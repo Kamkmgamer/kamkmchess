@@ -2,16 +2,16 @@
   "title": "Define legal move selection and model failure behavior",
   "issue": "KHA-10",
   "url": "https://linear.app/kamkm/issue/KHA-10/define-legal-move-selection-and-model-failure-behavior",
-  "taskId": "node:delegated-task:e0ded7d0-5977-41ba-9ce7-90e41b162d3c",
+  "taskId": "node:delegated-task:de86e109-ab59-4efe-b855-5bdeda7d6efd",
   "childThreadId": "thread:delegated-task:command%3Amcp%3Ae08672c0-c126-4db5-a062-3aa9342188fb%3Adelegate-task%3Awayfinder-chess-conversation-transfer-20261015-r1",
-  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:15",
+  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:16",
   "source": "The owner asked 'let's move to the next ticket' in the research child thread.",
   "taskStatus": "completed",
   "hasPendingChildRuns": false,
   "ticketStatus": "In Progress",
-  "awaitingOwnerDecision": true,
-  "pendingQuestion": "Should model resignation also offer unscored practice continuation with the same or a new model, using fresh context and the current position?",
-  "recommendation": "Offer the same unscored practice continuation after resignation, keeping the original loss final.",
+  "awaitingOwnerDecision": false,
+  "pendingQuestion": null,
+  "recommendation": null,
   "priorModelSelectionTicket": "KHA-9 remains in progress; the mid-match compatibility-check question is unanswered.",
   "previousTaskIds": [
     "node:delegated-task:c6918c8e-890b-4ea5-88ca-2b18d3377968",
@@ -26,9 +26,10 @@
     "node:delegated-task:e6bb0646-e419-4237-88d7-06a5a38e8767",
     "node:delegated-task:e08b9fee-0c4a-452c-bdca-4c2cfcbcc4d4",
     "node:delegated-task:42256beb-07cb-4475-b021-201806159b34",
-    "node:delegated-task:440e98de-8e76-4805-aeea-b40542a77a58"
+    "node:delegated-task:440e98de-8e76-4805-aeea-b40542a77a58",
+    "node:delegated-task:e0ded7d0-5977-41ba-9ce7-90e41b162d3c"
   ],
-  "terminalSummary": "Recorded: an explicit refusal to move counts as resignation and a model loss.\n\nShould resignation also offer **unscored practice continuation** with the same or a new model, using fresh context and the current position? I recommend yes, keeping the loss final.",
+  "terminalSummary": "Recorded: unfinished games can continue with a new model. Recorded losses stay final, with further play treated as practice.\n\nI added [custom starting positions](https://linear.app/kamkm/issue/KHA-19/define-custom-starting-positions-and-position-editor) to the MVP plan.\n\nShould players be able to **arrange pieces visually and paste a FEN position**? I recommend supporting both.",
   "acceptedDecision": "Do not supply a legal-move list or constrain the response to an enumeration of legal moves. The model proposes its own move and may receive corrections for mistakes.",
   "discussionCommentId": "64c107b9-2653-44f4-8496-2de310dbcb81",
   "acceptedDecisions": [
@@ -43,7 +44,9 @@
     "Malformed replies, including invalid JSON or a missing move field, do not consume the four-attempt chess budget and cannot cause a chess loss.",
     "Accept a clearly chosen coordinate move outside valid JSON after checking legality. Ask for formatting correction only when the chosen move is missing or ambiguous; do not infer a move from hypothetical plan alternatives.",
     "Allow three separate formatting-correction retries per turn. They neither consume nor reset illegal chess-move attempts. Exhaustion pauses at the unchanged position with Retry or Switch model and no chess loss.",
-    "An explicit model refusal to make a move is resignation and a model loss. Do not use correction retries after this refusal. Practice continuation after resignation remains undecided."
+    "An explicit model refusal to make a move is resignation and a model loss. Do not use correction retries after this refusal. Resignation offers optional unscored practice continuation with the same or a new model, using fresh context and the current position. The loss remains final.",
+    "Any unfinished game can continue with a new model. Recorded losses remain final, and further play after a loss is practice. Lifecycle details remain in their own ticket.",
+    "Custom starting positions are included in MVP scope and specified in KHA-19."
   ],
   "acceptedRetryLimit": {
     "initialAttempts": 1,
@@ -115,7 +118,9 @@
     "explicitRefusalToMove": "Model resignation and loss.",
     "correctionRetries": "Do not spend them trying to obtain a move after explicit refusal.",
     "distinctFrom": "Provider errors, interrupted responses, and connection failures.",
-    "remaining": "Resignation response format, detection rules, and whether resignation offers unscored practice continuation."
+    "remaining": "Resignation response format and detection rules.",
+    "practiceContinuation": "Offer the same unscored practice continuation with the same or a new model, fresh context, and the current position. The original loss remains final."
   },
-  "sourcePosition": 215
+  "sourcePosition": 248,
+  "discussionContinuesIn": "KHA-19"
 }

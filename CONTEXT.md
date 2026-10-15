@@ -29,7 +29,10 @@ The accumulated instructions, game inputs, and model replies in a chess match, i
 A chess move proposed by a model opponent that may be legal or illegal. A formatting error alone does not establish an illegal move.
 
 **Post-loss continuation**:
-Unscored practice from the position at which a model lost after repeated illegal move attempts. The original loss remains final.
+Unscored practice from the position at which a model lost through resignation or repeated illegal move attempts. The original loss remains final.
 
 **Model resignation**:
 An explicit refusal by a model opponent to make a move, resulting in a loss for that model.
+
+**Custom starting position**:
+A chess position chosen by the human player as the starting point for play against a model opponent.

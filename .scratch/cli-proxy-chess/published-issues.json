@@ -219,6 +219,14 @@
         ],
         "relatedTo": [
           {
+            "id": "KHA-19",
+            "title": "Define custom starting positions and position editor"
+          },
+          {
+            "id": "KHA-11",
+            "title": "Define the MVP match lifecycle"
+          },
+          {
             "id": "KHA-9",
             "title": "Choose the model catalog and opponent selection rules"
           }
@@ -231,7 +239,9 @@
       "key": "match-lifecycle",
       "title": "Define the MVP match lifecycle",
       "type": "grilling",
-      "blockedBy": [],
+      "blockedBy": [
+        "custom-starting-position"
+      ],
       "id": "b47092f0-b1b0-4ae1-9363-248a6a85edd2",
       "url": "https://linear.app/kamkm/issue/KHA-11/define-the-mvp-match-lifecycle",
       "assigned": false,
@@ -248,8 +258,18 @@
             "title": "Validate the connection and chess match interface"
           }
         ],
-        "blockedBy": [],
-        "relatedTo": [],
+        "blockedBy": [
+          {
+            "id": "KHA-19",
+            "title": "Define custom starting positions and position editor"
+          }
+        ],
+        "relatedTo": [
+          {
+            "id": "KHA-10",
+            "title": "Define legal move selection and model failure behavior"
+          }
+        ],
         "duplicateOf": null
       }
     },
@@ -258,11 +278,12 @@
       "title": "Validate the connection and chess match interface",
       "type": "prototype",
       "blockedBy": [
-        "proxy-policy",
+        "custom-starting-position",
+        "provider-access",
+        "match-lifecycle",
         "model-selection",
         "move-contract",
-        "match-lifecycle",
-        "provider-access"
+        "proxy-policy"
       ],
       "id": "1b1d6eee-7ef4-4cca-9130-c334f76e6ce2",
       "url": "https://linear.app/kamkm/issue/KHA-12/validate-the-connection-and-chess-match-interface",
@@ -281,6 +302,10 @@
           }
         ],
         "blockedBy": [
+          {
+            "id": "KHA-19",
+            "title": "Define custom starting positions and position editor"
+          },
           {
             "id": "KHA-16",
             "title": "Establish provider rules for subscription-backed proxy access"
@@ -316,11 +341,12 @@
       "title": "Choose the application architecture and data boundaries",
       "type": "grilling",
       "blockedBy": [
+        "custom-starting-position",
         "proxy-policy",
         "model-selection",
         "move-contract",
-        "match-lifecycle",
-        "interface"
+        "interface",
+        "match-lifecycle"
       ],
       "id": "da3b16b5-547a-4ea6-812f-c4c57008592a",
       "url": "https://linear.app/kamkm/issue/KHA-13/choose-the-application-architecture-and-data-boundaries",
@@ -335,6 +361,10 @@
           }
         ],
         "blockedBy": [
+          {
+            "id": "KHA-19",
+            "title": "Define custom starting positions and position editor"
+          },
           {
             "id": "KHA-8",
             "title": "Choose supported proxy setups and credential handling"
@@ -356,7 +386,12 @@
             "title": "Define the MVP match lifecycle"
           }
         ],
-        "relatedTo": [],
+        "relatedTo": [
+          {
+            "id": "KHA-17",
+            "title": "Choose supported model access and usage disclosure"
+          }
+        ],
         "duplicateOf": null
       }
     },
@@ -385,7 +420,12 @@
             "title": "Choose the application architecture and data boundaries"
           }
         ],
-        "relatedTo": [],
+        "relatedTo": [
+          {
+            "id": "KHA-17",
+            "title": "Choose supported model access and usage disclosure"
+          }
+        ],
         "duplicateOf": null
       }
     },
@@ -545,9 +585,45 @@
       "researchFile": "C:/Users/Lenovo/.t3/worktrees/kamkmchess/t3-164a044e/research/conversation-transfer.md",
       "resolutionCommentId": "4c4dca72-bc43-483d-92e4-d2a00eac9b43",
       "attachmentId": "eb3a2a3a-c144-4137-9ced-a3cbc15bbb48"
+    },
+    {
+      "key": "custom-starting-position",
+      "type": "grilling",
+      "identifier": "KHA-19",
+      "id": "347d9588-6095-44f3-93fb-8c503cc7a8bb",
+      "url": "https://linear.app/kamkm/issue/KHA-19/define-custom-starting-positions-and-position-editor",
+      "assigned": true,
+      "status": "In Progress",
+      "discussionCommentId": "549fc01e-8804-423d-a6f1-338981f2ae3d",
+      "title": "Define custom starting positions and position editor",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-13",
+            "title": "Choose the application architecture and data boundaries"
+          },
+          {
+            "id": "KHA-12",
+            "title": "Validate the connection and chess match interface"
+          },
+          {
+            "id": "KHA-11",
+            "title": "Define the MVP match lifecycle"
+          }
+        ],
+        "blockedBy": [],
+        "relatedTo": [
+          {
+            "id": "KHA-10",
+            "title": "Define legal move selection and model failure behavior"
+          }
+        ],
+        "duplicateOf": null
+      },
+      "blockedBy": []
     }
   ],
   "dependenciesWired": true,
-  "verifiedChildCount": 13,
-  "verifiedBlockingEdgeCount": 25
+  "verifiedChildCount": 14,
+  "verifiedBlockingEdgeCount": 28
 }
