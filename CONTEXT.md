@@ -10,17 +10,20 @@ A person playing chess against a model opponent.
 **Model opponent**:
 An AI model that plays one side of a chess game and chooses its own moves.
 
+**AI connection**:
+A human player's configured access to an AI provider or custom endpoint for their model opponents.
+
 **Connected proxy**:
-A human player's existing CLIProxyAPI setup that provides access to their model subscriptions.
+An AI connection through a human player's existing proxy, such as CLIProxyAPI.
 
 **Model catalog**:
-The model entries advertised by a human player's connected proxy.
+The model entries advertised through a human player's selected AI connection.
 
 **Model family**:
 A named group of related AI models, such as GPT, Claude, Gemini, Grok, or Kimi.
 
 **Model switch**:
-A change of model opponent within an existing chess match.
+A change of model opponent within an existing chess match, which may also change the AI connection.
 
 **Match conversation**:
 The accumulated instructions, game inputs, and model replies on a match's current line of play, including any plans or reasoning the models returned.

@@ -2,7 +2,8 @@
   "map": {
     "id": "eeaf292f-67aa-45db-b588-cb0cecfe2e4d",
     "identifier": "KHA-5",
-    "url": "https://linear.app/kamkm/issue/KHA-5/find-the-way-to-the-cliproxyapi-chess-mvp"
+    "url": "https://linear.app/kamkm/issue/KHA-5/find-the-way-to-the-ai-chess-mvp",
+    "title": "Find the way to the AI chess MVP"
   },
   "tickets": [
     {
@@ -19,7 +20,7 @@
         "blocks": [
           {
             "id": "KHA-8",
-            "title": "Choose supported proxy setups and credential handling"
+            "title": "Choose provider connections and credential handling"
           },
           {
             "id": "KHA-15",
@@ -69,7 +70,7 @@
           },
           {
             "id": "KHA-8",
-            "title": "Choose supported proxy setups and credential handling"
+            "title": "Choose provider connections and credential handling"
           }
         ],
         "blockedBy": [],
@@ -88,18 +89,19 @@
     },
     {
       "key": "proxy-policy",
-      "title": "Choose supported proxy setups and credential handling",
+      "title": "Choose provider connections and credential handling",
       "type": "grilling",
       "blockedBy": [
-        "proxy-connectivity",
-        "proxy-api",
+        "provider-endpoints",
+        "access-policy",
         "connectivity-check",
-        "access-policy"
+        "proxy-api",
+        "proxy-connectivity"
       ],
       "id": "4a8e16dd-06dd-41b4-b566-5fb42723ab91",
-      "url": "https://linear.app/kamkm/issue/KHA-8/choose-supported-proxy-setups-and-credential-handling",
-      "assigned": false,
-      "status": "Backlog",
+      "url": "https://linear.app/kamkm/issue/KHA-8/choose-provider-connections-and-credential-handling",
+      "assigned": true,
+      "status": "In Progress",
       "identifier": "KHA-8",
       "nativeRelations": {
         "blocks": [
@@ -113,6 +115,10 @@
           }
         ],
         "blockedBy": [
+          {
+            "id": "KHA-20",
+            "title": "Establish direct-browser provider protocols and endpoint compatibility"
+          },
           {
             "id": "KHA-17",
             "title": "Choose supported model access and usage disclosure"
@@ -130,15 +136,30 @@
             "title": "Determine how a public website can reach a player's CLIProxyAPI"
           }
         ],
-        "relatedTo": [],
+        "relatedTo": [
+          {
+            "id": "KHA-10",
+            "title": "Define legal move selection and model failure behavior"
+          },
+          {
+            "id": "KHA-14",
+            "title": "Agree on MVP acceptance criteria and the specification handoff"
+          },
+          {
+            "id": "KHA-11",
+            "title": "Define the MVP match lifecycle"
+          }
+        ],
         "duplicateOf": null
-      }
+      },
+      "discussionCommentId": "724ecd5d-76e3-4001-9eca-6df13da1a33c"
     },
     {
       "key": "model-selection",
       "title": "Choose the model catalog and opponent selection rules",
       "type": "grilling",
       "blockedBy": [
+        "provider-endpoints",
         "conversation-transfer",
         "access-policy",
         "proxy-api"
@@ -161,6 +182,10 @@
         ],
         "blockedBy": [
           {
+            "id": "KHA-20",
+            "title": "Establish direct-browser provider protocols and endpoint compatibility"
+          },
+          {
             "id": "KHA-18",
             "title": "Determine how conversation history transfers between model families"
           },
@@ -177,6 +202,10 @@
           {
             "id": "KHA-10",
             "title": "Define legal move selection and model failure behavior"
+          },
+          {
+            "id": "KHA-11",
+            "title": "Define the MVP match lifecycle"
           }
         ],
         "duplicateOf": null
@@ -281,7 +310,7 @@
           },
           {
             "id": "KHA-8",
-            "title": "Choose supported proxy setups and credential handling"
+            "title": "Choose provider connections and credential handling"
           },
           {
             "id": "KHA-10",
@@ -342,7 +371,7 @@
           },
           {
             "id": "KHA-8",
-            "title": "Choose supported proxy setups and credential handling"
+            "title": "Choose provider connections and credential handling"
           }
         ],
         "relatedTo": [
@@ -385,7 +414,7 @@
           },
           {
             "id": "KHA-8",
-            "title": "Choose supported proxy setups and credential handling"
+            "title": "Choose provider connections and credential handling"
           },
           {
             "id": "KHA-9",
@@ -408,6 +437,10 @@
           {
             "id": "KHA-17",
             "title": "Choose supported model access and usage disclosure"
+          },
+          {
+            "id": "KHA-20",
+            "title": "Establish direct-browser provider protocols and endpoint compatibility"
           }
         ],
         "duplicateOf": null
@@ -440,12 +473,24 @@
         ],
         "relatedTo": [
           {
+            "id": "KHA-8",
+            "title": "Choose provider connections and credential handling"
+          },
+          {
             "id": "KHA-10",
             "title": "Define legal move selection and model failure behavior"
           },
           {
             "id": "KHA-17",
             "title": "Choose supported model access and usage disclosure"
+          },
+          {
+            "id": "KHA-20",
+            "title": "Establish direct-browser provider protocols and endpoint compatibility"
+          },
+          {
+            "id": "KHA-11",
+            "title": "Define the MVP match lifecycle"
           },
           {
             "id": "KHA-19",
@@ -477,7 +522,7 @@
         "blocks": [
           {
             "id": "KHA-8",
-            "title": "Choose supported proxy setups and credential handling"
+            "title": "Choose provider connections and credential handling"
           }
         ],
         "blockedBy": [
@@ -546,7 +591,7 @@
         "blocks": [
           {
             "id": "KHA-8",
-            "title": "Choose supported proxy setups and credential handling"
+            "title": "Choose provider connections and credential handling"
           },
           {
             "id": "KHA-9",
@@ -657,9 +702,53 @@
       },
       "blockedBy": [],
       "resolutionCommentId": "549fc01e-8804-423d-a6f1-338981f2ae3d"
+    },
+    {
+      "id": "a406e3a7-6d49-454f-b161-bb50383eb9fe",
+      "identifier": "KHA-20",
+      "title": "Establish direct-browser provider protocols and endpoint compatibility",
+      "url": "https://linear.app/kamkm/issue/KHA-20/establish-direct-browser-provider-protocols-and-endpoint-compatibility",
+      "status": "In Progress",
+      "assigned": true,
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-9",
+            "title": "Choose the model catalog and opponent selection rules"
+          },
+          {
+            "id": "KHA-8",
+            "title": "Choose provider connections and credential handling"
+          }
+        ],
+        "blockedBy": [],
+        "relatedTo": [
+          {
+            "id": "KHA-14",
+            "title": "Agree on MVP acceptance criteria and the specification handoff"
+          },
+          {
+            "id": "KHA-13",
+            "title": "Choose the application architecture and data boundaries"
+          },
+          {
+            "id": "KHA-10",
+            "title": "Define legal move selection and model failure behavior"
+          },
+          {
+            "id": "KHA-17",
+            "title": "Choose supported model access and usage disclosure"
+          }
+        ],
+        "duplicateOf": null
+      },
+      "key": "provider-endpoints",
+      "type": "research",
+      "blockedBy": [],
+      "researchFile": "research/provider-endpoints.md",
+      "taskRecord": ".scratch/cli-proxy-chess/provider-endpoints-task.json"
     }
   ],
   "dependenciesWired": true,
-  "verifiedChildCount": 14,
-  "verifiedBlockingEdgeCount": 28
+  "recordedChildCount": 15
 }

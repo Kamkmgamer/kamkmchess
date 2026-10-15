@@ -1,0 +1,52 @@
+{
+  "issue": {
+    "id": "a406e3a7-6d49-454f-b161-bb50383eb9fe",
+    "identifier": "KHA-20",
+    "title": "Establish direct-browser provider protocols and endpoint compatibility",
+    "url": "https://linear.app/kamkm/issue/KHA-20/establish-direct-browser-provider-protocols-and-endpoint-compatibility",
+    "status": "In Progress",
+    "assigned": true,
+    "nativeRelations": {
+      "blocks": [
+        {
+          "id": "KHA-9",
+          "title": "Choose the model catalog and opponent selection rules"
+        },
+        {
+          "id": "KHA-8",
+          "title": "Choose provider connections and credential handling"
+        }
+      ],
+      "blockedBy": [],
+      "relatedTo": [
+        {
+          "id": "KHA-14",
+          "title": "Agree on MVP acceptance criteria and the specification handoff"
+        },
+        {
+          "id": "KHA-13",
+          "title": "Choose the application architecture and data boundaries"
+        },
+        {
+          "id": "KHA-10",
+          "title": "Define legal move selection and model failure behavior"
+        },
+        {
+          "id": "KHA-17",
+          "title": "Choose supported model access and usage disclosure"
+        }
+      ],
+      "duplicateOf": null
+    }
+  },
+  "taskId": "node:delegated-task:command%3Amcp%3A7ce357ab-f0cc-4b03-9b16-69021b10d657%3Adelegate-task%3Akha20-provider-protocols-research-20261016-r1",
+  "childThreadId": "thread:delegated-task:command%3Amcp%3A7ce357ab-f0cc-4b03-9b16-69021b10d657%3Adelegate-task%3Akha20-provider-protocols-research-20261016-r1",
+  "providerInstanceId": "codex",
+  "model": "gpt-6.1-sol",
+  "status": "running",
+  "clientRequestId": "kha20-provider-protocols-research-20261016-r1",
+  "researchFile": "research/provider-endpoints.md",
+  "scope": "Documentation/source research only. No live provider calls, keys, paid usage, implementation, or deployment.",
+  "decisionCommentId": "724ecd5d-76e3-4001-9eca-6df13da1a33c",
+  "credentialPreference": "Pending owner answer to session default with optional device saving."
+}
