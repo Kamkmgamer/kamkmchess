@@ -1,0 +1,50 @@
+{
+  "map": {
+    "title": "Find the way to the CLIProxyAPI chess MVP",
+    "url": "https://linear.app/kamkm/issue/KHA-5/find-the-way-to-the-cliproxyapi-chess-mvp"
+  },
+  "tasks": [
+    {
+      "title": "Determine how a public website can reach a player's CLIProxyAPI",
+      "branch": "research/proxy-connectivity",
+      "asset": "research/proxy-connectivity.md",
+      "taskId": "node:delegated-task:command%3Amcp%3Ab12b904d-1aac-4150-8b82-5d26aa4707af%3Adelegate-task%3Awayfinder-chess-proxy-connectivity-20261015-r1",
+      "childThreadId": "thread:delegated-task:command%3Amcp%3Ab12b904d-1aac-4150-8b82-5d26aa4707af%3Adelegate-task%3Awayfinder-chess-proxy-connectivity-20261015-r1",
+      "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ab12b904d-1aac-4150-8b82-5d26aa4707af%253Adelegate-task%253Awayfinder-chess-proxy-connectivity-20261015-r1:ordinal:1",
+      "childNodeId": "node:delegated-task:command%3Amcp%3Ab12b904d-1aac-4150-8b82-5d26aa4707af%3Adelegate-task%3Awayfinder-chess-proxy-connectivity-20261015-r1",
+      "status": "running",
+      "workState": "working",
+      "hasPendingChildRuns": false,
+      "latestTerminalRunId": null,
+      "latestTerminalStatus": null,
+      "latestTerminalSummary": null,
+      "latestTerminalResultContextTransferId": null,
+      "providerInstanceId": "codex",
+      "model": "gpt-6.1-sol",
+      "summary": null,
+      "resultContextTransferId": null,
+      "waitTimedOut": false
+    },
+    {
+      "title": "Document CLIProxyAPI model discovery and move requests",
+      "branch": "research/proxy-api",
+      "asset": "research/proxy-api.md",
+      "taskId": "node:delegated-task:command%3Amcp%3Ab12b904d-1aac-4150-8b82-5d26aa4707af%3Adelegate-task%3Awayfinder-chess-proxy-api-20261015-r1",
+      "childThreadId": "thread:delegated-task:command%3Amcp%3Ab12b904d-1aac-4150-8b82-5d26aa4707af%3Adelegate-task%3Awayfinder-chess-proxy-api-20261015-r1",
+      "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ab12b904d-1aac-4150-8b82-5d26aa4707af%253Adelegate-task%253Awayfinder-chess-proxy-api-20261015-r1:ordinal:1",
+      "childNodeId": "node:delegated-task:command%3Amcp%3Ab12b904d-1aac-4150-8b82-5d26aa4707af%3Adelegate-task%3Awayfinder-chess-proxy-api-20261015-r1",
+      "status": "running",
+      "workState": "working",
+      "hasPendingChildRuns": false,
+      "latestTerminalRunId": null,
+      "latestTerminalStatus": null,
+      "latestTerminalSummary": null,
+      "latestTerminalResultContextTransferId": null,
+      "providerInstanceId": "codex",
+      "model": "gpt-6.1-sol",
+      "summary": null,
+      "resultContextTransferId": null,
+      "waitTimedOut": false
+    }
+  ]
+}
