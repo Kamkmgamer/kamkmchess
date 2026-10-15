@@ -2,7 +2,7 @@
 
 This project uses Linear. The user explicitly selected Linear for the CLIProxyAPI chess MVP wayfinder effort.
 
-The canonical map is [Find the way to the CLIProxyAPI chess MVP](https://linear.app/kamkm/issue/KHA-5/find-the-way-to-the-cliproxyapi-chess-mvp), in the khalil workspace and Khalil team. All nine child issues and all 15 native blocking relationships have been published and read back for verification. Their returned URLs and relationships are recorded in `.scratch/cli-proxy-chess/published-issues.json`.
+The canonical map is [Find the way to the CLIProxyAPI chess MVP](https://linear.app/kamkm/issue/KHA-5/find-the-way-to-the-cliproxyapi-chess-mvp), in the khalil workspace and Khalil team. It currently has ten child issues and 18 native blocking relationships. The original nine issues and 15 relationships were read back after charting; the additional connectivity task and its three relationships were read back after the connectivity research. Their returned URLs and relationships are recorded in `.scratch/cli-proxy-chess/published-issues.json`. Query Linear for current state before taking work.
 
 Linear's official MCP server is configured as `linear` at `https://mcp.linear.app/mcp` and authenticated through Codex OAuth. Prefer its tools when the running session exposes them. Keep credentials in the client's credential store, never in this repository. Files under `.scratch/cli-proxy-chess/` are publication drafts and connection records, not a second canonical tracker.
 
@@ -11,7 +11,7 @@ If a running session lacks native Linear tools, `.scratch/cli-proxy-chess/linear
 ## Wayfinding operations
 
 - The map is one Linear issue labelled `wayfinder:map`.
-- In Linear, the `wayfinder` label group contains `map`, `research`, `grilling`, and `prototype`; these correspond to the skill's `wayfinder:<type>` label vocabulary.
+- In Linear, the `wayfinder` label group contains `map`, `research`, `grilling`, `prototype`, and `task`; these correspond to the skill's `wayfinder:<type>` label vocabulary.
 - Decision tickets are native child issues of the map, each labelled `wayfinder:research`, `wayfinder:prototype`, `wayfinder:grilling`, or `wayfinder:task`.
 - Use Linear's native blocking issue relations. Create all issues before wiring those relations.
 - The frontier consists of open, unblocked, unassigned children, ordered by creation order.

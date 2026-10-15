@@ -13,19 +13,27 @@
       "id": "61848eaf-2232-43bb-9331-3b9a8a9357ba",
       "url": "https://linear.app/kamkm/issue/KHA-6/determine-how-a-public-website-can-reach-a-players-cliproxyapi",
       "assigned": true,
-      "status": "In Progress",
+      "status": "Done",
       "identifier": "KHA-6",
       "nativeRelations": {
         "blocks": [
           {
             "id": "KHA-8",
             "title": "Choose supported proxy setups and credential handling"
+          },
+          {
+            "id": "KHA-15",
+            "title": "Verify browser-to-proxy connectivity with synthetic credentials"
           }
         ],
         "blockedBy": [],
         "relatedTo": [],
         "duplicateOf": null
-      }
+      },
+      "commit": "deac83b02ead0a63998fcb69bd26c85ea153a6c1",
+      "researchFile": "C:/Users/Lenovo/.t3/worktrees/kamkmchess/t3-b031aae2/research/proxy-connectivity.md",
+      "resolutionCommentId": "bbfe85e5-3760-4d89-b884-13f6805e06c0",
+      "attachmentId": "cbf8898d-f934-4636-b946-692e12f96a82"
     },
     {
       "key": "proxy-api",
@@ -50,6 +58,10 @@
           {
             "id": "KHA-8",
             "title": "Choose supported proxy setups and credential handling"
+          },
+          {
+            "id": "KHA-15",
+            "title": "Verify browser-to-proxy connectivity with synthetic credentials"
           }
         ],
         "blockedBy": [],
@@ -63,7 +75,8 @@
       "type": "grilling",
       "blockedBy": [
         "proxy-connectivity",
-        "proxy-api"
+        "proxy-api",
+        "connectivity-check"
       ],
       "id": "4a8e16dd-06dd-41b4-b566-5fb42723ab91",
       "url": "https://linear.app/kamkm/issue/KHA-8/choose-supported-proxy-setups-and-credential-handling",
@@ -82,6 +95,10 @@
           }
         ],
         "blockedBy": [
+          {
+            "id": "KHA-15",
+            "title": "Verify browser-to-proxy connectivity with synthetic credentials"
+          },
           {
             "id": "KHA-7",
             "title": "Document CLIProxyAPI model discovery and move requests"
@@ -312,9 +329,43 @@
         "relatedTo": [],
         "duplicateOf": null
       }
+    },
+    {
+      "key": "connectivity-check",
+      "title": "Verify browser-to-proxy connectivity with synthetic credentials",
+      "type": "task",
+      "blockedBy": [
+        "proxy-connectivity",
+        "proxy-api"
+      ],
+      "id": "d7336b4b-893c-40ae-aa6b-1541c9993c0e",
+      "identifier": "KHA-15",
+      "url": "https://linear.app/kamkm/issue/KHA-15/verify-browser-to-proxy-connectivity-with-synthetic-credentials",
+      "assigned": false,
+      "status": "Backlog",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-8",
+            "title": "Choose supported proxy setups and credential handling"
+          }
+        ],
+        "blockedBy": [
+          {
+            "id": "KHA-7",
+            "title": "Document CLIProxyAPI model discovery and move requests"
+          },
+          {
+            "id": "KHA-6",
+            "title": "Determine how a public website can reach a player's CLIProxyAPI"
+          }
+        ],
+        "relatedTo": [],
+        "duplicateOf": null
+      }
     }
   ],
   "dependenciesWired": true,
-  "verifiedChildCount": 9,
-  "verifiedBlockingEdgeCount": 15
+  "verifiedChildCount": 10,
+  "verifiedBlockingEdgeCount": 18
 }
