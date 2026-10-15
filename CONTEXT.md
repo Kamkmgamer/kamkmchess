@@ -29,4 +29,4 @@ The accumulated instructions, game inputs, and model replies in a chess match, i
 A move proposed by a model opponent that may be legal or illegal.
 
 **Post-loss continuation**:
-Optional play from the position at which a model lost after repeated illegal move attempts.
+Unscored practice from the position at which a model lost after repeated illegal move attempts. The original loss remains final.
