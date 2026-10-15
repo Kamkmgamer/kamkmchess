@@ -403,7 +403,7 @@
       "identifier": "KHA-16",
       "url": "https://linear.app/kamkm/issue/KHA-16/establish-provider-rules-for-subscription-backed-proxy-access",
       "assigned": true,
-      "status": "In Progress",
+      "status": "Done",
       "nativeRelations": {
         "blocks": [
           {
@@ -424,7 +424,11 @@
           }
         ],
         "duplicateOf": null
-      }
+      },
+      "commit": "8c57ad74becc9ccafce1d92c62836ed81b724f8b",
+      "researchFile": "C:/Users/Lenovo/.t3/worktrees/kamkmchess/t3-5713c157/research/provider-access.md",
+      "resolutionCommentId": "dd4ae07f-7695-4fc8-96e9-898994d91cd9",
+      "attachmentId": "6698bf7a-63d1-40c9-959c-98b8a20bad1a"
     },
     {
       "key": "access-policy",

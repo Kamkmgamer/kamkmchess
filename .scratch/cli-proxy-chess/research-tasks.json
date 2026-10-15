@@ -62,18 +62,22 @@
       "childThreadId": "thread:delegated-task:command%3Amcp%3Ab12b904d-1aac-4150-8b82-5d26aa4707af%3Adelegate-task%3Awayfinder-chess-provider-access-20261015-r1",
       "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ab12b904d-1aac-4150-8b82-5d26aa4707af%253Adelegate-task%253Awayfinder-chess-provider-access-20261015-r1:ordinal:1",
       "childNodeId": "node:delegated-task:command%3Amcp%3Ab12b904d-1aac-4150-8b82-5d26aa4707af%3Adelegate-task%3Awayfinder-chess-provider-access-20261015-r1",
-      "status": "running",
-      "workState": "working",
+      "status": "completed",
+      "workState": "result_available",
       "hasPendingChildRuns": false,
-      "latestTerminalRunId": null,
-      "latestTerminalStatus": null,
-      "latestTerminalSummary": null,
+      "latestTerminalRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ab12b904d-1aac-4150-8b82-5d26aa4707af%253Adelegate-task%253Awayfinder-chess-provider-access-20261015-r1:ordinal:1",
+      "latestTerminalStatus": "completed",
+      "latestTerminalSummary": "Provider research completed; findings are attached, the issue is Done, and the map indexes the resolution. The owner disclosure and no-project-enforcement policy is preserved.",
       "latestTerminalResultContextTransferId": null,
       "providerInstanceId": "codex",
       "model": "gpt-6.1-sol",
-      "summary": null,
+      "summary": "Provider research completed; findings are attached, the issue is Done, and the map indexes the resolution. The owner disclosure and no-project-enforcement policy is preserved.",
       "resultContextTransferId": null,
-      "waitTimedOut": false
+      "waitTimedOut": false,
+      "commit": "8c57ad74becc9ccafce1d92c62836ed81b724f8b",
+      "researchFile": "C:/Users/Lenovo/.t3/worktrees/kamkmchess/t3-5713c157/research/provider-access.md",
+      "resolutionCommentId": "dd4ae07f-7695-4fc8-96e9-898994d91cd9",
+      "attachmentId": "6698bf7a-63d1-40c9-959c-98b8a20bad1a"
     }
   ]
 }
