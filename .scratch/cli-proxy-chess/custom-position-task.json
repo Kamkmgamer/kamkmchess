@@ -2,18 +2,25 @@
   "title": "Define custom starting positions and position editor",
   "issue": "KHA-19",
   "url": "https://linear.app/kamkm/issue/KHA-19/define-custom-starting-positions-and-position-editor",
-  "taskId": "node:delegated-task:de86e109-ab59-4efe-b855-5bdeda7d6efd",
+  "taskId": "node:delegated-task:d6196226-bb64-4c7d-a557-d690ad65a209",
   "childThreadId": "thread:delegated-task:command%3Amcp%3Ae08672c0-c126-4db5-a062-3aa9342188fb%3Adelegate-task%3Awayfinder-chess-conversation-transfer-20261015-r1",
-  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:16",
+  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:17",
   "taskStatus": "completed",
   "hasPendingChildRuns": false,
   "source": "The owner requested custom starting positions during the move-contract discussion in the child thread.",
   "ticketStatus": "In Progress",
   "awaitingOwnerDecision": true,
-  "pendingQuestion": "Should players be able to arrange pieces visually and paste a FEN position?",
-  "recommendation": "Support both a visual position editor and FEN import.",
+  "pendingQuestion": "Should play be blocked from invalid setups, such as a missing king or adjacent kings?",
+  "recommendation": "Allow free editing, but require basic chess-validity checks before play starts.",
   "acceptedScope": "The MVP includes human-selected starting positions for play against a model opponent. Chess.com and Lichess are familiar examples, without a decision to copy their full feature sets.",
   "discussionCommentId": "549fc01e-8804-423d-a6f1-338981f2ae3d",
-  "sourcePosition": 248,
-  "terminalSummary": "Recorded: unfinished games can continue with a new model. Recorded losses stay final, with further play treated as practice.\n\nI added [custom starting positions](https://linear.app/kamkm/issue/KHA-19/define-custom-starting-positions-and-position-editor) to the MVP plan.\n\nShould players be able to **arrange pieces visually and paste a FEN position**? I recommend supporting both."
+  "sourcePosition": 257,
+  "terminalSummary": "Support a visual board editor and FEN import. Position validation before play remains undecided.",
+  "previousTaskIds": [
+    "node:delegated-task:de86e109-ab59-4efe-b855-5bdeda7d6efd"
+  ],
+  "acceptedInputMethods": [
+    "Visual board editor for arranging pieces.",
+    "FEN import by pasting a position string."
+  ]
 }
