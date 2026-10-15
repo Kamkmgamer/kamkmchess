@@ -770,8 +770,8 @@
       "identifier": "KHA-21",
       "title": "Verify provider browser preflights and synthetic streaming",
       "url": "https://linear.app/kamkm/issue/KHA-21/verify-provider-browser-preflights-and-synthetic-streaming",
-      "status": "Backlog",
-      "assigned": false,
+      "status": "Done",
+      "assigned": true,
       "nativeRelations": {
         "blocks": [
           {
@@ -805,7 +805,17 @@
       "type": "task",
       "blockedBy": [
         "provider-endpoints"
-      ]
+      ],
+      "reportFile": "research/provider-browser-transport.md",
+      "evidenceDirectory": "experiments/provider-browser-transport/",
+      "resolutionCommentId": "2ad98011-9341-47fe-862d-99d7fe3ef0dc",
+      "attachmentIds": [
+        "810495a9-413f-4c90-b91e-bdbe13b7ee86",
+        "81a84782-ef9b-4532-b7f2-e3c0da0cc621"
+      ],
+      "reportSha256": "04cab7ac491436b867a894e9abbbcff1ddcb0ca64c6000783fbe765afabb3b55",
+      "bundleSha256": "ee36508fc84ae093571ce02b7ba66097cceae2a43f95abc9e219f8fd9421f3c0",
+      "attachmentDownloadsVerified": true
     }
   ],
   "dependenciesWired": true,

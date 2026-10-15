@@ -1,0 +1,44 @@
+[
+  {
+    "base": "http://127.0.0.1:18775",
+    "status": 200,
+    "headers": {
+      "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+      "access-control-allow-methods": "GET, POST, OPTIONS",
+      "access-control-allow-origin": "*",
+      "access-control-expose-headers": "x-synthetic-fixture",
+      "access-control-max-age": "0",
+      "cache-control": "no-store",
+      "connection": "keep-alive",
+      "content-type": "text/event-stream; charset=utf-8",
+      "date": "Thu, 15 Oct 2026 22:27:58 GMT",
+      "keep-alive": "timeout=5",
+      "transfer-encoding": "chunked",
+      "vary": "Origin",
+      "x-accel-buffering": "no",
+      "x-synthetic-fixture": "messages/normal"
+    },
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\ndata: \"message\":{\"id\":\"synthetic-message\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-only\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: ping\ndata: {\"type\":\"ping\"}\n\n: synthetic keepalive\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"fixture \"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"café ♞\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":3}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+  },
+  {
+    "base": "https://1fed-156-204-70-131.ngrok-free.app",
+    "status": 200,
+    "headers": {
+      "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+      "access-control-allow-methods": "GET, POST, OPTIONS",
+      "access-control-allow-origin": "*",
+      "access-control-expose-headers": "x-synthetic-fixture",
+      "access-control-max-age": "0",
+      "cache-control": "no-store",
+      "content-type": "text/event-stream; charset=utf-8",
+      "date": "Thu, 15 Oct 2026 22:27:59 GMT",
+      "ngrok-agent-ips": "156.204.70.131",
+      "transfer-encoding": "chunked",
+      "vary": "Origin",
+      "x-accel-buffering": "no",
+      "x-robots-tag": "noindex, nofollow",
+      "x-synthetic-fixture": "messages/normal"
+    },
+    "body": "event: message_start\ndata: {\"type\":\"message_start\",\ndata: \"message\":{\"id\":\"synthetic-message\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-only\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: ping\ndata: {\"type\":\"ping\"}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"fixture \"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"café ♞\"}}\n\nevent: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":3}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+  }
+]

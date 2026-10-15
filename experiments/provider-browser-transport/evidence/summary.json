@@ -1,0 +1,564 @@
+{
+  "checkedAt": "2026-10-15T22:33:55.980Z",
+  "origin": "https://1fed-156-204-70-131.ngrok-free.app",
+  "options": [
+    {
+      "id": "openai-models-base",
+      "status": 200,
+      "allowOrigin": "*",
+      "allowMethods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "allowHeaders": "authorization",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openai-models-scope",
+      "status": 200,
+      "allowOrigin": "*",
+      "allowMethods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "allowHeaders": "authorization, openai-organization, openai-project",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openai-chat-completions-base",
+      "status": 200,
+      "allowOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "allowMethods": "GET, OPTIONS, POST",
+      "allowHeaders": "authorization, content-type",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openai-chat-completions-scope",
+      "status": 200,
+      "allowOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "allowMethods": "GET, OPTIONS, POST",
+      "allowHeaders": "authorization, content-type, openai-organization, openai-project",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openai-responses-base",
+      "status": 200,
+      "allowOrigin": "*",
+      "allowMethods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "allowHeaders": "authorization, content-type",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openai-responses-scope",
+      "status": 200,
+      "allowOrigin": "*",
+      "allowMethods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "allowHeaders": "authorization, content-type, openai-organization, openai-project",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-models-base",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-models-attribution",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-models-attribution-cache",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [
+        "x-openrouter-cache"
+      ],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-chat-completions-base",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-chat-completions-attribution",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-chat-completions-attribution-cache",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [
+        "x-openrouter-cache"
+      ],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-responses-base",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-responses-attribution",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-responses-attribution-cache",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [
+        "x-openrouter-cache"
+      ],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-messages-base",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-messages-attribution",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-messages-attribution-cache",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [
+        "x-openrouter-cache"
+      ],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "openrouter-models-public",
+      "status": 204,
+      "allowOrigin": "*",
+      "allowMethods": "GET,OPTIONS,PATCH,DELETE,POST,PUT",
+      "allowHeaders": "Authorization,User-Agent,X-Api-Key,X-CSRF-Token,X-Requested-With,Accept,Accept-Version,Content-Length,Content-Encoding,Content-MD5,Content-Type,Date,X-Api-Version,HTTP-Referer,X-Windowai-Title,X-Openrouter-Title,X-Title,X-Openrouter-Categories,X-Openrouter-App-Visibility,X-Session-Id,X-Stainless-Lang,X-Stainless-Package-Version,X-Stainless-OS,X-Stainless-Arch,X-Stainless-Runtime,X-Stainless-Runtime-Version,X-Stainless-Retry-Count,X-Stainless-Timeout,X-Stainless-Helper-Method,Protection-Key,Idempotency-Key,traceparent,tracestate,b3",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "anthropic-models-api-key",
+      "status": 200,
+      "allowOrigin": "*",
+      "allowMethods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "allowHeaders": "anthropic-dangerous-direct-browser-access, anthropic-version, x-api-key",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "anthropic-models-bearer",
+      "status": 200,
+      "allowOrigin": "*",
+      "allowMethods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "allowHeaders": "anthropic-dangerous-direct-browser-access, anthropic-version, authorization",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "anthropic-models-workspace-beta",
+      "status": 200,
+      "allowOrigin": "*",
+      "allowMethods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "allowHeaders": "anthropic-beta, anthropic-dangerous-direct-browser-access, anthropic-version, anthropic-workspace-id, x-api-key",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "anthropic-messages-api-key",
+      "status": 200,
+      "allowOrigin": "*",
+      "allowMethods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "allowHeaders": "anthropic-dangerous-direct-browser-access, anthropic-version, content-type, x-api-key",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "anthropic-messages-bearer",
+      "status": 200,
+      "allowOrigin": "*",
+      "allowMethods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "allowHeaders": "anthropic-dangerous-direct-browser-access, anthropic-version, authorization, content-type",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    },
+    {
+      "id": "anthropic-messages-workspace-beta",
+      "status": 200,
+      "allowOrigin": "*",
+      "allowMethods": "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT",
+      "allowHeaders": "anthropic-beta, anthropic-dangerous-direct-browser-access, anthropic-version, anthropic-workspace-id, content-type, x-api-key",
+      "unlistedHeaderNames": [],
+      "wildcardHeaderList": false
+    }
+  ],
+  "browsers": [
+    {
+      "browser": "chrome",
+      "version": "Chrome/155.0.8059.79",
+      "catalogs": [
+        {
+          "id": "openai-models-base",
+          "status": 401,
+          "readable": true
+        },
+        {
+          "id": "openai-models-scope",
+          "status": 400,
+          "readable": true
+        },
+        {
+          "id": "openrouter-models-base",
+          "status": 200,
+          "readable": true
+        },
+        {
+          "id": "openrouter-models-attribution",
+          "status": 200,
+          "readable": true
+        },
+        {
+          "id": "openrouter-models-attribution-cache",
+          "status": null,
+          "readable": false
+        },
+        {
+          "id": "openrouter-models-public",
+          "status": 200,
+          "readable": true
+        },
+        {
+          "id": "anthropic-models-api-key",
+          "status": 401,
+          "readable": true
+        },
+        {
+          "id": "anthropic-models-bearer",
+          "status": 401,
+          "readable": true
+        },
+        {
+          "id": "anthropic-models-workspace-beta",
+          "status": 400,
+          "readable": true
+        }
+      ],
+      "fixtures": 39,
+      "outcomes": {
+        "complete": 9,
+        "stream-error": 6,
+        "http-error": 3,
+        "truncated": 4,
+        "read-error": 3,
+        "aborted": 6,
+        "incomplete": 3,
+        "protocol-error": 3,
+        "fetch-error": 2
+      },
+      "incrementalTiming": [
+        {
+          "id": "chrome-controlled-origin-chat-normal",
+          "firstTextMs": 1028,
+          "secondTextMs": 1203,
+          "terminalMs": 1530,
+          "reads": 4
+        },
+        {
+          "id": "chrome-controlled-origin-chat-stale",
+          "firstTextMs": 592,
+          "secondTextMs": 916,
+          "terminalMs": 1245,
+          "reads": 4
+        },
+        {
+          "id": "chrome-controlled-origin-responses-normal",
+          "firstTextMs": 496,
+          "secondTextMs": 822,
+          "terminalMs": 1261,
+          "reads": 4
+        },
+        {
+          "id": "chrome-controlled-origin-responses-stale",
+          "firstTextMs": 542,
+          "secondTextMs": 872,
+          "terminalMs": 1202,
+          "reads": 4
+        },
+        {
+          "id": "chrome-controlled-origin-messages-normal",
+          "firstTextMs": 529,
+          "secondTextMs": 871,
+          "terminalMs": 1228,
+          "reads": 4
+        },
+        {
+          "id": "chrome-controlled-origin-messages-stale",
+          "firstTextMs": 539,
+          "secondTextMs": 895,
+          "terminalMs": 1219,
+          "reads": 4
+        },
+        {
+          "id": "chrome-cross-origin-chat-normal",
+          "firstTextMs": 929,
+          "secondTextMs": 1241,
+          "terminalMs": 1569,
+          "reads": 4
+        },
+        {
+          "id": "chrome-cross-origin-responses-normal",
+          "firstTextMs": 646,
+          "secondTextMs": 989,
+          "terminalMs": 1301,
+          "reads": 4
+        },
+        {
+          "id": "chrome-cross-origin-messages-normal",
+          "firstTextMs": 649,
+          "secondTextMs": 990,
+          "terminalMs": 1317,
+          "reads": 4
+        }
+      ],
+      "providerGenerationRequests": 0
+    },
+    {
+      "browser": "edge",
+      "version": "Edg/155.0.4283.45",
+      "catalogs": [
+        {
+          "id": "openai-models-base",
+          "status": 401,
+          "readable": true
+        },
+        {
+          "id": "openai-models-scope",
+          "status": 400,
+          "readable": true
+        },
+        {
+          "id": "openrouter-models-base",
+          "status": 200,
+          "readable": true
+        },
+        {
+          "id": "openrouter-models-attribution",
+          "status": 200,
+          "readable": true
+        },
+        {
+          "id": "openrouter-models-attribution-cache",
+          "status": null,
+          "readable": false
+        },
+        {
+          "id": "openrouter-models-public",
+          "status": 200,
+          "readable": true
+        },
+        {
+          "id": "anthropic-models-api-key",
+          "status": 401,
+          "readable": true
+        },
+        {
+          "id": "anthropic-models-bearer",
+          "status": 401,
+          "readable": true
+        },
+        {
+          "id": "anthropic-models-workspace-beta",
+          "status": 400,
+          "readable": true
+        }
+      ],
+      "fixtures": 39,
+      "outcomes": {
+        "complete": 9,
+        "stream-error": 6,
+        "http-error": 3,
+        "truncated": 4,
+        "read-error": 3,
+        "aborted": 6,
+        "incomplete": 3,
+        "protocol-error": 3,
+        "fetch-error": 2
+      },
+      "incrementalTiming": [
+        {
+          "id": "edge-controlled-origin-chat-normal",
+          "firstTextMs": 625,
+          "secondTextMs": 950,
+          "terminalMs": 1290,
+          "reads": 4
+        },
+        {
+          "id": "edge-controlled-origin-chat-stale",
+          "firstTextMs": 507,
+          "secondTextMs": 821,
+          "terminalMs": 1161,
+          "reads": 4
+        },
+        {
+          "id": "edge-controlled-origin-responses-normal",
+          "firstTextMs": 495,
+          "secondTextMs": 839,
+          "terminalMs": 1165,
+          "reads": 4
+        },
+        {
+          "id": "edge-controlled-origin-responses-stale",
+          "firstTextMs": 494,
+          "secondTextMs": 823,
+          "terminalMs": 1151,
+          "reads": 4
+        },
+        {
+          "id": "edge-controlled-origin-messages-normal",
+          "firstTextMs": 570,
+          "secondTextMs": 820,
+          "terminalMs": 1163,
+          "reads": 4
+        },
+        {
+          "id": "edge-controlled-origin-messages-stale",
+          "firstTextMs": 494,
+          "secondTextMs": 809,
+          "terminalMs": 1140,
+          "reads": 4
+        },
+        {
+          "id": "edge-cross-origin-chat-normal",
+          "firstTextMs": 2853,
+          "secondTextMs": 3167,
+          "terminalMs": 3479,
+          "reads": 4
+        },
+        {
+          "id": "edge-cross-origin-responses-normal",
+          "firstTextMs": 620,
+          "secondTextMs": 933,
+          "terminalMs": 1261,
+          "reads": 4
+        },
+        {
+          "id": "edge-cross-origin-messages-normal",
+          "firstTextMs": 615,
+          "secondTextMs": 943,
+          "terminalMs": 1272,
+          "reads": 4
+        }
+      ],
+      "providerGenerationRequests": 0
+    }
+  ],
+  "fragmentation": [
+    {
+      "id": "chrome-fragmented-chat",
+      "sourceOrigin": "https://example.com",
+      "targetOrigin": "http://127.0.0.1:18775",
+      "reads": 8,
+      "splitUtf8Observed": true,
+      "outcome": "complete"
+    },
+    {
+      "id": "chrome-fragmented-responses",
+      "sourceOrigin": "https://example.com",
+      "targetOrigin": "http://127.0.0.1:18775",
+      "reads": 8,
+      "splitUtf8Observed": true,
+      "outcome": "complete"
+    },
+    {
+      "id": "chrome-fragmented-messages",
+      "sourceOrigin": "https://example.com",
+      "targetOrigin": "http://127.0.0.1:18775",
+      "reads": 8,
+      "splitUtf8Observed": true,
+      "outcome": "complete"
+    },
+    {
+      "id": "edge-fragmented-chat",
+      "sourceOrigin": "https://example.com",
+      "targetOrigin": "http://127.0.0.1:18775",
+      "reads": 8,
+      "splitUtf8Observed": true,
+      "outcome": "complete"
+    },
+    {
+      "id": "edge-fragmented-responses",
+      "sourceOrigin": "https://example.com",
+      "targetOrigin": "http://127.0.0.1:18775",
+      "reads": 8,
+      "splitUtf8Observed": true,
+      "outcome": "complete"
+    },
+    {
+      "id": "edge-fragmented-messages",
+      "sourceOrigin": "https://example.com",
+      "targetOrigin": "http://127.0.0.1:18775",
+      "reads": 8,
+      "splitUtf8Observed": true,
+      "outcome": "complete"
+    }
+  ],
+  "assertions": [
+    "Exact raw OPTIONS matrix matched source profiles.",
+    "Catalog results matched HTTP/CORS diagnostics.",
+    "All 78 final tunnel fixture outcomes matched their intended semantics.",
+    "Normal streams delivered two intact UTF-8 deltas before terminal completion.",
+    "Six loopback cases observed split UTF-8 codepoints and partial SSE lines.",
+    "Abort closed each controlled connection before normal completion.",
+    "Late events after invalidation were fenced in the disposable client.",
+    "Both CORS controls prevented the synthetic POST.",
+    "No browser provider generation request was attempted.",
+    "CRLF tunnel framing failure and LF correction retained independently.",
+    "Existing KHA-15 manifest and every covered file are unchanged.",
+    "Owned servers, browsers, and tunnel have no remaining listeners or processes."
+  ],
+  "priorEvidenceFilesVerified": 16
+}

@@ -1,0 +1,142 @@
+[
+  {
+    "file": "client.js",
+    "bytes": 7330,
+    "sha256": "086f70dfe1c9d1980a3b092b5aca5a3f4ea0b128357c22fcef730abf3835c5d0"
+  },
+  {
+    "file": "evidence/chrome.json",
+    "bytes": 233210,
+    "sha256": "af8a8f7e9a930d593c654b0e06a07407b15a9bb1ac99cf24903505f0c7c35fbb"
+  },
+  {
+    "file": "evidence/cleanup.json",
+    "bytes": 200,
+    "sha256": "a06b892821de1d59096f7ba84c10762418d37f5eebee7742b7cd3ef120c53824"
+  },
+  {
+    "file": "evidence/edge.json",
+    "bytes": 232516,
+    "sha256": "f91b91f69494ab19f798c0a49aa96fd97a616b9fd757e30f8680d91b9a1c3bf7"
+  },
+  {
+    "file": "evidence/environment.json",
+    "bytes": 897,
+    "sha256": "18f2d9449c75d7f8946da5096dd461eca6149f506ffa0ca54542c942675da1f9"
+  },
+  {
+    "file": "evidence/fragments-chrome.json",
+    "bytes": 16468,
+    "sha256": "0dea0f6aae978e5bb853b5e964dac2f46ad2654ff082e806325e18b7ee03c342"
+  },
+  {
+    "file": "evidence/fragments-edge.json",
+    "bytes": 16506,
+    "sha256": "8a6ee0e2e35b04fd47d51a1e01954360d1bc65eb6f7e61fae8576150fcaef759"
+  },
+  {
+    "file": "evidence/initial/chrome.json",
+    "bytes": 174394,
+    "sha256": "47395a3509bae1a39617c33f17ab33a9be54e448b0aad8c5dd5503211fadd86d"
+  },
+  {
+    "file": "evidence/initial/client.js",
+    "bytes": 7330,
+    "sha256": "086f70dfe1c9d1980a3b092b5aca5a3f4ea0b128357c22fcef730abf3835c5d0"
+  },
+  {
+    "file": "evidence/initial/edge.json",
+    "bytes": 174520,
+    "sha256": "9f00729c2e94b7716a47b105f5bcae16b5de645e67f475e0c18ed46c1b2252bf"
+  },
+  {
+    "file": "evidence/initial/options.json",
+    "bytes": 62010,
+    "sha256": "5741fce19b3028cdd847ec85b014e5dd2a3ba0927c03d8d8892e2d2b4b5f231d"
+  },
+  {
+    "file": "evidence/initial/run-browsers.mjs",
+    "bytes": 6231,
+    "sha256": "5894fe5752f39150811ddda27bd053be39d95543a23c8e149908f6b737199148"
+  },
+  {
+    "file": "evidence/initial/server.mjs",
+    "bytes": 8291,
+    "sha256": "ca9d406167c689d7b7a32f14ff8f9e8c0a7a38a963eac1428f45a9a5cb7e1b42"
+  },
+  {
+    "file": "evidence/initial/startup-chrome.json",
+    "bytes": 222,
+    "sha256": "f330d1875f1a71cddb793a4ef20858fae9f1254590027d230d7e1356e2447a52"
+  },
+  {
+    "file": "evidence/initial/startup-edge.json",
+    "bytes": 220,
+    "sha256": "01a248393e5b66cd3006b9df0ab81b2cade1d486e92a7b52f3d196651e6f5398"
+  },
+  {
+    "file": "evidence/options.json",
+    "bytes": 76488,
+    "sha256": "9268d6ad2cfb9e016d4f70d49b02dab000042263ba9db4ade7b08099e51eae8c"
+  },
+  {
+    "file": "evidence/server-requests.ndjson",
+    "bytes": 399375,
+    "sha256": "9a9759eda28c98d3003e8be223433219b7c1319c6c2f72ac4cf0ce011f4bd1a6"
+  },
+  {
+    "file": "evidence/summary.json",
+    "bytes": 23365,
+    "sha256": "62293267dee2da4275f70010be605d3a6e46a9da878c5e5e5d539d68f978cda9"
+  },
+  {
+    "file": "evidence/transport-diagnostic-lf.json",
+    "bytes": 3673,
+    "sha256": "ab93c8a357fe8f37fc87b4d4c6249e4ea3c67cc148b933054e62b1b24f41751d"
+  },
+  {
+    "file": "evidence/transport-diagnostic.json",
+    "bytes": 3646,
+    "sha256": "51052d612e8e1cd0a5f31a72b2f7d984cee0ec9ea75cf199dcbc642a52d4cd1f"
+  },
+  {
+    "file": "probe-options.mjs",
+    "bytes": 2160,
+    "sha256": "5a64103eb76ff5e7711dbc29c176f46e3b9c162380749f3e90d8bfc45e6cd25d"
+  },
+  {
+    "file": "profiles.mjs",
+    "bytes": 1982,
+    "sha256": "bc88fd6ad839c83ebc72dcf6949a80b4140c865a9f897ac1b303c2d8e07a64de"
+  },
+  {
+    "file": "README.md",
+    "bytes": 6876,
+    "sha256": "6782e7abe303674e56749022d10dfd498265dc4446b2ef88a6d9977a45ad334d"
+  },
+  {
+    "file": "redact-evidence.mjs",
+    "bytes": 1478,
+    "sha256": "5d0f2c3f8952a0219cd9263cdaacbffe2db527cd49f5905addbb609dcdf00b3d"
+  },
+  {
+    "file": "run-browsers.mjs",
+    "bytes": 6484,
+    "sha256": "163fbe50c3bb963fa16b0c26dfbefc47b4eafed764ebc3f17d6bf79762cd6699"
+  },
+  {
+    "file": "run-fragments.mjs",
+    "bytes": 3961,
+    "sha256": "1114141ef19702e4da94b3d864cf1dfa76d9c68c821270942b670588b76c3545"
+  },
+  {
+    "file": "server.mjs",
+    "bytes": 8377,
+    "sha256": "9aefde3f67d2d9c722bf27356fcb00d8cccec762288da596334be9286e44d2ff"
+  },
+  {
+    "file": "summarize.mjs",
+    "bytes": 10266,
+    "sha256": "52d305c1d1996259c89599f485daa582b418a5e852e4b80643b0dabc9fff57bc"
+  }
+]

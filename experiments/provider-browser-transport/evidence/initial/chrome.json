@@ -1,0 +1,3822 @@
+{
+  "browser": "chrome",
+  "publicOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+  "startedAt": "2026-10-15T22:25:02.011Z",
+  "pages": [
+    {
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/harness",
+      "origin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "title": "KHA21 synthetic transport",
+      "text": "KHA21 synthetic transport\n\nDisposable test page. No real credentials or models.",
+      "ready": "complete",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36"
+    },
+    {
+      "url": "https://example.com/",
+      "origin": "https://example.com",
+      "title": "Example Domain",
+      "text": "This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\n\nهذا النطاق مُخصص للاستخدام في أمثلة التوثيق دون الحاجة إلى إذن. هذه ليست خدمة، يُرجى تجنب الاعتماد عليها لأغراض الاختبار والمراقبة.\n\n该域名仅用于文档示例，无需获得许可。这并非一项服务，请勿将其用于测试和监控目的。\n\nL’usage de ce domaine est réservé à des exemples de documentation, sans autorisation préalable. Il ne s’agit pas d’un service ; son utilisation à des fins de test ou de surveillance est à éviter.\n\nДанный домен предназначен для использования в примерах документации без необходимости получения предварительного разрешения. Это не сервис; не рекомендуется его использование для тестирования и мониторинга.\n\nEste dominio está destinado al uso en ejemplos de documentación sin necesidad de permiso. Esto no es un servicio; evitar utilizarlo para realizar pruebas o monitoreos.\n\nLearn more",
+      "ready": "complete",
+      "ua": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36"
+    }
+  ],
+  "catalogs": [
+    {
+      "id": "openai-models-base",
+      "url": "https://api.openai.com/v1/models",
+      "requestHeaders": {
+        "authorization": "Bearer kha21-invalid-synthetic-not-a-key"
+      },
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:11.994Z",
+      "status": 401,
+      "readable": true,
+      "responseHeaders": {
+        "cf-ray": "a4b23cf7ab8fc0ab-MRS",
+        "content-length": "262",
+        "content-type": "application/json",
+        "x-request-id": "ee3a7aac-9edc-406a-842b-a222d6a9cdf2"
+      },
+      "sample": "{\n  \"error\": {\n    \"message\": \"Incorrect API key provided: kha21-in*********************-key. You can find your API key at https://platform.openai.com/account/api-keys.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": null,\n    \"code\": \"invalid_api_key\"\n  }\n}",
+      "sampleTruncated": false,
+      "bytesRead": 262,
+      "elapsedMs": 648.3999999985099,
+      "finishedAt": "2026-10-15T22:25:12.642Z"
+    },
+    {
+      "id": "openai-models-scope",
+      "url": "https://api.openai.com/v1/models",
+      "requestHeaders": {
+        "authorization": "Bearer kha21-invalid-synthetic-not-a-key",
+        "openai-organization": "kha21-synthetic-org",
+        "openai-project": "kha21-synthetic-project"
+      },
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:12.648Z",
+      "status": 400,
+      "readable": true,
+      "responseHeaders": {
+        "cf-ray": "a4b23cfae9cd15d7-MRS",
+        "content-length": "170",
+        "content-type": "application/json",
+        "x-request-id": "351fdb79-6bda-4edb-9146-35d49b2ade0e"
+      },
+      "sample": "{\n  \"error\": {\n    \"message\": \"Invalid project ID 'kha21-synthetic-project'.\",\n    \"type\": \"invalid_request_error\",\n    \"param\": null,\n    \"code\": \"invalid_project\"\n  }\n}",
+      "sampleTruncated": false,
+      "bytesRead": 170,
+      "elapsedMs": 503.40000000596046,
+      "finishedAt": "2026-10-15T22:25:13.151Z"
+    },
+    {
+      "id": "openrouter-models-base",
+      "url": "https://openrouter.ai/api/v1/models",
+      "requestHeaders": {
+        "authorization": "Bearer kha21-invalid-synthetic-not-a-key"
+      },
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:13.159Z",
+      "status": 200,
+      "readable": true,
+      "responseHeaders": {
+        "cache-control": "private, no-store",
+        "cf-ray": "a4b23cfe6d4ce1dc-MRS",
+        "content-type": "application/json"
+      },
+      "sample": "{\"data\":[{\"id\":\"moondream/moondream3-preview\",\"canonical_slug\":\"moondream/moondream3-preview-20261013\",\"hugging_face_id\":\"moondream/moondream3-preview\",\"name\":\"Moondream: Moondream 3 Preview\",\"created\":1792102385,\"description\":\"Moondream 3 Preview is a vision-language model from Moondream with 9B total parameters and 2B active (mixture-of-experts). It handles visual question answering, captioning, OCR, and visual reasoning over images, with...\",\"context_length\":32000,\"architecture\":{\"modality\":\"text+image->text\",\"input_modalities\":[\"text\",\"image\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.0000003\",\"completion\":\"0.0000025\"},\"top_provider\":{\"context_length\":32000,\"max_completion_tokens\":4096,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"include_reasoning\",\"max_completion_tokens\",\"max_tokens\",\"reasoning\",\"temperature\",\"top_p\"],\"default_parameters\":{\"temperature\":0.2,\"top_p\":0.9},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/moondream/moondream3-preview-20261013/endpoints\"},\"reasoning\":{\"mandatory\":false,\"default_enabled\":false}},{\"id\":\"moondream/moondream3.1-9b-a2b\",\"canonical_slug\":\"moondream/moondream3.1-9b-a2b-20261013\",\"hugging_face_id\":\"moondream/moondream3.1-9B-A2B\",\"name\":\"Moondream: Moondream 3.1\",\"created\":1792102373,\"description\":\"Moondream 3.1 is a vision-language model from Moondream, the successor to Moondream 3 Preview, with 9B total parameters and 2B active (mixture-of-experts). It handles visual question answering, captioning, OCR, and...\",\"context_length\":32000,\"architecture\":{\"modality\":\"text+image->text\",\"input_modalities\":[\"text\",\"image\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.0000003\",\"completion\":\"0.0000025\"},\"top_provider\":{\"context_length\":32000,\"max_completion_tokens\":4096,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"include_reasoning\",\"max_completion_tokens\",\"max_tokens\",\"reasoning\",\"temperature\",\"top_p\"],\"default_parameters\":{\"temperature\":0.2,\"top_p\":0.9},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/moondream/moondream3.1-9b-a2b-20261013/endpoints\"},\"reasoning\":{\"mandatory\":false,\"default_enabled\":false}},{\"id\":\"meta/muse-spark-open\",\"canonical_slug\":\"meta/muse-spark-open-20261015\",\"hugging_face_id\":\"meta-models/Muse-Spark-Open-816B-A42B\",\"name\":\"Meta: Muse Spark Open\",\"created\":1792087069,\"description\":\"Muse Spark Open is a coding-optimized open-weight model. Trained specifically for agentic coding workflows, it delivers higher first-attempt accuracy, reliable tool calling, and deep codebase understanding across the repos developers...\",\"context_length\":1048576,\"architecture\":{\"modality\":\"text+image+file+audio+video->text\",\"input_modalities\":[\"text\",\"image\",\"video\",\"file\",\"audio\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.00000125\",\"completion\":\"0.00000425\",\"input_cache_read\":\"0.00000015\"},\"top_provider\":{\"context_length\":1048576,\"max_completion_tokens\":943718,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"frequency_penalty\",\"include_reasoning\",\"logit_bias\",\"logprobs\",\"max_tokens\",\"min_p\",\"presence_penalty\",\"reasoning\",\"reasoning_effort\",\"repetition_penalty\",\"response_format\",\"seed\",\"stop\",\"structured_outputs\",\"temperature\",\"tool_choice\",\"tools\",\"top_k\",\"top_logprobs\",\"top_p\"],\"default_parameters\":{},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/meta/muse-spark-open-20261015/endpoints\"},\"reasoning\":{\"mandatory\":true,\"supported_efforts\":[\"xhigh\",\"high\",\"medium\",\"low\"],\"default_effort\":\"medium\"}},{\"id\":\"nvidia/nemotron-3.5-super-vl\",\"canonical_slug\":\"nvidia/nemotron-3.5-super-vl-20261015\",\"hugging_face_id\":\"nvidia/NVIDIA-Nemotron-3.5-Super-VL\",\"name\":\"NVIDIA: Nemotron 3.5 Super VL\",\"created\":1792076662,\"description\":\"NVIDIA Nemotron 3.5 Super VL is an open multimodal mixture-of-experts model from NVIDIA, with 12B active parameters out of 120B total. It takes text, images, documents, GUI screenshots, and video...\",\"context_length\":1048576,\"architecture\":{\"modality\":\"text+image+video->text\",\"input_modalities\":[\"text\",\"image\",\"video\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.00000015\",\"completion\":\"0.0000005\",\"input_cache_read\":\"0.00000002\"},\"top_provider\":{\"context_length\":262144,\"max_completion_tokens\":235929,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"frequency_penalty\",\"include_reasoning\",\"logit_bias\",\"logprobs\",\"max_tokens\",\"min_p\",\"presence_penalty\",\"reasoning\",\"repetition_penalty\",\"response_format\",\"seed\",\"stop\",\"structured_outputs\",\"temperature\",\"tool_choice\",\"tools\",\"top_k\",\"top_logprobs\",\"top_p\"],\"default_parameters\":{},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/nvidia/nemotron-3.5-super-vl-20261015/endpoints\"},\"reasoning\":{\"mandatory\":false}},{\"id\":\"nvidia/nemotron-3.5-super-vl:free\",\"canonical_slug\":\"nvidia/nemotron-3.5-super-vl-20261015\",\"hugging_face_id\":\"nvidia/NVIDIA-Nemotron-3.5-Super-VL\",\"name\":\"NVIDIA: Nemotron 3.5 Super VL (free)\",\"created\":1792076662,\"description\":\"NVIDIA Nemotron 3.5 Super VL is an open multimodal mixture-of-experts model from NVIDIA, with 12B active parameters out of 120B total. It takes text, images, documents, GUI screenshots, and video...\",\"context_length\":1000000,\"architecture\":{\"modality\":\"text+image+video->text\",\"input_modalities\":[\"text\",\"image\",\"video\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0\",\"completion\":\"0\"},\"top_provider\":{\"context_length\":1000000,\"max_completion_tokens\":131072,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"include_reasoning\",\"max_tokens\",\"reasoning\",\"response_format\",\"seed\",\"structured_outputs\",\"temperature\",\"tool_choice\",\"tools\",\"top_p\"],\"default_parameters\":{},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/nvidia/nemotron-3.5-super-vl-20261015/endpoints\"},\"reasoning\":{\"mandatory\":false}},{\"id\":\"~unbiased/pareto-latest\",\"canonical_slug\":\"~unbiased/pareto-latest\",\"alias_target\":{\"name\":\"Pareto 26.9\",\"slug\":\"unbiased/pareto-26.9\"},\"hugging_face_id\":null,\"name\":\"Pareto Latest\",\"created\":1791933050,\"description\":\"This model always redirects to the latest model in the Pareto family.\",\"context_length\":262144,\"architecture\":{\"modality\":\"text+image->text\",\"input_modalities\":[\"text\",\"image\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Router\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.0000025\",\"completion\":\"0.0000075\",\"input_cache_read\":\"0.00000025\"},\"top_provider\":{\"context_length\":262144,\"max_completion_tokens\":131072,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"max_tokens\",\"response_format\",\"temperature\",\"tool_choice\",\"tools\",\"top_p\"],\"default_parameters\":{},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/~unbiased/pareto-latest/endpoints\"}},{\"id\":\"unbiased/pareto-26.9\",\"canonical_slug\":\"unbiased/pareto-26.9-20260917\",\"hugging_face_id\":null,\"name\":\"Pareto 26.9\",\"created\":1791930537,\"description\":\"Pareto is a multimodal composite model built for research, coding, and agentic workflows, while delivering frontier-level performance across a broad range of general-purpose tasks.\",\"context_length\":262144,\"architecture\":{\"modality\":\"text+image->text\",\"input_modalities\":[\"text\",\"image\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.0000025\",\"completion\":\"0.0000075\",\"input_cache_read\":\"0.00000025\"},\"top_provider\":{\"context_length\":262144,\"max_completion_tokens\":131072,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"max_tokens\",\"response_format\",\"temperature\",\"tool_choice\",\"tools\",\"top_p\"],\"default_parameters\":{},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/mode",
+      "sampleTruncated": true,
+      "bytesRead": 184346,
+      "elapsedMs": 480.09999999403954,
+      "finishedAt": "2026-10-15T22:25:13.639Z"
+    },
+    {
+      "id": "openrouter-models-attribution-cache",
+      "url": "https://openrouter.ai/api/v1/models",
+      "requestHeaders": {
+        "authorization": "Bearer kha21-invalid-synthetic-not-a-key",
+        "http-referer": "https://example.invalid/kha21",
+        "x-openrouter-title": "KHA21 synthetic transport",
+        "x-openrouter-cache": "false"
+      },
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:13.658Z",
+      "readable": false,
+      "error": {
+        "name": "TypeError",
+        "message": "Failed to fetch"
+      },
+      "elapsedMs": 68,
+      "finishedAt": "2026-10-15T22:25:13.726Z"
+    },
+    {
+      "id": "openrouter-models-public",
+      "url": "https://openrouter.ai/api/v1/models",
+      "requestHeaders": {},
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:13.736Z",
+      "status": 200,
+      "readable": true,
+      "responseHeaders": {
+        "cache-control": "public, max-age=120, stale-while-revalidate=3600, stale-if-error=3600",
+        "cf-ray": "a4b23cffbfb4e1dc-MRS",
+        "content-type": "application/json"
+      },
+      "sample": "{\"data\":[{\"id\":\"moondream/moondream3-preview\",\"canonical_slug\":\"moondream/moondream3-preview-20261013\",\"hugging_face_id\":\"moondream/moondream3-preview\",\"name\":\"Moondream: Moondream 3 Preview\",\"created\":1792102385,\"description\":\"Moondream 3 Preview is a vision-language model from Moondream with 9B total parameters and 2B active (mixture-of-experts). It handles visual question answering, captioning, OCR, and visual reasoning over images, with...\",\"context_length\":32000,\"architecture\":{\"modality\":\"text+image->text\",\"input_modalities\":[\"text\",\"image\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.0000003\",\"completion\":\"0.0000025\"},\"top_provider\":{\"context_length\":32000,\"max_completion_tokens\":4096,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"include_reasoning\",\"max_completion_tokens\",\"max_tokens\",\"reasoning\",\"temperature\",\"top_p\"],\"default_parameters\":{\"temperature\":0.2,\"top_p\":0.9},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/moondream/moondream3-preview-20261013/endpoints\"},\"reasoning\":{\"mandatory\":false,\"default_enabled\":false}},{\"id\":\"moondream/moondream3.1-9b-a2b\",\"canonical_slug\":\"moondream/moondream3.1-9b-a2b-20261013\",\"hugging_face_id\":\"moondream/moondream3.1-9B-A2B\",\"name\":\"Moondream: Moondream 3.1\",\"created\":1792102373,\"description\":\"Moondream 3.1 is a vision-language model from Moondream, the successor to Moondream 3 Preview, with 9B total parameters and 2B active (mixture-of-experts). It handles visual question answering, captioning, OCR, and...\",\"context_length\":32000,\"architecture\":{\"modality\":\"text+image->text\",\"input_modalities\":[\"text\",\"image\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.0000003\",\"completion\":\"0.0000025\"},\"top_provider\":{\"context_length\":32000,\"max_completion_tokens\":4096,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"include_reasoning\",\"max_completion_tokens\",\"max_tokens\",\"reasoning\",\"temperature\",\"top_p\"],\"default_parameters\":{\"temperature\":0.2,\"top_p\":0.9},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/moondream/moondream3.1-9b-a2b-20261013/endpoints\"},\"reasoning\":{\"mandatory\":false,\"default_enabled\":false}},{\"id\":\"meta/muse-spark-open\",\"canonical_slug\":\"meta/muse-spark-open-20261015\",\"hugging_face_id\":\"meta-models/Muse-Spark-Open-816B-A42B\",\"name\":\"Meta: Muse Spark Open\",\"created\":1792087069,\"description\":\"Muse Spark Open is a coding-optimized open-weight model. Trained specifically for agentic coding workflows, it delivers higher first-attempt accuracy, reliable tool calling, and deep codebase understanding across the repos developers...\",\"context_length\":1048576,\"architecture\":{\"modality\":\"text+image+file+audio+video->text\",\"input_modalities\":[\"text\",\"image\",\"video\",\"file\",\"audio\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.00000125\",\"completion\":\"0.00000425\",\"input_cache_read\":\"0.00000015\"},\"top_provider\":{\"context_length\":1048576,\"max_completion_tokens\":943718,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"frequency_penalty\",\"include_reasoning\",\"logit_bias\",\"logprobs\",\"max_tokens\",\"min_p\",\"presence_penalty\",\"reasoning\",\"reasoning_effort\",\"repetition_penalty\",\"response_format\",\"seed\",\"stop\",\"structured_outputs\",\"temperature\",\"tool_choice\",\"tools\",\"top_k\",\"top_logprobs\",\"top_p\"],\"default_parameters\":{},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/meta/muse-spark-open-20261015/endpoints\"},\"reasoning\":{\"mandatory\":true,\"supported_efforts\":[\"xhigh\",\"high\",\"medium\",\"low\"],\"default_effort\":\"medium\"}},{\"id\":\"nvidia/nemotron-3.5-super-vl\",\"canonical_slug\":\"nvidia/nemotron-3.5-super-vl-20261015\",\"hugging_face_id\":\"nvidia/NVIDIA-Nemotron-3.5-Super-VL\",\"name\":\"NVIDIA: Nemotron 3.5 Super VL\",\"created\":1792076662,\"description\":\"NVIDIA Nemotron 3.5 Super VL is an open multimodal mixture-of-experts model from NVIDIA, with 12B active parameters out of 120B total. It takes text, images, documents, GUI screenshots, and video...\",\"context_length\":1048576,\"architecture\":{\"modality\":\"text+image+video->text\",\"input_modalities\":[\"text\",\"image\",\"video\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.00000015\",\"completion\":\"0.0000005\",\"input_cache_read\":\"0.00000002\"},\"top_provider\":{\"context_length\":262144,\"max_completion_tokens\":235929,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"frequency_penalty\",\"include_reasoning\",\"logit_bias\",\"logprobs\",\"max_tokens\",\"min_p\",\"presence_penalty\",\"reasoning\",\"repetition_penalty\",\"response_format\",\"seed\",\"stop\",\"structured_outputs\",\"temperature\",\"tool_choice\",\"tools\",\"top_k\",\"top_logprobs\",\"top_p\"],\"default_parameters\":{},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/nvidia/nemotron-3.5-super-vl-20261015/endpoints\"},\"reasoning\":{\"mandatory\":false}},{\"id\":\"nvidia/nemotron-3.5-super-vl:free\",\"canonical_slug\":\"nvidia/nemotron-3.5-super-vl-20261015\",\"hugging_face_id\":\"nvidia/NVIDIA-Nemotron-3.5-Super-VL\",\"name\":\"NVIDIA: Nemotron 3.5 Super VL (free)\",\"created\":1792076662,\"description\":\"NVIDIA Nemotron 3.5 Super VL is an open multimodal mixture-of-experts model from NVIDIA, with 12B active parameters out of 120B total. It takes text, images, documents, GUI screenshots, and video...\",\"context_length\":1000000,\"architecture\":{\"modality\":\"text+image+video->text\",\"input_modalities\":[\"text\",\"image\",\"video\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0\",\"completion\":\"0\"},\"top_provider\":{\"context_length\":1000000,\"max_completion_tokens\":131072,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"include_reasoning\",\"max_tokens\",\"reasoning\",\"response_format\",\"seed\",\"structured_outputs\",\"temperature\",\"tool_choice\",\"tools\",\"top_p\"],\"default_parameters\":{},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/nvidia/nemotron-3.5-super-vl-20261015/endpoints\"},\"reasoning\":{\"mandatory\":false}},{\"id\":\"~unbiased/pareto-latest\",\"canonical_slug\":\"~unbiased/pareto-latest\",\"alias_target\":{\"name\":\"Pareto 26.9\",\"slug\":\"unbiased/pareto-26.9\"},\"hugging_face_id\":null,\"name\":\"Pareto Latest\",\"created\":1791933050,\"description\":\"This model always redirects to the latest model in the Pareto family.\",\"context_length\":262144,\"architecture\":{\"modality\":\"text+image->text\",\"input_modalities\":[\"text\",\"image\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Router\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.0000025\",\"completion\":\"0.0000075\",\"input_cache_read\":\"0.00000025\"},\"top_provider\":{\"context_length\":262144,\"max_completion_tokens\":131072,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"max_tokens\",\"response_format\",\"temperature\",\"tool_choice\",\"tools\",\"top_p\"],\"default_parameters\":{},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/models/~unbiased/pareto-latest/endpoints\"}},{\"id\":\"unbiased/pareto-26.9\",\"canonical_slug\":\"unbiased/pareto-26.9-20260917\",\"hugging_face_id\":null,\"name\":\"Pareto 26.9\",\"created\":1791930537,\"description\":\"Pareto is a multimodal composite model built for research, coding, and agentic workflows, while delivering frontier-level performance across a broad range of general-purpose tasks.\",\"context_length\":262144,\"architecture\":{\"modality\":\"text+image->text\",\"input_modalities\":[\"text\",\"image\"],\"output_modalities\":[\"text\"],\"tokenizer\":\"Other\",\"instruct_type\":null},\"pricing\":{\"prompt\":\"0.0000025\",\"completion\":\"0.0000075\",\"input_cache_read\":\"0.00000025\"},\"top_provider\":{\"context_length\":262144,\"max_completion_tokens\":131072,\"is_moderated\":false},\"per_request_limits\":null,\"supported_parameters\":[\"max_tokens\",\"response_format\",\"temperature\",\"tool_choice\",\"tools\",\"top_p\"],\"default_parameters\":{},\"supported_voices\":null,\"knowledge_cutoff\":null,\"expiration_date\":null,\"links\":{\"details\":\"/api/v1/mode",
+      "sampleTruncated": true,
+      "bytesRead": 244568,
+      "elapsedMs": 71.29999999701977,
+      "finishedAt": "2026-10-15T22:25:13.807Z"
+    },
+    {
+      "id": "anthropic-models-api-key",
+      "url": "https://api.anthropic.com/v1/models",
+      "requestHeaders": {
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "x-api-key": "kha21-invalid-synthetic-not-a-key"
+      },
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:13.824Z",
+      "status": 401,
+      "readable": true,
+      "responseHeaders": {
+        "access-control-allow-origin": "*",
+        "access-control-expose-headers": "*",
+        "cache-control": "no-store",
+        "cf-cache-status": "DYNAMIC",
+        "cf-ray": "a4b23d024e56e1d1-MRS",
+        "content-length": "130",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+        "content-type": "application/json",
+        "date": "Thu, 15 Oct 2026 22:25:12 GMT",
+        "request-id": "req_011Cg4onabojkFszwBPDuerw",
+        "server": "cloudflare",
+        "server-timing": "x-originResponse;dur=",
+        "vary": "Origin, Access-Control-Request-Headers, anthropic-dangerous-direct-browser-access",
+        "x-robots-tag": "none",
+        "x-should-retry": "false"
+      },
+      "sample": "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"invalid x-api-key\"},\"request_id\":\"req_011Cg4onabojkFszwBPDuerw\"}",
+      "sampleTruncated": false,
+      "bytesRead": 130,
+      "elapsedMs": 484.6000000014901,
+      "finishedAt": "2026-10-15T22:25:14.309Z"
+    },
+    {
+      "id": "anthropic-models-bearer",
+      "url": "https://api.anthropic.com/v1/models",
+      "requestHeaders": {
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "authorization": "Bearer kha21-invalid-synthetic-not-a-key"
+      },
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:14.312Z",
+      "status": 401,
+      "readable": true,
+      "responseHeaders": {
+        "access-control-allow-origin": "*",
+        "access-control-expose-headers": "*",
+        "cache-control": "no-store",
+        "cf-cache-status": "DYNAMIC",
+        "cf-ray": "a4b23d045a4ce1d1-MRS",
+        "content-length": "133",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+        "content-type": "application/json",
+        "date": "Thu, 15 Oct 2026 22:25:12 GMT",
+        "request-id": "req_011Cg4onc2d1M5fqhmPp8VFg",
+        "server": "cloudflare",
+        "server-timing": "x-originResponse;dur=",
+        "vary": "Origin, Access-Control-Request-Headers, anthropic-dangerous-direct-browser-access",
+        "x-robots-tag": "none",
+        "x-should-retry": "false"
+      },
+      "sample": "{\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"Invalid bearer token\"},\"request_id\":\"req_011Cg4onc2d1M5fqhmPp8VFg\"}",
+      "sampleTruncated": false,
+      "bytesRead": 133,
+      "elapsedMs": 374.3999999985099,
+      "finishedAt": "2026-10-15T22:25:14.687Z"
+    },
+    {
+      "id": "anthropic-models-workspace-beta",
+      "url": "https://api.anthropic.com/v1/models",
+      "requestHeaders": {
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+        "x-api-key": "kha21-invalid-synthetic-not-a-key",
+        "anthropic-workspace-id": "kha21-synthetic-workspace",
+        "anthropic-beta": "kha21-synthetic-beta"
+      },
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:14.691Z",
+      "status": 400,
+      "readable": true,
+      "responseHeaders": {
+        "access-control-allow-origin": "*",
+        "access-control-expose-headers": "*",
+        "cache-control": "no-store",
+        "cf-cache-status": "DYNAMIC",
+        "cf-ray": "a4b23d06becce1d1-MRS",
+        "content-length": "173",
+        "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+        "content-type": "application/json",
+        "date": "Thu, 15 Oct 2026 22:25:12 GMT",
+        "request-id": "req_011Cg4ondfqy6yNuufqxp2GB",
+        "server": "cloudflare",
+        "server-timing": "x-originResponse;dur=",
+        "vary": "Origin, Access-Control-Request-Headers, anthropic-dangerous-direct-browser-access",
+        "x-robots-tag": "none",
+        "x-should-retry": "false"
+      },
+      "sample": "{\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"anthropic-workspace-id header must be a valid workspace ID.\"},\"request_id\":\"req_011Cg4ondfqy6yNuufqxp2GB\"}",
+      "sampleTruncated": false,
+      "bytesRead": 173,
+      "elapsedMs": 327.79999999701977,
+      "finishedAt": "2026-10-15T22:25:15.019Z"
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "chrome-controlled-origin-chat-normal",
+      "protocol": "chat",
+      "kind": "normal",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:15.024Z",
+      "reads": [
+        {
+          "atMs": 309.3999999985099,
+          "bytes": 197,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0IiwNCmRhdGE6ICJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjowLCJtb2RlbCI6InN5bnRoZXRpYy1vbmx5IiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7InJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjoiIn0sImZpbmlzaF9yZWFzb24iOm51bGx9XX0NCgo="
+        },
+        {
+          "atMs": 677,
+          "bytes": 178,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6eyJjb250ZW50IjoiZml4dHVyZSAifSwiZmluaXNoX3JlYXNvbiI6bnVsbH1dfQ0KCg=="
+        },
+        {
+          "atMs": 970.7999999970198,
+          "bytes": 179,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6eyJjb250ZW50IjoiY2Fmw6kg4pmeIn0sImZpbmlzaF9yZWFzb24iOm51bGx9XX0NCgo="
+        },
+        {
+          "atMs": 1347.8999999985099,
+          "bytes": 174,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6e30sImZpbmlzaF9yZWFzb24iOiJzdG9wIn1dfQ0KZGF0YTogW0RPTkVdDQoK"
+        }
+      ],
+      "events": [
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\n\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}",
+          "atMs": 310
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"fixture \"},\"finish_reason\":null}]}",
+          "atMs": 677.0999999940395
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"café ♞\"},\"finish_reason\":null}]}",
+          "atMs": 971
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n[DONE]",
+          "atMs": 1348.8999999985099
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 310.09999999403954,
+          "text": "",
+          "version": 1
+        },
+        {
+          "atMs": 677.0999999940395,
+          "text": "fixture ",
+          "version": 1
+        },
+        {
+          "atMs": 971,
+          "text": "café ♞",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/normal?id=chrome-controlled-origin-chat-normal",
+      "httpStatus": 200,
+      "headersAtMs": 262.79999999701977,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:15 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "chat/normal"
+      },
+      "outcome": "protocol-error",
+      "fullText": "fixture café ♞",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 152 (line 2 column 1)"
+      },
+      "appliedText": "fixture café ♞",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:16.374Z",
+      "elapsedMs": 1350,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-chat-error",
+      "protocol": "chat",
+      "kind": "error",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:16.398Z",
+      "reads": [
+        {
+          "atMs": 201.30000000447035,
+          "bytes": 197,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0IiwNCmRhdGE6ICJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjowLCJtb2RlbCI6InN5bnRoZXRpYy1vbmx5IiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7InJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjoiIn0sImZpbmlzaF9yZWFzb24iOm51bGx9XX0NCgo="
+        },
+        {
+          "atMs": 529.1000000014901,
+          "bytes": 178,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6eyJjb250ZW50IjoiZml4dHVyZSAifSwiZmluaXNoX3JlYXNvbiI6bnVsbH1dfQ0KCg=="
+        },
+        {
+          "atMs": 1032.2000000029802,
+          "bytes": 83,
+          "base64": "ZGF0YTogeyJlcnJvciI6eyJtZXNzYWdlIjoic3ludGhldGljIHN0cmVhbSBlcnJvciIsImNvZGUiOiJzeW50aGV0aWNfb3ZlcmxvYWQifX0NCgo="
+        }
+      ],
+      "events": [
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\n\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}",
+          "atMs": 201.40000000596046
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"fixture \"},\"finish_reason\":null}]}",
+          "atMs": 529.2000000029802
+        },
+        {
+          "event": "",
+          "data": "{\"error\":{\"message\":\"synthetic stream error\",\"code\":\"synthetic_overload\"}}",
+          "atMs": 1032.2000000029802
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 201.40000000596046,
+          "text": "",
+          "version": 1
+        },
+        {
+          "atMs": 529.2000000029802,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/error?id=chrome-controlled-origin-chat-error",
+      "httpStatus": 200,
+      "headersAtMs": 158.30000000447035,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:16 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "chat/error"
+      },
+      "outcome": "stream-error",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:17.437Z",
+      "elapsedMs": 1039.2000000029802,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-chat-first-error",
+      "protocol": "chat",
+      "kind": "first-error",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:17.449Z",
+      "reads": [
+        {
+          "atMs": 208.39999999850988,
+          "bytes": 91,
+          "base64": "ZGF0YTogeyJlcnJvciI6eyJtZXNzYWdlIjoic3ludGhldGljIHN0cmVhbSBlcnJvciIsDQpkYXRhOiAiY29kZSI6InN5bnRoZXRpY19vdmVybG9hZCJ9fQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "",
+          "data": "{\"error\":{\"message\":\"synthetic stream error\",\n\"code\":\"synthetic_overload\"}}",
+          "atMs": 208.5
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/first-error?id=chrome-controlled-origin-chat-first-error",
+      "httpStatus": 200,
+      "headersAtMs": 173.80000000447035,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:17 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "chat/first-error"
+      },
+      "outcome": "stream-error",
+      "fullText": "",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:17.695Z",
+      "elapsedMs": 246.10000000149012,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-chat-http-error",
+      "protocol": "chat",
+      "kind": "http-error",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:17.701Z",
+      "reads": [],
+      "events": [],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/http-error?id=chrome-controlled-origin-chat-http-error",
+      "httpStatus": 429,
+      "headersAtMs": 131.29999999701977,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "date": "Thu, 15 Oct 2026 22:25:17 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "chat/http-error"
+      },
+      "outcome": "http-error",
+      "body": "{\"error\":{\"code\":\"synthetic_rate_limit\",\"message\":\"synthetic HTTP error\"}}",
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:17.833Z",
+      "elapsedMs": 131.79999999701977,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-chat-eof",
+      "protocol": "chat",
+      "kind": "eof",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:17.839Z",
+      "reads": [
+        {
+          "atMs": 210.69999999552965,
+          "bytes": 197,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0IiwNCmRhdGE6ICJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjowLCJtb2RlbCI6InN5bnRoZXRpYy1vbmx5IiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7InJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjoiIn0sImZpbmlzaF9yZWFzb24iOm51bGx9XX0NCgo="
+        },
+        {
+          "atMs": 531.7999999970198,
+          "bytes": 178,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6eyJjb250ZW50IjoiZml4dHVyZSAifSwiZmluaXNoX3JlYXNvbiI6bnVsbH1dfQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\n\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}",
+          "atMs": 210.79999999701977
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"fixture \"},\"finish_reason\":null}]}",
+          "atMs": 531.8999999985099
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 210.79999999701977,
+          "text": "",
+          "version": 1
+        },
+        {
+          "atMs": 531.8999999985099,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/eof?id=chrome-controlled-origin-chat-eof",
+      "httpStatus": 200,
+      "headersAtMs": 125.29999999701977,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:17 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "chat/eof"
+      },
+      "outcome": "truncated",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:18.462Z",
+      "elapsedMs": 623.1000000014901,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-chat-disconnect",
+      "protocol": "chat",
+      "kind": "disconnect",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:18.484Z",
+      "reads": [
+        {
+          "atMs": 275.1000000014901,
+          "bytes": 197,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0IiwNCmRhdGE6ICJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjowLCJtb2RlbCI6InN5bnRoZXRpYy1vbmx5IiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7InJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjoiIn0sImZpbmlzaF9yZWFzb24iOm51bGx9XX0NCgo="
+        },
+        {
+          "atMs": 696.5,
+          "bytes": 178,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6eyJjb250ZW50IjoiZml4dHVyZSAifSwiZmluaXNoX3JlYXNvbiI6bnVsbH1dfQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\n\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}",
+          "atMs": 275.20000000298023
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"fixture \"},\"finish_reason\":null}]}",
+          "atMs": 696.6000000014901
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 275.20000000298023,
+          "text": "",
+          "version": 1
+        },
+        {
+          "atMs": 696.6000000014901,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/disconnect?id=chrome-controlled-origin-chat-disconnect",
+      "httpStatus": 200,
+      "headersAtMs": 183.10000000149012,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:18 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "chat/disconnect"
+      },
+      "outcome": "read-error",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "TypeError",
+        "message": "network error"
+      },
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:19.211Z",
+      "elapsedMs": 726.6000000014901,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-chat-abort",
+      "protocol": "chat",
+      "kind": "abort",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:19.216Z",
+      "reads": [
+        {
+          "atMs": 944,
+          "bytes": 197,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0IiwNCmRhdGE6ICJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjowLCJtb2RlbCI6InN5bnRoZXRpYy1vbmx5IiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7InJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjoiIn0sImZpbmlzaF9yZWFzb24iOm51bGx9XX0NCgo="
+        },
+        {
+          "atMs": 1215.7000000029802,
+          "bytes": 178,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6eyJjb250ZW50IjoiZml4dHVyZSAifSwiZmluaXNoX3JlYXNvbiI6bnVsbH1dfQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\n\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}",
+          "atMs": 944.1000000014901
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"fixture \"},\"finish_reason\":null}]}",
+          "atMs": 1215.7999999970198
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 944.1000000014901,
+          "text": "",
+          "version": 1
+        },
+        {
+          "atMs": 1215.7999999970198,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/abort?id=chrome-controlled-origin-chat-abort",
+      "httpStatus": 200,
+      "headersAtMs": 909.2000000029802,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:19 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "chat/abort"
+      },
+      "outcome": "aborted",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "AbortError",
+        "message": "signal is aborted without reason"
+      },
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:20.432Z",
+      "elapsedMs": 1216.2999999970198,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-chat-stale",
+      "protocol": "chat",
+      "kind": "stale",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:20.439Z",
+      "reads": [
+        {
+          "atMs": 376,
+          "bytes": 197,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0IiwNCmRhdGE6ICJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjowLCJtb2RlbCI6InN5bnRoZXRpYy1vbmx5IiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7InJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjoiIn0sImZpbmlzaF9yZWFzb24iOm51bGx9XX0NCgo="
+        },
+        {
+          "atMs": 584,
+          "bytes": 178,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6eyJjb250ZW50IjoiZml4dHVyZSAifSwiZmluaXNoX3JlYXNvbiI6bnVsbH1dfQ0KCg=="
+        },
+        {
+          "atMs": 917.8000000044703,
+          "bytes": 179,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6eyJjb250ZW50IjoiY2Fmw6kg4pmeIn0sImZpbmlzaF9yZWFzb24iOm51bGx9XX0NCgo="
+        },
+        {
+          "atMs": 1225.8000000044703,
+          "bytes": 174,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6e30sImZpbmlzaF9yZWFzb24iOiJzdG9wIn1dfQ0KZGF0YTogW0RPTkVdDQoK"
+        }
+      ],
+      "events": [
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\n\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}",
+          "atMs": 376.1000000014901
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"fixture \"},\"finish_reason\":null}]}",
+          "atMs": 584.1000000014901
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"café ♞\"},\"finish_reason\":null}]}",
+          "atMs": 917.9000000059605
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n[DONE]",
+          "atMs": 1225.9000000059605
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 376.1000000014901,
+          "text": "",
+          "version": 1
+        },
+        {
+          "atMs": 584.1000000014901,
+          "text": "fixture ",
+          "version": 1
+        },
+        {
+          "atMs": 917.9000000059605,
+          "text": "café ♞",
+          "version": 2
+        }
+      ],
+      "dropped": [
+        {
+          "kind": "event",
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"café ♞\"},\"finish_reason\":null}]}",
+          "atMs": 917.9000000059605
+        },
+        {
+          "kind": "text",
+          "atMs": 917.9000000059605,
+          "text": "café ♞",
+          "version": 2
+        },
+        {
+          "kind": "event",
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n[DONE]",
+          "atMs": 1225.9000000059605
+        }
+      ],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/stale?id=chrome-controlled-origin-chat-stale",
+      "httpStatus": 200,
+      "headersAtMs": 371.20000000298023,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:20 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "chat/stale"
+      },
+      "invalidatedAtMs": 584.1000000014901,
+      "outcome": "protocol-error",
+      "fullText": "fixture café ♞",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 152 (line 2 column 1)"
+      },
+      "appliedText": "fixture ",
+      "version": 2,
+      "finishedAt": "2026-10-15T22:25:21.665Z",
+      "elapsedMs": 1226,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-chat-incomplete",
+      "protocol": "chat",
+      "kind": "incomplete",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:21.672Z",
+      "reads": [
+        {
+          "atMs": 753.6000000014901,
+          "bytes": 375,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0IiwNCmRhdGE6ICJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjowLCJtb2RlbCI6InN5bnRoZXRpYy1vbmx5IiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7InJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjoiIn0sImZpbmlzaF9yZWFzb24iOm51bGx9XX0NCgpkYXRhOiB7ImlkIjoic3ludGhldGljLWNoYXQiLCJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjowLCJtb2RlbCI6InN5bnRoZXRpYy1vbmx5IiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7ImNvbnRlbnQiOiJmaXh0dXJlICJ9LCJmaW5pc2hfcmVhc29uIjpudWxsfV19DQoK"
+        },
+        {
+          "atMs": 1051,
+          "bytes": 176,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6e30sImZpbmlzaF9yZWFzb24iOiJsZW5ndGgifV19DQpkYXRhOiBbRE9ORV0NCgo="
+        }
+      ],
+      "events": [
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\n\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}",
+          "atMs": 753.6999999955297
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"fixture \"},\"finish_reason\":null}]}",
+          "atMs": 753.7999999970198
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n[DONE]",
+          "atMs": 1051.1000000014901
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 753.7999999970198,
+          "text": "",
+          "version": 1
+        },
+        {
+          "atMs": 753.7999999970198,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/incomplete?id=chrome-controlled-origin-chat-incomplete",
+      "httpStatus": 200,
+      "headersAtMs": 752.1000000014901,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:21 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "chat/incomplete"
+      },
+      "outcome": "protocol-error",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 154 (line 2 column 1)"
+      },
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:22.723Z",
+      "elapsedMs": 1051.1999999955297,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-chat-malformed",
+      "protocol": "chat",
+      "kind": "malformed",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:22.729Z",
+      "reads": [
+        {
+          "atMs": 713.3999999985099,
+          "bytes": 197,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0IiwNCmRhdGE6ICJvYmplY3QiOiJjaGF0LmNvbXBsZXRpb24uY2h1bmsiLCJjcmVhdGVkIjowLCJtb2RlbCI6InN5bnRoZXRpYy1vbmx5IiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7InJvbGUiOiJhc3Npc3RhbnQiLCJjb250ZW50IjoiIn0sImZpbmlzaF9yZWFzb24iOm51bGx9XX0NCgo="
+        },
+        {
+          "atMs": 1020.1000000014901,
+          "bytes": 178,
+          "base64": "ZGF0YTogeyJpZCI6InN5bnRoZXRpYy1jaGF0Iiwib2JqZWN0IjoiY2hhdC5jb21wbGV0aW9uLmNodW5rIiwiY3JlYXRlZCI6MCwibW9kZWwiOiJzeW50aGV0aWMtb25seSIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6eyJjb250ZW50IjoiZml4dHVyZSAifSwiZmluaXNoX3JlYXNvbiI6bnVsbH1dfQ0KCg=="
+        },
+        {
+          "atMs": 1344.2000000029802,
+          "bytes": 19,
+          "base64": "ZGF0YToge25vdC1qc29ufQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\n\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}",
+          "atMs": 713.5
+        },
+        {
+          "event": "",
+          "data": "{\"id\":\"synthetic-chat\",\"object\":\"chat.completion.chunk\",\"created\":0,\"model\":\"synthetic-only\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"fixture \"},\"finish_reason\":null}]}",
+          "atMs": 1020.1000000014901
+        },
+        {
+          "event": "",
+          "data": "{not-json}",
+          "atMs": 1344.2000000029802
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 713.5,
+          "text": "",
+          "version": 1
+        },
+        {
+          "atMs": 1020.2000000029802,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/malformed?id=chrome-controlled-origin-chat-malformed",
+      "httpStatus": 200,
+      "headersAtMs": 675.2999999970198,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:23 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "chat/malformed"
+      },
+      "outcome": "protocol-error",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+      },
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:24.073Z",
+      "elapsedMs": 1344.2999999970198,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-responses-normal",
+      "protocol": "responses",
+      "kind": "normal",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:24.087Z",
+      "reads": [
+        {
+          "atMs": 220.29999999701977,
+          "bytes": 163,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQNCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmNyZWF0ZWQiLA0KZGF0YTogInJlc3BvbnNlIjp7ImlkIjoic3ludGhldGljLXJlc3BvbnNlIiwic3RhdHVzIjoiaW5fcHJvZ3Jlc3MiLCJvdXRwdXQiOltdfSwic2VxdWVuY2VfbnVtYmVyIjowfQ0KCg=="
+        },
+        {
+          "atMs": 547.8999999985099,
+          "bytes": 196,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhDQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5vdXRwdXRfdGV4dC5kZWx0YSIsIml0ZW1faWQiOiJzeW50aGV0aWMtaXRlbSIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaXh0dXJlICIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjoxfQ0KCg=="
+        },
+        {
+          "atMs": 1568.2000000029802,
+          "bytes": 666,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhDQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5vdXRwdXRfdGV4dC5kZWx0YSIsIml0ZW1faWQiOiJzeW50aGV0aWMtaXRlbSIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJjYWbDqSDimZ4iLCJsb2dwcm9icyI6W10sInNlcXVlbmNlX251bWJlciI6Mn0NCgpldmVudDogcmVzcG9uc2UuY29tcGxldGVkDQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5vdXRwdXRfdGV4dC5kb25lIiwiaXRlbV9pZCI6InN5bnRoZXRpYy1pdGVtIiwib3V0cHV0X2luZGV4IjowLCJjb250ZW50X2luZGV4IjowLCJ0ZXh0IjoiZml4dHVyZSBjYWbDqSDimZ4iLCJzZXF1ZW5jZV9udW1iZXIiOjN9DQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5jb21wbGV0ZWQiLCJyZXNwb25zZSI6eyJpZCI6InN5bnRoZXRpYy1yZXNwb25zZSIsInN0YXR1cyI6ImNvbXBsZXRlZCIsIm91dHB1dCI6W3siaWQiOiJzeW50aGV0aWMtaXRlbSIsInR5cGUiOiJtZXNzYWdlIiwicm9sZSI6ImFzc2lzdGFudCIsInN0YXR1cyI6ImNvbXBsZXRlZCIsImNvbnRlbnQiOlt7InR5cGUiOiJvdXRwdXRfdGV4dCIsInRleHQiOiJmaXh0dXJlIGNhZsOpIOKZniIsImFubm90YXRpb25zIjpbXX1dfV19LCJzZXF1ZW5jZV9udW1iZXIiOjR9DQoK"
+        }
+      ],
+      "events": [
+        {
+          "event": "response.created",
+          "data": "{\"type\":\"response.created\",\n\"response\":{\"id\":\"synthetic-response\",\"status\":\"in_progress\",\"output\":[]},\"sequence_number\":0}",
+          "atMs": 220.5
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": "{\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"delta\":\"fixture \",\"logprobs\":[],\"sequence_number\":1}",
+          "atMs": 548
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": "{\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"delta\":\"café ♞\",\"logprobs\":[],\"sequence_number\":2}",
+          "atMs": 1568.2999999970198
+        },
+        {
+          "event": "response.completed",
+          "data": "{\"type\":\"response.output_text.done\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"text\":\"fixture café ♞\",\"sequence_number\":3}\n{\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-response\",\"status\":\"completed\",\"output\":[{\"id\":\"synthetic-item\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"fixture café ♞\",\"annotations\":[]}]}]},\"sequence_number\":4}",
+          "atMs": 1568.2999999970198
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 548.1000000014901,
+          "text": "fixture ",
+          "version": 1
+        },
+        {
+          "atMs": 1568.2999999970198,
+          "text": "café ♞",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/normal?id=chrome-controlled-origin-responses-normal",
+      "httpStatus": 200,
+      "headersAtMs": 183.10000000149012,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:24 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "responses/normal"
+      },
+      "outcome": "protocol-error",
+      "fullText": "fixture café ♞",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 143 (line 2 column 1)"
+      },
+      "appliedText": "fixture café ♞",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:25.655Z",
+      "elapsedMs": 1568.5,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-responses-error",
+      "protocol": "responses",
+      "kind": "error",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:25.662Z",
+      "reads": [
+        {
+          "atMs": 202.89999999850988,
+          "bytes": 163,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQNCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmNyZWF0ZWQiLA0KZGF0YTogInJlc3BvbnNlIjp7ImlkIjoic3ludGhldGljLXJlc3BvbnNlIiwic3RhdHVzIjoiaW5fcHJvZ3Jlc3MiLCJvdXRwdXQiOltdfSwic2VxdWVuY2VfbnVtYmVyIjowfQ0KCg=="
+        },
+        {
+          "atMs": 535.1000000014901,
+          "bytes": 196,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhDQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5vdXRwdXRfdGV4dC5kZWx0YSIsIml0ZW1faWQiOiJzeW50aGV0aWMtaXRlbSIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaXh0dXJlICIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjoxfQ0KCg=="
+        },
+        {
+          "atMs": 836.6000000014901,
+          "bytes": 203,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmZhaWxlZA0KZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuZmFpbGVkIiwicmVzcG9uc2UiOnsiaWQiOiJzeW50aGV0aWMtcmVzcG9uc2UiLCJzdGF0dXMiOiJmYWlsZWQiLCJlcnJvciI6eyJjb2RlIjoic2VydmVyX2Vycm9yIiwibWVzc2FnZSI6InN5bnRoZXRpYyBzdHJlYW0gZXJyb3IifX0sInNlcXVlbmNlX251bWJlciI6NX0NCgo="
+        }
+      ],
+      "events": [
+        {
+          "event": "response.created",
+          "data": "{\"type\":\"response.created\",\n\"response\":{\"id\":\"synthetic-response\",\"status\":\"in_progress\",\"output\":[]},\"sequence_number\":0}",
+          "atMs": 202.89999999850988
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": "{\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"delta\":\"fixture \",\"logprobs\":[],\"sequence_number\":1}",
+          "atMs": 535.2999999970198
+        },
+        {
+          "event": "response.failed",
+          "data": "{\"type\":\"response.failed\",\"response\":{\"id\":\"synthetic-response\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"synthetic stream error\"}},\"sequence_number\":5}",
+          "atMs": 836.6000000014901
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 535.2999999970198,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/error?id=chrome-controlled-origin-responses-error",
+      "httpStatus": 200,
+      "headersAtMs": 167.29999999701977,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:25 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "responses/error"
+      },
+      "outcome": "stream-error",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:26.549Z",
+      "elapsedMs": 886.7999999970198,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-responses-first-error",
+      "protocol": "responses",
+      "kind": "first-error",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:26.555Z",
+      "reads": [
+        {
+          "atMs": 307.40000000596046,
+          "bytes": 142,
+          "base64": "ZXZlbnQ6IGVycm9yDQpkYXRhOiB7InR5cGUiOiJlcnJvciIsDQpkYXRhOiAiY29kZSI6InNlcnZlcl9lcnJvciIsIm1lc3NhZ2UiOiJzeW50aGV0aWMgZmlyc3QtZXZlbnQgZXJyb3IiLCJwYXJhbSI6bnVsbCwic2VxdWVuY2VfbnVtYmVyIjo3fQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "error",
+          "data": "{\"type\":\"error\",\n\"code\":\"server_error\",\"message\":\"synthetic first-event error\",\"param\":null,\"sequence_number\":7}",
+          "atMs": 307.6000000014901
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/first-error?id=chrome-controlled-origin-responses-first-error",
+      "httpStatus": 200,
+      "headersAtMs": 206.70000000298023,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:26 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "responses/first-error"
+      },
+      "outcome": "stream-error",
+      "fullText": "",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:27.348Z",
+      "elapsedMs": 793.5,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-responses-http-error",
+      "protocol": "responses",
+      "kind": "http-error",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:27.356Z",
+      "reads": [],
+      "events": [],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/http-error?id=chrome-controlled-origin-responses-http-error",
+      "httpStatus": 429,
+      "headersAtMs": 210.39999999850988,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "date": "Thu, 15 Oct 2026 22:25:27 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "responses/http-error"
+      },
+      "outcome": "http-error",
+      "body": "{\"error\":{\"code\":\"synthetic_rate_limit\",\"message\":\"synthetic HTTP error\"}}",
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:28.041Z",
+      "elapsedMs": 684.6999999955297,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-responses-eof",
+      "protocol": "responses",
+      "kind": "eof",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:28.048Z",
+      "reads": [
+        {
+          "atMs": 359.5,
+          "bytes": 163,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQNCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmNyZWF0ZWQiLA0KZGF0YTogInJlc3BvbnNlIjp7ImlkIjoic3ludGhldGljLXJlc3BvbnNlIiwic3RhdHVzIjoiaW5fcHJvZ3Jlc3MiLCJvdXRwdXQiOltdfSwic2VxdWVuY2VfbnVtYmVyIjowfQ0KCg=="
+        },
+        {
+          "atMs": 680.8000000044703,
+          "bytes": 196,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhDQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5vdXRwdXRfdGV4dC5kZWx0YSIsIml0ZW1faWQiOiJzeW50aGV0aWMtaXRlbSIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaXh0dXJlICIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjoxfQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "response.created",
+          "data": "{\"type\":\"response.created\",\n\"response\":{\"id\":\"synthetic-response\",\"status\":\"in_progress\",\"output\":[]},\"sequence_number\":0}",
+          "atMs": 359.90000000596046
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": "{\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"delta\":\"fixture \",\"logprobs\":[],\"sequence_number\":1}",
+          "atMs": 680.9000000059605
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 680.9000000059605,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/eof?id=chrome-controlled-origin-responses-eof",
+      "httpStatus": 200,
+      "headersAtMs": 240.30000000447035,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:28 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "responses/eof"
+      },
+      "outcome": "truncated",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:29.253Z",
+      "elapsedMs": 1204.9000000059605,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-responses-disconnect",
+      "protocol": "responses",
+      "kind": "disconnect",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:29.263Z",
+      "reads": [
+        {
+          "atMs": 294.79999999701977,
+          "bytes": 163,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQNCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmNyZWF0ZWQiLA0KZGF0YTogInJlc3BvbnNlIjp7ImlkIjoic3ludGhldGljLXJlc3BvbnNlIiwic3RhdHVzIjoiaW5fcHJvZ3Jlc3MiLCJvdXRwdXQiOltdfSwic2VxdWVuY2VfbnVtYmVyIjowfQ0KCg=="
+        },
+        {
+          "atMs": 657.1000000014901,
+          "bytes": 196,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhDQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5vdXRwdXRfdGV4dC5kZWx0YSIsIml0ZW1faWQiOiJzeW50aGV0aWMtaXRlbSIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaXh0dXJlICIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjoxfQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "response.created",
+          "data": "{\"type\":\"response.created\",\n\"response\":{\"id\":\"synthetic-response\",\"status\":\"in_progress\",\"output\":[]},\"sequence_number\":0}",
+          "atMs": 294.8999999985099
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": "{\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"delta\":\"fixture \",\"logprobs\":[],\"sequence_number\":1}",
+          "atMs": 657.2000000029802
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 657.2000000029802,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/disconnect?id=chrome-controlled-origin-responses-disconnect",
+      "httpStatus": 200,
+      "headersAtMs": 235.20000000298023,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:29 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "responses/disconnect"
+      },
+      "outcome": "read-error",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "TypeError",
+        "message": "network error"
+      },
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:29.965Z",
+      "elapsedMs": 702.8999999985099,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-responses-abort",
+      "protocol": "responses",
+      "kind": "abort",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:29.977Z",
+      "reads": [
+        {
+          "atMs": 233,
+          "bytes": 163,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQNCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmNyZWF0ZWQiLA0KZGF0YTogInJlc3BvbnNlIjp7ImlkIjoic3ludGhldGljLXJlc3BvbnNlIiwic3RhdHVzIjoiaW5fcHJvZ3Jlc3MiLCJvdXRwdXQiOltdfSwic2VxdWVuY2VfbnVtYmVyIjowfQ0KCg=="
+        },
+        {
+          "atMs": 568.5,
+          "bytes": 196,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhDQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5vdXRwdXRfdGV4dC5kZWx0YSIsIml0ZW1faWQiOiJzeW50aGV0aWMtaXRlbSIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaXh0dXJlICIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjoxfQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "response.created",
+          "data": "{\"type\":\"response.created\",\n\"response\":{\"id\":\"synthetic-response\",\"status\":\"in_progress\",\"output\":[]},\"sequence_number\":0}",
+          "atMs": 233.19999999552965
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": "{\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"delta\":\"fixture \",\"logprobs\":[],\"sequence_number\":1}",
+          "atMs": 568.5
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 568.5,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/abort?id=chrome-controlled-origin-responses-abort",
+      "httpStatus": 200,
+      "headersAtMs": 184.79999999701977,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:30 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "responses/abort"
+      },
+      "outcome": "aborted",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "AbortError",
+        "message": "signal is aborted without reason"
+      },
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:30.546Z",
+      "elapsedMs": 568.7999999970198,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-responses-stale",
+      "protocol": "responses",
+      "kind": "stale",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:30.555Z",
+      "reads": [
+        {
+          "atMs": 276,
+          "bytes": 163,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQNCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmNyZWF0ZWQiLA0KZGF0YTogInJlc3BvbnNlIjp7ImlkIjoic3ludGhldGljLXJlc3BvbnNlIiwic3RhdHVzIjoiaW5fcHJvZ3Jlc3MiLCJvdXRwdXQiOltdfSwic2VxdWVuY2VfbnVtYmVyIjowfQ0KCg=="
+        },
+        {
+          "atMs": 619.7000000029802,
+          "bytes": 196,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhDQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5vdXRwdXRfdGV4dC5kZWx0YSIsIml0ZW1faWQiOiJzeW50aGV0aWMtaXRlbSIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaXh0dXJlICIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjoxfQ0KCg=="
+        },
+        {
+          "atMs": 941.9000000059605,
+          "bytes": 197,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhDQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5vdXRwdXRfdGV4dC5kZWx0YSIsIml0ZW1faWQiOiJzeW50aGV0aWMtaXRlbSIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJjYWbDqSDimZ4iLCJsb2dwcm9icyI6W10sInNlcXVlbmNlX251bWJlciI6Mn0NCgo="
+        },
+        {
+          "atMs": 1254.7000000029802,
+          "bytes": 469,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmNvbXBsZXRlZA0KZGF0YTogeyJ0eXBlIjoicmVzcG9uc2Uub3V0cHV0X3RleHQuZG9uZSIsIml0ZW1faWQiOiJzeW50aGV0aWMtaXRlbSIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwidGV4dCI6ImZpeHR1cmUgY2Fmw6kg4pmeIiwic2VxdWVuY2VfbnVtYmVyIjozfQ0KZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuY29tcGxldGVkIiwicmVzcG9uc2UiOnsiaWQiOiJzeW50aGV0aWMtcmVzcG9uc2UiLCJzdGF0dXMiOiJjb21wbGV0ZWQiLCJvdXRwdXQiOlt7ImlkIjoic3ludGhldGljLWl0ZW0iLCJ0eXBlIjoibWVzc2FnZSIsInJvbGUiOiJhc3Npc3RhbnQiLCJzdGF0dXMiOiJjb21wbGV0ZWQiLCJjb250ZW50IjpbeyJ0eXBlIjoib3V0cHV0X3RleHQiLCJ0ZXh0IjoiZml4dHVyZSBjYWbDqSDimZ4iLCJhbm5vdGF0aW9ucyI6W119XX1dfSwic2VxdWVuY2VfbnVtYmVyIjo0fQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "response.created",
+          "data": "{\"type\":\"response.created\",\n\"response\":{\"id\":\"synthetic-response\",\"status\":\"in_progress\",\"output\":[]},\"sequence_number\":0}",
+          "atMs": 276.1000000014901
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": "{\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"delta\":\"fixture \",\"logprobs\":[],\"sequence_number\":1}",
+          "atMs": 619.8000000044703
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": "{\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"delta\":\"café ♞\",\"logprobs\":[],\"sequence_number\":2}",
+          "atMs": 942
+        },
+        {
+          "event": "response.completed",
+          "data": "{\"type\":\"response.output_text.done\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"text\":\"fixture café ♞\",\"sequence_number\":3}\n{\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-response\",\"status\":\"completed\",\"output\":[{\"id\":\"synthetic-item\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"fixture café ♞\",\"annotations\":[]}]}]},\"sequence_number\":4}",
+          "atMs": 1254.7000000029802
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 619.9000000059605,
+          "text": "fixture ",
+          "version": 1
+        },
+        {
+          "atMs": 942,
+          "text": "café ♞",
+          "version": 2
+        }
+      ],
+      "dropped": [
+        {
+          "kind": "event",
+          "event": "response.output_text.delta",
+          "data": "{\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"delta\":\"café ♞\",\"logprobs\":[],\"sequence_number\":2}",
+          "atMs": 942
+        },
+        {
+          "kind": "text",
+          "atMs": 942,
+          "text": "café ♞",
+          "version": 2
+        },
+        {
+          "kind": "event",
+          "event": "response.completed",
+          "data": "{\"type\":\"response.output_text.done\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"text\":\"fixture café ♞\",\"sequence_number\":3}\n{\"type\":\"response.completed\",\"response\":{\"id\":\"synthetic-response\",\"status\":\"completed\",\"output\":[{\"id\":\"synthetic-item\",\"type\":\"message\",\"role\":\"assistant\",\"status\":\"completed\",\"content\":[{\"type\":\"output_text\",\"text\":\"fixture café ♞\",\"annotations\":[]}]}]},\"sequence_number\":4}",
+          "atMs": 1254.7000000029802
+        }
+      ],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/stale?id=chrome-controlled-origin-responses-stale",
+      "httpStatus": 200,
+      "headersAtMs": 238.60000000149012,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:30 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "responses/stale"
+      },
+      "invalidatedAtMs": 619.9000000059605,
+      "outcome": "protocol-error",
+      "fullText": "fixture café ♞",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 143 (line 2 column 1)"
+      },
+      "appliedText": "fixture ",
+      "version": 2,
+      "finishedAt": "2026-10-15T22:25:31.809Z",
+      "elapsedMs": 1254.8000000044703,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-responses-incomplete",
+      "protocol": "responses",
+      "kind": "incomplete",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:31.823Z",
+      "reads": [
+        {
+          "atMs": 186.40000000596046,
+          "bytes": 163,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQNCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmNyZWF0ZWQiLA0KZGF0YTogInJlc3BvbnNlIjp7ImlkIjoic3ludGhldGljLXJlc3BvbnNlIiwic3RhdHVzIjoiaW5fcHJvZ3Jlc3MiLCJvdXRwdXQiOltdfSwic2VxdWVuY2VfbnVtYmVyIjowfQ0KCg=="
+        },
+        {
+          "atMs": 530.3000000044703,
+          "bytes": 196,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhDQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5vdXRwdXRfdGV4dC5kZWx0YSIsIml0ZW1faWQiOiJzeW50aGV0aWMtaXRlbSIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaXh0dXJlICIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjoxfQ0KCg=="
+        },
+        {
+          "atMs": 843.4000000059605,
+          "bytes": 200,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmluY29tcGxldGUNCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmluY29tcGxldGUiLCJyZXNwb25zZSI6eyJpZCI6InN5bnRoZXRpYy1yZXNwb25zZSIsInN0YXR1cyI6ImluY29tcGxldGUiLCJpbmNvbXBsZXRlX2RldGFpbHMiOnsicmVhc29uIjoibWF4X291dHB1dF90b2tlbnMifX0sInNlcXVlbmNlX251bWJlciI6Nn0NCgo="
+        }
+      ],
+      "events": [
+        {
+          "event": "response.created",
+          "data": "{\"type\":\"response.created\",\n\"response\":{\"id\":\"synthetic-response\",\"status\":\"in_progress\",\"output\":[]},\"sequence_number\":0}",
+          "atMs": 186.5
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": "{\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"delta\":\"fixture \",\"logprobs\":[],\"sequence_number\":1}",
+          "atMs": 530.3000000044703
+        },
+        {
+          "event": "response.incomplete",
+          "data": "{\"type\":\"response.incomplete\",\"response\":{\"id\":\"synthetic-response\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}},\"sequence_number\":6}",
+          "atMs": 843.4000000059605
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 530.4000000059605,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/incomplete?id=chrome-controlled-origin-responses-incomplete",
+      "httpStatus": 200,
+      "headersAtMs": 136.70000000298023,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:31 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "responses/incomplete"
+      },
+      "outcome": "incomplete",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:32.707Z",
+      "elapsedMs": 883.5,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-responses-malformed",
+      "protocol": "responses",
+      "kind": "malformed",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:32.711Z",
+      "reads": [
+        {
+          "atMs": 188.09999999403954,
+          "bytes": 163,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmNyZWF0ZWQNCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmNyZWF0ZWQiLA0KZGF0YTogInJlc3BvbnNlIjp7ImlkIjoic3ludGhldGljLXJlc3BvbnNlIiwic3RhdHVzIjoiaW5fcHJvZ3Jlc3MiLCJvdXRwdXQiOltdfSwic2VxdWVuY2VfbnVtYmVyIjowfQ0KCg=="
+        },
+        {
+          "atMs": 545.3999999985099,
+          "bytes": 196,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLm91dHB1dF90ZXh0LmRlbHRhDQpkYXRhOiB7InR5cGUiOiJyZXNwb25zZS5vdXRwdXRfdGV4dC5kZWx0YSIsIml0ZW1faWQiOiJzeW50aGV0aWMtaXRlbSIsIm91dHB1dF9pbmRleCI6MCwiY29udGVudF9pbmRleCI6MCwiZGVsdGEiOiJmaXh0dXJlICIsImxvZ3Byb2JzIjpbXSwic2VxdWVuY2VfbnVtYmVyIjoxfQ0KCg=="
+        },
+        {
+          "atMs": 864.2999999970198,
+          "bytes": 19,
+          "base64": "ZGF0YToge25vdC1qc29ufQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "response.created",
+          "data": "{\"type\":\"response.created\",\n\"response\":{\"id\":\"synthetic-response\",\"status\":\"in_progress\",\"output\":[]},\"sequence_number\":0}",
+          "atMs": 188.19999999552965
+        },
+        {
+          "event": "response.output_text.delta",
+          "data": "{\"type\":\"response.output_text.delta\",\"item_id\":\"synthetic-item\",\"output_index\":0,\"content_index\":0,\"delta\":\"fixture \",\"logprobs\":[],\"sequence_number\":1}",
+          "atMs": 545.3999999985099
+        },
+        {
+          "event": "",
+          "data": "{not-json}",
+          "atMs": 864.2999999970198
+        }
+      ],
+      "deltas": [
+        {
+          "atMs": 545.3999999985099,
+          "text": "fixture ",
+          "version": 1
+        }
+      ],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/malformed?id=chrome-controlled-origin-responses-malformed",
+      "httpStatus": 200,
+      "headersAtMs": 126.59999999403954,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:32 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "responses/malformed"
+      },
+      "outcome": "protocol-error",
+      "fullText": "fixture ",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+      },
+      "appliedText": "fixture ",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:33.576Z",
+      "elapsedMs": 864.5,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-messages-normal",
+      "protocol": "messages",
+      "kind": "normal",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:33.582Z",
+      "reads": [
+        {
+          "atMs": 197.20000000298023,
+          "bytes": 363,
+          "base64": "ZXZlbnQ6IHBpbmcNCmRhdGE6IHsidHlwZSI6Im1lc3NhZ2Vfc3RhcnQiLA0KZGF0YTogIm1lc3NhZ2UiOnsiaWQiOiJzeW50aGV0aWMtbWVzc2FnZSIsInR5cGUiOiJtZXNzYWdlIiwicm9sZSI6ImFzc2lzdGFudCIsIm1vZGVsIjoic3ludGhldGljLW9ubHkiLCJjb250ZW50IjpbXSwic3RvcF9yZWFzb24iOm51bGwsInN0b3Bfc2VxdWVuY2UiOm51bGwsInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MSwib3V0cHV0X3Rva2VucyI6MH19fQ0KZGF0YTogeyJ0eXBlIjoiY29udGVudF9ibG9ja19zdGFydCIsImluZGV4IjowLCJjb250ZW50X2Jsb2NrIjp7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IiJ9fQ0KZGF0YTogeyJ0eXBlIjoicGluZyJ9DQoK"
+        }
+      ],
+      "events": [
+        {
+          "event": "ping",
+          "data": "{\"type\":\"message_start\",\n\"message\":{\"id\":\"synthetic-message\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-only\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n{\"type\":\"ping\"}",
+          "atMs": 197.30000000447035
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/normal?id=chrome-controlled-origin-messages-normal",
+      "httpStatus": 200,
+      "headersAtMs": 123.5,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:33 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "messages/normal"
+      },
+      "outcome": "protocol-error",
+      "fullText": "",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 222 (line 3 column 1)"
+      },
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:33.779Z",
+      "elapsedMs": 197.5,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-messages-error",
+      "protocol": "messages",
+      "kind": "error",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:33.785Z",
+      "reads": [
+        {
+          "atMs": 208.60000000149012,
+          "bytes": 363,
+          "base64": "ZXZlbnQ6IHBpbmcNCmRhdGE6IHsidHlwZSI6Im1lc3NhZ2Vfc3RhcnQiLA0KZGF0YTogIm1lc3NhZ2UiOnsiaWQiOiJzeW50aGV0aWMtbWVzc2FnZSIsInR5cGUiOiJtZXNzYWdlIiwicm9sZSI6ImFzc2lzdGFudCIsIm1vZGVsIjoic3ludGhldGljLW9ubHkiLCJjb250ZW50IjpbXSwic3RvcF9yZWFzb24iOm51bGwsInN0b3Bfc2VxdWVuY2UiOm51bGwsInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MSwib3V0cHV0X3Rva2VucyI6MH19fQ0KZGF0YTogeyJ0eXBlIjoiY29udGVudF9ibG9ja19zdGFydCIsImluZGV4IjowLCJjb250ZW50X2Jsb2NrIjp7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IiJ9fQ0KZGF0YTogeyJ0eXBlIjoicGluZyJ9DQoK"
+        }
+      ],
+      "events": [
+        {
+          "event": "ping",
+          "data": "{\"type\":\"message_start\",\n\"message\":{\"id\":\"synthetic-message\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-only\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n{\"type\":\"ping\"}",
+          "atMs": 208.69999999552965
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/error?id=chrome-controlled-origin-messages-error",
+      "httpStatus": 200,
+      "headersAtMs": 157.39999999850988,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:33 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "messages/error"
+      },
+      "outcome": "protocol-error",
+      "fullText": "",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 222 (line 3 column 1)"
+      },
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:33.994Z",
+      "elapsedMs": 208.89999999850988,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-messages-first-error",
+      "protocol": "messages",
+      "kind": "first-error",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:34.002Z",
+      "reads": [
+        {
+          "atMs": 197.60000000149012,
+          "bytes": 118,
+          "base64": "ZXZlbnQ6IGVycm9yDQpkYXRhOiB7InR5cGUiOiJlcnJvciIsDQpkYXRhOiAiZXJyb3IiOnsidHlwZSI6Im92ZXJsb2FkZWRfZXJyb3IiLCJtZXNzYWdlIjoic3ludGhldGljIHN0cmVhbSBlcnJvciJ9fQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "error",
+          "data": "{\"type\":\"error\",\n\"error\":{\"type\":\"overloaded_error\",\"message\":\"synthetic stream error\"}}",
+          "atMs": 197.60000000149012
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/first-error?id=chrome-controlled-origin-messages-first-error",
+      "httpStatus": 200,
+      "headersAtMs": 145,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:34 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "messages/first-error"
+      },
+      "outcome": "stream-error",
+      "fullText": "",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:34.242Z",
+      "elapsedMs": 239.70000000298023,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-messages-http-error",
+      "protocol": "messages",
+      "kind": "http-error",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:34.252Z",
+      "reads": [],
+      "events": [],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/http-error?id=chrome-controlled-origin-messages-http-error",
+      "httpStatus": 429,
+      "headersAtMs": 131.80000000447035,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "date": "Thu, 15 Oct 2026 22:25:34 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "messages/http-error"
+      },
+      "outcome": "http-error",
+      "body": "{\"error\":{\"code\":\"synthetic_rate_limit\",\"message\":\"synthetic HTTP error\"}}",
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:34.384Z",
+      "elapsedMs": 132.40000000596046,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-messages-eof",
+      "protocol": "messages",
+      "kind": "eof",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:34.391Z",
+      "reads": [
+        {
+          "atMs": 161.40000000596046,
+          "bytes": 363,
+          "base64": "ZXZlbnQ6IHBpbmcNCmRhdGE6IHsidHlwZSI6Im1lc3NhZ2Vfc3RhcnQiLA0KZGF0YTogIm1lc3NhZ2UiOnsiaWQiOiJzeW50aGV0aWMtbWVzc2FnZSIsInR5cGUiOiJtZXNzYWdlIiwicm9sZSI6ImFzc2lzdGFudCIsIm1vZGVsIjoic3ludGhldGljLW9ubHkiLCJjb250ZW50IjpbXSwic3RvcF9yZWFzb24iOm51bGwsInN0b3Bfc2VxdWVuY2UiOm51bGwsInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MSwib3V0cHV0X3Rva2VucyI6MH19fQ0KZGF0YTogeyJ0eXBlIjoiY29udGVudF9ibG9ja19zdGFydCIsImluZGV4IjowLCJjb250ZW50X2Jsb2NrIjp7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IiJ9fQ0KZGF0YTogeyJ0eXBlIjoicGluZyJ9DQoK"
+        }
+      ],
+      "events": [
+        {
+          "event": "ping",
+          "data": "{\"type\":\"message_start\",\n\"message\":{\"id\":\"synthetic-message\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-only\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n{\"type\":\"ping\"}",
+          "atMs": 161.5
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/eof?id=chrome-controlled-origin-messages-eof",
+      "httpStatus": 200,
+      "headersAtMs": 125.90000000596046,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:34 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "messages/eof"
+      },
+      "outcome": "protocol-error",
+      "fullText": "",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 222 (line 3 column 1)"
+      },
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:34.553Z",
+      "elapsedMs": 161.60000000149012,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-messages-disconnect",
+      "protocol": "messages",
+      "kind": "disconnect",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:34.562Z",
+      "reads": [
+        {
+          "atMs": 211.5,
+          "bytes": 363,
+          "base64": "ZXZlbnQ6IHBpbmcNCmRhdGE6IHsidHlwZSI6Im1lc3NhZ2Vfc3RhcnQiLA0KZGF0YTogIm1lc3NhZ2UiOnsiaWQiOiJzeW50aGV0aWMtbWVzc2FnZSIsInR5cGUiOiJtZXNzYWdlIiwicm9sZSI6ImFzc2lzdGFudCIsIm1vZGVsIjoic3ludGhldGljLW9ubHkiLCJjb250ZW50IjpbXSwic3RvcF9yZWFzb24iOm51bGwsInN0b3Bfc2VxdWVuY2UiOm51bGwsInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MSwib3V0cHV0X3Rva2VucyI6MH19fQ0KZGF0YTogeyJ0eXBlIjoiY29udGVudF9ibG9ja19zdGFydCIsImluZGV4IjowLCJjb250ZW50X2Jsb2NrIjp7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IiJ9fQ0KZGF0YTogeyJ0eXBlIjoicGluZyJ9DQoK"
+        }
+      ],
+      "events": [
+        {
+          "event": "ping",
+          "data": "{\"type\":\"message_start\",\n\"message\":{\"id\":\"synthetic-message\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-only\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n{\"type\":\"ping\"}",
+          "atMs": 211.5
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/disconnect?id=chrome-controlled-origin-messages-disconnect",
+      "httpStatus": 200,
+      "headersAtMs": 159.79999999701977,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:34 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "messages/disconnect"
+      },
+      "outcome": "protocol-error",
+      "fullText": "",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 222 (line 3 column 1)"
+      },
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:34.773Z",
+      "elapsedMs": 211.59999999403954,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-messages-abort",
+      "protocol": "messages",
+      "kind": "abort",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:34.782Z",
+      "reads": [
+        {
+          "atMs": 224.30000000447035,
+          "bytes": 363,
+          "base64": "ZXZlbnQ6IHBpbmcNCmRhdGE6IHsidHlwZSI6Im1lc3NhZ2Vfc3RhcnQiLA0KZGF0YTogIm1lc3NhZ2UiOnsiaWQiOiJzeW50aGV0aWMtbWVzc2FnZSIsInR5cGUiOiJtZXNzYWdlIiwicm9sZSI6ImFzc2lzdGFudCIsIm1vZGVsIjoic3ludGhldGljLW9ubHkiLCJjb250ZW50IjpbXSwic3RvcF9yZWFzb24iOm51bGwsInN0b3Bfc2VxdWVuY2UiOm51bGwsInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MSwib3V0cHV0X3Rva2VucyI6MH19fQ0KZGF0YTogeyJ0eXBlIjoiY29udGVudF9ibG9ja19zdGFydCIsImluZGV4IjowLCJjb250ZW50X2Jsb2NrIjp7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IiJ9fQ0KZGF0YTogeyJ0eXBlIjoicGluZyJ9DQoK"
+        }
+      ],
+      "events": [
+        {
+          "event": "ping",
+          "data": "{\"type\":\"message_start\",\n\"message\":{\"id\":\"synthetic-message\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-only\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n{\"type\":\"ping\"}",
+          "atMs": 224.39999999850988
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/abort?id=chrome-controlled-origin-messages-abort",
+      "httpStatus": 200,
+      "headersAtMs": 167,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:34 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "messages/abort"
+      },
+      "outcome": "protocol-error",
+      "fullText": "",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 222 (line 3 column 1)"
+      },
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:35.006Z",
+      "elapsedMs": 224.5,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-messages-stale",
+      "protocol": "messages",
+      "kind": "stale",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:35.018Z",
+      "reads": [
+        {
+          "atMs": 236.39999999850988,
+          "bytes": 363,
+          "base64": "ZXZlbnQ6IHBpbmcNCmRhdGE6IHsidHlwZSI6Im1lc3NhZ2Vfc3RhcnQiLA0KZGF0YTogIm1lc3NhZ2UiOnsiaWQiOiJzeW50aGV0aWMtbWVzc2FnZSIsInR5cGUiOiJtZXNzYWdlIiwicm9sZSI6ImFzc2lzdGFudCIsIm1vZGVsIjoic3ludGhldGljLW9ubHkiLCJjb250ZW50IjpbXSwic3RvcF9yZWFzb24iOm51bGwsInN0b3Bfc2VxdWVuY2UiOm51bGwsInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MSwib3V0cHV0X3Rva2VucyI6MH19fQ0KZGF0YTogeyJ0eXBlIjoiY29udGVudF9ibG9ja19zdGFydCIsImluZGV4IjowLCJjb250ZW50X2Jsb2NrIjp7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IiJ9fQ0KZGF0YTogeyJ0eXBlIjoicGluZyJ9DQoK"
+        }
+      ],
+      "events": [
+        {
+          "event": "ping",
+          "data": "{\"type\":\"message_start\",\n\"message\":{\"id\":\"synthetic-message\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-only\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n{\"type\":\"ping\"}",
+          "atMs": 236.5
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/stale?id=chrome-controlled-origin-messages-stale",
+      "httpStatus": 200,
+      "headersAtMs": 165.70000000298023,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:35 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "messages/stale"
+      },
+      "outcome": "protocol-error",
+      "fullText": "",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 222 (line 3 column 1)"
+      },
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:35.255Z",
+      "elapsedMs": 236.60000000149012,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-messages-incomplete",
+      "protocol": "messages",
+      "kind": "incomplete",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:35.260Z",
+      "reads": [
+        {
+          "atMs": 198.5,
+          "bytes": 363,
+          "base64": "ZXZlbnQ6IHBpbmcNCmRhdGE6IHsidHlwZSI6Im1lc3NhZ2Vfc3RhcnQiLA0KZGF0YTogIm1lc3NhZ2UiOnsiaWQiOiJzeW50aGV0aWMtbWVzc2FnZSIsInR5cGUiOiJtZXNzYWdlIiwicm9sZSI6ImFzc2lzdGFudCIsIm1vZGVsIjoic3ludGhldGljLW9ubHkiLCJjb250ZW50IjpbXSwic3RvcF9yZWFzb24iOm51bGwsInN0b3Bfc2VxdWVuY2UiOm51bGwsInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MSwib3V0cHV0X3Rva2VucyI6MH19fQ0KZGF0YTogeyJ0eXBlIjoiY29udGVudF9ibG9ja19zdGFydCIsImluZGV4IjowLCJjb250ZW50X2Jsb2NrIjp7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IiJ9fQ0KZGF0YTogeyJ0eXBlIjoicGluZyJ9DQoK"
+        }
+      ],
+      "events": [
+        {
+          "event": "ping",
+          "data": "{\"type\":\"message_start\",\n\"message\":{\"id\":\"synthetic-message\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-only\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n{\"type\":\"ping\"}",
+          "atMs": 198.5
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/incomplete?id=chrome-controlled-origin-messages-incomplete",
+      "httpStatus": 200,
+      "headersAtMs": 137.30000000447035,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:35 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "messages/incomplete"
+      },
+      "outcome": "protocol-error",
+      "fullText": "",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 222 (line 3 column 1)"
+      },
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:35.459Z",
+      "elapsedMs": 198.70000000298023,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-messages-malformed",
+      "protocol": "messages",
+      "kind": "malformed",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:35.463Z",
+      "reads": [
+        {
+          "atMs": 198.59999999403954,
+          "bytes": 363,
+          "base64": "ZXZlbnQ6IHBpbmcNCmRhdGE6IHsidHlwZSI6Im1lc3NhZ2Vfc3RhcnQiLA0KZGF0YTogIm1lc3NhZ2UiOnsiaWQiOiJzeW50aGV0aWMtbWVzc2FnZSIsInR5cGUiOiJtZXNzYWdlIiwicm9sZSI6ImFzc2lzdGFudCIsIm1vZGVsIjoic3ludGhldGljLW9ubHkiLCJjb250ZW50IjpbXSwic3RvcF9yZWFzb24iOm51bGwsInN0b3Bfc2VxdWVuY2UiOm51bGwsInVzYWdlIjp7ImlucHV0X3Rva2VucyI6MSwib3V0cHV0X3Rva2VucyI6MH19fQ0KZGF0YTogeyJ0eXBlIjoiY29udGVudF9ibG9ja19zdGFydCIsImluZGV4IjowLCJjb250ZW50X2Jsb2NrIjp7InR5cGUiOiJ0ZXh0IiwidGV4dCI6IiJ9fQ0KZGF0YTogeyJ0eXBlIjoicGluZyJ9DQoK"
+        }
+      ],
+      "events": [
+        {
+          "event": "ping",
+          "data": "{\"type\":\"message_start\",\n\"message\":{\"id\":\"synthetic-message\",\"type\":\"message\",\"role\":\"assistant\",\"model\":\"synthetic-only\",\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n{\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n{\"type\":\"ping\"}",
+          "atMs": 198.59999999403954
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/malformed?id=chrome-controlled-origin-messages-malformed",
+      "httpStatus": 200,
+      "headersAtMs": 146.79999999701977,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:35 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "messages/malformed"
+      },
+      "outcome": "protocol-error",
+      "fullText": "",
+      "finish": null,
+      "unknown": [],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "error": {
+        "name": "SyntaxError",
+        "message": "Unexpected non-whitespace character after JSON at position 222 (line 3 column 1)"
+      },
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:35.662Z",
+      "elapsedMs": 198.69999999552965,
+      "phase": "controlled-origin"
+    },
+    {
+      "id": "chrome-controlled-origin-responses-alias",
+      "protocol": "responses",
+      "kind": "alias",
+      "cors": null,
+      "sourceOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+      "startedAt": "2026-10-15T22:25:35.667Z",
+      "reads": [
+        {
+          "atMs": 179.39999999850988,
+          "bytes": 139,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmNvbnRlbnRfcGFydC5kZWx0YQ0KZGF0YTogeyJ0eXBlIjoicmVzcG9uc2UuY29udGVudF9wYXJ0LmRlbHRhIiwNCmRhdGE6ICJkZWx0YSI6eyJ0ZXh0IjoiZml4dHVyZSAifSwic2VxdWVuY2VfbnVtYmVyIjo3fQ0KCg=="
+        },
+        {
+          "atMs": 492.1000000014901,
+          "bytes": 109,
+          "base64": "ZXZlbnQ6IHJlc3BvbnNlLmRvbmUNCmRhdGE6IHsidHlwZSI6InJlc3BvbnNlLmRvbmUiLCJyZXNwb25zZSI6eyJzdGF0dXMiOiJjb21wbGV0ZWQifSwic2VxdWVuY2VfbnVtYmVyIjo4fQ0KCg=="
+        }
+      ],
+      "events": [
+        {
+          "event": "response.content_part.delta",
+          "data": "{\"type\":\"response.content_part.delta\",\n\"delta\":{\"text\":\"fixture \"},\"sequence_number\":7}",
+          "atMs": 179.5
+        },
+        {
+          "event": "response.done",
+          "data": "{\"type\":\"response.done\",\"response\":{\"status\":\"completed\"},\"sequence_number\":8}",
+          "atMs": 492.1000000014901
+        }
+      ],
+      "deltas": [],
+      "dropped": [],
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/alias?id=chrome-controlled-origin-responses-alias",
+      "httpStatus": 200,
+      "headersAtMs": 124.29999999701977,
+      "responseHeaders": {
+        "access-control-allow-headers": "authorization,content-type,ngrok-skip-browser-warning",
+        "access-control-allow-methods": "GET, POST, OPTIONS",
+        "access-control-allow-origin": "https://1fed-156-204-70-131.ngrok-free.app",
+        "access-control-expose-headers": "x-synthetic-fixture",
+        "access-control-max-age": "0",
+        "cache-control": "no-store",
+        "content-type": "text/event-stream; charset=utf-8",
+        "date": "Thu, 15 Oct 2026 22:25:35 GMT",
+        "ngrok-agent-ips": "156.204.70.131",
+        "vary": "Origin",
+        "x-accel-buffering": "no",
+        "x-robots-tag": "noindex, nofollow",
+        "x-synthetic-fixture": "responses/alias"
+      },
+      "outcome": "truncated",
+      "fullText": "",
+      "finish": null,
+      "unknown": [
+        "response.content_part.delta",
+        "response.done"
+      ],
+      "pendingCharacters": 0,
+      "pendingDataLines": 0,
+      "appliedText": "",
+      "version": 1,
+      "finishedAt": "2026-10-15T22:25:36.203Z",
+      "elapsedMs": 535.7999999970198,
+      "phase": "controlled-origin"
+    }
+  ],
+  "version": {
+    "Browser": "Chrome/155.0.8059.79",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36",
+    "V8-Version": "15.5.35.23",
+    "WebKit-Version": "537.36 (@a49e2e3d4addfd84e765b52afe230bedb81096db)",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:19232/devtools/browser/7e993be8-fb92-4851-87d3-0ce2827f10bf"
+  },
+  "error": "Error: Unexpected page {\"url\":\"https://example.com/\",\"origin\":\"https://example.com\",\"title\":\"Example Domain\",\"text\":\"This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\\n\\nهذا النطاق مُخصص للاستخدام في أمثلة التوثيق دون الحاجة إلى إذن. هذه ليست خدمة، يُرجى تجنب الاعتماد عليها لأغراض الاختبار والمراقبة.\\n\\n该域名仅用于文档示例，无需获得许可。这并非一项服务，请勿将其用于测试和监控目的。\\n\\nL’usage de ce domaine est réservé à des exemples de documentation, sans autorisation préalable. Il ne s’agit pas d’un service ; son utilisation à des fins de test ou de surveillance est à éviter.\\n\\nДанный домен предназначен для использования в примерах документации без необходимости получения предварительного разрешения. Это не сервис; не рекомендуется его использование для тестирования и мониторинга.\\n\\nEste dominio está destinado al uso en ejemplos de documentación sin necesidad de permiso. Esto no es un servicio; evitar utilizarlo para realizar pruebas o monitoreos.\\n\\nLearn more\",\"ready\":\"complete\",\"ua\":\"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36\"}",
+  "diagnostics": [
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "3ABDC8BDBB8499CF453A90EF125F9C1E",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/harness",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "3ABDC8BDBB8499CF453A90EF125F9C1E",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/harness",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.2",
+      "url": "https://assets.ngrok.com/fonts/euclid-square/EuclidSquare-Regular-WebS.woff",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.3",
+      "url": "https://assets.ngrok.com/fonts/euclid-square/EuclidSquare-RegularItalic-WebS.woff",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.4",
+      "url": "https://assets.ngrok.com/fonts/euclid-square/EuclidSquare-Medium-WebS.woff",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.5",
+      "url": "https://assets.ngrok.com/fonts/euclid-square/EuclidSquare-MediumItalic-WebS.woff",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.6",
+      "url": "https://assets.ngrok.com/fonts/ibm-plex-mono/IBMPlexMono-Text.woff",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.7",
+      "url": "https://assets.ngrok.com/fonts/ibm-plex-mono/IBMPlexMono-TextItalic.woff",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.8",
+      "url": "https://assets.ngrok.com/fonts/ibm-plex-mono/IBMPlexMono-SemiBold.woff",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.9",
+      "url": "https://assets.ngrok.com/fonts/ibm-plex-mono/IBMPlexMono-SemiBoldItalic.woff",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.10",
+      "url": "https://cdn.ngrok.com/static/css/error.css",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.11",
+      "url": "https://cdn.ngrok.com/static/js/error.js",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.4",
+      "url": "https://assets.ngrok.com/fonts/euclid-square/EuclidSquare-Medium-WebS.woff",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.2",
+      "url": "https://assets.ngrok.com/fonts/euclid-square/EuclidSquare-Regular-WebS.woff",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.7",
+      "url": "https://assets.ngrok.com/fonts/ibm-plex-mono/IBMPlexMono-TextItalic.woff",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.5",
+      "url": "https://assets.ngrok.com/fonts/euclid-square/EuclidSquare-MediumItalic-WebS.woff",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.9",
+      "url": "https://assets.ngrok.com/fonts/ibm-plex-mono/IBMPlexMono-SemiBoldItalic.woff",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.3",
+      "url": "https://assets.ngrok.com/fonts/euclid-square/EuclidSquare-RegularItalic-WebS.woff",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.6",
+      "url": "https://assets.ngrok.com/fonts/ibm-plex-mono/IBMPlexMono-Text.woff",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.10",
+      "url": "https://cdn.ngrok.com/static/css/error.css",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.11",
+      "url": "https://cdn.ngrok.com/static/js/error.js",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.22",
+      "url": "https://cdn.ngrok.com/static/compiled/js/allerrors.js",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.23",
+      "url": "https://cdn.ngrok.com/static/compiled/css/global.css",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.24",
+      "url": "https://ngrok.com/assets/favicon.ico",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.8",
+      "url": "https://assets.ngrok.com/fonts/ibm-plex-mono/IBMPlexMono-SemiBold.woff",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.23",
+      "url": "https://cdn.ngrok.com/static/compiled/css/global.css",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.22",
+      "url": "https://cdn.ngrok.com/static/compiled/js/allerrors.js",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.30",
+      "url": "https://cdn.ngrok.com/static/compiled/js/global.js",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.24",
+      "url": "https://ngrok.com/assets/favicon.ico",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.30",
+      "url": "https://cdn.ngrok.com/static/compiled/js/global.js",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.25",
+      "url": "https://assets.ngrok.com/fonts/roobert/roobert-proportional-vf.woff2",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.26",
+      "url": "https://assets.ngrok.com/fonts/jetbrains/jetbrainsmono-wght.woff2",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "9F5989CA13A16733D50F9C2B2B0032AA",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/harness",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.25",
+      "url": "https://assets.ngrok.com/fonts/roobert/roobert-proportional-vf.woff2",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.26",
+      "url": "https://assets.ngrok.com/fonts/jetbrains/jetbrainsmono-wght.woff2",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "9F5989CA13A16733D50F9C2B2B0032AA",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/harness",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.32",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/client.js",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.32",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/client.js",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.34",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/favicon.ico",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.35",
+      "url": "https://api.openai.com/v1/models",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "A13A6EAA3EF2FBF51C71CC641EA3512B",
+      "url": "https://api.openai.com/v1/models",
+      "httpMethod": "OPTIONS"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.34",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/favicon.ico",
+      "status": 404,
+      "protocol": "h2"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 404 ()",
+          "timestamp": 1792103112045.813,
+          "url": "https://1fed-156-204-70-131.ngrok-free.app/favicon.ico",
+          "networkRequestId": "5316.34"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "A13A6EAA3EF2FBF51C71CC641EA3512B",
+      "url": "https://api.openai.com/v1/models",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.35",
+      "url": "https://api.openai.com/v1/models",
+      "status": 401,
+      "protocol": "h2"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 401 ()",
+          "timestamp": 1792103112640.612,
+          "url": "https://api.openai.com/v1/models",
+          "networkRequestId": "5316.35"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.36",
+      "url": "https://api.openai.com/v1/models",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "FA8D02D732CE17A673C4073495EBF720",
+      "url": "https://api.openai.com/v1/models",
+      "httpMethod": "OPTIONS"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "FA8D02D732CE17A673C4073495EBF720",
+      "url": "https://api.openai.com/v1/models",
+      "status": 200,
+      "protocol": "h3"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.36",
+      "url": "https://api.openai.com/v1/models",
+      "status": 400,
+      "protocol": "h3"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 400 ()",
+          "timestamp": 1792103113150.457,
+          "url": "https://api.openai.com/v1/models",
+          "networkRequestId": "5316.36"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.37",
+      "url": "https://openrouter.ai/api/v1/models",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "4237B50FD577E8C80244CF827FF22C9F",
+      "url": "https://openrouter.ai/api/v1/models",
+      "httpMethod": "OPTIONS"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "4237B50FD577E8C80244CF827FF22C9F",
+      "url": "https://openrouter.ai/api/v1/models",
+      "status": 204,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.37",
+      "url": "https://openrouter.ai/api/v1/models",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.37",
+        "timestamp": 49937.541004,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.38",
+      "url": "https://openrouter.ai/api/v1/models",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "6FCE85A89983C19CA9857CA723F1486D",
+      "url": "https://openrouter.ai/api/v1/models",
+      "httpMethod": "OPTIONS"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'https://openrouter.ai/api/v1/models' from origin 'https://1fed-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Request header field x-openrouter-cache is not allowed by Access-Control-Allow-Headers in preflight response.",
+          "category": "cors",
+          "timestamp": 1792103113725.127,
+          "url": "https://1fed-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.38",
+        "timestamp": 49937.626639,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "HeaderDisallowedByPreflightResponse",
+          "failedParameter": "x-openrouter-cache"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792103113725.812,
+          "url": "https://openrouter.ai/api/v1/models",
+          "networkRequestId": "5316.38"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "6FCE85A89983C19CA9857CA723F1486D",
+      "url": "https://openrouter.ai/api/v1/models",
+      "status": 204,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.39",
+      "url": "https://openrouter.ai/api/v1/models",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.39",
+      "url": "https://openrouter.ai/api/v1/models",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.39",
+        "timestamp": 49937.709604,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.40",
+      "url": "https://api.anthropic.com/v1/models",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "FDA847D537ED5B0AF79D47687FEB07AB",
+      "url": "https://api.anthropic.com/v1/models",
+      "httpMethod": "OPTIONS"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "FDA847D537ED5B0AF79D47687FEB07AB",
+      "url": "https://api.anthropic.com/v1/models",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.40",
+      "url": "https://api.anthropic.com/v1/models",
+      "status": 401,
+      "protocol": "h2"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 401 ()",
+          "timestamp": 1792103114308.503,
+          "url": "https://api.anthropic.com/v1/models",
+          "networkRequestId": "5316.40"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.41",
+      "url": "https://api.anthropic.com/v1/models",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "DAAF1D4E952D8B669142E2D99C85127E",
+      "url": "https://api.anthropic.com/v1/models",
+      "httpMethod": "OPTIONS"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "DAAF1D4E952D8B669142E2D99C85127E",
+      "url": "https://api.anthropic.com/v1/models",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.41",
+      "url": "https://api.anthropic.com/v1/models",
+      "status": 401,
+      "protocol": "h2"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 401 ()",
+          "timestamp": 1792103114685.87,
+          "url": "https://api.anthropic.com/v1/models",
+          "networkRequestId": "5316.41"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.42",
+      "url": "https://api.anthropic.com/v1/models",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "0400533CD5E0002FD6B0D9A548C39429",
+      "url": "https://api.anthropic.com/v1/models",
+      "httpMethod": "OPTIONS"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "0400533CD5E0002FD6B0D9A548C39429",
+      "url": "https://api.anthropic.com/v1/models",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.42",
+      "url": "https://api.anthropic.com/v1/models",
+      "status": 400,
+      "protocol": "h2"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 400 ()",
+          "timestamp": 1792103115018.819,
+          "url": "https://api.anthropic.com/v1/models",
+          "networkRequestId": "5316.42"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.43",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/normal?id=chrome-controlled-origin-chat-normal",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.43",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/normal?id=chrome-controlled-origin-chat-normal",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.43",
+        "timestamp": 49940.281003,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.44",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/error?id=chrome-controlled-origin-chat-error",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.44",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/error?id=chrome-controlled-origin-chat-error",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.44",
+        "timestamp": 49941.338399,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.45",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/first-error?id=chrome-controlled-origin-chat-first-error",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.45",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/first-error?id=chrome-controlled-origin-chat-first-error",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.45",
+        "timestamp": 49941.595937,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.46",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/http-error?id=chrome-controlled-origin-chat-http-error",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.46",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/http-error?id=chrome-controlled-origin-chat-http-error",
+      "status": 429,
+      "protocol": "h2"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 429 ()",
+          "timestamp": 1792103117832.65,
+          "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/http-error?id=chrome-controlled-origin-chat-http-error",
+          "networkRequestId": "5316.46"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.47",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/eof?id=chrome-controlled-origin-chat-eof",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.47",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/eof?id=chrome-controlled-origin-chat-eof",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.47",
+        "timestamp": 49942.363626,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.48",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/disconnect?id=chrome-controlled-origin-chat-disconnect",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.48",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/disconnect?id=chrome-controlled-origin-chat-disconnect",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.48",
+        "timestamp": 49943.112207,
+        "type": "Fetch",
+        "errorText": "net::ERR_HTTP2_PROTOCOL_ERROR",
+        "canceled": false
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_HTTP2_PROTOCOL_ERROR",
+          "timestamp": 1792103119211.366,
+          "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/disconnect?id=chrome-controlled-origin-chat-disconnect",
+          "networkRequestId": "5316.48"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.49",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/abort?id=chrome-controlled-origin-chat-abort",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.49",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/abort?id=chrome-controlled-origin-chat-abort",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.49",
+        "timestamp": 49944.334171,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.50",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/stale?id=chrome-controlled-origin-chat-stale",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.50",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/stale?id=chrome-controlled-origin-chat-stale",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.50",
+        "timestamp": 49945.566831,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.51",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/incomplete?id=chrome-controlled-origin-chat-incomplete",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.51",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/incomplete?id=chrome-controlled-origin-chat-incomplete",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.51",
+        "timestamp": 49946.62533,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.52",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/malformed?id=chrome-controlled-origin-chat-malformed",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.52",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/chat/malformed?id=chrome-controlled-origin-chat-malformed",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.52",
+        "timestamp": 49947.974961,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.53",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/normal?id=chrome-controlled-origin-responses-normal",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.53",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/normal?id=chrome-controlled-origin-responses-normal",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.53",
+        "timestamp": 49949.55712,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.54",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/error?id=chrome-controlled-origin-responses-error",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.54",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/error?id=chrome-controlled-origin-responses-error",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.54",
+        "timestamp": 49950.450249,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.55",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/first-error?id=chrome-controlled-origin-responses-first-error",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.55",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/first-error?id=chrome-controlled-origin-responses-first-error",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.55",
+        "timestamp": 49951.249214,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.56",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/http-error?id=chrome-controlled-origin-responses-http-error",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.56",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/http-error?id=chrome-controlled-origin-responses-http-error",
+      "status": 429,
+      "protocol": "h2"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 429 ()",
+          "timestamp": 1792103127566.47,
+          "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/http-error?id=chrome-controlled-origin-responses-http-error",
+          "networkRequestId": "5316.56"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.57",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/eof?id=chrome-controlled-origin-responses-eof",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.57",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/eof?id=chrome-controlled-origin-responses-eof",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.57",
+        "timestamp": 49953.154046,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.58",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/disconnect?id=chrome-controlled-origin-responses-disconnect",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.58",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/disconnect?id=chrome-controlled-origin-responses-disconnect",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.58",
+        "timestamp": 49953.866647,
+        "type": "Fetch",
+        "errorText": "net::ERR_HTTP2_PROTOCOL_ERROR",
+        "canceled": false
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_HTTP2_PROTOCOL_ERROR",
+          "timestamp": 1792103129965.804,
+          "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/disconnect?id=chrome-controlled-origin-responses-disconnect",
+          "networkRequestId": "5316.58"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.59",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/abort?id=chrome-controlled-origin-responses-abort",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.59",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/abort?id=chrome-controlled-origin-responses-abort",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.59",
+        "timestamp": 49954.447506,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.60",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/stale?id=chrome-controlled-origin-responses-stale",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.60",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/stale?id=chrome-controlled-origin-responses-stale",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.60",
+        "timestamp": 49955.711263,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.61",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/incomplete?id=chrome-controlled-origin-responses-incomplete",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.61",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/incomplete?id=chrome-controlled-origin-responses-incomplete",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.61",
+        "timestamp": 49956.60817,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.62",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/malformed?id=chrome-controlled-origin-responses-malformed",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.62",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/malformed?id=chrome-controlled-origin-responses-malformed",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.62",
+        "timestamp": 49957.477528,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.63",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/normal?id=chrome-controlled-origin-messages-normal",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.63",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/normal?id=chrome-controlled-origin-messages-normal",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.63",
+        "timestamp": 49957.680863,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.64",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/error?id=chrome-controlled-origin-messages-error",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.64",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/error?id=chrome-controlled-origin-messages-error",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.64",
+        "timestamp": 49957.896135,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.65",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/first-error?id=chrome-controlled-origin-messages-first-error",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.65",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/first-error?id=chrome-controlled-origin-messages-first-error",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.65",
+        "timestamp": 49958.143018,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.66",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/http-error?id=chrome-controlled-origin-messages-http-error",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.66",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/http-error?id=chrome-controlled-origin-messages-http-error",
+      "status": 429,
+      "protocol": "h2"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 429 ()",
+          "timestamp": 1792103134383.885,
+          "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/http-error?id=chrome-controlled-origin-messages-http-error",
+          "networkRequestId": "5316.66"
+        }
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.67",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/eof?id=chrome-controlled-origin-messages-eof",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.67",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/eof?id=chrome-controlled-origin-messages-eof",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.67",
+        "timestamp": 49958.454396,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.68",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/disconnect?id=chrome-controlled-origin-messages-disconnect",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.68",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/disconnect?id=chrome-controlled-origin-messages-disconnect",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.68",
+        "timestamp": 49958.675321,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.69",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/abort?id=chrome-controlled-origin-messages-abort",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.69",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/abort?id=chrome-controlled-origin-messages-abort",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.69",
+        "timestamp": 49958.908027,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.70",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/stale?id=chrome-controlled-origin-messages-stale",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.70",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/stale?id=chrome-controlled-origin-messages-stale",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.70",
+        "timestamp": 49959.156682,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.71",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/incomplete?id=chrome-controlled-origin-messages-incomplete",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.71",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/incomplete?id=chrome-controlled-origin-messages-incomplete",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.71",
+        "timestamp": 49959.360529,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.72",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/malformed?id=chrome-controlled-origin-messages-malformed",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.72",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/messages/malformed?id=chrome-controlled-origin-messages-malformed",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.72",
+        "timestamp": 49959.563773,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "5316.73",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/alias?id=chrome-controlled-origin-responses-alias",
+      "httpMethod": "POST"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "5316.73",
+      "url": "https://1fed-156-204-70-131.ngrok-free.app/fixture/responses/alias?id=chrome-controlled-origin-responses-alias",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "5316.73",
+        "timestamp": 49960.103848,
+        "type": "Fetch",
+        "errorText": "net::ERR_ABORTED",
+        "canceled": true
+      },
+      "sessionId": "2A7D98D04C8F24727DFA02AA28A379E5"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "497372EB26E9FB74D4C05B74722F3ABA",
+      "url": "https://example.com/",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "497372EB26E9FB74D4C05B74722F3ABA",
+      "url": "https://example.com/",
+      "status": 200,
+      "protocol": "h2"
+    },
+    {
+      "method": "Network.requestWillBeSent",
+      "requestId": "2336.2",
+      "url": "https://example.com/s.js",
+      "httpMethod": "GET"
+    },
+    {
+      "method": "Network.responseReceived",
+      "requestId": "2336.2",
+      "url": "https://example.com/s.js",
+      "status": 200,
+      "protocol": "h2"
+    }
+  ]
+}

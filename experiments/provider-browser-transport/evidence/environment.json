@@ -1,0 +1,28 @@
+{
+  "origin": "https://1fed-156-204-70-131.ngrok-free.app",
+  "priorEvidenceManifest": "31BF0112573E0A18C1CAFDC4D67B11DD66574DFC911C11C9F3E46D36F37841F7",
+  "node": "v24.22.0",
+  "startedAt": "2026-10-15T22:24:22.7820058Z",
+  "browsers": [
+    {
+      "path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "name": "chrome",
+      "version": "155.0.8059.79"
+    },
+    {
+      "path": "C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe",
+      "name": "edge",
+      "version": "155.0.4283.45"
+    }
+  ],
+  "runtimeDir": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\kha21-provider-transport-20261016",
+  "os": {
+    "Caption": "Microsoft Windows 11 Pro",
+    "Version": "10.0.26300",
+    "BuildNumber": "26300"
+  },
+  "previewFailures": [
+    "Preview automation snapshot timed out after 15000ms.",
+    "Preview automation snapshot timed out after 15000ms."
+  ]
+}

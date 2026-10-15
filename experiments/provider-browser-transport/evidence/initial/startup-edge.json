@@ -1,0 +1,9 @@
+{
+  "browser": "edge",
+  "publicOrigin": "https://1fed-156-204-70-131.ngrok-free.app",
+  "startedAt": "2026-10-15T22:28:23.291Z",
+  "pages": [],
+  "catalogs": [],
+  "fixtures": [],
+  "error": "TypeError: fetch failed"
+}
