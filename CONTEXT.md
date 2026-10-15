@@ -30,3 +30,6 @@ A chess move proposed by a model opponent that may be legal or illegal. A format
 
 **Post-loss continuation**:
 Unscored practice from the position at which a model lost after repeated illegal move attempts. The original loss remains final.
+
+**Model resignation**:
+An explicit refusal by a model opponent to make a move, resulting in a loss for that model.
