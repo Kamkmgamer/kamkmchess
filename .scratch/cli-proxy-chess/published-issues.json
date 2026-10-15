@@ -1,0 +1,320 @@
+{
+  "map": {
+    "id": "eeaf292f-67aa-45db-b588-cb0cecfe2e4d",
+    "identifier": "KHA-5",
+    "url": "https://linear.app/kamkm/issue/KHA-5/find-the-way-to-the-cliproxyapi-chess-mvp"
+  },
+  "tickets": [
+    {
+      "key": "proxy-connectivity",
+      "title": "Determine how a public website can reach a player's CLIProxyAPI",
+      "type": "research",
+      "blockedBy": [],
+      "id": "61848eaf-2232-43bb-9331-3b9a8a9357ba",
+      "url": "https://linear.app/kamkm/issue/KHA-6/determine-how-a-public-website-can-reach-a-players-cliproxyapi",
+      "assigned": true,
+      "status": "In Progress",
+      "identifier": "KHA-6",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-8",
+            "title": "Choose supported proxy setups and credential handling"
+          }
+        ],
+        "blockedBy": [],
+        "relatedTo": [],
+        "duplicateOf": null
+      }
+    },
+    {
+      "key": "proxy-api",
+      "title": "Document CLIProxyAPI model discovery and move requests",
+      "type": "research",
+      "blockedBy": [],
+      "id": "8bf2c1b8-8559-45b2-b83d-990bd5c8a61a",
+      "url": "https://linear.app/kamkm/issue/KHA-7/document-cliproxyapi-model-discovery-and-move-requests",
+      "assigned": true,
+      "status": "In Progress",
+      "identifier": "KHA-7",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-10",
+            "title": "Define legal move selection and model failure behavior"
+          },
+          {
+            "id": "KHA-9",
+            "title": "Choose the model catalog and opponent selection rules"
+          },
+          {
+            "id": "KHA-8",
+            "title": "Choose supported proxy setups and credential handling"
+          }
+        ],
+        "blockedBy": [],
+        "relatedTo": [],
+        "duplicateOf": null
+      }
+    },
+    {
+      "key": "proxy-policy",
+      "title": "Choose supported proxy setups and credential handling",
+      "type": "grilling",
+      "blockedBy": [
+        "proxy-connectivity",
+        "proxy-api"
+      ],
+      "id": "4a8e16dd-06dd-41b4-b566-5fb42723ab91",
+      "url": "https://linear.app/kamkm/issue/KHA-8/choose-supported-proxy-setups-and-credential-handling",
+      "assigned": false,
+      "status": "Backlog",
+      "identifier": "KHA-8",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-13",
+            "title": "Choose the application architecture and data boundaries"
+          },
+          {
+            "id": "KHA-12",
+            "title": "Validate the connection and chess match interface"
+          }
+        ],
+        "blockedBy": [
+          {
+            "id": "KHA-7",
+            "title": "Document CLIProxyAPI model discovery and move requests"
+          },
+          {
+            "id": "KHA-6",
+            "title": "Determine how a public website can reach a player's CLIProxyAPI"
+          }
+        ],
+        "relatedTo": [],
+        "duplicateOf": null
+      }
+    },
+    {
+      "key": "model-selection",
+      "title": "Choose the model catalog and opponent selection rules",
+      "type": "grilling",
+      "blockedBy": [
+        "proxy-api"
+      ],
+      "id": "3443ba2f-5a93-4a49-ad9d-b2ef9f4b4956",
+      "url": "https://linear.app/kamkm/issue/KHA-9/choose-the-model-catalog-and-opponent-selection-rules",
+      "assigned": false,
+      "status": "Backlog",
+      "identifier": "KHA-9",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-13",
+            "title": "Choose the application architecture and data boundaries"
+          },
+          {
+            "id": "KHA-12",
+            "title": "Validate the connection and chess match interface"
+          }
+        ],
+        "blockedBy": [
+          {
+            "id": "KHA-7",
+            "title": "Document CLIProxyAPI model discovery and move requests"
+          }
+        ],
+        "relatedTo": [],
+        "duplicateOf": null
+      }
+    },
+    {
+      "key": "move-contract",
+      "title": "Define legal move selection and model failure behavior",
+      "type": "grilling",
+      "blockedBy": [
+        "proxy-api"
+      ],
+      "id": "72b8aab7-071b-41de-a974-fb015e798190",
+      "url": "https://linear.app/kamkm/issue/KHA-10/define-legal-move-selection-and-model-failure-behavior",
+      "assigned": false,
+      "status": "Backlog",
+      "identifier": "KHA-10",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-13",
+            "title": "Choose the application architecture and data boundaries"
+          },
+          {
+            "id": "KHA-12",
+            "title": "Validate the connection and chess match interface"
+          }
+        ],
+        "blockedBy": [
+          {
+            "id": "KHA-7",
+            "title": "Document CLIProxyAPI model discovery and move requests"
+          }
+        ],
+        "relatedTo": [],
+        "duplicateOf": null
+      }
+    },
+    {
+      "key": "match-lifecycle",
+      "title": "Define the MVP match lifecycle",
+      "type": "grilling",
+      "blockedBy": [],
+      "id": "b47092f0-b1b0-4ae1-9363-248a6a85edd2",
+      "url": "https://linear.app/kamkm/issue/KHA-11/define-the-mvp-match-lifecycle",
+      "assigned": false,
+      "status": "Backlog",
+      "identifier": "KHA-11",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-13",
+            "title": "Choose the application architecture and data boundaries"
+          },
+          {
+            "id": "KHA-12",
+            "title": "Validate the connection and chess match interface"
+          }
+        ],
+        "blockedBy": [],
+        "relatedTo": [],
+        "duplicateOf": null
+      }
+    },
+    {
+      "key": "interface",
+      "title": "Validate the connection and chess match interface",
+      "type": "prototype",
+      "blockedBy": [
+        "proxy-policy",
+        "model-selection",
+        "move-contract",
+        "match-lifecycle"
+      ],
+      "id": "1b1d6eee-7ef4-4cca-9130-c334f76e6ce2",
+      "url": "https://linear.app/kamkm/issue/KHA-12/validate-the-connection-and-chess-match-interface",
+      "assigned": false,
+      "status": "Backlog",
+      "identifier": "KHA-12",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-14",
+            "title": "Agree on MVP acceptance criteria and the specification handoff"
+          },
+          {
+            "id": "KHA-13",
+            "title": "Choose the application architecture and data boundaries"
+          }
+        ],
+        "blockedBy": [
+          {
+            "id": "KHA-11",
+            "title": "Define the MVP match lifecycle"
+          },
+          {
+            "id": "KHA-9",
+            "title": "Choose the model catalog and opponent selection rules"
+          },
+          {
+            "id": "KHA-10",
+            "title": "Define legal move selection and model failure behavior"
+          },
+          {
+            "id": "KHA-8",
+            "title": "Choose supported proxy setups and credential handling"
+          }
+        ],
+        "relatedTo": [],
+        "duplicateOf": null
+      }
+    },
+    {
+      "key": "architecture",
+      "title": "Choose the application architecture and data boundaries",
+      "type": "grilling",
+      "blockedBy": [
+        "proxy-policy",
+        "model-selection",
+        "move-contract",
+        "match-lifecycle",
+        "interface"
+      ],
+      "id": "da3b16b5-547a-4ea6-812f-c4c57008592a",
+      "url": "https://linear.app/kamkm/issue/KHA-13/choose-the-application-architecture-and-data-boundaries",
+      "assigned": false,
+      "status": "Backlog",
+      "identifier": "KHA-13",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-14",
+            "title": "Agree on MVP acceptance criteria and the specification handoff"
+          }
+        ],
+        "blockedBy": [
+          {
+            "id": "KHA-8",
+            "title": "Choose supported proxy setups and credential handling"
+          },
+          {
+            "id": "KHA-9",
+            "title": "Choose the model catalog and opponent selection rules"
+          },
+          {
+            "id": "KHA-10",
+            "title": "Define legal move selection and model failure behavior"
+          },
+          {
+            "id": "KHA-12",
+            "title": "Validate the connection and chess match interface"
+          },
+          {
+            "id": "KHA-11",
+            "title": "Define the MVP match lifecycle"
+          }
+        ],
+        "relatedTo": [],
+        "duplicateOf": null
+      }
+    },
+    {
+      "key": "acceptance",
+      "title": "Agree on MVP acceptance criteria and the specification handoff",
+      "type": "grilling",
+      "blockedBy": [
+        "interface",
+        "architecture"
+      ],
+      "id": "a55716ab-b2ca-4232-946b-04298b9090c1",
+      "url": "https://linear.app/kamkm/issue/KHA-14/agree-on-mvp-acceptance-criteria-and-the-specification-handoff",
+      "assigned": false,
+      "status": "Backlog",
+      "identifier": "KHA-14",
+      "nativeRelations": {
+        "blocks": [],
+        "blockedBy": [
+          {
+            "id": "KHA-12",
+            "title": "Validate the connection and chess match interface"
+          },
+          {
+            "id": "KHA-13",
+            "title": "Choose the application architecture and data boundaries"
+          }
+        ],
+        "relatedTo": [],
+        "duplicateOf": null
+      }
+    }
+  ],
+  "dependenciesWired": true,
+  "verifiedChildCount": 9,
+  "verifiedBlockingEdgeCount": 15
+}
