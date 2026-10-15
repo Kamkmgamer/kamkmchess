@@ -2,21 +2,26 @@
   "title": "Define legal move selection and model failure behavior",
   "issue": "KHA-10",
   "url": "https://linear.app/kamkm/issue/KHA-10/define-legal-move-selection-and-model-failure-behavior",
-  "taskId": "node:delegated-task:ace5ba90-f7c7-4994-bbde-c185a660573a",
+  "taskId": "node:delegated-task:6bd9e100-a0fa-479d-bf92-ca76e86236aa",
   "childThreadId": "thread:delegated-task:command%3Amcp%3Ae08672c0-c126-4db5-a062-3aa9342188fb%3Adelegate-task%3Awayfinder-chess-conversation-transfer-20261015-r1",
-  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:3",
+  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:4",
   "source": "The owner asked 'let's move to the next ticket' in the research child thread.",
   "taskStatus": "completed",
   "hasPendingChildRuns": false,
   "ticketStatus": "In Progress",
   "awaitingOwnerDecision": true,
-  "pendingQuestion": "Should corrective feedback explain the specific chess-rule violation or only say the move is illegal?",
-  "recommendation": "Explain the specific violation while leaving the replacement move to the model.",
+  "pendingQuestion": "How many correction retries should a model get per turn?",
+  "recommendation": "Allow 3 correction retries after the initial attempt, for 4 attempts total before requiring player action.",
   "priorModelSelectionTicket": "KHA-9 remains in progress; the mid-match compatibility-check question is unanswered.",
   "previousTaskIds": [
-    "node:delegated-task:c6918c8e-890b-4ea5-88ca-2b18d3377968"
+    "node:delegated-task:c6918c8e-890b-4ea5-88ca-2b18d3377968",
+    "node:delegated-task:ace5ba90-f7c7-4994-bbde-c185a660573a"
   ],
-  "terminalSummary": "Recorded: no legal-move list. The model chooses independently and can receive corrections.\n\nWhen it attempts an illegal move, should we explain **why**, such as “That leaves your king in check,” or simply say “Illegal move, try again”?\n\nI recommend explaining the specific violation while leaving the replacement move entirely to the model.",
+  "terminalSummary": "Corrections explain the rule violation, and the model chooses its replacement move. The correction retry limit remains open.",
   "acceptedDecision": "Do not supply a legal-move list or constrain the response to an enumeration of legal moves. The model proposes its own move and may receive corrections for mistakes.",
-  "discussionCommentId": "64c107b9-2653-44f4-8496-2de310dbcb81"
+  "discussionCommentId": "64c107b9-2653-44f4-8496-2de310dbcb81",
+  "acceptedDecisions": [
+    "Do not supply a legal-move list or constrain the response to an enumeration of legal moves. The model proposes its own move and may receive corrections for mistakes.",
+    "Corrections explain the specific chess-rule violation without suggesting a replacement move or supplying the legal-move list. The model chooses its own replacement."
+  ]
 }
