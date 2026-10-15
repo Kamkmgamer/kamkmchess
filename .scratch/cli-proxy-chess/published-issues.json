@@ -43,10 +43,14 @@
       "id": "8bf2c1b8-8559-45b2-b83d-990bd5c8a61a",
       "url": "https://linear.app/kamkm/issue/KHA-7/document-cliproxyapi-model-discovery-and-move-requests",
       "assigned": true,
-      "status": "In Progress",
+      "status": "Done",
       "identifier": "KHA-7",
       "nativeRelations": {
         "blocks": [
+          {
+            "id": "KHA-15",
+            "title": "Verify browser-to-proxy connectivity with synthetic credentials"
+          },
           {
             "id": "KHA-10",
             "title": "Define legal move selection and model failure behavior"
@@ -60,14 +64,18 @@
             "title": "Choose supported proxy setups and credential handling"
           },
           {
-            "id": "KHA-15",
-            "title": "Verify browser-to-proxy connectivity with synthetic credentials"
+            "id": "KHA-16",
+            "title": "Establish provider rules for subscription-backed proxy access"
           }
         ],
         "blockedBy": [],
         "relatedTo": [],
         "duplicateOf": null
-      }
+      },
+      "commit": "8d73d613df4e87f7dca6734ce40dcc60e4ff772a",
+      "researchFile": "C:/Users/Lenovo/.t3/worktrees/kamkmchess/t3-7760dfcf/research/proxy-api.md",
+      "resolutionCommentId": "1edddfd1-8d2d-4a04-bd17-c29e02177087",
+      "attachmentId": "9c0f4df1-4a8f-4dd7-b343-82414857def3"
     },
     {
       "key": "proxy-policy",
@@ -76,7 +84,8 @@
       "blockedBy": [
         "proxy-connectivity",
         "proxy-api",
-        "connectivity-check"
+        "connectivity-check",
+        "access-policy"
       ],
       "id": "4a8e16dd-06dd-41b4-b566-5fb42723ab91",
       "url": "https://linear.app/kamkm/issue/KHA-8/choose-supported-proxy-setups-and-credential-handling",
@@ -95,6 +104,10 @@
           }
         ],
         "blockedBy": [
+          {
+            "id": "KHA-17",
+            "title": "Choose supported model access and usage disclosure"
+          },
           {
             "id": "KHA-15",
             "title": "Verify browser-to-proxy connectivity with synthetic credentials"
@@ -117,7 +130,8 @@
       "title": "Choose the model catalog and opponent selection rules",
       "type": "grilling",
       "blockedBy": [
-        "proxy-api"
+        "proxy-api",
+        "access-policy"
       ],
       "id": "3443ba2f-5a93-4a49-ad9d-b2ef9f4b4956",
       "url": "https://linear.app/kamkm/issue/KHA-9/choose-the-model-catalog-and-opponent-selection-rules",
@@ -136,6 +150,10 @@
           }
         ],
         "blockedBy": [
+          {
+            "id": "KHA-17",
+            "title": "Choose supported model access and usage disclosure"
+          },
           {
             "id": "KHA-7",
             "title": "Document CLIProxyAPI model discovery and move requests"
@@ -363,9 +381,76 @@
         "relatedTo": [],
         "duplicateOf": null
       }
+    },
+    {
+      "key": "provider-access",
+      "title": "Establish provider rules for subscription-backed proxy access",
+      "type": "research",
+      "blockedBy": [
+        "proxy-api"
+      ],
+      "id": "f9391f61-0572-4d82-995d-e86753e3e8f3",
+      "identifier": "KHA-16",
+      "url": "https://linear.app/kamkm/issue/KHA-16/establish-provider-rules-for-subscription-backed-proxy-access",
+      "assigned": true,
+      "status": "In Progress",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-17",
+            "title": "Choose supported model access and usage disclosure"
+          }
+        ],
+        "blockedBy": [
+          {
+            "id": "KHA-7",
+            "title": "Document CLIProxyAPI model discovery and move requests"
+          }
+        ],
+        "relatedTo": [],
+        "duplicateOf": null
+      }
+    },
+    {
+      "key": "access-policy",
+      "title": "Choose supported model access and usage disclosure",
+      "type": "grilling",
+      "blockedBy": [
+        "provider-access"
+      ],
+      "id": "8959935d-248e-4291-90b0-aedb66ea136c",
+      "identifier": "KHA-17",
+      "url": "https://linear.app/kamkm/issue/KHA-17/choose-supported-model-access-and-usage-disclosure",
+      "assigned": false,
+      "status": "Backlog",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-8",
+            "title": "Choose supported proxy setups and credential handling"
+          },
+          {
+            "id": "KHA-9",
+            "title": "Choose the model catalog and opponent selection rules"
+          }
+        ],
+        "blockedBy": [
+          {
+            "id": "KHA-16",
+            "title": "Establish provider rules for subscription-backed proxy access"
+          }
+        ],
+        "relatedTo": [
+          {
+            "id": "KHA-7",
+            "title": "Document CLIProxyAPI model discovery and move requests"
+          }
+        ],
+        "duplicateOf": null
+      }
     }
   ],
   "dependenciesWired": true,
-  "verifiedChildCount": 10,
-  "verifiedBlockingEdgeCount": 18
+  "verifiedChildCount": 12,
+  "verifiedBlockingEdgeCount": 22
 }
