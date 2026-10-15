@@ -48,5 +48,5 @@
   "researchFile": "research/provider-endpoints.md",
   "scope": "Documentation/source research only. No live provider calls, keys, paid usage, implementation, or deployment.",
   "decisionCommentId": "724ecd5d-76e3-4001-9eca-6df13da1a33c",
-  "credentialPreference": "Pending owner answer to session default with optional device saving."
+  "credentialPreference": "Owner selected device-local AI credential saving by default. No hosted storage or account sync of credentials."
 }
