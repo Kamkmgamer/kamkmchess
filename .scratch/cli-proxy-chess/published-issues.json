@@ -102,7 +102,7 @@
       "id": "4a8e16dd-06dd-41b4-b566-5fb42723ab91",
       "url": "https://linear.app/kamkm/issue/KHA-8/choose-provider-connections-and-credential-handling",
       "assigned": true,
-      "status": "In Progress",
+      "status": "Done",
       "identifier": "KHA-8",
       "nativeRelations": {
         "blocks": [
@@ -157,7 +157,16 @@
         ],
         "duplicateOf": null
       },
-      "discussionCommentId": "724ecd5d-76e3-4001-9eca-6df13da1a33c"
+      "discussionCommentId": "724ecd5d-76e3-4001-9eca-6df13da1a33c",
+      "resolutionCommentId": "bab521f6-8e67-4a3c-8b7e-0c18df1cd564",
+      "launchAcceptanceTargets": [
+        "Windows desktop Chrome",
+        "Windows desktop Edge",
+        "Windows desktop Firefox",
+        "macOS desktop Safari",
+        "iOS mobile Safari",
+        "Android mobile Chrome"
+      ]
     },
     {
       "key": "model-selection",
