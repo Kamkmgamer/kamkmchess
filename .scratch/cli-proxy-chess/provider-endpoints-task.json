@@ -4,10 +4,14 @@
     "identifier": "KHA-20",
     "title": "Establish direct-browser provider protocols and endpoint compatibility",
     "url": "https://linear.app/kamkm/issue/KHA-20/establish-direct-browser-provider-protocols-and-endpoint-compatibility",
-    "status": "In Progress",
+    "status": "Done",
     "assigned": true,
     "nativeRelations": {
       "blocks": [
+        {
+          "id": "KHA-21",
+          "title": "Verify provider browser preflights and synthetic streaming"
+        },
         {
           "id": "KHA-9",
           "title": "Choose the model catalog and opponent selection rules"
@@ -43,10 +47,56 @@
   "childThreadId": "thread:delegated-task:command%3Amcp%3A7ce357ab-f0cc-4b03-9b16-69021b10d657%3Adelegate-task%3Akha20-provider-protocols-research-20261016-r1",
   "providerInstanceId": "codex",
   "model": "gpt-6.1-sol",
-  "status": "running",
+  "status": "completed",
   "clientRequestId": "kha20-provider-protocols-research-20261016-r1",
   "researchFile": "research/provider-endpoints.md",
   "scope": "Documentation/source research only. No live provider calls, keys, paid usage, implementation, or deployment.",
   "decisionCommentId": "724ecd5d-76e3-4001-9eca-6df13da1a33c",
-  "credentialPreference": "Owner selected device-local AI credential saving by default. No hosted storage or account sync of credentials."
+  "credentialPreference": "Owner selected device-local AI credential saving by default. No hosted storage or account sync of credentials.",
+  "branch": "t3/research-provider-endpoints",
+  "worktree": "C:/Users/Lenovo/.t3/worktrees/kamkmchess/t3-a030e5fe",
+  "researchCommit": "597d96882a9194ebbb967d9bed99a396451a18ba",
+  "integratedReportCommit": "1bcd1d05f3ccf6f217a630cad68b109053c97d43",
+  "attachmentId": "443940bd-a7d8-4db5-afe7-9ad2cbf31b66",
+  "reportSha256": "c58e76a9d0bb5b5fefbb510fa74955fcda166ab95d79ff6543c2b9d24dfd1278",
+  "reportSize": 36206,
+  "attachmentDownloadVerified": true,
+  "resolutionCommentId": "49f7a00d-8172-4c2a-a5eb-e1ddce4099e0",
+  "followUpIssue": {
+    "id": "88940540-4f05-4dde-94fc-5c6796482949",
+    "identifier": "KHA-21",
+    "title": "Verify provider browser preflights and synthetic streaming",
+    "url": "https://linear.app/kamkm/issue/KHA-21/verify-provider-browser-preflights-and-synthetic-streaming",
+    "status": "Backlog",
+    "assigned": false,
+    "nativeRelations": {
+      "blocks": [
+        {
+          "id": "KHA-8",
+          "title": "Choose provider connections and credential handling"
+        }
+      ],
+      "blockedBy": [
+        {
+          "id": "KHA-20",
+          "title": "Establish direct-browser provider protocols and endpoint compatibility"
+        }
+      ],
+      "relatedTo": [
+        {
+          "id": "KHA-14",
+          "title": "Agree on MVP acceptance criteria and the specification handoff"
+        },
+        {
+          "id": "KHA-9",
+          "title": "Choose the model catalog and opponent selection rules"
+        },
+        {
+          "id": "KHA-13",
+          "title": "Choose the application architecture and data boundaries"
+        }
+      ],
+      "duplicateOf": null
+    }
+  }
 }
