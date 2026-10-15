@@ -516,7 +516,7 @@
       "identifier": "KHA-18",
       "url": "https://linear.app/kamkm/issue/KHA-18/determine-how-conversation-history-transfers-between-model-families",
       "assigned": true,
-      "status": "In Progress",
+      "status": "Done",
       "nativeRelations": {
         "blocks": [
           {
@@ -539,7 +539,11 @@
       },
       "blockedBy": [
         "proxy-api"
-      ]
+      ],
+      "commit": "7c12e10529b68ee5d85c79d59e342c6493a0196a",
+      "researchFile": "C:/Users/Lenovo/.t3/worktrees/kamkmchess/t3-164a044e/research/conversation-transfer.md",
+      "resolutionCommentId": "4c4dca72-bc43-483d-92e4-d2a00eac9b43",
+      "attachmentId": "eb3a2a3a-c144-4137-9ced-a3cbc15bbb48"
     }
   ],
   "dependenciesWired": true,
