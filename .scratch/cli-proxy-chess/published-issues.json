@@ -249,9 +249,10 @@
       ],
       "id": "b47092f0-b1b0-4ae1-9363-248a6a85edd2",
       "url": "https://linear.app/kamkm/issue/KHA-11/define-the-mvp-match-lifecycle",
-      "assigned": false,
-      "status": "Backlog",
+      "assigned": true,
+      "status": "Done",
       "identifier": "KHA-11",
+      "resolutionCommentId": "084530f6-8495-4a8c-b5b8-bcc93f7b10ac",
       "nativeRelations": {
         "blocks": [
           {
@@ -270,6 +271,18 @@
           }
         ],
         "relatedTo": [
+          {
+            "id": "KHA-14",
+            "title": "Agree on MVP acceptance criteria and the specification handoff"
+          },
+          {
+            "id": "KHA-9",
+            "title": "Choose the model catalog and opponent selection rules"
+          },
+          {
+            "id": "KHA-8",
+            "title": "Choose supported proxy setups and credential handling"
+          },
           {
             "id": "KHA-10",
             "title": "Define legal move selection and model failure behavior"
