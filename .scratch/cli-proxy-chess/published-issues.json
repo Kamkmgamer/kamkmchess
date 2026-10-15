@@ -193,8 +193,8 @@
       ],
       "id": "72b8aab7-071b-41de-a974-fb015e798190",
       "url": "https://linear.app/kamkm/issue/KHA-10/define-legal-move-selection-and-model-failure-behavior",
-      "assigned": false,
-      "status": "Backlog",
+      "assigned": true,
+      "status": "In Progress",
       "identifier": "KHA-10",
       "nativeRelations": {
         "blocks": [
