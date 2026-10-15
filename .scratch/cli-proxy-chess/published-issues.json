@@ -230,7 +230,8 @@
         "proxy-policy",
         "model-selection",
         "move-contract",
-        "match-lifecycle"
+        "match-lifecycle",
+        "provider-access"
       ],
       "id": "1b1d6eee-7ef4-4cca-9130-c334f76e6ce2",
       "url": "https://linear.app/kamkm/issue/KHA-12/validate-the-connection-and-chess-match-interface",
@@ -250,6 +251,10 @@
         ],
         "blockedBy": [
           {
+            "id": "KHA-16",
+            "title": "Establish provider rules for subscription-backed proxy access"
+          },
+          {
             "id": "KHA-11",
             "title": "Define the MVP match lifecycle"
           },
@@ -266,7 +271,12 @@
             "title": "Choose supported proxy setups and credential handling"
           }
         ],
-        "relatedTo": [],
+        "relatedTo": [
+          {
+            "id": "KHA-17",
+            "title": "Choose supported model access and usage disclosure"
+          }
+        ],
         "duplicateOf": null
       }
     },
@@ -397,8 +407,8 @@
       "nativeRelations": {
         "blocks": [
           {
-            "id": "KHA-17",
-            "title": "Choose supported model access and usage disclosure"
+            "id": "KHA-12",
+            "title": "Validate the connection and chess match interface"
           }
         ],
         "blockedBy": [
@@ -407,7 +417,12 @@
             "title": "Document CLIProxyAPI model discovery and move requests"
           }
         ],
-        "relatedTo": [],
+        "relatedTo": [
+          {
+            "id": "KHA-17",
+            "title": "Choose supported model access and usage disclosure"
+          }
+        ],
         "duplicateOf": null
       }
     },
@@ -415,14 +430,12 @@
       "key": "access-policy",
       "title": "Choose supported model access and usage disclosure",
       "type": "grilling",
-      "blockedBy": [
-        "provider-access"
-      ],
+      "blockedBy": [],
       "id": "8959935d-248e-4291-90b0-aedb66ea136c",
       "identifier": "KHA-17",
       "url": "https://linear.app/kamkm/issue/KHA-17/choose-supported-model-access-and-usage-disclosure",
-      "assigned": false,
-      "status": "Backlog",
+      "assigned": true,
+      "status": "Done",
       "nativeRelations": {
         "blocks": [
           {
@@ -434,20 +447,32 @@
             "title": "Choose the model catalog and opponent selection rules"
           }
         ],
-        "blockedBy": [
+        "blockedBy": [],
+        "relatedTo": [
           {
             "id": "KHA-16",
             "title": "Establish provider rules for subscription-backed proxy access"
-          }
-        ],
-        "relatedTo": [
+          },
           {
             "id": "KHA-7",
             "title": "Document CLIProxyAPI model discovery and move requests"
+          },
+          {
+            "id": "KHA-13",
+            "title": "Choose the application architecture and data boundaries"
+          },
+          {
+            "id": "KHA-14",
+            "title": "Agree on MVP acceptance criteria and the specification handoff"
+          },
+          {
+            "id": "KHA-12",
+            "title": "Validate the connection and chess match interface"
           }
         ],
         "duplicateOf": null
-      }
+      },
+      "resolutionCommentId": "89ae3dca-03b6-4354-87d3-d28d784b593c"
     }
   ],
   "dependenciesWired": true,
