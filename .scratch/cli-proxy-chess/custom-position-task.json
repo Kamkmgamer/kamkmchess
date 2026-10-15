@@ -2,25 +2,26 @@
   "title": "Define custom starting positions and position editor",
   "issue": "KHA-19",
   "url": "https://linear.app/kamkm/issue/KHA-19/define-custom-starting-positions-and-position-editor",
-  "taskId": "node:delegated-task:8f90c014-e3ab-45cf-9abd-1fd047b6512d",
+  "taskId": "node:delegated-task:316a593e-e547-441d-b0dc-34e90bf40154",
   "childThreadId": "thread:delegated-task:command%3Amcp%3Ae08672c0-c126-4db5-a062-3aa9342188fb%3Adelegate-task%3Awayfinder-chess-conversation-transfer-20261015-r1",
-  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:20",
+  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:21",
   "taskStatus": "completed",
   "hasPendingChildRuns": false,
   "source": "The owner requested custom starting positions during the move-contract discussion in the child thread.",
   "ticketStatus": "In Progress",
   "awaitingOwnerDecision": true,
-  "pendingQuestion": "Should editing a position from an existing game start a separate custom-position game, preserving the original game and its result?",
-  "recommendation": "Create separate custom-position play and preserve the original game and result.",
+  "pendingQuestion": "Should the new custom-position game use fresh model context with the usual instructions, FEN, and piece list, leaving the previous conversation with the original game?",
+  "recommendation": "Use fresh context for the new custom-position game.",
   "acceptedScope": "The MVP includes human-selected starting positions for play against a model opponent. Chess.com and Lichess are familiar examples, without a decision to copy their full feature sets.",
   "discussionCommentId": "549fc01e-8804-423d-a6f1-338981f2ae3d",
-  "sourcePosition": 282,
-  "terminalSummary": "Custom-position games record their own result labeled Custom position. Editing an existing game remains undecided.",
+  "sourcePosition": 290,
+  "terminalSummary": "Starting from an edited position creates a separate custom-position game and preserves the original. Initial model context remains undecided.",
   "previousTaskIds": [
     "node:delegated-task:de86e109-ab59-4efe-b855-5bdeda7d6efd",
     "node:delegated-task:d6196226-bb64-4c7d-a557-d690ad65a209",
     "node:delegated-task:302b9ca8-fb0e-4780-8c0b-51887bdcf248",
-    "node:delegated-task:6019077a-1ba8-4438-a9f5-68243773a5af"
+    "node:delegated-task:6019077a-1ba8-4438-a9f5-68243773a5af",
+    "node:delegated-task:8f90c014-e3ab-45cf-9abd-1fd047b6512d"
   ],
   "acceptedInputMethods": [
     "Visual board editor for arranging pieces.",
@@ -53,5 +54,11 @@
     ],
     "label": "Custom position",
     "practiceException": "Post-loss continuation remains unscored under the move-contract decision."
+  },
+  "acceptedExistingGameEditing": {
+    "startFromEditedPosition": "Create a separate custom-position game.",
+    "originalGame": "Preserve it and any recorded result.",
+    "newGameResult": "Use the accepted Custom position result policy.",
+    "initialContext": "Awaiting owner decision."
   }
 }
