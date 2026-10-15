@@ -27,3 +27,6 @@ The accumulated instructions, game inputs, and model replies in a chess match, i
 
 **Move attempt**:
 A move proposed by a model opponent that may be legal or illegal.
+
+**Post-loss continuation**:
+Optional play from the position at which a model lost after repeated illegal move attempts.
