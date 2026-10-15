@@ -2,7 +2,7 @@
 
 This project uses Linear. The user explicitly selected Linear for the CLIProxyAPI chess MVP wayfinder effort.
 
-The canonical map is [Find the way to the CLIProxyAPI chess MVP](https://linear.app/kamkm/issue/KHA-5/find-the-way-to-the-cliproxyapi-chess-mvp), in the khalil workspace and Khalil team. It currently has twelve child issues and 22 native blocking relationships. Each added issue and dependency has been read back after publication. All three research tickets are resolved. Their returned URLs and relationships are recorded in `.scratch/cli-proxy-chess/published-issues.json`. Query Linear for current state before taking work.
+The canonical map is [Find the way to the CLIProxyAPI chess MVP](https://linear.app/kamkm/issue/KHA-5/find-the-way-to-the-cliproxyapi-chess-mvp), in the khalil workspace and Khalil team. Its child issues use native blocking relationships. Each added issue and dependency has been read back after publication. The original three research tickets are resolved. Conversation-transfer research is in progress alongside the model-selection discussion. Returned URLs and relationships are recorded in `.scratch/cli-proxy-chess/published-issues.json`, and its delegated task is recorded in `.scratch/cli-proxy-chess/conversation-transfer-task.json`. Query Linear for current state before taking work.
 
 Linear's official MCP server is configured as `linear` at `https://mcp.linear.app/mcp` and authenticated through Codex OAuth. Prefer its tools when the running session exposes them. Keep credentials in the client's credential store, never in this repository. Files under `.scratch/cli-proxy-chess/` are publication drafts and connection records, not a second canonical tracker.
 

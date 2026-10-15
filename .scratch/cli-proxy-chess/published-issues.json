@@ -48,6 +48,14 @@
       "nativeRelations": {
         "blocks": [
           {
+            "id": "KHA-18",
+            "title": "Determine how conversation history transfers between model families"
+          },
+          {
+            "id": "KHA-16",
+            "title": "Establish provider rules for subscription-backed proxy access"
+          },
+          {
             "id": "KHA-15",
             "title": "Verify browser-to-proxy connectivity with synthetic credentials"
           },
@@ -62,14 +70,15 @@
           {
             "id": "KHA-8",
             "title": "Choose supported proxy setups and credential handling"
-          },
-          {
-            "id": "KHA-16",
-            "title": "Establish provider rules for subscription-backed proxy access"
           }
         ],
         "blockedBy": [],
-        "relatedTo": [],
+        "relatedTo": [
+          {
+            "id": "KHA-17",
+            "title": "Choose supported model access and usage disclosure"
+          }
+        ],
         "duplicateOf": null
       },
       "commit": "8d73d613df4e87f7dca6734ce40dcc60e4ff772a",
@@ -130,13 +139,14 @@
       "title": "Choose the model catalog and opponent selection rules",
       "type": "grilling",
       "blockedBy": [
-        "proxy-api",
-        "access-policy"
+        "conversation-transfer",
+        "access-policy",
+        "proxy-api"
       ],
       "id": "3443ba2f-5a93-4a49-ad9d-b2ef9f4b4956",
       "url": "https://linear.app/kamkm/issue/KHA-9/choose-the-model-catalog-and-opponent-selection-rules",
-      "assigned": false,
-      "status": "Backlog",
+      "assigned": true,
+      "status": "In Progress",
       "identifier": "KHA-9",
       "nativeRelations": {
         "blocks": [
@@ -151,6 +161,10 @@
         ],
         "blockedBy": [
           {
+            "id": "KHA-18",
+            "title": "Determine how conversation history transfers between model families"
+          },
+          {
             "id": "KHA-17",
             "title": "Choose supported model access and usage disclosure"
           },
@@ -159,15 +173,22 @@
             "title": "Document CLIProxyAPI model discovery and move requests"
           }
         ],
-        "relatedTo": [],
+        "relatedTo": [
+          {
+            "id": "KHA-10",
+            "title": "Define legal move selection and model failure behavior"
+          }
+        ],
         "duplicateOf": null
-      }
+      },
+      "discussionCommentId": "67123683-4f0f-4ad6-aa83-62a28fea887f"
     },
     {
       "key": "move-contract",
       "title": "Define legal move selection and model failure behavior",
       "type": "grilling",
       "blockedBy": [
+        "conversation-transfer",
         "proxy-api"
       ],
       "id": "72b8aab7-071b-41de-a974-fb015e798190",
@@ -188,11 +209,20 @@
         ],
         "blockedBy": [
           {
+            "id": "KHA-18",
+            "title": "Determine how conversation history transfers between model families"
+          },
+          {
             "id": "KHA-7",
             "title": "Document CLIProxyAPI model discovery and move requests"
           }
         ],
-        "relatedTo": [],
+        "relatedTo": [
+          {
+            "id": "KHA-9",
+            "title": "Choose the model catalog and opponent selection rules"
+          }
+        ],
         "duplicateOf": null
       }
     },
@@ -477,9 +507,42 @@
         "duplicateOf": null
       },
       "resolutionCommentId": "89ae3dca-03b6-4354-87d3-d28d784b593c"
+    },
+    {
+      "key": "conversation-transfer",
+      "type": "research",
+      "title": "Determine how conversation history transfers between model families",
+      "id": "2e7dc947-2b24-49e3-b1e6-5fe846ceafdb",
+      "identifier": "KHA-18",
+      "url": "https://linear.app/kamkm/issue/KHA-18/determine-how-conversation-history-transfers-between-model-families",
+      "assigned": true,
+      "status": "In Progress",
+      "nativeRelations": {
+        "blocks": [
+          {
+            "id": "KHA-10",
+            "title": "Define legal move selection and model failure behavior"
+          },
+          {
+            "id": "KHA-9",
+            "title": "Choose the model catalog and opponent selection rules"
+          }
+        ],
+        "blockedBy": [
+          {
+            "id": "KHA-7",
+            "title": "Document CLIProxyAPI model discovery and move requests"
+          }
+        ],
+        "relatedTo": [],
+        "duplicateOf": null
+      },
+      "blockedBy": [
+        "proxy-api"
+      ]
     }
   ],
   "dependenciesWired": true,
-  "verifiedChildCount": 12,
-  "verifiedBlockingEdgeCount": 22
+  "verifiedChildCount": 13,
+  "verifiedBlockingEdgeCount": 25
 }
