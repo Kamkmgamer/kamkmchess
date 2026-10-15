@@ -2,26 +2,34 @@
   "title": "Define legal move selection and model failure behavior",
   "issue": "KHA-10",
   "url": "https://linear.app/kamkm/issue/KHA-10/define-legal-move-selection-and-model-failure-behavior",
-  "taskId": "node:delegated-task:6bd9e100-a0fa-479d-bf92-ca76e86236aa",
+  "taskId": "node:delegated-task:e6e15088-9719-4ee8-9bf6-aaea62320445",
   "childThreadId": "thread:delegated-task:command%3Amcp%3Ae08672c0-c126-4db5-a062-3aa9342188fb%3Adelegate-task%3Awayfinder-chess-conversation-transfer-20261015-r1",
-  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:4",
+  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:5",
   "source": "The owner asked 'let's move to the next ticket' in the research child thread.",
   "taskStatus": "completed",
   "hasPendingChildRuns": false,
   "ticketStatus": "In Progress",
   "awaitingOwnerDecision": true,
-  "pendingQuestion": "How many correction retries should a model get per turn?",
-  "recommendation": "Allow 3 correction retries after the initial attempt, for 4 attempts total before requiring player action.",
+  "pendingQuestion": "After all four illegal-move attempts fail, should the match pause with Retry and Switch model options, or count as a model loss?",
+  "recommendation": "Pause at the unchanged position and let the player choose how to continue.",
   "priorModelSelectionTicket": "KHA-9 remains in progress; the mid-match compatibility-check question is unanswered.",
   "previousTaskIds": [
     "node:delegated-task:c6918c8e-890b-4ea5-88ca-2b18d3377968",
-    "node:delegated-task:ace5ba90-f7c7-4994-bbde-c185a660573a"
+    "node:delegated-task:ace5ba90-f7c7-4994-bbde-c185a660573a",
+    "node:delegated-task:6bd9e100-a0fa-479d-bf92-ca76e86236aa"
   ],
-  "terminalSummary": "Corrections explain the rule violation, and the model chooses its replacement move. The correction retry limit remains open.",
+  "terminalSummary": "Recorded: four attempts per turn.\n\nIf all four fail, should the match **pause with Retry and Switch model options**, or count as a loss for the model?\n\nI recommend pausing at the unchanged position and letting the player choose how to continue.",
   "acceptedDecision": "Do not supply a legal-move list or constrain the response to an enumeration of legal moves. The model proposes its own move and may receive corrections for mistakes.",
   "discussionCommentId": "64c107b9-2653-44f4-8496-2de310dbcb81",
   "acceptedDecisions": [
     "Do not supply a legal-move list or constrain the response to an enumeration of legal moves. The model proposes its own move and may receive corrections for mistakes.",
-    "Corrections explain the specific chess-rule violation without suggesting a replacement move or supplying the legal-move list. The model chooses its own replacement."
-  ]
+    "Corrections explain the specific chess-rule violation without suggesting a replacement move or supplying the legal-move list. The model chooses its own replacement.",
+    "Allow three automatic correction retries after the initial illegal-move attempt, for four attempts total on the same turn. Exhaustion stops automatic retries and requires player action; the match outcome remains undecided."
+  ],
+  "acceptedRetryLimit": {
+    "initialAttempts": 1,
+    "automaticCorrectionRetries": 3,
+    "totalAttempts": 4,
+    "scope": "Illegal-move correction only. Malformed responses, refusals, transport failures, and proxy-internal retries remain undecided."
+  }
 }
