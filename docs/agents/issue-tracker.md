@@ -2,7 +2,7 @@
 
 This project uses Linear. The user explicitly selected Linear for the CLIProxyAPI chess MVP wayfinder effort.
 
-The canonical map is [Find the way to the CLIProxyAPI chess MVP](https://linear.app/kamkm/issue/KHA-5/find-the-way-to-the-cliproxyapi-chess-mvp), in the khalil workspace and Khalil team. Its child issues use native blocking relationships. Each added issue and dependency has been read back after publication. All four research tickets and the custom-starting-position decision are resolved; model-selection and move-contract discussions remain in progress. Returned URLs and relationships are recorded in `.scratch/cli-proxy-chess/published-issues.json`, and the conversation-transfer task is recorded in `.scratch/cli-proxy-chess/conversation-transfer-task.json`. Query Linear for current state before taking work.
+The canonical map is [Find the way to the CLIProxyAPI chess MVP](https://linear.app/kamkm/issue/KHA-5/find-the-way-to-the-cliproxyapi-chess-mvp), in the khalil workspace and Khalil team. Its child issues use native blocking relationships. Each added issue and dependency has been read back after publication. All four research tickets, the custom-starting-position decision, and the move-contract decision are resolved; model selection remains in progress. Returned URLs and relationships are recorded in `.scratch/cli-proxy-chess/published-issues.json`, and the conversation-transfer task is recorded in `.scratch/cli-proxy-chess/conversation-transfer-task.json`. Query Linear for current state before taking work.
 
 Linear's official MCP server is configured as `linear` at `https://mcp.linear.app/mcp` and authenticated through Codex OAuth. Prefer its tools when the running session exposes them. Keep credentials in the client's credential store, never in this repository. Files under `.scratch/cli-proxy-chess/` are publication drafts and connection records, not a second canonical tracker.
 
@@ -20,4 +20,5 @@ If a running session lacks native Linear tools, `.scratch/cli-proxy-chess/linear
 - Keep open-ticket listings out of the map body. Query the children instead.
 - Refer to maps and tickets by linked titles in human-readable text.
 - Keep decision detail in its ticket. Link research and prototype assets from that ticket.
+- The owner delegated routine defaults after the repeated approval questions. Preserve explicit choices, choose routine defaults, and ask only about consequential tradeoffs. The source exchange is recorded in `.scratch/cli-proxy-chess/move-contract-task.json`.
 

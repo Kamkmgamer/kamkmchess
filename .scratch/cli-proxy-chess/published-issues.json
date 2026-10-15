@@ -194,7 +194,7 @@
       "id": "72b8aab7-071b-41de-a974-fb015e798190",
       "url": "https://linear.app/kamkm/issue/KHA-10/define-legal-move-selection-and-model-failure-behavior",
       "assigned": true,
-      "status": "In Progress",
+      "status": "Done",
       "identifier": "KHA-10",
       "nativeRelations": {
         "blocks": [
@@ -219,6 +219,10 @@
         ],
         "relatedTo": [
           {
+            "id": "KHA-14",
+            "title": "Agree on MVP acceptance criteria and the specification handoff"
+          },
+          {
             "id": "KHA-19",
             "title": "Define custom starting positions and position editor"
           },
@@ -233,7 +237,8 @@
         ],
         "duplicateOf": null
       },
-      "discussionCommentId": "64c107b9-2653-44f4-8496-2de310dbcb81"
+      "discussionCommentId": "64c107b9-2653-44f4-8496-2de310dbcb81",
+      "resolutionCommentId": "64c107b9-2653-44f4-8496-2de310dbcb81"
     },
     {
       "key": "match-lifecycle",
@@ -421,6 +426,10 @@
           }
         ],
         "relatedTo": [
+          {
+            "id": "KHA-10",
+            "title": "Define legal move selection and model failure behavior"
+          },
           {
             "id": "KHA-17",
             "title": "Choose supported model access and usage disclosure"
