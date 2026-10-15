@@ -24,3 +24,6 @@ A change of model opponent within an existing chess match.
 
 **Match conversation**:
 The accumulated instructions, game inputs, and model replies in a chess match, including any plans or reasoning the models returned.
+
+**Move attempt**:
+A move proposed by a model opponent that may be legal or illegal.

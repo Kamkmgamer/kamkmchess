@@ -2,15 +2,21 @@
   "title": "Define legal move selection and model failure behavior",
   "issue": "KHA-10",
   "url": "https://linear.app/kamkm/issue/KHA-10/define-legal-move-selection-and-model-failure-behavior",
-  "taskId": "node:delegated-task:c6918c8e-890b-4ea5-88ca-2b18d3377968",
+  "taskId": "node:delegated-task:ace5ba90-f7c7-4994-bbde-c185a660573a",
   "childThreadId": "thread:delegated-task:command%3Amcp%3Ae08672c0-c126-4db5-a062-3aa9342188fb%3Adelegate-task%3Awayfinder-chess-conversation-transfer-20261015-r1",
-  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:2",
+  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:3",
   "source": "The owner asked 'let's move to the next ticket' in the research child thread.",
   "taskStatus": "completed",
   "hasPendingChildRuns": false,
   "ticketStatus": "In Progress",
   "awaitingOwnerDecision": true,
-  "pendingQuestion": "Should the model receive every legal move to choose from, or determine legal moves itself?",
-  "recommendation": "Supply the legal-move list without rankings or evaluations alongside the entire prior conversation. The model chooses its move and strategy.",
-  "priorModelSelectionTicket": "KHA-9 remains in progress; the mid-match compatibility-check question is unanswered."
+  "pendingQuestion": "Should corrective feedback explain the specific chess-rule violation or only say the move is illegal?",
+  "recommendation": "Explain the specific violation while leaving the replacement move to the model.",
+  "priorModelSelectionTicket": "KHA-9 remains in progress; the mid-match compatibility-check question is unanswered.",
+  "previousTaskIds": [
+    "node:delegated-task:c6918c8e-890b-4ea5-88ca-2b18d3377968"
+  ],
+  "terminalSummary": "Recorded: no legal-move list. The model chooses independently and can receive corrections.\n\nWhen it attempts an illegal move, should we explain **why**, such as “That leaves your king in check,” or simply say “Illegal move, try again”?\n\nI recommend explaining the specific violation while leaving the replacement move entirely to the model.",
+  "acceptedDecision": "Do not supply a legal-move list or constrain the response to an enumeration of legal moves. The model proposes its own move and may receive corrections for mistakes.",
+  "discussionCommentId": "64c107b9-2653-44f4-8496-2de310dbcb81"
 }
