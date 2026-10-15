@@ -26,7 +26,7 @@ A change of model opponent within an existing chess match.
 The accumulated instructions, game inputs, and model replies in a chess match, including any plans or reasoning the models returned.
 
 **Move attempt**:
-A move proposed by a model opponent that may be legal or illegal.
+A chess move proposed by a model opponent that may be legal or illegal. A formatting error alone does not establish an illegal move.
 
 **Post-loss continuation**:
 Unscored practice from the position at which a model lost after repeated illegal move attempts. The original loss remains final.
