@@ -1,0 +1,17 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Synthetic browser-to-proxy transport check</title>
+<h1>Synthetic browser-to-proxy transport check</h1>
+<p>This disposable experiment uses only a fixed synthetic key and synthetic replies. It cannot route a request to a model.</p>
+<p>Use a browser's normal site permission controls to allow or deny local-network access. The experiment does not disable browser security.</p>
+<button id="run">Test HTTP loopback</button>
+<pre id="result">Ready.</pre>
+<script src="/probe.js"></script>
+<script>
+document.querySelector('#run').onclick = async () => {
+  const result = document.querySelector('#result');
+  result.textContent = 'Running…';
+  try { result.textContent = JSON.stringify(await kha15Probe({base: 'http://127.0.0.1:18765', label: 'manual-loopback', scope: 'baseline'}), null, 2); }
+  catch (error) { result.textContent = String(error); }
+};
+</script>

@@ -1,0 +1,1464 @@
+{
+  "browser": "edge",
+  "publicOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+  "startedAt": "2026-10-15T21:13:16.621Z",
+  "permissionOverrides": [
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "local-network-access",
+      "setting": "granted",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "local-network",
+      "setting": "granted",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "loopback-network",
+      "setting": "granted",
+      "applied": true
+    },
+    {
+      "origin": "https://example.com",
+      "permission": "local-network-access",
+      "setting": "denied",
+      "applied": true
+    },
+    {
+      "origin": "https://example.com",
+      "permission": "local-network",
+      "setting": "denied",
+      "applied": true
+    },
+    {
+      "origin": "https://example.com",
+      "permission": "loopback-network",
+      "setting": "denied",
+      "applied": true
+    }
+  ],
+  "pageStates": [
+    {
+      "url": "https://9f46-156-204-70-131.ngrok-free.app/harness",
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "title": "ERR_NGROK_6024 - You are about to visit 9f46-156-204-70-131.ngrok-free.app, served by 156.204.70.131. This website is served for free through ngrok.com. You should only visit this website if you trust whoever sent the link to you.",
+      "ready": "complete",
+      "text": "Skip to main content\n\nYou are about to visit:\n\n9f46-156-204-70-131.ngrok-free.app\n\nWebsite IP: 156.204.70.131\n\nThis website is served for free through ngrok.com.\nYou should only visit this website if you trust whoever sent the link to you.\nBe careful about disclosing personal or financial information like passwords, phone numbers, or credit cards.\nVisit Site\nAre you the developer?\n\nWe display this page to prevent abuse. Visitors to your site will only see it once.\n\nTo remove this page:\nSet and send an ngrok-skip-browser-warning request header with any value.\nOr, set and send a custom/non-standard browser User-Agent request header.\nOr, please upgrade to any paid ngrok account.\n\n Learn how ngrok fights abuse\n\nPowered by ngrok",
+      "buttons": [
+        {
+          "text": "Skip to main content",
+          "tag": "A"
+        },
+        {
+          "text": "ngrok.com",
+          "tag": "A"
+        },
+        {
+          "text": "Visit Site",
+          "tag": "BUTTON"
+        },
+        {
+          "text": "upgrade",
+          "tag": "A"
+        },
+        {
+          "text": "fights abuse",
+          "tag": "A"
+        },
+        {
+          "text": "ngrok",
+          "tag": "A"
+        }
+      ]
+    },
+    {
+      "url": "https://9f46-156-204-70-131.ngrok-free.app/harness",
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "title": "Synthetic browser-to-proxy transport check",
+      "ready": "complete",
+      "text": "Synthetic browser-to-proxy transport check\n\nThis disposable experiment uses only a fixed synthetic key and synthetic replies. It cannot route a request to a model.\n\nUse a browser's normal site permission controls to allow or deny local-network access. The experiment does not disable browser security.\n\nTest HTTP loopback\nReady.",
+      "buttons": [
+        {
+          "text": "Test HTTP loopback",
+          "tag": "BUTTON"
+        }
+      ]
+    },
+    {
+      "url": "https://example.com/",
+      "origin": "https://example.com",
+      "title": "Example Domain",
+      "ready": "complete",
+      "text": "This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\n\nهذا النطاق مُخصص للاستخدام في أمثلة التوثيق دون الحاجة إلى إذن. هذه ليست خدمة، يُرجى تجنب الاعتماد عليها لأغراض الاختبار والمراقبة.\n\n该域名仅用于文档示例，无需获得许可。这并非一项服务，请勿将其用于测试和监控目的。\n\nL’usage de ce domaine est réservé à des exemples de documentation, sans autorisation préalable. Il ne s’agit pas d’un service ; son utilisation à des fins de test ou de surveillance est à éviter.\n\nДанный домен предназначен для использования в примерах документации без необходимости получения предварительного разрешения. Это не сервис; не рекомендуется его использование для тестирования и мониторинга.\n\nEste dominio está destinado al uso en ejemplos de documentación sin necesidad de permiso. Esto no es un servicio; evitar utilizarlo para realizar pruebas o monitoreos.\n\nLearn more",
+      "buttons": [
+        {
+          "text": "Learn more",
+          "tag": "A"
+        }
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "utc": "2026-10-15T21:13:20.449Z",
+      "label": "edge-cors-audit-loopback",
+      "sourceOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "granted"
+        },
+        {
+          "name": "local-network",
+          "state": "granted"
+        },
+        {
+          "name": "loopback-network",
+          "state": "granted"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "baseline",
+      "rows": [
+        {
+          "case": "edge-cors-audit-loopback-baseline-Authorization-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-cors-audit-loopback-baseline-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 16
+        },
+        {
+          "case": "edge-cors-audit-loopback-baseline-Authorization-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/v1/chat/completions?case=edge-cors-audit-loopback-baseline-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 9
+        },
+        {
+          "case": "edge-cors-audit-loopback-baseline-X-Api-Key-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-cors-audit-loopback-baseline-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 7
+        },
+        {
+          "case": "edge-cors-audit-loopback-baseline-X-Api-Key-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/v1/chat/completions?case=edge-cors-audit-loopback-baseline-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 8
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:13:20.476Z",
+      "label": "edge-cors-audit-loopback",
+      "sourceOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "granted"
+        },
+        {
+          "name": "local-network",
+          "state": "granted"
+        },
+        {
+          "name": "loopback-network",
+          "state": "granted"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "restricted",
+      "rows": [
+        {
+          "case": "edge-cors-audit-loopback-restricted-Authorization-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/restricted/v1/models?case=edge-cors-audit-loopback-restricted-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 4
+        },
+        {
+          "case": "edge-cors-audit-loopback-restricted-Authorization-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/restricted/v1/chat/completions?case=edge-cors-audit-loopback-restricted-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "Content-Type"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 4
+        },
+        {
+          "case": "edge-cors-audit-loopback-restricted-X-Api-Key-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/restricted/v1/models?case=edge-cors-audit-loopback-restricted-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 8
+        },
+        {
+          "case": "edge-cors-audit-loopback-restricted-X-Api-Key-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/restricted/v1/chat/completions?case=edge-cors-audit-loopback-restricted-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 8
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:13:20.496Z",
+      "label": "edge-cors-audit-loopback",
+      "sourceOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "granted"
+        },
+        {
+          "name": "local-network",
+          "state": "granted"
+        },
+        {
+          "name": "loopback-network",
+          "state": "granted"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "blocked-origin",
+      "rows": [
+        {
+          "case": "edge-cors-audit-loopback-blocked-origin-Authorization-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/blocked-origin/v1/models?case=edge-cors-audit-loopback-blocked-origin-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 4
+        },
+        {
+          "case": "edge-cors-audit-loopback-blocked-origin-Authorization-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/blocked-origin/v1/chat/completions?case=edge-cors-audit-loopback-blocked-origin-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "Content-Type"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 4
+        },
+        {
+          "case": "edge-cors-audit-loopback-blocked-origin-X-Api-Key-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/blocked-origin/v1/models?case=edge-cors-audit-loopback-blocked-origin-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 4
+        },
+        {
+          "case": "edge-cors-audit-loopback-blocked-origin-X-Api-Key-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/blocked-origin/v1/chat/completions?case=edge-cors-audit-loopback-blocked-origin-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "Content-Type"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 4
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:13:22.131Z",
+      "label": "edge-cors-audit-public-https",
+      "sourceOrigin": "https://example.com",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "denied"
+        },
+        {
+          "name": "local-network",
+          "state": "denied"
+        },
+        {
+          "name": "loopback-network",
+          "state": "denied"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "baseline",
+      "rows": [
+        {
+          "case": "edge-cors-audit-public-https-baseline-Authorization-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/models?case=edge-cors-audit-public-https-baseline-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "ngrok-skip-browser-warning"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 434
+        },
+        {
+          "case": "edge-cors-audit-public-https-baseline-Authorization-POST",
+          "method": "POST",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/chat/completions?case=edge-cors-audit-public-https-baseline-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "ngrok-skip-browser-warning",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 242
+        },
+        {
+          "case": "edge-cors-audit-public-https-baseline-X-Api-Key-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/models?case=edge-cors-audit-public-https-baseline-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 244
+        },
+        {
+          "case": "edge-cors-audit-public-https-baseline-X-Api-Key-POST",
+          "method": "POST",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/chat/completions?case=edge-cors-audit-public-https-baseline-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 241
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:13:22.864Z",
+      "label": "edge-cors-audit-public-https",
+      "sourceOrigin": "https://example.com",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "denied"
+        },
+        {
+          "name": "local-network",
+          "state": "denied"
+        },
+        {
+          "name": "loopback-network",
+          "state": "denied"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "restricted",
+      "rows": [
+        {
+          "case": "edge-cors-audit-public-https-restricted-Authorization-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/restricted/v1/models?case=edge-cors-audit-public-https-restricted-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "ngrok-skip-browser-warning"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 122
+        },
+        {
+          "case": "edge-cors-audit-public-https-restricted-Authorization-POST",
+          "method": "POST",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/restricted/v1/chat/completions?case=edge-cors-audit-public-https-restricted-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "ngrok-skip-browser-warning",
+            "Content-Type"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 122
+        },
+        {
+          "case": "edge-cors-audit-public-https-restricted-X-Api-Key-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/restricted/v1/models?case=edge-cors-audit-public-https-restricted-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 243
+        },
+        {
+          "case": "edge-cors-audit-public-https-restricted-X-Api-Key-POST",
+          "method": "POST",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/restricted/v1/chat/completions?case=edge-cors-audit-public-https-restricted-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 243
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:13:23.355Z",
+      "label": "edge-cors-audit-public-https",
+      "sourceOrigin": "https://example.com",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "denied"
+        },
+        {
+          "name": "local-network",
+          "state": "denied"
+        },
+        {
+          "name": "loopback-network",
+          "state": "denied"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "blocked-origin",
+      "rows": [
+        {
+          "case": "edge-cors-audit-public-https-blocked-origin-Authorization-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/models?case=edge-cors-audit-public-https-blocked-origin-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "ngrok-skip-browser-warning"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 121
+        },
+        {
+          "case": "edge-cors-audit-public-https-blocked-origin-Authorization-POST",
+          "method": "POST",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/chat/completions?case=edge-cors-audit-public-https-blocked-origin-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "ngrok-skip-browser-warning",
+            "Content-Type"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 122
+        },
+        {
+          "case": "edge-cors-audit-public-https-blocked-origin-X-Api-Key-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/models?case=edge-cors-audit-public-https-blocked-origin-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 121
+        },
+        {
+          "case": "edge-cors-audit-public-https-blocked-origin-X-Api-Key-POST",
+          "method": "POST",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/chat/completions?case=edge-cors-audit-public-https-blocked-origin-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning",
+            "Content-Type"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 122
+        }
+      ]
+    }
+  ],
+  "protocolVersion": {
+    "Browser": "Edg/155.0.4283.45",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "V8-Version": "15.5.9.4",
+    "WebKit-Version": "537.36 (@50f24ef2aa5369a074b8888b7db82d9c0652d642)",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:19223/devtools/browser/7b6c3383-32df-4dca-b9ed-b0c477f0535d"
+  },
+  "completedAt": "2026-10-15T21:13:23.358Z",
+  "diagnostics": [
+    {
+      "method": "Network.responseReceived",
+      "params": {
+        "url": "https://9f46-156-204-70-131.ngrok-free.app/harness",
+        "status": 200,
+        "mimeType": "text/html",
+        "remoteIPAddress": "63.179.179.132",
+        "contentType": "text/html",
+        "contentLength": "2803"
+      }
+    },
+    {
+      "method": "Network.responseReceived",
+      "params": {
+        "url": "https://9f46-156-204-70-131.ngrok-free.app/harness",
+        "status": 200,
+        "mimeType": "text/html",
+        "remoteIPAddress": "63.179.179.132",
+        "contentType": "text/html; charset=utf-8",
+        "contentLength": "904"
+      }
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 404 ()",
+          "timestamp": 1792098800305.591,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/favicon.ico",
+          "networkRequestId": "8268.34"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.responseReceived",
+      "params": {
+        "url": "https://9f46-156-204-70-131.ngrok-free.app/harness",
+        "status": 200,
+        "mimeType": "text/html",
+        "remoteIPAddress": "63.179.179.132",
+        "contentType": "text/html; charset=utf-8",
+        "contentLength": "904"
+      }
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'http://127.0.0.1:18765/restricted/v1/models?case=edge-cors-audit-loopback-restricted-Authorization-GET' from origin 'https://9f46-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Request header field authorization is not allowed by Access-Control-Allow-Headers in preflight response.",
+          "category": "cors",
+          "timestamp": 1792098800456.168,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "8268.42",
+        "timestamp": 45624.357709,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "HeaderDisallowedByPreflightResponse",
+          "failedParameter": "authorization"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098800456.872,
+          "url": "http://127.0.0.1:18765/restricted/v1/models?case=edge-cors-audit-loopback-restricted-Authorization-GET",
+          "networkRequestId": "8268.42"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'http://127.0.0.1:18765/restricted/v1/chat/completions?case=edge-cors-audit-loopback-restricted-Authorization-POST' from origin 'https://9f46-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Request header field authorization is not allowed by Access-Control-Allow-Headers in preflight response.",
+          "category": "cors",
+          "timestamp": 1792098800460.491,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "8268.43",
+        "timestamp": 45624.361539,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "HeaderDisallowedByPreflightResponse",
+          "failedParameter": "authorization"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098800460.696,
+          "url": "http://127.0.0.1:18765/restricted/v1/chat/completions?case=edge-cors-audit-loopback-restricted-Authorization-POST",
+          "networkRequestId": "8268.43"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'http://127.0.0.1:18765/blocked-origin/v1/models?case=edge-cors-audit-loopback-blocked-origin-Authorization-GET' from origin 'https://9f46-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The 'Access-Control-Allow-Origin' header has a value 'https://not-the-test-origin.invalid' that is not equal to the supplied origin. Have the server send the header with a valid value.",
+          "category": "cors",
+          "timestamp": 1792098800484.009,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "8268.46",
+        "timestamp": 45624.384987,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "PreflightAllowOriginMismatch",
+          "failedParameter": "https://not-the-test-origin.invalid"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098800484.144,
+          "url": "http://127.0.0.1:18765/blocked-origin/v1/models?case=edge-cors-audit-loopback-blocked-origin-Authorization-GET",
+          "networkRequestId": "8268.46"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'http://127.0.0.1:18765/blocked-origin/v1/chat/completions?case=edge-cors-audit-loopback-blocked-origin-Authorization-POST' from origin 'https://9f46-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The 'Access-Control-Allow-Origin' header has a value 'https://not-the-test-origin.invalid' that is not equal to the supplied origin. Have the server send the header with a valid value.",
+          "category": "cors",
+          "timestamp": 1792098800487.726,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "8268.47",
+        "timestamp": 45624.388785,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "PreflightAllowOriginMismatch",
+          "failedParameter": "https://not-the-test-origin.invalid"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098800487.943,
+          "url": "http://127.0.0.1:18765/blocked-origin/v1/chat/completions?case=edge-cors-audit-loopback-blocked-origin-Authorization-POST",
+          "networkRequestId": "8268.47"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'http://127.0.0.1:18765/blocked-origin/v1/models?case=edge-cors-audit-loopback-blocked-origin-X-Api-Key-GET' from origin 'https://9f46-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The 'Access-Control-Allow-Origin' header has a value 'https://not-the-test-origin.invalid' that is not equal to the supplied origin. Have the server send the header with a valid value.",
+          "category": "cors",
+          "timestamp": 1792098800491.517,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "8268.48",
+        "timestamp": 45624.392519,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "PreflightAllowOriginMismatch",
+          "failedParameter": "https://not-the-test-origin.invalid"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098800491.677,
+          "url": "http://127.0.0.1:18765/blocked-origin/v1/models?case=edge-cors-audit-loopback-blocked-origin-X-Api-Key-GET",
+          "networkRequestId": "8268.48"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'http://127.0.0.1:18765/blocked-origin/v1/chat/completions?case=edge-cors-audit-loopback-blocked-origin-X-Api-Key-POST' from origin 'https://9f46-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The 'Access-Control-Allow-Origin' header has a value 'https://not-the-test-origin.invalid' that is not equal to the supplied origin. Have the server send the header with a valid value.",
+          "category": "cors",
+          "timestamp": 1792098800495.033,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "8268.49",
+        "timestamp": 45624.396856,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "PreflightAllowOriginMismatch",
+          "failedParameter": "https://not-the-test-origin.invalid"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098800496.023,
+          "url": "http://127.0.0.1:18765/blocked-origin/v1/chat/completions?case=edge-cors-audit-loopback-blocked-origin-X-Api-Key-POST",
+          "networkRequestId": "8268.49"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.responseReceived",
+      "params": {
+        "url": "https://example.com/",
+        "status": 200,
+        "mimeType": "text/html",
+        "remoteIPAddress": "172.66.147.243",
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'https://9f46-156-204-70-131.ngrok-free.app/restricted/v1/models?case=edge-cors-audit-public-https-restricted-Authorization-GET' from origin 'https://example.com' has been blocked by CORS policy: Request header field authorization is not allowed by Access-Control-Allow-Headers in preflight response.",
+          "category": "cors",
+          "timestamp": 1792098802256.153,
+          "url": "https://example.com/"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "14976.8",
+        "timestamp": 45626.157616,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "HeaderDisallowedByPreflightResponse",
+          "failedParameter": "authorization"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098802256.777,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/restricted/v1/models?case=edge-cors-audit-public-https-restricted-Authorization-GET",
+          "networkRequestId": "14976.8"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'https://9f46-156-204-70-131.ngrok-free.app/restricted/v1/chat/completions?case=edge-cors-audit-public-https-restricted-Authorization-POST' from origin 'https://example.com' has been blocked by CORS policy: Request header field authorization is not allowed by Access-Control-Allow-Headers in preflight response.",
+          "category": "cors",
+          "timestamp": 1792098802378.285,
+          "url": "https://example.com/"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "14976.9",
+        "timestamp": 45626.279354,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "HeaderDisallowedByPreflightResponse",
+          "failedParameter": "authorization"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098802378.511,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/restricted/v1/chat/completions?case=edge-cors-audit-public-https-restricted-Authorization-POST",
+          "networkRequestId": "14976.9"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/models?case=edge-cors-audit-public-https-blocked-origin-Authorization-GET' from origin 'https://example.com' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The 'Access-Control-Allow-Origin' header has a value 'https://not-the-test-origin.invalid' that is not equal to the supplied origin. Have the server send the header with a valid value.",
+          "category": "cors",
+          "timestamp": 1792098802989.278,
+          "url": "https://example.com/"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "14976.12",
+        "timestamp": 45626.890271,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "PreflightAllowOriginMismatch",
+          "failedParameter": "https://not-the-test-origin.invalid"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098802989.427,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/models?case=edge-cors-audit-public-https-blocked-origin-Authorization-GET",
+          "networkRequestId": "14976.12"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/chat/completions?case=edge-cors-audit-public-https-blocked-origin-Authorization-POST' from origin 'https://example.com' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The 'Access-Control-Allow-Origin' header has a value 'https://not-the-test-origin.invalid' that is not equal to the supplied origin. Have the server send the header with a valid value.",
+          "category": "cors",
+          "timestamp": 1792098803111.308,
+          "url": "https://example.com/"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "14976.13",
+        "timestamp": 45627.012384,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "PreflightAllowOriginMismatch",
+          "failedParameter": "https://not-the-test-origin.invalid"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098803111.544,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/chat/completions?case=edge-cors-audit-public-https-blocked-origin-Authorization-POST",
+          "networkRequestId": "14976.13"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/models?case=edge-cors-audit-public-https-blocked-origin-X-Api-Key-GET' from origin 'https://example.com' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The 'Access-Control-Allow-Origin' header has a value 'https://not-the-test-origin.invalid' that is not equal to the supplied origin. Have the server send the header with a valid value.",
+          "category": "cors",
+          "timestamp": 1792098803232.724,
+          "url": "https://example.com/"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "14976.14",
+        "timestamp": 45627.133704,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "PreflightAllowOriginMismatch",
+          "failedParameter": "https://not-the-test-origin.invalid"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098803232.858,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/models?case=edge-cors-audit-public-https-blocked-origin-X-Api-Key-GET",
+          "networkRequestId": "14976.14"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/chat/completions?case=edge-cors-audit-public-https-blocked-origin-X-Api-Key-POST' from origin 'https://example.com' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The 'Access-Control-Allow-Origin' header has a value 'https://not-the-test-origin.invalid' that is not equal to the supplied origin. Have the server send the header with a valid value.",
+          "category": "cors",
+          "timestamp": 1792098803354.762,
+          "url": "https://example.com/"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "14976.15",
+        "timestamp": 45627.255775,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "PreflightAllowOriginMismatch",
+          "failedParameter": "https://not-the-test-origin.invalid"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098803354.929,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/blocked-origin/v1/chat/completions?case=edge-cors-audit-public-https-blocked-origin-X-Api-Key-POST",
+          "networkRequestId": "14976.15"
+        }
+      },
+      "sessionId": "CB0D242AF31EDD8A7DB59BF7FDBF9E60"
+    }
+  ]
+}

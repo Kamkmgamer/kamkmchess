@@ -1,0 +1,66 @@
+{
+  "experiments/browser-proxy-transport/evidence/chrome-cors-controls.json": {
+    "bytes": 53496,
+    "sha256": "518c9bfc3ec923ddd2da4fedb980ef53dade19a8cff82f3672d1708f0d2f2727"
+  },
+  "experiments/browser-proxy-transport/evidence/chrome.json": {
+    "bytes": 60832,
+    "sha256": "9666d31a4d9aa16c392c6868b0550f8e6a51c7b7ee1a467829300474caddb042"
+  },
+  "experiments/browser-proxy-transport/evidence/edge-cors-controls.json": {
+    "bytes": 53894,
+    "sha256": "42a35fea5a08be4a4d43cc7c9a7b6b951f896d16fb5a1f2a0aecc8f3a0984fbe"
+  },
+  "experiments/browser-proxy-transport/evidence/edge.json": {
+    "bytes": 60792,
+    "sha256": "e5715b853da3a171343f1455bcfa1c19aee71e24e16dbca189a7941da7554148"
+  },
+  "experiments/browser-proxy-transport/evidence/environment.json": {
+    "bytes": 1616,
+    "sha256": "05ad3077e855958fddc318ddfbf92deeab8d29bedb06b2b4379b107881a20939"
+  },
+  "experiments/browser-proxy-transport/evidence/initial-navigation-chrome.json": {
+    "bytes": 1640,
+    "sha256": "fb1cf271240f67ad0db45a7493fc88c0227f24cb9d5f85c06bb49b886680e5f3"
+  },
+  "experiments/browser-proxy-transport/evidence/initial-navigation-edge.json": {
+    "bytes": 1647,
+    "sha256": "9d1042db3e349b1b2b95a23db33a3b629728c562f24223c8d1793d9a4969a0b4"
+  },
+  "experiments/browser-proxy-transport/evidence/server-requests.ndjson": {
+    "bytes": 178068,
+    "sha256": "93654e9edb2397f7728cbcb3b6517d6d355a7ab248dddf0368758e78e84277d1"
+  },
+  "experiments/browser-proxy-transport/evidence/summary.json": {
+    "bytes": 1528,
+    "sha256": "d5cedeb5c8b50bf6d57ea9d1df1f5e96f00c37a16856c1d00b32266b5ec94d71"
+  },
+  "experiments/browser-proxy-transport/probe.html": {
+    "bytes": 904,
+    "sha256": "bc2742733f041c9e04d69daf68a127ed74fe1da44d07751e3e8588f2ad696cac"
+  },
+  "experiments/browser-proxy-transport/probe.js": {
+    "bytes": 3295,
+    "sha256": "52838e248c12cc2ee9399c8aa1bf03ba4fa444a97998a68b12616a9e01912ecf"
+  },
+  "experiments/browser-proxy-transport/README.md": {
+    "bytes": 6327,
+    "sha256": "e37a96c280492fe590f281bf04881b2a829c69672c972c837548c9862f32a935"
+  },
+  "experiments/browser-proxy-transport/run-browsers.mjs": {
+    "bytes": 9203,
+    "sha256": "7ba56fb4d0a653763244c21a8290d593840c460cbadb7eb01be084f628b871dc"
+  },
+  "experiments/browser-proxy-transport/summarize-evidence.mjs": {
+    "bytes": 4180,
+    "sha256": "9421f7f6f37d03a8b40413e171ee70b1430f0179bf2babc5db9863d21c481516"
+  },
+  "experiments/browser-proxy-transport/upstream_harness_test.go": {
+    "bytes": 6971,
+    "sha256": "1591310d35831442699fbb400c3eb9850456e162735be72ebab4ad4a3e86dca1"
+  },
+  "research/browser-proxy-transport.md": {
+    "bytes": 10470,
+    "sha256": "685482412b986ead58cbd5683415940b5f18866274325ec8a244b734a0adc21a"
+  }
+}

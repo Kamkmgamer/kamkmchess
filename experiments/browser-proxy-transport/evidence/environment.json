@@ -1,0 +1,31 @@
+{
+  "runDateAfricaCairo": "2026-10-16",
+  "os": {"caption": "Microsoft Windows 11 Pro", "version": "10.0.26300", "build": "26300"},
+  "tools": {"node": "24.22.0", "go": "1.26.5 windows/amd64", "ngrok": "3.39.9-msix-stable"},
+  "upstream": {
+    "version": "v8.0.30",
+    "commit": "5be2cdab0869cbaa3d401891f740aebf7e15aa99",
+    "serverMiddlewareSHA256": "3483d143ec92a0f969b9ecb6608409552fd0131c29b452e7be9dd3ec9c821078",
+    "configAccessProviderSHA256": "cfb2cc55c64643e350bd16428288e225c5226731f56552dc011fae332491d8de",
+    "fullServiceStarted": false,
+    "syntheticAPIHandlersOnly": true,
+    "providerExecutorsCreated": false
+  },
+  "browserLaunchFlags": ["--headless=new", "--remote-debugging-port=<task-port>", "--user-data-dir=<fresh-task-profile>", "--no-first-run", "--no-default-browser-check", "about:blank"],
+  "permissionControl": "Per-source-origin CDP Browser.setPermission, independently queried by navigator.permissions in the page. Native permission UI not exercised.",
+  "preview": {
+    "electron": "44.4.5",
+    "chromium": "152.0.7977.130",
+    "localNetworkPermissions": "denied",
+    "snapshotFailures": ["Preview automation snapshot timed out after 15000ms.", "Preview automation snapshot timed out after 15000ms."],
+    "returnNavigationFailure": "Preview automation navigate timed out after 15000ms."
+  },
+  "cleanup": {
+    "goHarnessShutdownResults": ["PASS", "PASS"],
+    "taskBrowserContextsClosed": true,
+    "taskNgrokStopped": true,
+    "checkedPorts": [18765, 18766, 19222, 19223, 4040],
+    "remainingListeners": 0,
+    "temporaryCheckoutAndProfilesRetainedInert": true
+  }
+}

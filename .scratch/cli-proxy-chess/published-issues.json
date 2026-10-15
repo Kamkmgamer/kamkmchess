@@ -466,8 +466,13 @@
       "id": "d7336b4b-893c-40ae-aa6b-1541c9993c0e",
       "identifier": "KHA-15",
       "url": "https://linear.app/kamkm/issue/KHA-15/verify-browser-to-proxy-connectivity-with-synthetic-credentials",
-      "assigned": false,
-      "status": "Backlog",
+      "assigned": true,
+      "status": "Done",
+      "resolutionCommentId": "f0c52c1e-347c-412a-82ab-476b857accf6",
+      "researchFile": "D:/projects/kamkmchess/research/browser-proxy-transport.md",
+      "experimentDirectory": "experiments/browser-proxy-transport",
+      "attachmentId": "6c938626-6827-42e7-92bd-00770804ec1a",
+      "evidenceAttachmentId": "6bb027fb-2468-419e-aa8f-afefe23201cd",
       "nativeRelations": {
         "blocks": [
           {

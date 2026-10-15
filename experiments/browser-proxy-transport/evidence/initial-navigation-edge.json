@@ -1,0 +1,46 @@
+{
+  "browser": "edge",
+  "publicOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+  "startedAt": "2026-10-15T21:09:46.949Z",
+  "permissionOverrides": [
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "local-network-access",
+      "setting": "granted",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "local-network",
+      "setting": "granted",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "loopback-network",
+      "setting": "granted",
+      "applied": true
+    }
+  ],
+  "pageStates": [
+    {
+      "url": "https://9f46-156-204-70-131.ngrok-free.app/harness",
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "title": "",
+      "ready": "complete",
+      "text": "",
+      "buttons": []
+    }
+  ],
+  "probes": [],
+  "protocolVersion": {
+    "Browser": "Edg/155.0.4283.45",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "V8-Version": "15.5.9.4",
+    "WebKit-Version": "537.36 (@50f24ef2aa5369a074b8888b7db82d9c0652d642)",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:19223/devtools/browser/adf2305a-d027-4717-9028-f06babace444"
+  },
+  "error": "Error: Unexpected public harness page: {\"url\":\"https://9f46-156-204-70-131.ngrok-free.app/harness\",\"origin\":\"https://9f46-156-204-70-131.ngrok-free.app\",\"title\":\"\",\"ready\":\"complete\",\"text\":\"\",\"buttons\":[]}",
+  "diagnostics": []
+}

@@ -1,0 +1,1735 @@
+{
+  "browser": "edge",
+  "publicOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+  "startedAt": "2026-10-15T21:10:53.093Z",
+  "permissionOverrides": [
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "local-network-access",
+      "setting": "granted",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "local-network",
+      "setting": "granted",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "loopback-network",
+      "setting": "granted",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "local-network-access",
+      "setting": "denied",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "local-network",
+      "setting": "denied",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "loopback-network",
+      "setting": "denied",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "local-network-access",
+      "setting": "granted",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "local-network",
+      "setting": "granted",
+      "applied": true
+    },
+    {
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "permission": "loopback-network",
+      "setting": "granted",
+      "applied": true
+    },
+    {
+      "origin": "https://example.com",
+      "permission": "local-network-access",
+      "setting": "denied",
+      "applied": true
+    },
+    {
+      "origin": "https://example.com",
+      "permission": "local-network",
+      "setting": "denied",
+      "applied": true
+    },
+    {
+      "origin": "https://example.com",
+      "permission": "loopback-network",
+      "setting": "denied",
+      "applied": true
+    }
+  ],
+  "pageStates": [
+    {
+      "url": "https://9f46-156-204-70-131.ngrok-free.app/harness",
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "title": "ERR_NGROK_6024 - You are about to visit 9f46-156-204-70-131.ngrok-free.app, served by 156.204.70.131. This website is served for free through ngrok.com. You should only visit this website if you trust whoever sent the link to you.",
+      "ready": "complete",
+      "text": "Skip to main content\n\nYou are about to visit:\n\n9f46-156-204-70-131.ngrok-free.app\n\nWebsite IP: 156.204.70.131\n\nThis website is served for free through ngrok.com.\nYou should only visit this website if you trust whoever sent the link to you.\nBe careful about disclosing personal or financial information like passwords, phone numbers, or credit cards.\nVisit Site\nAre you the developer?\n\nWe display this page to prevent abuse. Visitors to your site will only see it once.\n\nTo remove this page:\nSet and send an ngrok-skip-browser-warning request header with any value.\nOr, set and send a custom/non-standard browser User-Agent request header.\nOr, please upgrade to any paid ngrok account.\n\n Learn how ngrok fights abuse\n\nPowered by ngrok",
+      "buttons": [
+        {
+          "text": "Skip to main content",
+          "tag": "A"
+        },
+        {
+          "text": "ngrok.com",
+          "tag": "A"
+        },
+        {
+          "text": "Visit Site",
+          "tag": "BUTTON"
+        },
+        {
+          "text": "upgrade",
+          "tag": "A"
+        },
+        {
+          "text": "fights abuse",
+          "tag": "A"
+        },
+        {
+          "text": "ngrok",
+          "tag": "A"
+        }
+      ]
+    },
+    {
+      "url": "https://9f46-156-204-70-131.ngrok-free.app/harness",
+      "origin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "title": "Synthetic browser-to-proxy transport check",
+      "ready": "complete",
+      "text": "Synthetic browser-to-proxy transport check\n\nThis disposable experiment uses only a fixed synthetic key and synthetic replies. It cannot route a request to a model.\n\nUse a browser's normal site permission controls to allow or deny local-network access. The experiment does not disable browser security.\n\nTest HTTP loopback\nReady.",
+      "buttons": [
+        {
+          "text": "Test HTTP loopback",
+          "tag": "BUTTON"
+        }
+      ]
+    },
+    {
+      "url": "https://example.com/",
+      "origin": "https://example.com",
+      "title": "Example Domain",
+      "ready": "complete",
+      "text": "This domain is for use in documentation examples without needing permission. This is not a service; avoid relying on it for testing and monitoring purposes.\n\nهذا النطاق مُخصص للاستخدام في أمثلة التوثيق دون الحاجة إلى إذن. هذه ليست خدمة، يُرجى تجنب الاعتماد عليها لأغراض الاختبار والمراقبة.\n\n该域名仅用于文档示例，无需获得许可。这并非一项服务，请勿将其用于测试和监控目的。\n\nL’usage de ce domaine est réservé à des exemples de documentation, sans autorisation préalable. Il ne s’agit pas d’un service ; son utilisation à des fins de test ou de surveillance est à éviter.\n\nДанный домен предназначен для использования в примерах документации без необходимости получения предварительного разрешения. Это не сервис; не рекомендуется его использование для тестирования и мониторинга.\n\nEste dominio está destinado al uso en ejemplos de documentación sin necesidad de permiso. Esto no es un servicio; evitar utilizarlo para realizar pruebas o monitoreos.\n\nLearn more",
+      "buttons": [
+        {
+          "text": "Learn more",
+          "tag": "A"
+        }
+      ]
+    }
+  ],
+  "probes": [
+    {
+      "utc": "2026-10-15T21:10:58.868Z",
+      "label": "edge-loopback-granted",
+      "sourceOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "granted"
+        },
+        {
+          "name": "local-network",
+          "state": "granted"
+        },
+        {
+          "name": "loopback-network",
+          "state": "granted"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "baseline",
+      "rows": [
+        {
+          "case": "edge-loopback-granted-baseline-Authorization-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-granted-baseline-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 11
+        },
+        {
+          "case": "edge-loopback-granted-baseline-Authorization-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/v1/chat/completions?case=edge-loopback-granted-baseline-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        },
+        {
+          "case": "edge-loopback-granted-baseline-X-Api-Key-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-granted-baseline-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 7
+        },
+        {
+          "case": "edge-loopback-granted-baseline-X-Api-Key-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/v1/chat/completions?case=edge-loopback-granted-baseline-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:10:58.897Z",
+      "label": "edge-loopback-granted",
+      "sourceOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "granted"
+        },
+        {
+          "name": "local-network",
+          "state": "granted"
+        },
+        {
+          "name": "loopback-network",
+          "state": "granted"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "explicit",
+      "rows": [
+        {
+          "case": "edge-loopback-granted-explicit-Authorization-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/explicit/v1/models?case=edge-loopback-granted-explicit-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 7
+        },
+        {
+          "case": "edge-loopback-granted-explicit-Authorization-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/explicit/v1/chat/completions?case=edge-loopback-granted-explicit-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        },
+        {
+          "case": "edge-loopback-granted-explicit-X-Api-Key-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/explicit/v1/models?case=edge-loopback-granted-explicit-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        },
+        {
+          "case": "edge-loopback-granted-explicit-X-Api-Key-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/explicit/v1/chat/completions?case=edge-loopback-granted-explicit-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:10:58.920Z",
+      "label": "edge-loopback-granted",
+      "sourceOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "granted"
+        },
+        {
+          "name": "local-network",
+          "state": "granted"
+        },
+        {
+          "name": "loopback-network",
+          "state": "granted"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "controls",
+      "rows": [
+        {
+          "case": "edge-loopback-granted-missing-key-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-granted-missing-key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept"
+          ],
+          "status": 401,
+          "ok": false,
+          "responseType": "cors",
+          "body": "{\"error\":\"Missing API key\"}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 3
+        },
+        {
+          "case": "edge-loopback-granted-wrong-key-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-granted-wrong-key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key"
+          ],
+          "status": 401,
+          "ok": false,
+          "responseType": "cors",
+          "body": "{\"error\":\"Invalid API key\"}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        },
+        {
+          "case": "edge-loopback-granted-credentials-include-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-granted-credentials-include-GET",
+          "credentials": "include",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 4
+        },
+        {
+          "case": "edge-loopback-granted-synthetic-SSE-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/v1/chat/completions?case=edge-loopback-granted-synthetic-SSE-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "data: {\"id\":\"kha15-fixture\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"kha15-fixture\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+          "readable": true,
+          "syntheticSSEComplete": true,
+          "elapsedMs": 6
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:10:58.932Z",
+      "label": "edge-loopback-denied",
+      "sourceOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "denied"
+        },
+        {
+          "name": "local-network",
+          "state": "denied"
+        },
+        {
+          "name": "loopback-network",
+          "state": "denied"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "baseline",
+      "rows": [
+        {
+          "case": "edge-loopback-denied-baseline-Authorization-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-denied-baseline-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 2
+        },
+        {
+          "case": "edge-loopback-denied-baseline-Authorization-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/v1/chat/completions?case=edge-loopback-denied-baseline-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "Content-Type"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 2
+        },
+        {
+          "case": "edge-loopback-denied-baseline-X-Api-Key-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-denied-baseline-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 2
+        },
+        {
+          "case": "edge-loopback-denied-baseline-X-Api-Key-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/v1/chat/completions?case=edge-loopback-denied-baseline-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "Content-Type"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 2
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:10:58.961Z",
+      "label": "edge-loopback-regranted",
+      "sourceOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "granted"
+        },
+        {
+          "name": "local-network",
+          "state": "granted"
+        },
+        {
+          "name": "loopback-network",
+          "state": "granted"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "baseline",
+      "rows": [
+        {
+          "case": "edge-loopback-regranted-baseline-Authorization-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-regranted-baseline-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        },
+        {
+          "case": "edge-loopback-regranted-baseline-Authorization-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/v1/chat/completions?case=edge-loopback-regranted-baseline-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        },
+        {
+          "case": "edge-loopback-regranted-baseline-X-Api-Key-GET",
+          "method": "GET",
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-regranted-baseline-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        },
+        {
+          "case": "edge-loopback-regranted-baseline-X-Api-Key-POST",
+          "method": "POST",
+          "url": "http://127.0.0.1:18765/v1/chat/completions?case=edge-loopback-regranted-baseline-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 7
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:10:58.989Z",
+      "label": "edge-localhost-granted",
+      "sourceOrigin": "https://9f46-156-204-70-131.ngrok-free.app",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "granted"
+        },
+        {
+          "name": "local-network",
+          "state": "granted"
+        },
+        {
+          "name": "loopback-network",
+          "state": "granted"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "baseline",
+      "rows": [
+        {
+          "case": "edge-localhost-granted-baseline-Authorization-GET",
+          "method": "GET",
+          "url": "http://localhost:18765/v1/models?case=edge-localhost-granted-baseline-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 7
+        },
+        {
+          "case": "edge-localhost-granted-baseline-Authorization-POST",
+          "method": "POST",
+          "url": "http://localhost:18765/v1/chat/completions?case=edge-localhost-granted-baseline-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        },
+        {
+          "case": "edge-localhost-granted-baseline-X-Api-Key-GET",
+          "method": "GET",
+          "url": "http://localhost:18765/v1/models?case=edge-localhost-granted-baseline-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        },
+        {
+          "case": "edge-localhost-granted-baseline-X-Api-Key-POST",
+          "method": "POST",
+          "url": "http://localhost:18765/v1/chat/completions?case=edge-localhost-granted-baseline-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 6
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:11:02.611Z",
+      "label": "edge-public-https-reference",
+      "sourceOrigin": "https://example.com",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "denied"
+        },
+        {
+          "name": "local-network",
+          "state": "denied"
+        },
+        {
+          "name": "loopback-network",
+          "state": "denied"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "baseline",
+      "rows": [
+        {
+          "case": "edge-public-https-reference-baseline-Authorization-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/models?case=edge-public-https-reference-baseline-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "ngrok-skip-browser-warning"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 1442
+        },
+        {
+          "case": "edge-public-https-reference-baseline-Authorization-POST",
+          "method": "POST",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/chat/completions?case=edge-public-https-reference-baseline-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "ngrok-skip-browser-warning",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 243
+        },
+        {
+          "case": "edge-public-https-reference-baseline-X-Api-Key-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/models?case=edge-public-https-reference-baseline-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 240
+        },
+        {
+          "case": "edge-public-https-reference-baseline-X-Api-Key-POST",
+          "method": "POST",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/chat/completions?case=edge-public-https-reference-baseline-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 240
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:11:03.595Z",
+      "label": "edge-public-https-reference",
+      "sourceOrigin": "https://example.com",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "denied"
+        },
+        {
+          "name": "local-network",
+          "state": "denied"
+        },
+        {
+          "name": "loopback-network",
+          "state": "denied"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "explicit",
+      "rows": [
+        {
+          "case": "edge-public-https-reference-explicit-Authorization-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/explicit/v1/models?case=edge-public-https-reference-explicit-Authorization-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "ngrok-skip-browser-warning"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 238
+        },
+        {
+          "case": "edge-public-https-reference-explicit-Authorization-POST",
+          "method": "POST",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/explicit/v1/chat/completions?case=edge-public-https-reference-explicit-Authorization-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "Authorization",
+            "ngrok-skip-browser-warning",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 239
+        },
+        {
+          "case": "edge-public-https-reference-explicit-X-Api-Key-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/explicit/v1/models?case=edge-public-https-reference-explicit-X-Api-Key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"data\":[{\"id\":\"kha15-synthetic\",\"object\":\"model\",\"owned_by\":\"transport-fixture\"}],\"object\":\"list\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 258
+        },
+        {
+          "case": "edge-public-https-reference-explicit-X-Api-Key-POST",
+          "method": "POST",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/explicit/v1/chat/completions?case=edge-public-https-reference-explicit-X-Api-Key-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "{\"choices\":[{\"finish_reason\":\"stop\",\"index\":0,\"message\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\",\"role\":\"assistant\"}}],\"id\":\"kha15-fixture\",\"object\":\"chat.completion\",\"synthetic\":true}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 245
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-15T21:11:04.441Z",
+      "label": "edge-public-https-reference",
+      "sourceOrigin": "https://example.com",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+      "secureContext": true,
+      "permissions": [
+        {
+          "name": "local-network-access",
+          "state": "denied"
+        },
+        {
+          "name": "local-network",
+          "state": "denied"
+        },
+        {
+          "name": "loopback-network",
+          "state": "denied"
+        }
+      ],
+      "uaData": {
+        "brands": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24"
+          }
+        ],
+        "fullVersionList": [
+          {
+            "brand": "Microsoft Edge",
+            "version": "155.0.4283.45"
+          },
+          {
+            "brand": "Chromium",
+            "version": "155.0.8059.40"
+          },
+          {
+            "brand": "Not(A:Brand",
+            "version": "24.0.0.0"
+          }
+        ],
+        "mobile": false,
+        "platform": "Windows",
+        "platformVersion": "19.0.0"
+      },
+      "scope": "controls",
+      "rows": [
+        {
+          "case": "edge-public-https-reference-missing-key-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/models?case=edge-public-https-reference-missing-key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "ngrok-skip-browser-warning"
+          ],
+          "status": 401,
+          "ok": false,
+          "responseType": "cors",
+          "body": "{\"error\":\"Missing API key\"}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 240
+        },
+        {
+          "case": "edge-public-https-reference-wrong-key-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/models?case=edge-public-https-reference-wrong-key-GET",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning"
+          ],
+          "status": 401,
+          "ok": false,
+          "responseType": "cors",
+          "body": "{\"error\":\"Invalid API key\"}",
+          "readable": true,
+          "syntheticSSEComplete": null,
+          "elapsedMs": 240
+        },
+        {
+          "case": "edge-public-https-reference-credentials-include-GET",
+          "method": "GET",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/models?case=edge-public-https-reference-credentials-include-GET",
+          "credentials": "include",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning"
+          ],
+          "readable": false,
+          "error": {
+            "name": "TypeError",
+            "message": "Failed to fetch"
+          },
+          "elapsedMs": 121
+        },
+        {
+          "case": "edge-public-https-reference-synthetic-SSE-POST",
+          "method": "POST",
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/chat/completions?case=edge-public-https-reference-synthetic-SSE-POST",
+          "credentials": "omit",
+          "requestHeaderNames": [
+            "Accept",
+            "X-Api-Key",
+            "ngrok-skip-browser-warning",
+            "Content-Type"
+          ],
+          "status": 200,
+          "ok": true,
+          "responseType": "cors",
+          "body": "data: {\"id\":\"kha15-fixture\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"{\\\"move\\\":\\\"e2e4\\\"}\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"kha15-fixture\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+          "readable": true,
+          "syntheticSSEComplete": true,
+          "elapsedMs": 241
+        }
+      ]
+    }
+  ],
+  "protocolVersion": {
+    "Browser": "Edg/155.0.4283.45",
+    "Protocol-Version": "1.3",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 Edg/155.0.0.0",
+    "V8-Version": "15.5.9.4",
+    "WebKit-Version": "537.36 (@50f24ef2aa5369a074b8888b7db82d9c0652d642)",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:19223/devtools/browser/eacc9bd9-4e7b-443e-9dfe-35c73cca95bd"
+  },
+  "completedAt": "2026-10-15T21:11:04.443Z",
+  "diagnostics": [
+    {
+      "method": "Network.responseReceived",
+      "params": {
+        "url": "https://9f46-156-204-70-131.ngrok-free.app/harness",
+        "status": 200,
+        "mimeType": "text/html",
+        "remoteIPAddress": "63.180.108.122",
+        "contentType": "text/html",
+        "contentLength": "2803"
+      }
+    },
+    {
+      "method": "Network.responseReceived",
+      "params": {
+        "url": "https://9f46-156-204-70-131.ngrok-free.app/harness",
+        "status": 200,
+        "mimeType": "text/html",
+        "remoteIPAddress": "63.180.108.122",
+        "contentType": "text/html; charset=utf-8",
+        "contentLength": "904"
+      }
+    },
+    {
+      "method": "Network.responseReceived",
+      "params": {
+        "url": "https://9f46-156-204-70-131.ngrok-free.app/harness",
+        "status": 200,
+        "mimeType": "text/html",
+        "remoteIPAddress": "63.180.108.122",
+        "contentType": "text/html; charset=utf-8",
+        "contentLength": "904"
+      }
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 404 ()",
+          "timestamp": 1792098656805.063,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/favicon.ico",
+          "networkRequestId": "8312.34"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+          "timestamp": 1792098658902.815,
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-granted-missing-key-GET",
+          "networkRequestId": "8312.46"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+          "timestamp": 1792098658908.991,
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-granted-wrong-key-GET",
+          "networkRequestId": "8312.47"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'http://127.0.0.1:18765/v1/models?case=edge-loopback-granted-credentials-include-GET' from origin 'https://9f46-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The value of the 'Access-Control-Allow-Origin' header in the response must not be the wildcard '*' when the request's credentials mode is 'include'.",
+          "category": "cors",
+          "timestamp": 1792098658913.051,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "8312.48",
+        "timestamp": 45482.814503,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "PreflightWildcardOriginNotAllowed",
+          "failedParameter": ""
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098658913.684,
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-granted-credentials-include-GET",
+          "networkRequestId": "8312.48"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "1E468CB807939BAAB277C625282A8FF2",
+        "timestamp": 45482.827732,
+        "type": "Preflight",
+        "errorText": "net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'http://127.0.0.1:18765/v1/models?case=edge-loopback-denied-baseline-Authorization-GET' from origin 'https://9f46-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+          "category": "cors",
+          "timestamp": 1792098658927.007,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "8312.50",
+        "timestamp": 45482.828004,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098658927.16,
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-denied-baseline-Authorization-GET",
+          "networkRequestId": "8312.50"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "59A1109249C624E69059A12500FADBE4",
+        "timestamp": 45482.829473,
+        "type": "Preflight",
+        "errorText": "net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'http://127.0.0.1:18765/v1/chat/completions?case=edge-loopback-denied-baseline-Authorization-POST' from origin 'https://9f46-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+          "category": "cors",
+          "timestamp": 1792098658928.715,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "8312.51",
+        "timestamp": 45482.829734,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098658928.888,
+          "url": "http://127.0.0.1:18765/v1/chat/completions?case=edge-loopback-denied-baseline-Authorization-POST",
+          "networkRequestId": "8312.51"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "1412CC06D80CD3C0C550C0398CE7963C",
+        "timestamp": 45482.831138,
+        "type": "Preflight",
+        "errorText": "net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'http://127.0.0.1:18765/v1/models?case=edge-loopback-denied-baseline-X-Api-Key-GET' from origin 'https://9f46-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+          "category": "cors",
+          "timestamp": 1792098658930.459,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "8312.52",
+        "timestamp": 45482.831435,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098658930.59,
+          "url": "http://127.0.0.1:18765/v1/models?case=edge-loopback-denied-baseline-X-Api-Key-GET",
+          "networkRequestId": "8312.52"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "F6B743F49200C602E1FDD707A70351BE",
+        "timestamp": 45482.832923,
+        "type": "Preflight",
+        "errorText": "net::ERR_BLOCKED_BY_LOCAL_NETWORK_ACCESS_CHECKS",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'http://127.0.0.1:18765/v1/chat/completions?case=edge-loopback-denied-baseline-X-Api-Key-POST' from origin 'https://9f46-156-204-70-131.ngrok-free.app' has been blocked by CORS policy: Permission was denied for this request to access the `loopback` address space.",
+          "category": "cors",
+          "timestamp": 1792098658932.159,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/harness"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "8312.53",
+        "timestamp": 45482.833164,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "LocalNetworkAccessPermissionDenied",
+          "failedParameter": ""
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098658932.318,
+          "url": "http://127.0.0.1:18765/v1/chat/completions?case=edge-loopback-denied-baseline-X-Api-Key-POST",
+          "networkRequestId": "8312.53"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Network.responseReceived",
+      "params": {
+        "url": "https://example.com/",
+        "status": 200,
+        "mimeType": "text/html",
+        "remoteIPAddress": "172.66.147.243",
+        "contentType": "text/html; charset=utf-8"
+      }
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 401 ()",
+          "timestamp": 1792098663838.523,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/models?case=edge-public-https-reference-missing-key-GET",
+          "networkRequestId": "16680.12"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: the server responded with a status of 401 ()",
+          "timestamp": 1792098664078.891,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/models?case=edge-public-https-reference-wrong-key-GET",
+          "networkRequestId": "16680.13"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "javascript",
+          "level": "error",
+          "text": "Access to fetch at 'https://9f46-156-204-70-131.ngrok-free.app/v1/models?case=edge-public-https-reference-credentials-include-GET' from origin 'https://example.com' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The value of the 'Access-Control-Allow-Origin' header in the response must not be the wildcard '*' when the request's credentials mode is 'include'.",
+          "category": "cors",
+          "timestamp": 1792098664199.244,
+          "url": "https://example.com/"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Network.loadingFailed",
+      "params": {
+        "requestId": "16680.14",
+        "timestamp": 45488.100815,
+        "type": "Fetch",
+        "errorText": "net::ERR_FAILED",
+        "canceled": false,
+        "corsErrorStatus": {
+          "corsError": "PreflightWildcardOriginNotAllowed",
+          "failedParameter": ""
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    },
+    {
+      "method": "Log.entryAdded",
+      "params": {
+        "entry": {
+          "source": "network",
+          "level": "error",
+          "text": "Failed to load resource: net::ERR_FAILED",
+          "category": "cors",
+          "timestamp": 1792098664199.98,
+          "url": "https://9f46-156-204-70-131.ngrok-free.app/v1/models?case=edge-public-https-reference-credentials-include-GET",
+          "networkRequestId": "16680.14"
+        }
+      },
+      "sessionId": "3DC90F73E56F1ED99D070594AB266247"
+    }
+  ]
+}
