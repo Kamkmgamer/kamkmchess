@@ -424,6 +424,10 @@
           {
             "id": "KHA-17",
             "title": "Choose supported model access and usage disclosure"
+          },
+          {
+            "id": "KHA-19",
+            "title": "Define custom starting positions and position editor"
           }
         ],
         "duplicateOf": null
@@ -593,7 +597,7 @@
       "id": "347d9588-6095-44f3-93fb-8c503cc7a8bb",
       "url": "https://linear.app/kamkm/issue/KHA-19/define-custom-starting-positions-and-position-editor",
       "assigned": true,
-      "status": "In Progress",
+      "status": "Done",
       "discussionCommentId": "549fc01e-8804-423d-a6f1-338981f2ae3d",
       "title": "Define custom starting positions and position editor",
       "nativeRelations": {
@@ -614,13 +618,18 @@
         "blockedBy": [],
         "relatedTo": [
           {
+            "id": "KHA-14",
+            "title": "Agree on MVP acceptance criteria and the specification handoff"
+          },
+          {
             "id": "KHA-10",
             "title": "Define legal move selection and model failure behavior"
           }
         ],
         "duplicateOf": null
       },
-      "blockedBy": []
+      "blockedBy": [],
+      "resolutionCommentId": "549fc01e-8804-423d-a6f1-338981f2ae3d"
     }
   ],
   "dependenciesWired": true,

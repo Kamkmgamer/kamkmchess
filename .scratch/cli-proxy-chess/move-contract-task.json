@@ -2,16 +2,16 @@
   "title": "Define legal move selection and model failure behavior",
   "issue": "KHA-10",
   "url": "https://linear.app/kamkm/issue/KHA-10/define-legal-move-selection-and-model-failure-behavior",
-  "taskId": "node:delegated-task:de86e109-ab59-4efe-b855-5bdeda7d6efd",
+  "taskId": "node:delegated-task:d31ae6b9-2aaa-4095-8d1e-ee75fcd49100",
   "childThreadId": "thread:delegated-task:command%3Amcp%3Ae08672c0-c126-4db5-a062-3aa9342188fb%3Adelegate-task%3Awayfinder-chess-conversation-transfer-20261015-r1",
-  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:16",
+  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:25",
   "source": "The owner asked 'let's move to the next ticket' in the research child thread.",
   "taskStatus": "completed",
   "hasPendingChildRuns": false,
   "ticketStatus": "In Progress",
-  "awaitingOwnerDecision": false,
-  "pendingQuestion": null,
-  "recommendation": null,
+  "awaitingOwnerDecision": true,
+  "pendingQuestion": "Should connection failures and proxy errors pause the match with Retry or Switch model, without a chess loss?",
+  "recommendation": "Pause with Retry or Switch model and no chess loss.",
   "priorModelSelectionTicket": "KHA-9 remains in progress; the mid-match compatibility-check question is unanswered.",
   "previousTaskIds": [
     "node:delegated-task:c6918c8e-890b-4ea5-88ca-2b18d3377968",
@@ -27,9 +27,10 @@
     "node:delegated-task:e08b9fee-0c4a-452c-bdca-4c2cfcbcc4d4",
     "node:delegated-task:42256beb-07cb-4475-b021-201806159b34",
     "node:delegated-task:440e98de-8e76-4805-aeea-b40542a77a58",
-    "node:delegated-task:e0ded7d0-5977-41ba-9ce7-90e41b162d3c"
+    "node:delegated-task:e0ded7d0-5977-41ba-9ce7-90e41b162d3c",
+    "node:delegated-task:de86e109-ab59-4efe-b855-5bdeda7d6efd"
   ],
-  "terminalSummary": "Recorded: unfinished games can continue with a new model. Recorded losses stay final, with further play treated as practice.\n\nI added [custom starting positions](https://linear.app/kamkm/issue/KHA-19/define-custom-starting-positions-and-position-editor) to the MVP plan.\n\nShould players be able to **arrange pieces visually and paste a FEN position**? I recommend supporting both.",
+  "terminalSummary": "Closed [Custom starting positions and position editor](https://linear.app/kamkm/issue/KHA-19/define-custom-starting-positions-and-position-editor): validate the current setup without proving its history.\n\nReturning to move handling: should **connection failures and proxy errors pause the match with Retry or Switch model, without a chess loss**?\n\nI recommend yes.",
   "acceptedDecision": "Do not supply a legal-move list or constrain the response to an enumeration of legal moves. The model proposes its own move and may receive corrections for mistakes.",
   "discussionCommentId": "64c107b9-2653-44f4-8496-2de310dbcb81",
   "acceptedDecisions": [
@@ -121,6 +122,5 @@
     "remaining": "Resignation response format and detection rules.",
     "practiceContinuation": "Offer the same unscored practice continuation with the same or a new model, fresh context, and the current position. The original loss remains final."
   },
-  "sourcePosition": 248,
-  "discussionContinuesIn": "KHA-19"
+  "sourcePosition": 344
 }

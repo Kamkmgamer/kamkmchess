@@ -2,20 +2,20 @@
   "title": "Define custom starting positions and position editor",
   "issue": "KHA-19",
   "url": "https://linear.app/kamkm/issue/KHA-19/define-custom-starting-positions-and-position-editor",
-  "taskId": "node:delegated-task:eac19a10-199e-43ad-91f8-f2349fab23db",
+  "taskId": "node:delegated-task:d31ae6b9-2aaa-4095-8d1e-ee75fcd49100",
   "childThreadId": "thread:delegated-task:command%3Amcp%3Ae08672c0-c126-4db5-a062-3aa9342188fb%3Adelegate-task%3Awayfinder-chess-conversation-transfer-20261015-r1",
-  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:24",
+  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:25",
   "taskStatus": "completed",
   "hasPendingChildRuns": false,
   "source": "The owner requested custom starting positions during the move-contract discussion in the child thread.",
-  "ticketStatus": "In Progress",
-  "awaitingOwnerDecision": true,
-  "pendingQuestion": "Should validation check current board and position-setting consistency without proving a complete legal history from the normal starting position?",
-  "recommendation": "Check current position consistency without requiring a proof of its full legal history.",
+  "ticketStatus": "Done",
+  "awaitingOwnerDecision": false,
+  "pendingQuestion": null,
+  "recommendation": null,
   "acceptedScope": "The MVP includes human-selected starting positions for play against a model opponent. Chess.com and Lichess are familiar examples, without a decision to copy their full feature sets.",
   "discussionCommentId": "549fc01e-8804-423d-a6f1-338981f2ae3d",
-  "sourcePosition": 314,
-  "terminalSummary": "Checkmate and stalemate starting positions remain viewable and editable with Start game disabled. The validation boundary remains undecided.",
+  "sourcePosition": 344,
+  "terminalSummary": "Closed [Custom starting positions and position editor](https://linear.app/kamkm/issue/KHA-19/define-custom-starting-positions-and-position-editor): validate the current setup without proving its history.\n\nReturning to move handling: should **connection failures and proxy errors pause the match with Retry or Switch model, without a chess loss**?\n\nI recommend yes.",
   "previousTaskIds": [
     "node:delegated-task:de86e109-ab59-4efe-b855-5bdeda7d6efd",
     "node:delegated-task:d6196226-bb64-4c7d-a557-d690ad65a209",
@@ -24,7 +24,8 @@
     "node:delegated-task:8f90c014-e3ab-45cf-9abd-1fd047b6512d",
     "node:delegated-task:316a593e-e547-441d-b0dc-34e90bf40154",
     "node:delegated-task:6a5765fe-23cf-4a22-bfec-02dd878f4a0b",
-    "node:delegated-task:d63f81a0-5c7d-4e56-9d47-6334cfba02bb"
+    "node:delegated-task:d63f81a0-5c7d-4e56-9d47-6334cfba02bb",
+    "node:delegated-task:eac19a10-199e-43ad-91f8-f2349fab23db"
   ],
   "acceptedInputMethods": [
     "Visual board editor for arranging pieces.",
@@ -38,7 +39,16 @@
       "Adjacent kings"
     ],
     "modelGuidance": "Setup validation does not supply legal moves or strategy to the model.",
-    "remaining": "Exact validation checks and actionable error messages."
+    "remaining": "Chess-library behavior, UI, and acceptance verification are tracked in downstream tickets.",
+    "boundary": "Current board and position settings must be consistent. Full legal-history reachability proof is not required.",
+    "basicChecks": [
+      "Input structure and field values",
+      "King placement",
+      "Pawn ranks",
+      "Side-to-move/check consistency",
+      "Declared castling and en passant state"
+    ],
+    "messages": "Identify the failed check and affected setting or square."
   },
   "acceptedPositionSettings": {
     "controls": [
@@ -88,5 +98,8 @@
     "viewingAndEditing": "Allow.",
     "startGame": "Disable.",
     "explanation": "Clearly state that the position is already terminal."
-  }
+  },
+  "resolutionCommentId": "549fc01e-8804-423d-a6f1-338981f2ae3d",
+  "discussionReturnsTo": "KHA-10",
+  "downstreamVerification": "Map index and architecture/acceptance pointers read back after closure."
 }
