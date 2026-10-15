@@ -2,16 +2,16 @@
   "title": "Define legal move selection and model failure behavior",
   "issue": "KHA-10",
   "url": "https://linear.app/kamkm/issue/KHA-10/define-legal-move-selection-and-model-failure-behavior",
-  "taskId": "node:delegated-task:2319fd10-9014-47a3-9292-72097b6798fe",
+  "taskId": "node:delegated-task:84a7054b-ffd4-4dec-b61b-ab4402eeda80",
   "childThreadId": "thread:delegated-task:command%3Amcp%3Ae08672c0-c126-4db5-a062-3aa9342188fb%3Adelegate-task%3Awayfinder-chess-conversation-transfer-20261015-r1",
-  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:8",
+  "childRunId": "run:thread:thread%3Adelegated-task%3Acommand%253Amcp%253Ae08672c0-c126-4db5-a062-3aa9342188fb%253Adelegate-task%253Awayfinder-chess-conversation-transfer-20261015-r1:ordinal:9",
   "source": "The owner asked 'let's move to the next ticket' in the research child thread.",
   "taskStatus": "completed",
   "hasPendingChildRuns": false,
   "ticketStatus": "In Progress",
   "awaitingOwnerDecision": true,
-  "pendingQuestion": "Should the board input include both FEN and a readable piece list?",
-  "recommendation": "Send both FEN and a readable piece list. Describe the position without supplying legal moves or strategic advice.",
+  "pendingQuestion": "Should returned moves use coordinate notation such as e2e4 or e7e8q for queen promotion?",
+  "recommendation": "Use coordinate notation with a starting square, destination square, and promotion choice when applicable.",
   "priorModelSelectionTicket": "KHA-9 remains in progress; the mid-match compatibility-check question is unanswered.",
   "previousTaskIds": [
     "node:delegated-task:c6918c8e-890b-4ea5-88ca-2b18d3377968",
@@ -19,9 +19,10 @@
     "node:delegated-task:6bd9e100-a0fa-479d-bf92-ca76e86236aa",
     "node:delegated-task:e6e15088-9719-4ee8-9bf6-aaea62320445",
     "node:delegated-task:f2e20b72-98b4-4623-9985-ac62f75e4271",
-    "node:delegated-task:cf99c4b2-869b-42db-9579-f281d88edd88"
+    "node:delegated-task:cf99c4b2-869b-42db-9579-f281d88edd88",
+    "node:delegated-task:2319fd10-9014-47a3-9292-72097b6798fe"
   ],
-  "terminalSummary": "The original loss stays final, and optional continuation is unscored practice. The board input format remains undecided.",
+  "terminalSummary": "Board input uses FEN plus a readable piece list. Returned-move notation remains undecided.",
   "acceptedDecision": "Do not supply a legal-move list or constrain the response to an enumeration of legal moves. The model proposes its own move and may receive corrections for mistakes.",
   "discussionCommentId": "64c107b9-2653-44f4-8496-2de310dbcb81",
   "acceptedDecisions": [
@@ -29,7 +30,8 @@
     "Corrections explain the specific chess-rule violation without suggesting a replacement move or supplying the legal-move list. The model chooses its own replacement.",
     "Allow three automatic correction retries after the initial illegal-move attempt, for four attempts total on the same turn. Exhaustion stops automatic retries and counts as a loss for the model.",
     "After the model loss, offer optional continuation from the current position with the same model or a new model. Both continuation options use fresh context plus the current position. Ordinary mid-match switches retain the full prior conversation.",
-    "The original model loss remains final. Post-loss continuation is unscored practice with either the same model or a new model."
+    "The original model loss remains final. Post-loss continuation is unscored practice with either the same model or a new model.",
+    "Provide the current position as both FEN and a readable list of pieces and their squares."
   ],
   "acceptedRetryLimit": {
     "initialAttempts": 1,
@@ -46,5 +48,11 @@
     "relationshipToRecordedResult": "The original model loss remains final. Continuation with the same or a new model is unscored practice and cannot erase or replace the loss.",
     "ordinarySwitches": "Retain the full prior match conversation.",
     "transcriptRetention": "Separate unresolved decision. Resetting the sent context does not decide deletion of stored transcripts."
+  },
+  "acceptedBoardInput": {
+    "positionString": "FEN",
+    "pieceList": "Readable pieces and their squares.",
+    "scope": "Ordinary play and post-loss practice, subject to the accepted conversation/reset rules.",
+    "guidance": "Describe the position without legal-move lists or strategic advice."
   }
 }
