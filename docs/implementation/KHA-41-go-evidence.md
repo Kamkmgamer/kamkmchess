@@ -26,3 +26,15 @@ Latest observed run on 2026-10-17: all eight top-level PostgreSQL integration te
 The fixture suite also verifies identical concurrent operation retries, operation lookup after an uncertain acknowledgment, conflicting operation-ID reuse, semantic final-result immutability, exact archive event and chunk item JSON byte round-trip over the authenticated HTTP API, owner-only archive reads, and transaction rollback when duplicate archive sequence insertion fails. The create-time dangling-reference and scrubbed-receipt regressions now pass. These are local database/API checks only.
 
 No provider credentials, hosted database, production Clerk project, live model, external service spending, or browser suite was used. No credentials are present in the test DSN.
+
+## Final build checks
+
+The coordinator ran the production Go checks with PostgreSQL required: `go vet ./backend/... ./cmd/...` and `go test ./backend/... ./cmd/... -count=1` passed. The frontend `corepack pnpm check` passed lint, all 273 tests in 18 files, TypeScript checks, the Vite production build, and distribution notice generation. A process-local Corepack shim directory was prepended to `PATH` so nested pnpm scripts used the pinned pnpm 12.14.0 rather than an older global executable. No package-manager version requirement was relaxed.
+
+## Standards review
+
+An independent GPT-6 Luna agent reviewed the implementation against base `4208383` and found zero actionable documented-standard violations or correctness-relevant code smells. It checked public test seams and the browser/server responsibility boundary.
+
+## Spec review
+
+A separate GPT-6 Luna agent reviewed the same diff against KHA-41 and the amended specification and found zero actionable spec findings. Hosted and native acceptance remains unrun. The reviewers made no implementation edits.
