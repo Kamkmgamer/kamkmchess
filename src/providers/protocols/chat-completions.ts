@@ -81,6 +81,10 @@ function consumeChatEvent(
     state.malformed = true;
     return;
   }
+  if (event.event !== 'message') {
+    state.unknownEvents.push(event);
+    return;
+  }
   if (event.data === '[DONE]') {
     state.doneSeen = true;
     return;
