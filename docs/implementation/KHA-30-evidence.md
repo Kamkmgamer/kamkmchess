@@ -48,11 +48,11 @@ Environment: Node v24.22.0 and npm 11.19.1. No credentials, live models, network
 | `npm run lint` | No lint errors. | Passed in the final full check. |
 | `npm test` | Complete offline fixture suite passes. | 71 tests passed across 3 files. |
 | `npm run typecheck` | App and node TypeScript projects pass. | Passed in the final full check. |
-| `npm run build` | Typecheck, Vite production build and notices complete. | Passed in the final full check. Vite built 15 modules and wrote [the app](../../dist/index.html), [third-party notices](../../dist/THIRD_PARTY_NOTICES.txt) and [dependency inventory](../../dist/DEPENDENCY_INVENTORY.json). |
+| `npm run build` | Typecheck, Vite production build and notices complete. | Passed in the final full check. Vite built 15 modules. The committed [build bundle](artifacts/KHA-30-build-17a2bdf.zip) contains the app, licenses, notices, dependency inventory and static-host configuration; the [manifest](artifacts/KHA-30-build-17a2bdf.json) records its source commit and every file's SHA-256. |
 
 The final `npm run check` command ran lint, all 71 tests, typecheck, the Vite production build and notice generation. It exited 0.
 
-The curated publication candidate also passed a clean `npm ci` and `npm run check` on 2026-10-16. All 71 proof, rules and clock fixtures passed, as did lint, typechecking, the production build and notice generation. The proof source and fixtures are unchanged from the reviewed checker; publication documentation links only the committed inputs and canonical research decisions.
+The curated publication candidate `17a2bdf33915f2932995c4609ada8425ac2b6ffd` also passed a clean `npm ci` and `npm run check` on 2026-10-16. All 71 proof, rules and clock fixtures passed, as did lint, typechecking, the production build and notice generation. The proof source and fixtures are unchanged from the reviewed checker. The committed bundle contains that candidate's actual generated `dist/` files, including the placeholder app; it is a local build artifact, not a deployment or a playable-game acceptance result. Every archive entry was checked against the manifest and local output. Publication documentation links to committed inputs, artifacts and canonical research decisions.
 
 ## Unrun work and limits
 

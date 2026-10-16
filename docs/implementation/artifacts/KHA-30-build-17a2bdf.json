@@ -1,0 +1,52 @@
+{
+    "format":  "kamkmchess.local-build-evidence",
+    "schemaVersion":  1,
+    "sourceCommit":  "17a2bdf33915f2932995c4609ada8425ac2b6ffd",
+    "method":  "Clean npm ci and npm run check on the public proof candidate",
+    "observed":  "Exit 0, 71 fixtures across three files, lint, typecheck, Vite build and notice generation passed",
+    "scope":  "Offline local build only. No hosted, native, assistive technology, live-provider or product acceptance certification.",
+    "archive":  "KHA-30-build-17a2bdf.zip",
+    "archiveSha256":  "c0b4f188781bab47c5ba9450d00de6129e883fca5e669e63748fc6a9a5b64512",
+    "files":  [
+                  {
+                      "path":  "_headers",
+                      "bytes":  336,
+                      "sha256":  "01d00fe3ab6cf75ef6214f11e5d294734e23961382b58115ec7c080e1885d65b"
+                  },
+                  {
+                      "path":  "_redirects",
+                      "bytes":  19,
+                      "sha256":  "6036983e5fc00f0169c9e939b1816ed771eee00e27f2fcc517b819041460b9ef"
+                  },
+                  {
+                      "path":  "assets/index-CE2xj8Mp.js",
+                      "bytes":  219192,
+                      "sha256":  "729ec9148ca84b456d8bd35e4e8f4af91fdb06a32c2404587920055dbc0ffd86"
+                  },
+                  {
+                      "path":  "assets/index-Dn1Kj2XK.css",
+                      "bytes":  562,
+                      "sha256":  "84935c1fa75bb6ef1afb3f6862aadeb681ad506f1dca201490dacef620c5283f"
+                  },
+                  {
+                      "path":  "DEPENDENCY_INVENTORY.json",
+                      "bytes":  32896,
+                      "sha256":  "d3dd75307a5ac1332c5795e78a54bd2d13e0cf691d456499f91472911e58b34f"
+                  },
+                  {
+                      "path":  "index.html",
+                      "bytes":  496,
+                      "sha256":  "4651fb5226b77250c542ce82ca8e098b2b035154d6dc660db0b3e175776bac51"
+                  },
+                  {
+                      "path":  "LICENSE.txt",
+                      "bytes":  1080,
+                      "sha256":  "4ccc7c5ac9ebaa24233e3115dda4541b5d7d5d254f8e027a3fc442807d56e50c"
+                  },
+                  {
+                      "path":  "THIRD_PARTY_NOTICES.txt",
+                      "bytes":  5038,
+                      "sha256":  "a833d6cb3a6f09d0482ec3dd94ce1e8767aab8eb9f14186f79ee408efa4115b9"
+                  }
+              ]
+}
