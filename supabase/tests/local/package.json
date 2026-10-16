@@ -1,0 +1,11 @@
+{
+  "name": "kha41-local-postgres-verification",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node ./run-kha41.mjs"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.5.10"
+  }
+}

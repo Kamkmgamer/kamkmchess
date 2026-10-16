@@ -34,12 +34,14 @@ The build also writes `dist/DEPENDENCY_INVENTORY.json` with every locked package
 | vite | 8.3.4 | MIT |
 | vitest | 5.0.5 | MIT |
 
+The optional developer subpackage in `supabase/tests/local/` has its own lockfile. It pins `@electric-sql/pglite` 0.5.10 (Apache-2.0) and vendors pgTAP 1.3.3's extension SQL/control bundle (revised FreeBSD license, retained in the SQL). These tools run embedded PostgreSQL for offline fixtures. They are not dependencies of the application package or browser bundle. The [runner guide](../supabase/tests/local/README.md) records source provenance and checksums.
+
 TypeScript 6.0.3 stays within typescript-eslint 8.71.2's declared `>=4.8.4 <6.1.0` support. The current TypeScript 7 release is not selected. Vite 8 and its React plugin's declared peer versions agree. The verified build runtime is Node 24.22.0 with npm 11.19.1. Dependency installation reported zero known vulnerabilities on 2026-10-16; this does not certify future registry advisories or application security.
 
 ## Artwork and later dependencies
 
 This build contains no piece sprites, icons, fonts or third-party artwork. It uses system fonts and a text-only placeholder. No source was copied from the disposable interface prototype.
 
-The approved chess.js **1.4.0** runtime dependency is installed and listed above. cm-chessboard **8.15.3** remains a research baseline and is not installed yet. The board work must pin and review its actual version against the decision recorded in [KHA-22](https://linear.app/kamkm/issue/KHA-22/verify-chess-rules-board-accessibility-and-dependency-licenses), preserve required dependency notices, and add the standard art's actual author/source, CC BY-SA 3.0 license and modification notices before distribution. The research report and raw experiment files are not included here. Their absence does not change those requirements.
+The approved chess.js **1.4.0** runtime dependency is installed and listed above. cm-chessboard **8.15.3** remains a research baseline and is not installed yet. The board work must pin and review its actual version against [the dependency research](../research/chess-dependencies.md), preserve required dependency notices, and add the standard art's actual author/source, CC BY-SA 3.0 license and modification notices before distribution. The absence of the board package and artwork here does not replace those choices.
 
 Exclude the optional NonCommercial piece set, research-only GPL replay packages and the unsafe stock solver from production. Experiment lockfiles and bundles are not production dependencies or distribution assets. Later artwork licensing remains separate from the original-code MIT license. Complete `OPS-05` requires the final game distribution and asset review, not just this foundation inventory.
