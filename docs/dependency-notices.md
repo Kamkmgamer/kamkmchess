@@ -27,6 +27,7 @@ The build also writes `dist/DEPENDENCY_INVENTORY.json` with every locked package
 | eslint | 10.12.0 | MIT |
 | eslint-plugin-react-hooks | 7.1.1 | MIT |
 | eslint-plugin-react-refresh | 0.5.7 | MIT |
+| fake-indexeddb | 6.2.5 | Apache-2.0 |
 | globals | 17.13.0 | MIT |
 | typescript | 6.0.3 | Apache-2.0 |
 | typescript-eslint | 8.71.2 | MIT |

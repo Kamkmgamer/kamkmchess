@@ -7,10 +7,17 @@ import {
   readGameCheckpoint,
 } from './validation';
 import type { ArchiveSnapshotV1, GameArchiveExportV1 } from './types';
-import type { ArchiveChunkV1, ArchiveEventV1, GameCheckpointV1 } from '../storage/types';
+import type { ArchiveChunkV1, ArchiveEventV1, GameCheckpointV1 } from '../storage';
 
 export type { ArchiveChunkExportV1, ArchiveSnapshotV1, GameArchiveExportV1 } from './types';
 export { ArchiveError } from './codec';
+export {
+  assertArchiveReferenceIntegrity,
+  readArchiveChunk,
+  readArchiveEvent,
+  readGameCheckpoint,
+  verifyChunkDigest,
+} from './validation';
 
 export interface PreparedArchiveRecordsV1 {
   events: ArchiveEventV1[];
@@ -51,18 +58,26 @@ function jsonContainsText(value: unknown, text: string): boolean {
   return Object.entries(value).some(([key, entry]) => key.includes(text) || jsonContainsText(entry, text));
 }
 
-function copyCredentials(value: readonly string[]): string[] {
-  if (!Array.isArray(value) || value.some((credential) => typeof credential !== 'string')) {
+export function snapshotKnownCredentials(value: readonly string[]): readonly string[] {
+  if (!Array.isArray(value)) {
     throw new ArchiveError('invalid-archive', 'Credential checks must contain strings only.');
   }
-  return [...value];
+  const credentials: string[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    const credential: unknown = value[index];
+    if (typeof credential !== 'string') {
+      throw new ArchiveError('invalid-archive', 'Credential checks must contain strings only.');
+    }
+    credentials.push(credential);
+  }
+  return Object.freeze(credentials);
 }
 
 export function checkpointHasCredentialEcho(
   checkpoint: GameCheckpointV1,
   knownCredentials: readonly string[],
 ): boolean {
-  return copyCredentials(knownCredentials).some(
+  return snapshotKnownCredentials(knownCredentials).some(
     (credential) => credential.length > 0 && jsonContainsText(checkpoint, credential),
   );
 }
@@ -83,7 +98,8 @@ function quarantineCredentialEchoes(
     const marker = encoder.encode(credential);
     const matchedChunkIds = new Set<string>();
     for (const chunk of chunks) {
-      if (containsBytes(chunk.bytes, marker)) matchedChunkIds.add(chunk.chunkId);
+      const { bytes, ...metadata } = chunk;
+      if (containsBytes(bytes, marker) || jsonContainsText(metadata, credential)) matchedChunkIds.add(chunk.chunkId);
     }
     for (const event of events) {
       const eventChunks = event.chunkIds
@@ -95,7 +111,7 @@ function quarantineCredentialEchoes(
       } else if (eventChunks.length > 1 && containsBytes(joinBytes(eventChunks), marker)) {
         event.egressStatus = 'credential-echo-quarantined';
         for (const chunk of eventChunks) matchedChunkIds.add(chunk.chunkId);
-      } else if (jsonContainsText(event.payload, credential)) {
+      } else if (jsonContainsText(event, credential)) {
         event.egressStatus = 'credential-echo-quarantined';
         for (const chunk of eventChunks) matchedChunkIds.add(chunk.chunkId);
       }
@@ -116,7 +132,7 @@ export async function prepareArchiveRecords(
   chunkInputs: readonly ArchiveChunkV1[],
   knownCredentials: readonly string[],
 ): Promise<PreparedArchiveRecordsV1> {
-  const credentials = copyCredentials(knownCredentials);
+  const credentials = snapshotKnownCredentials(knownCredentials);
   const events = eventInputs.map((event) => readArchiveEvent(event));
   const chunks = await Promise.all(
     chunkInputs.map(async (chunk) => {
@@ -138,7 +154,7 @@ export async function exportGameArchive(
   knownCredentials: readonly string[],
   exportedAtMs = Date.now(),
 ): Promise<GameArchiveExportV1> {
-  const credentials = copyCredentials(knownCredentials);
+  const credentials = snapshotKnownCredentials(knownCredentials);
   const checkpoint = readGameCheckpoint(snapshot.checkpoint);
   const prepared = await prepareArchiveRecords(snapshot.events, snapshot.chunks, credentials);
   if (
@@ -164,7 +180,7 @@ export async function exportGameArchive(
   }
   assertArchiveReferenceIntegrity(checkpoint, prepared.events, prepared.chunks);
 
-  return {
+  const archive: GameArchiveExportV1 = {
     format: 'kamkmchess.game-archive',
     schemaVersion: 1,
     exportedAtMs,
@@ -181,6 +197,26 @@ export async function exportGameArchive(
       sha256: chunk.sha256,
     })),
   };
+  if (credentials.some((credential) => credential.length > 0 && jsonContainsText(archive, credential))) {
+    const encodedEchoChunkIds = new Set(
+      archive.chunks
+        .filter((chunk) => credentials.some((credential) => credential.length > 0 && chunk.bytesBase64.includes(credential)))
+        .map((chunk) => chunk.chunkId),
+    );
+    snapshot.checkpoint = checkpointWithQuarantine(checkpoint, true);
+    for (const chunk of snapshot.chunks) {
+      if (encodedEchoChunkIds.has(chunk.chunkId)) chunk.egressStatus = 'credential-echo-quarantined';
+    }
+    for (const event of snapshot.events) {
+      if (!event.chunkIds.some((chunkId) => encodedEchoChunkIds.has(chunkId))) continue;
+      event.egressStatus = 'credential-echo-quarantined';
+      for (const chunk of snapshot.chunks) {
+        if (event.chunkIds.includes(chunk.chunkId)) chunk.egressStatus = 'credential-echo-quarantined';
+      }
+    }
+    throw new ArchiveError('credential-echo', 'Export is blocked because the archive contains a recognized credential echo.');
+  }
+  return archive;
 }
 
 export async function validateGameArchive(value: unknown): Promise<GameArchiveExportV1> {

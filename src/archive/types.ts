@@ -2,7 +2,7 @@ import type {
   ArchiveChunkV1,
   ArchiveEventV1,
   GameCheckpointV1,
-} from '../storage/types';
+} from '../storage';
 
 export interface ArchiveSnapshotV1 {
   checkpoint: GameCheckpointV1;

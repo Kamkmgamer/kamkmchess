@@ -71,13 +71,24 @@ export interface HistoryCheckpointV1 {
   messages: HistoryMessageV1[];
 }
 
+export interface ClockAnchorCheckpointV1 {
+  monotonicMs: number;
+  wallTimeMs: number;
+  hostOffsetMs?: number;
+}
+
 export interface ClockCheckpointV1 {
-  initialTimeMs: number;
-  incrementMs: number;
-  remainingMs: Record<ChessSideV1, number>;
+  schemaVersion: 1;
+  timeControl: {
+    startingTimeMs: number;
+    incrementMs: number;
+  };
+  banksAtAnchor: {
+    whiteMs: number;
+    blackMs: number;
+  };
   activeSide: ChessSideV1 | null;
-  turnStartedAtWallMs: number | null;
-  turnStartedAtMonotonicMs: number | null;
+  anchor: ClockAnchorCheckpointV1 | null;
   lastReconciledAtMs: number;
 }
 

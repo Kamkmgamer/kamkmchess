@@ -4,17 +4,15 @@ import {
   checkpointWithQuarantine,
   exportGameArchive as buildGameArchiveExport,
   prepareArchiveRecords,
-  unpackGameArchive,
-} from '../archive';
-import {
-  assertArchiveReferenceIntegrity,
   readArchiveChunk,
   readArchiveEvent,
   readGameCheckpoint,
+  snapshotKnownCredentials,
+  unpackGameArchive,
+  assertArchiveReferenceIntegrity,
   verifyChunkDigest,
-} from '../archive/validation';
-import type { GameArchiveExportV1 } from '../archive/types';
-import type { PreparedArchiveRecordsV1 } from '../archive';
+} from '../archive';
+import type { GameArchiveExportV1, PreparedArchiveRecordsV1 } from '../archive';
 import { abortTransaction, DATABASE_STORES, openDatabase, transactionCompletion } from './database';
 import { GameStorageError, classifyStorageFailure } from './errors';
 import type {
@@ -404,7 +402,9 @@ class IndexedDbGameStore implements GameStore {
           transactionFailure.operation =
             error instanceof GameStorageError
               ? error
-              : storageFailure('transaction-aborted', 'The checkpoint transaction was aborted.');
+              : error instanceof ArchiveError
+                ? storageFailure('invalid-data', 'The checkpoint archive references are invalid.')
+                : storageFailure('transaction-aborted', 'The checkpoint transaction was aborted.');
           abortTransaction(transaction);
           resolve();
         }
@@ -619,29 +619,44 @@ class IndexedDbGameStore implements GameStore {
   }
 
   async exportGameArchive(gameId: string, knownCredentials: readonly string[]): Promise<GameArchiveExportV1> {
+    const credentialSnapshot = snapshotKnownCredentials(knownCredentials);
     const snapshot = await this.readGame(gameId);
     if (!snapshot) throw storageFailure('invalid-data', 'The requested game has no committed checkpoint.');
     try {
-      return await buildGameArchiveExport(snapshot, knownCredentials);
+      return await buildGameArchiveExport(snapshot, credentialSnapshot);
     } catch (error) {
       if (error instanceof ArchiveError && error.code === 'credential-echo') {
-        await this.persistQuarantineMarker(gameId);
+        await this.persistQuarantineMarker(
+          gameId,
+          snapshot.events.filter((event) => event.egressStatus === 'credential-echo-quarantined').map((event) => event.eventId),
+          snapshot.chunks.filter((chunk) => chunk.egressStatus === 'credential-echo-quarantined').map((chunk) => chunk.chunkId),
+        );
       }
       throw error;
     }
   }
 
-  private async persistQuarantineMarker(gameId: string): Promise<void> {
+  private async persistQuarantineMarker(
+    gameId: string,
+    quarantinedEventIds: readonly string[],
+    quarantinedChunkIds: readonly string[],
+  ): Promise<void> {
     const transaction = safeTransaction(this.database, 'readwrite');
     const completed = transactionCompletion(transaction);
     const checkpointStore = transaction.objectStore('checkpoints');
+    const eventStore = transaction.objectStore('events');
+    const chunkStore = transaction.objectStore('chunks');
     const outboxStore = transaction.objectStore('outbox');
     const checkpointRequest = checkpointStore.get(gameId);
     const outboxRequest = outboxStore.index('byGame').getAll(gameId);
+    const eventsRequest = eventStore.index('byGame').getAll(gameId);
+    const chunksRequest = chunkStore.index('byGame').getAll(gameId);
     const failure: { value: GameStorageError | null } = { value: null };
     let checkpointValue: unknown;
     let outboxValues: unknown[] = [];
-    let pending = 2;
+    let eventValues: unknown[] = [];
+    let chunkValues: unknown[] = [];
+    let pending = 4;
     let settled = false;
 
     await new Promise<void>((resolve) => {
@@ -661,6 +676,16 @@ class IndexedDbGameStore implements GameStore {
           }
           const checkpoint = readGameCheckpoint(checkpointValue);
           checkpointStore.put(checkpointWithQuarantine(checkpoint, true));
+          const eventIds = new Set(quarantinedEventIds);
+          for (const value of eventValues) {
+            const event = readArchiveEvent(value);
+            if (eventIds.has(event.eventId)) eventStore.put({ ...event, egressStatus: 'credential-echo-quarantined' });
+          }
+          const chunkIds = new Set(quarantinedChunkIds);
+          for (const value of chunkValues) {
+            const chunk = readArchiveChunk(value);
+            if (chunkIds.has(chunk.chunkId)) chunkStore.put({ ...chunk, egressStatus: 'credential-echo-quarantined' });
+          }
           for (const value of outboxValues) {
             const record = readOutboxRecord(value);
             if (record.gameId !== gameId || (record.state !== 'pending' && record.state !== 'failed')) continue;
@@ -691,8 +716,18 @@ class IndexedDbGameStore implements GameStore {
         outboxValues = outboxRequest.result;
         received();
       };
+      eventsRequest.onsuccess = () => {
+        eventValues = eventsRequest.result;
+        received();
+      };
+      chunksRequest.onsuccess = () => {
+        chunkValues = chunksRequest.result;
+        received();
+      };
       checkpointRequest.onerror = () => fail(checkpointRequest);
       outboxRequest.onerror = () => fail(outboxRequest);
+      eventsRequest.onerror = () => fail(eventsRequest);
+      chunksRequest.onerror = () => fail(chunksRequest);
     });
 
     try {
@@ -709,6 +744,7 @@ class IndexedDbGameStore implements GameStore {
   }
 
   async importGameArchive(value: unknown, knownCredentials: readonly string[] = []): Promise<StoredGameV1> {
+    const credentialSnapshot = snapshotKnownCredentials(knownCredentials);
     this.ensureOpen();
     let snapshot: StoredGameV1;
     try {
@@ -717,12 +753,12 @@ class IndexedDbGameStore implements GameStore {
       this.recordFailure('invalid-data');
       throw storageFailure('invalid-data', 'The game archive failed version, digest, or reference validation.');
     }
-    const prepared = await prepareArchiveRecords(snapshot.events, snapshot.chunks, knownCredentials);
+    const prepared = await prepareArchiveRecords(snapshot.events, snapshot.chunks, credentialSnapshot);
     const checkpoint = checkpointWithQuarantine(
       snapshot.checkpoint,
       snapshot.checkpoint.archive.egressStatus === 'credential-echo-quarantined' ||
         prepared.quarantined ||
-        checkpointHasCredentialEcho(snapshot.checkpoint, knownCredentials),
+        checkpointHasCredentialEcho(snapshot.checkpoint, credentialSnapshot),
     );
     assertArchiveReferenceIntegrity(checkpoint, prepared.events, prepared.chunks);
 
@@ -880,6 +916,8 @@ export { GameStorageError } from './errors';
 export type {
   AppliedMoveV1,
   ArchiveReferencesV1,
+  ArchiveLineReferenceV1,
+  DiscardedLineReferenceV1,
   ArchiveChunkV1,
   ArchiveEventV1,
   BudgetCheckpointV1,
@@ -888,6 +926,7 @@ export type {
   CheckpointCommitResultV1,
   ChessSideV1,
   ClockCheckpointV1,
+  ClockAnchorCheckpointV1,
   GameCheckpointV1,
   GameNamespaceV1,
   GameResultV1,

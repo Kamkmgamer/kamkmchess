@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { exportGameArchive } from '../archive';
-import type { ArchiveChunkV1, ArchiveEventV1, GameCheckpointV1 } from './types';
 import { openGameStore } from './index';
+import type { ArchiveChunkV1, ArchiveEventV1, GameCheckpointV1 } from './index';
 
 function makeCheckpoint(revision = 1, updatedAtMs = 100): GameCheckpointV1 {
   return {
@@ -67,12 +67,11 @@ function makeCheckpoint(revision = 1, updatedAtMs = 100): GameCheckpointV1 {
       ],
     },
     clocks: {
-      initialTimeMs: 900000,
-      incrementMs: 10000,
-      remainingMs: { white: 810000, black: 800000 },
+      schemaVersion: 1,
+      timeControl: { startingTimeMs: 900000, incrementMs: 10000 },
+      banksAtAnchor: { whiteMs: 810000, blackMs: 800000 },
       activeSide: 'black',
-      turnStartedAtWallMs: 90,
-      turnStartedAtMonotonicMs: 8,
+      anchor: { wallTimeMs: 90, monotonicMs: 8 },
       lastReconciledAtMs: 99,
     },
     budgets: {
@@ -244,6 +243,59 @@ describe('IndexedDB checkpoint commits', () => {
     store.close();
   });
 
+  it('round-trips versioned clock anchors, optional host offsets, and paused null state', async () => {
+    const factory = new IDBFactory();
+    const clockCases: GameCheckpointV1['clocks'][] = [
+      {
+        schemaVersion: 1,
+        timeControl: { startingTimeMs: 900000, incrementMs: 10000 },
+        banksAtAnchor: { whiteMs: 810000, blackMs: 800000 },
+        activeSide: 'black',
+        anchor: { monotonicMs: 8, wallTimeMs: 90, hostOffsetMs: 350 },
+        lastReconciledAtMs: 99,
+      },
+      {
+        schemaVersion: 1,
+        timeControl: { startingTimeMs: 900000, incrementMs: 10000 },
+        banksAtAnchor: { whiteMs: 810000, blackMs: 800000 },
+        activeSide: 'white',
+        anchor: { monotonicMs: 11, wallTimeMs: 101 },
+        lastReconciledAtMs: 102,
+      },
+      {
+        schemaVersion: 1,
+        timeControl: { startingTimeMs: 900000, incrementMs: 10000 },
+        banksAtAnchor: { whiteMs: 900000, blackMs: 900000 },
+        activeSide: null,
+        anchor: null,
+        lastReconciledAtMs: 0,
+      },
+    ];
+
+    for (let index = 0; index < clockCases.length; index += 1) {
+      const source = await openGameStore({ databaseName: databaseName(), factory, now: () => 101 });
+      const checkpoint = { ...makeCheckpoint(), gameId: `clock-game-${index}`, clocks: clockCases[index]! };
+      const result = await source.commitCheckpoint({
+        gameId: checkpoint.gameId,
+        expectedRevision: null,
+        expectedEpoch: 0,
+        events: [{ ...makeEvent(['chunk-1']), gameId: checkpoint.gameId }],
+        chunks: [{ ...makeChunk('chunk-1', 1, 'clock archive'), gameId: checkpoint.gameId }],
+        knownCredentials: [],
+        decide: () => ({ checkpoint, outboxOperationIds: [] }),
+      });
+      expect(result.kind).toBe('committed');
+      expect((await source.readGame(checkpoint.gameId))?.checkpoint.clocks).toEqual(clockCases[index]);
+
+      const archive = await source.exportGameArchive(checkpoint.gameId, []);
+      const destination = await openGameStore({ databaseName: databaseName(), factory });
+      const imported = await destination.importGameArchive(JSON.parse(JSON.stringify(archive)));
+      expect(imported.checkpoint.clocks).toEqual(clockCases[index]);
+      source.close();
+      destination.close();
+    }
+  });
+
   it('reports an injected quota abort as unsaved and leaves no partial archive', async () => {
     const name = databaseName();
     const factory = new IDBFactory();
@@ -404,6 +456,137 @@ describe('IndexedDB checkpoint commits', () => {
     reloaded.close();
   });
 
+  it('snapshots credentials at export entry and keeps the recognized echo quarantined after key removal', async () => {
+    const name = databaseName();
+    const factory = new IDBFactory();
+    const firstStore = await openGameStore({ databaseName: name, factory, syncConfigured: true });
+    const initial = makeCheckpoint();
+    const exactBytes = 'raw provider echo: api-key-canary-739 and snow 雪';
+    await firstStore.commitCheckpoint({
+      gameId: initial.gameId,
+      expectedRevision: null,
+      expectedEpoch: 0,
+      events: [makeEvent(['chunk-1'])],
+      chunks: [makeChunk('chunk-1', 1, exactBytes)],
+      knownCredentials: [],
+      decide: () => ({ checkpoint: initial, outboxOperationIds: ['mutation-export-operation'] }),
+    });
+
+    const credentials = ['api-key-canary-739'];
+    const exportPromise = firstStore.exportGameArchive(initial.gameId, credentials);
+    credentials.splice(0, credentials.length);
+    await expect(exportPromise).rejects.toMatchObject({ code: 'credential-echo' });
+
+    const quarantined = await firstStore.readGame(initial.gameId);
+    expect(quarantined?.checkpoint.archive.egressStatus).toBe('credential-echo-quarantined');
+    expect(quarantined?.events[0]?.egressStatus).toBe('credential-echo-quarantined');
+    expect(quarantined?.chunks[0]?.egressStatus).toBe('credential-echo-quarantined');
+    expect(new TextDecoder().decode(quarantined?.chunks[0]?.bytes)).toBe(exactBytes);
+    expect((await firstStore.readOutboxOperation('mutation-export-operation'))?.state).toBe('blocked');
+    firstStore.close();
+
+    const reloaded = await openGameStore({ databaseName: name, factory, syncConfigured: true });
+    await expect(reloaded.exportGameArchive(initial.gameId, [])).rejects.toMatchObject({
+      code: 'credential-echo',
+    });
+    expect((await reloaded.readOutboxOperation('mutation-export-operation'))?.state).toBe('blocked');
+    expect((await reloaded.status(initial.gameId)).sync.kind).toBe('blocked');
+    expect(new TextDecoder().decode((await reloaded.readGame(initial.gameId))?.chunks[0]?.bytes)).toBe(exactBytes);
+    reloaded.close();
+  });
+
+  it('snapshots credentials at import entry and persists quarantine before later outbox work', async () => {
+    const name = databaseName();
+    const factory = new IDBFactory();
+    const initial = makeCheckpoint();
+    const exactBytes = 'imported provider echo: api-key-canary-739 and snow 雪';
+    const archive = await exportGameArchive(
+      { checkpoint: initial, events: [makeEvent(['chunk-1'])], chunks: [makeChunk('chunk-1', 1, exactBytes)] },
+      [],
+    );
+    const store = await openGameStore({ databaseName: name, factory, syncConfigured: true });
+
+    const credentials = ['api-key-canary-739'];
+    const importPromise = store.importGameArchive(JSON.parse(JSON.stringify(archive)), credentials);
+    credentials.splice(0, credentials.length);
+    await importPromise;
+
+    const imported = await store.readGame(initial.gameId);
+    expect(imported?.checkpoint.archive.egressStatus).toBe('credential-echo-quarantined');
+    expect(imported?.events[0]?.egressStatus).toBe('credential-echo-quarantined');
+    expect(imported?.chunks[0]?.egressStatus).toBe('credential-echo-quarantined');
+    expect(new TextDecoder().decode(imported?.chunks[0]?.bytes)).toBe(exactBytes);
+
+    const nextCheckpoint: GameCheckpointV1 = {
+      ...initial,
+      revision: 2,
+      positionRevision: 2,
+      updatedAtMs: 102,
+    };
+    const commit = await store.commitCheckpoint({
+      gameId: initial.gameId,
+      expectedRevision: 1,
+      expectedEpoch: 0,
+      events: [],
+      chunks: [],
+      knownCredentials: [],
+      decide: (decisionTimeMs) => ({
+        checkpoint: { ...nextCheckpoint, updatedAtMs: decisionTimeMs },
+        outboxOperationIds: ['blocked-after-import'],
+      }),
+    });
+    expect(commit.kind).toBe('committed');
+    expect((await store.readOutboxOperation('blocked-after-import'))?.state).toBe('blocked');
+    store.close();
+
+    const reloaded = await openGameStore({ databaseName: name, factory, syncConfigured: true });
+    await expect(reloaded.exportGameArchive(initial.gameId, [])).rejects.toMatchObject({
+      code: 'credential-echo',
+    });
+    expect((await reloaded.readOutboxOperation('blocked-after-import'))?.state).toBe('blocked');
+    expect((await reloaded.status(initial.gameId)).sync.kind).toBe('blocked');
+    expect(new TextDecoder().decode((await reloaded.readGame(initial.gameId))?.chunks[0]?.bytes)).toBe(exactBytes);
+    reloaded.close();
+  });
+
+  it('persists a credential echo found only in event metadata and keeps it blocked after key removal', async () => {
+    const name = databaseName();
+    const factory = new IDBFactory();
+    const firstStore = await openGameStore({ databaseName: name, factory, syncConfigured: true });
+    const initial = makeCheckpoint();
+    const exactBytes = 'raw event body contains no credential: 雪';
+    const event = { ...makeEvent(['chunk-1']), kind: 'api-key-canary-739' };
+    await firstStore.commitCheckpoint({
+      gameId: initial.gameId,
+      expectedRevision: null,
+      expectedEpoch: 0,
+      events: [event],
+      chunks: [makeChunk('chunk-1', 1, exactBytes)],
+      knownCredentials: [],
+      decide: () => ({ checkpoint: initial, outboxOperationIds: ['metadata-echo-operation'] }),
+    });
+
+    await expect(firstStore.exportGameArchive(initial.gameId, ['api-key-canary-739'])).rejects.toMatchObject({
+      code: 'credential-echo',
+      message: expect.not.stringContaining('api-key-canary-739'),
+    });
+    const local = await firstStore.readGame(initial.gameId);
+    expect(local?.checkpoint.archive.egressStatus).toBe('credential-echo-quarantined');
+    expect(local?.events[0]?.kind).toBe('api-key-canary-739');
+    expect(local?.events[0]?.egressStatus).toBe('credential-echo-quarantined');
+    expect(local?.chunks[0]?.egressStatus).toBe('credential-echo-quarantined');
+    expect(new TextDecoder().decode(local?.chunks[0]?.bytes)).toBe(exactBytes);
+    expect((await firstStore.readOutboxOperation('metadata-echo-operation'))?.state).toBe('blocked');
+    firstStore.close();
+
+    const reloaded = await openGameStore({ databaseName: name, factory, syncConfigured: true });
+    await expect(reloaded.exportGameArchive(initial.gameId, [])).rejects.toMatchObject({ code: 'credential-echo' });
+    expect((await reloaded.readOutboxOperation('metadata-echo-operation'))?.state).toBe('blocked');
+    expect((await reloaded.status(initial.gameId)).sync.kind).toBe('blocked');
+    expect(new TextDecoder().decode((await reloaded.readGame(initial.gameId))?.chunks[0]?.bytes)).toBe(exactBytes);
+    reloaded.close();
+  });
+
   it('rejects stale revision or ownership epoch without calling the decision hook', async () => {
     const store = await openGameStore({ databaseName: databaseName(), factory: new IDBFactory(), now: () => 100 });
     const initial = makeCheckpoint();
@@ -431,6 +614,32 @@ describe('IndexedDB checkpoint commits', () => {
     });
     expect(stale).toEqual({ kind: 'revision-conflict', actualRevision: 1, actualEpoch: 0 });
     expect(decisionCalled).toBe(false);
+    store.close();
+  });
+
+  it('classifies an invalid archive reference as invalid data and aborts every write', async () => {
+    const store = await openGameStore({ databaseName: databaseName(), factory: new IDBFactory(), now: () => 100 });
+    const valid = makeCheckpoint();
+    const invalid: GameCheckpointV1 = {
+      ...valid,
+      archive: { ...valid.archive, currentLine: { lineId: 'line-current', eventIds: ['missing-event'] } },
+    };
+
+    await expect(
+      store.commitCheckpoint({
+        gameId: invalid.gameId,
+        expectedRevision: null,
+        expectedEpoch: 0,
+        events: [makeEvent(['chunk-1'])],
+        chunks: [makeChunk('chunk-1', 1, 'must roll back')],
+        knownCredentials: [],
+        decide: () => ({ checkpoint: invalid, outboxOperationIds: ['invalid-archive-operation'] }),
+      }),
+    ).rejects.toMatchObject({ code: 'invalid-data' });
+
+    expect(await store.readGame(invalid.gameId)).toBeNull();
+    expect(await store.readOutboxOperation('invalid-archive-operation')).toBeNull();
+    expect((await store.status(invalid.gameId)).local).toMatchObject({ kind: 'failed', savedRevision: null });
     store.close();
   });
 

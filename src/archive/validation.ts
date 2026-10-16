@@ -19,7 +19,7 @@ import type {
   PracticeCheckpointV1,
   RulesCheckpointV1,
   SelectionCheckpointV1,
-} from '../storage/types';
+} from '../storage';
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -282,37 +282,45 @@ function readHistory(value: unknown): HistoryCheckpointV1 {
 
 function readClock(value: unknown): ClockCheckpointV1 {
   const clock = readRecord(value, 'checkpoint.clocks');
-  exactKeys(
-    clock,
-    [
-      'initialTimeMs',
-      'incrementMs',
-      'remainingMs',
-      'activeSide',
-      'turnStartedAtWallMs',
-      'turnStartedAtMonotonicMs',
-      'lastReconciledAtMs',
-    ],
-    'checkpoint.clocks',
-  );
-  const remaining = readRecord(clock.remainingMs, 'checkpoint.clocks.remainingMs');
-  exactKeys(remaining, ['white', 'black'], 'checkpoint.clocks.remainingMs');
+  exactKeys(clock, ['schemaVersion', 'timeControl', 'banksAtAnchor', 'activeSide', 'anchor', 'lastReconciledAtMs'], 'checkpoint.clocks');
+  if (clock.schemaVersion !== 1) fail('checkpoint.clocks.schemaVersion is unsupported.');
+  const timeControl = readRecord(clock.timeControl, 'checkpoint.clocks.timeControl');
+  exactKeys(timeControl, ['startingTimeMs', 'incrementMs'], 'checkpoint.clocks.timeControl');
+  const banks = readRecord(clock.banksAtAnchor, 'checkpoint.clocks.banksAtAnchor');
+  exactKeys(banks, ['whiteMs', 'blackMs'], 'checkpoint.clocks.banksAtAnchor');
+  let anchor: ClockCheckpointV1['anchor'] = null;
+  if (clock.anchor !== null) {
+    const anchorRecord = readRecord(clock.anchor, 'checkpoint.clocks.anchor');
+    const anchorKeys = ['monotonicMs', 'wallTimeMs'];
+    if (Object.hasOwn(anchorRecord, 'hostOffsetMs')) anchorKeys.push('hostOffsetMs');
+    exactKeys(anchorRecord, anchorKeys, 'checkpoint.clocks.anchor');
+    anchor = {
+      monotonicMs: numberValue(anchorRecord.monotonicMs, 'checkpoint.clocks.anchor.monotonicMs'),
+      wallTimeMs: numberValue(anchorRecord.wallTimeMs, 'checkpoint.clocks.anchor.wallTimeMs'),
+      ...(Object.hasOwn(anchorRecord, 'hostOffsetMs')
+        ? { hostOffsetMs: numberValue(anchorRecord.hostOffsetMs, 'checkpoint.clocks.anchor.hostOffsetMs') }
+        : {}),
+    };
+  }
+  const activeSide =
+    clock.activeSide === null
+      ? null
+      : enumValue(clock.activeSide, ['white', 'black'] as const, 'checkpoint.clocks.activeSide');
+  if ((activeSide === null) !== (anchor === null)) {
+    fail('checkpoint.clocks.activeSide and anchor must both be null while paused.');
+  }
   return {
-    initialTimeMs: numberValue(clock.initialTimeMs, 'checkpoint.clocks.initialTimeMs'),
-    incrementMs: numberValue(clock.incrementMs, 'checkpoint.clocks.incrementMs'),
-    remainingMs: {
-      white: numberValue(remaining.white, 'checkpoint.clocks.remainingMs.white'),
-      black: numberValue(remaining.black, 'checkpoint.clocks.remainingMs.black'),
+    schemaVersion: 1,
+    timeControl: {
+      startingTimeMs: numberValue(timeControl.startingTimeMs, 'checkpoint.clocks.timeControl.startingTimeMs'),
+      incrementMs: numberValue(timeControl.incrementMs, 'checkpoint.clocks.timeControl.incrementMs'),
     },
-    activeSide:
-      clock.activeSide === null
-        ? null
-        : enumValue(clock.activeSide, ['white', 'black'] as const, 'checkpoint.clocks.activeSide'),
-    turnStartedAtWallMs: nullableNumber(clock.turnStartedAtWallMs, 'checkpoint.clocks.turnStartedAtWallMs'),
-    turnStartedAtMonotonicMs: nullableNumber(
-      clock.turnStartedAtMonotonicMs,
-      'checkpoint.clocks.turnStartedAtMonotonicMs',
-    ),
+    banksAtAnchor: {
+      whiteMs: numberValue(banks.whiteMs, 'checkpoint.clocks.banksAtAnchor.whiteMs'),
+      blackMs: numberValue(banks.blackMs, 'checkpoint.clocks.banksAtAnchor.blackMs'),
+    },
+    activeSide,
+    anchor,
     lastReconciledAtMs: numberValue(clock.lastReconciledAtMs, 'checkpoint.clocks.lastReconciledAtMs'),
   };
 }
@@ -688,6 +696,23 @@ export function assertArchiveReferenceIntegrity(
   ];
   if (referencedEventIds.some((eventId) => !eventIds.has(eventId))) {
     fail('checkpoint references an event that is missing from the archive.');
+  }
+  const lineReferences = [checkpoint.archive.currentLine, ...checkpoint.archive.discardedLines];
+  const lineIds = new Set(lineReferences.map((line) => line.lineId));
+  if (lineIds.size !== lineReferences.length) fail('checkpoint.archive contains duplicate line IDs.');
+  const linesById = new Map(lineReferences.map((line) => [line.lineId, line]));
+  const discardedLineIds = new Set(checkpoint.archive.discardedLines.map((line) => line.lineId));
+  for (const message of checkpoint.history.messages) {
+    const line = linesById.get(message.lineId);
+    if (!line) fail(`history message ${message.messageId} references a missing line.`);
+    const isDiscardedLine = discardedLineIds.has(message.lineId);
+    if ((message.disposition === 'discarded') !== isDiscardedLine) {
+      fail(`history message ${message.messageId} disposition does not match its line.`);
+    }
+    const lineEventIds = new Set(line.eventIds);
+    if (message.eventIds.some((eventId) => !lineEventIds.has(eventId))) {
+      fail(`history message ${message.messageId} references an event outside its line.`);
+    }
   }
   const anyQuarantined =
     events.some((event) => event.egressStatus === 'credential-echo-quarantined') ||
