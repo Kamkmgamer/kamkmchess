@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "evidenceType": "local-sql-execution",
+  "scope": "preparatory-local-sql-only",
+  "source": {
+    "integrationSnapshotCommit": "95c52b89ac5db86333c5a693f494a0b4750c2f76",
+    "fixtureSourceCommit": "f8a8b2013e25c155319923f436107d30a1ed947a",
+    "executionEvidenceCommit": "8de98a3157102bad80a3dd17751922bc60e4beea",
+    "productionMigrationUnchangedAfterBd031Correction": true
+  },
+  "testedInputs": [
+    {
+      "path": "supabase/config.toml",
+      "sourceGitBlob": "e16c05f4c84f1fc61e332475aecf44268771d307",
+      "candidateGitBlobMatchesSource": true,
+      "testedWindowsFileSha256": "96f16eb51d4eea702ed47d9d25f2d9ce9024dc93565508fe170ab9a5b1a49f5e"
+    },
+    {
+      "path": "supabase/migrations/20261016000100_owner_only_cloud_storage.sql",
+      "sourceGitBlob": "e882d1c5d4cddd19c3db11d5fdbe627f55959701",
+      "candidateGitBlobMatchesSource": true,
+      "testedWindowsFileSha256": "a85fda9bd9273c2b4f98fa02a2ca7d447aabba78041e3d473833fce3e2a462a3"
+    },
+    {
+      "path": "supabase/tests/kha41_cloud_storage.sql",
+      "sourceGitBlob": "bf0699639462c79dc1423f6098e29039356ff0a5",
+      "candidateGitBlobMatchesSource": true,
+      "testedWindowsFileSha256": "69d4259db4e816e6826361052fcfd0021345230bdf1733e24baf8e96380b1705"
+    },
+    {
+      "path": "supabase/tests/local/package.json",
+      "sourceGitBlob": "36777f5c133851ea0b7606d6780a14bb724571b1",
+      "candidateGitBlobMatchesSource": true,
+      "testedWindowsFileSha256": "52c763e994f01bf1e76a72358860c3165af5a55412ac0f3f29db677450619d95"
+    },
+    {
+      "path": "supabase/tests/local/package-lock.json",
+      "sourceGitBlob": "941875639d3437cc7e1783117645fb3f8157a9b1",
+      "candidateGitBlobMatchesSource": true,
+      "testedWindowsFileSha256": "1660a3c5245c7d3a4cacfded08904a39fcd7cbfc3fc48195e0e06af5ed3c0e47"
+    },
+    {
+      "path": "supabase/tests/local/run-kha41.mjs",
+      "sourceGitBlob": "790d791a25609cfa5085534d52934eea8c92f784",
+      "candidateGitBlobMatchesSource": true,
+      "testedWindowsFileSha256": "405e648e6d362f2940efbda46cec25f07b9aab3216928122033e4fe60596c115",
+      "candidateWindowsFileSha256": "405e648e6d362f2940efbda46cec25f07b9aab3216928122033e4fe60596c115"
+    },
+    {
+      "path": "supabase/tests/local/vendor/pgtap-1.3.3.tar.gz",
+      "sourceGitBlob": "baa71c62849685e7819c6925f800d8ddc548b87d",
+      "candidateGitBlobMatchesSource": true,
+      "testedWindowsFileSha256": "1f0f4c4d874f76b6b66a0e88ec1f4a78a26c1cdb1c8db2c38918ca8ee2de8ea3",
+      "sizeBytes": 38662
+    }
+  ],
+  "execution": {
+    "attribution": "Previously completed local execution in the root SQL verification lane; this candidate did not rerun it.",
+    "command": "npm test",
+    "exitCode": 0,
+    "rawTapOutputIncluded": false,
+    "fixture": {
+      "sourceAssertionCalls": 132,
+      "observedPlan": "1..132",
+      "observedAssertionLines": 132,
+      "passed": 132,
+      "failed": 0,
+      "allObservedLinesWereOk": true
+    },
+    "directPublicRpcProbes": {
+      "passed": 16,
+      "total": 16,
+      "observations": [
+        "sparse-create-revision-31-with-epoch-zero-checkpoint",
+        "digest-bound-create-batch-byte-roundtrip",
+        "sparse-commit-revision-61-without-intermediate-rows",
+        "first-bounded-read-freezes-revision-61-epoch-1",
+        "archive-delta-after-frozen-target",
+        "later-page-excludes-revision-70",
+        "operation-lookup-found-and-unknown",
+        "takeover-advances-epoch-preserves-checkpoint",
+        "stale-frozen-read-rejected-after-takeover",
+        "checkpoint-adopts-new-cloud-epoch",
+        "pending-create-does-not-latch-final",
+        "pending-update-does-not-latch-final",
+        "stalemate-draw-final-result-latched",
+        "semantic-final-equality-accepts-reordered-json",
+        "changed-final-rejected-with-sqlstate-55000",
+        "delete-lookup-and-retry-return-payload-free-receipts"
+      ]
+    },
+    "runnerPassConditions": {
+      "sourceAssertionCallCountMustEqual": 132,
+      "observedPlanMustEqual": "1..132",
+      "observedAssertionLinesMustEqual": 132,
+      "everyAssertionLineMustStartWith": "ok ",
+      "anyNotOkOrSqlExecutionErrorFails": true,
+      "allDirectRpcProbesMustPass": true
+    },
+    "environment": {
+      "node": "24.22.0",
+      "npm": "11.19.1",
+      "pglite": "0.5.10",
+      "postgresql": "18.6",
+      "postgresqlTarget": "wasm32-unknown-emscripten",
+      "emcc": "6.0.5",
+      "emccBuildHash": "1db513782be24469589d7cb8a1f1834e9a33f271",
+      "extensions": [
+        "pgcrypto",
+        "pgTAP 1.3.3"
+      ],
+      "syntheticRolesUsersAndJwtClaims": true,
+      "pgliteConnections": 1,
+      "tcpListenerOpened": false
+    }
+  },
+  "dependencyProvenance": {
+    "pglite": {
+      "package": "@electric-sql/pglite",
+      "version": "0.5.10",
+      "license": "Apache-2.0",
+      "scope": "optional local developer subpackage"
+    },
+    "pgtap": {
+      "version": "1.3.3",
+      "bundlePath": "supabase/tests/local/vendor/pgtap-1.3.3.tar.gz",
+      "bundleSha256": "1f0f4c4d874f76b6b66a0e88ec1f4a78a26c1cdb1c8db2c38918ca8ee2de8ea3",
+      "sourceArchive": "theory/pgtap",
+      "sourceArchiveSha256": "325ea79d0d2515bce96bce43f6823dcd3effbd6c54cb2a4d6c2384fffa3a14c7",
+      "license": "revised FreeBSD",
+      "includedInBrowserBundle": false
+    },
+    "rootApplicationPackageOrLockChanged": false
+  },
+  "lineEndingHashConvention": {
+    "gitBlobHash": "Git blob identity over repository-stored bytes",
+    "windowsFileSha256": "SHA-256 over checked-out file bytes",
+    "candidateRunnerMatchesTestedRawSha256": true,
+    "note": "The tested and candidate runner files use LF and have the same raw SHA-256. A later checkout that converts LF to CRLF can produce a different raw file SHA-256 while preserving the same Git blob. Compare Git blobs or normalize line endings before comparing checkouts."
+  },
+  "acceptanceAndLimits": {
+    "productAcceptanceChecks": {
+      "count": 79,
+      "status": "not_run"
+    },
+    "notRun": [
+      "hosted real two-account denial checks",
+      "deployed direct-table-write bypass checks",
+      "multi-session advisory-lock races",
+      "backup restore",
+      "native acceptance",
+      "assistive-technology acceptance",
+      "KHA-28 browser RPC adapter integration",
+      "KHA-42 and KHA-43 browser integration",
+      "static web build",
+      "full Vitest suite"
+    ],
+    "hostedDatabaseUsed": false,
+    "projectCredentialsUsed": false,
+    "liveRequestsMade": false,
+    "deploymentPerformed": false,
+    "spendIncurred": false,
+    "claimsFullKha41Certification": false,
+    "sqlIsChessAuthority": false,
+    "sqlRelaysAiCredentials": false,
+    "canScanOpaqueChunkBytesForCredentialValues": false,
+    "singleConnectionProvesMultiSessionLockRaces": false
+  }
+}
