@@ -1305,6 +1305,54 @@ describe('IndexedDB checkpoint commits', () => {
     imported.close();
   });
 
+  it('rejects non-draw stalemate results during public archive import without committing data', async () => {
+    const checkpoint = makeCheckpoint();
+    const validStalemate: GameCheckpointV1 = {
+      ...checkpoint,
+      result: {
+        kind: 'final',
+        winner: 'draw',
+        reason: 'stalemate',
+        eventId: 'event-1',
+        decidedAtMs: 1450,
+      },
+    };
+    const archive = await exportGameArchive(
+      {
+        checkpoint: validStalemate,
+        events: [makeEvent(['chunk-1'])],
+        chunks: [makeChunk('chunk-1', 1, 'stalemate result import control')],
+      },
+      [],
+    );
+
+    for (const winner of ['white', 'black'] as const) {
+      const malformed = JSON.parse(JSON.stringify(archive));
+      malformed.checkpoint.result.winner = winner;
+      const store = await openGameStore({ databaseName: databaseName(), factory: new IDBFactory() });
+
+      await expect(store.importGameArchive(malformed)).rejects.toMatchObject({ code: 'invalid-data' });
+      expect(await store.readGame(checkpoint.gameId)).toBeNull();
+      store.close();
+    }
+
+    for (const winner of ['white', 'black'] as const) {
+      const malformed = JSON.parse(JSON.stringify(archive));
+      malformed.checkpoint.practice.originalResult = {
+        kind: 'final',
+        winner,
+        reason: 'stalemate',
+        eventId: 'event-practice-original',
+        decidedAtMs: 1400,
+      };
+      const store = await openGameStore({ databaseName: databaseName(), factory: new IDBFactory() });
+
+      await expect(store.importGameArchive(malformed)).rejects.toMatchObject({ code: 'invalid-data' });
+      expect(await store.readGame(checkpoint.gameId)).toBeNull();
+      store.close();
+    }
+  });
+
   it('rejects an unsupported final result reason without committing any part', async () => {
     const store = await openGameStore({ databaseName: databaseName(), factory: new IDBFactory(), now: () => 1500 });
     const initial = makeCheckpoint();

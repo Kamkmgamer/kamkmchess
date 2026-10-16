@@ -466,23 +466,35 @@ function readResult(value: unknown): GameResultV1 {
     };
   }
   exactKeys(result, ['kind', 'winner', 'reason', 'eventId', 'decidedAtMs'], 'checkpoint.result');
+  const winner = enumValue(result.winner, ['white', 'black', 'draw'] as const, 'checkpoint.result.winner');
+  const reason = enumValue(
+    result.reason,
+    [
+      'checkmate',
+      'timeout',
+      'dead-position',
+      'threefold-repetition',
+      'fifty-move-rule',
+      'resignation',
+      'illegal-move',
+      'stalemate',
+    ] as const,
+    'checkpoint.result.reason',
+  );
+  if (reason === 'stalemate') {
+    if (winner !== 'draw') fail('checkpoint.result stalemate must have a draw winner.');
+    return {
+      kind,
+      winner,
+      reason,
+      eventId: nonEmptyString(result.eventId, 'checkpoint.result.eventId'),
+      decidedAtMs: numberValue(result.decidedAtMs, 'checkpoint.result.decidedAtMs'),
+    };
+  }
   return {
     kind,
-    winner: enumValue(result.winner, ['white', 'black', 'draw'] as const, 'checkpoint.result.winner'),
-    reason: enumValue(
-      result.reason,
-      [
-        'checkmate',
-        'timeout',
-        'dead-position',
-        'threefold-repetition',
-        'fifty-move-rule',
-        'resignation',
-        'illegal-move',
-        'stalemate',
-      ] as const,
-      'checkpoint.result.reason',
-    ),
+    winner,
+    reason,
     eventId: nonEmptyString(result.eventId, 'checkpoint.result.eventId'),
     decidedAtMs: numberValue(result.decidedAtMs, 'checkpoint.result.decidedAtMs'),
   };

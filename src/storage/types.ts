@@ -155,7 +155,14 @@ export type GameResultV1 =
   | {
       kind: 'final';
       winner: ChessSideV1 | 'draw';
-      reason: FinalResultReasonV1;
+      reason: Exclude<FinalResultReasonV1, 'stalemate'>;
+      eventId: string;
+      decidedAtMs: number;
+    }
+  | {
+      kind: 'final';
+      winner: 'draw';
+      reason: 'stalemate';
       eventId: string;
       decidedAtMs: number;
     };
