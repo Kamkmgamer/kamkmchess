@@ -33,7 +33,13 @@ The root integration run passed all 26 controller fixtures against the accepted 
 
 The root's 195 base cases were verified across one 194 case full attempt and one targeted correctness fixture after the test runner's 30 second guard fix. This was not one full 195 case green run. Root typechecking, distribution notice generation and targeted ESLint passed. The controller author's earlier 106 case run used the previous dependency set and is historical evidence only. This candidate does not claim one new 221 case full suite run.
 
-The candidate install and production build results, including the committed archive path and hashes, are recorded in the artifact section of this evidence. The production build typechecks the browser and Node TypeScript projects, builds the static placeholder, and generates the dependency notices.
+## Build artifact
+
+On source commit `e13030af1ff834366c5183d4b483eaa6c5328e3d`, `npm ci` passed with Node `v24.22.0` and npm `11.19.1`. `npm run build` passed, including both TypeScript projects, Vite `8.3.4`, and distribution notice generation. The build contains the static placeholder and does not wire up the controller.
+
+The committed [eight-file build archive](artifacts/KHA-29-controller-build-e13030a.zip) has SHA-256 `47c6a416935055be4704d62558ccfb46eecb1113173c75974191c314741f20f3`. The [SHA-256 manifest](artifacts/KHA-29-controller-build-e13030a.sha256.json) records the source commit, source paths, archive paths, each member hash and byte count, and the archive hash. Member hashes were computed from entries read from the ZIP and matched against the build output.
+
+Archive paths are `_headers`, `_redirects`, `assets/index-CE2xj8Mp.js`, `assets/index-Dn1Kj2XK.css`, `DEPENDENCY_INVENTORY.json`, `index.html`, `LICENSE.txt` and `THIRD_PARTY_NOTICES.txt`.
 
 The repository's acceptance matrix has 79 cases, all `not_run`. The KHA-29 trace `MOV-08`, `CLK-01`, `CLK-02`, `CLK-03`, `CLK-04`, `CLK-05`, `CLK-07` and `LIF-02` remains `not_run`. Deterministic fixtures do not certify native browser, sleep or closure behavior, live providers, assistive technology, or the full product.
 
