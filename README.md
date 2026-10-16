@@ -32,7 +32,7 @@ Publishable files are in `dist/`. The build includes the application license, co
 | `npm run build` | Typecheck, compile static assets and collect runtime license notices. |
 | `npm run check` | Lint, full fixture suite and production build. |
 
-Vitest runs the product fixtures for strict rules and pure clock calculations. A missing fixture suite fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md).
+Vitest runs the product fixtures for strict rules, pure clock calculations and proof checking. A missing fixture suite fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md).
 
 ## Implementation references
 
