@@ -1,0 +1,17 @@
+{
+  "date": "2026-10-17",
+  "method": "T3 collaborative browser page evaluation of runProofSearchSmoke through Vite development server",
+  "origin": "http://127.0.0.1:5176",
+  "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) T3CodeNightly/0.1.1-nightly.20261016.3190 Chrome/152.0.7977.130 Electron/44.4.5 Safari/537.36",
+  "passed": true,
+  "partial": "state-budget",
+  "durableCheckpoint": "found",
+  "resumed": { "conclusion": "dead", "states": 4, "edges": 4 },
+  "cancelled": "cancelled",
+  "limitations": [
+    "Development module Worker, not a deployed production bundle or hosting CSP check",
+    "IndexedDB reopen, not a browser crash durability test",
+    "T3 Chromium only, not the required native browser or assistive technology matrix",
+    "No product controller integration or universal graph completion claim"
+  ]
+}
