@@ -6,6 +6,7 @@ Foundation inventory for [Establish the React/TypeScript application and build c
 
 | Package | Locked version | License | Source / copyright |
 | --- | --- | --- | --- |
+| chess.js | 1.4.0 | BSD-2-Clause | Jeff Hlywa. [chess.js source](https://github.com/jhlywa/chess.js). |
 | react | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | react-dom | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | scheduler | 0.28.0 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
@@ -38,6 +39,6 @@ TypeScript 6.0.3 stays within typescript-eslint 8.71.2's declared `>=4.8.4 <6.1.
 
 This build contains no piece sprites, icons, fonts or third-party artwork. It uses system fonts and a text-only placeholder. No source was copied from the disposable interface prototype.
 
-The approved chess.js **1.4.0** and cm-chessboard **8.15.3** research baselines are not installed yet. The rules and board tickets must pin and review actual versions against the decision recorded in [KHA-22](https://linear.app/kamkm/issue/KHA-22/verify-chess-rules-board-accessibility-and-dependency-licenses), preserve BSD/MIT notices, and add the standard art's actual author/source, CC BY-SA 3.0 license and modification notices before distribution. The research report and raw experiment files are not included here. Their absence does not change those requirements.
+The approved chess.js **1.4.0** runtime dependency is installed and listed above. cm-chessboard **8.15.3** remains a research baseline and is not installed yet. The board work must pin and review its actual version against the decision recorded in [KHA-22](https://linear.app/kamkm/issue/KHA-22/verify-chess-rules-board-accessibility-and-dependency-licenses), preserve required dependency notices, and add the standard art's actual author/source, CC BY-SA 3.0 license and modification notices before distribution. The research report and raw experiment files are not included here. Their absence does not change those requirements.
 
 Exclude the optional NonCommercial piece set, research-only GPL replay packages and the unsafe stock solver from production. Experiment lockfiles and bundles are not production dependencies or distribution assets. Later artwork licensing remains separate from the original-code MIT license. Complete `OPS-05` requires the final game distribution and asset review, not just this foundation inventory.
