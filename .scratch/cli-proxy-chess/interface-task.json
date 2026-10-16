@@ -1,0 +1,71 @@
+{
+  "issue": "KHA-12",
+  "title": "Validate the connection and chess match interface",
+  "state": "Done",
+  "owner": "45fdeba7-e6d5-4b71-912f-02932bc83a91",
+  "humanReview": "approved",
+  "confirmed": {
+    "accessibility": "Complete screen-reader play alongside keyboard, mouse, and touch.",
+    "direction": "Normal Chess.com board, player/clock, navigation, and side-panel layout with T3 Code styling and actual themes.",
+    "excluded": "Halloween/seasonal bot presentation"
+  },
+  "prototype": {
+    "branch": "prototype/match-interface",
+    "worktree": "D:/projects/kamkmchess-interface-prototype",
+    "commit": "6af7fa61aec5668b4e8b42c1f1ba4a89f37cda45",
+    "url": "http://127.0.0.1:4182/?variant=A&theme=t3-chat&appearance=dark",
+    "server": {
+      "pid": 4380,
+      "port": 4182,
+      "keepForReview": true
+    },
+    "variants": {
+      "A": "Classic workspace",
+      "B": "Conversation desk",
+      "C": "Focused play"
+    },
+    "recommended": "A",
+    "approved": "A",
+    "offlineReview": ".impeccable/review/review.html",
+    "htmlRenderAttachment": "cee874bf-6cc2-4225-9601-4ee5c45576ab-98344a61-c4f0-4c19-b6a7-0f239b88990f-html"
+  },
+  "linear": {
+    "attachmentId": "5016386e-694c-4203-8789-fe37e513feff",
+    "readyCommentId": "7c25d2f1-f7e3-4da7-8e40-76c099f07c64",
+    "accessibilityCommentId": "f5f2263d-587b-4c1b-b870-f52870da1e10",
+    "directionCommentId": "25bf1bc8-1b70-43c6-95c1-3e9e65db8473",
+    "resolutionCommentId": "d83e2c28-a5ba-48a4-a9b7-efee6228d228"
+  },
+  "archive": {
+    "path": ".scratch/cli-proxy-chess/kha-12-interface-prototype.zip",
+    "size": 652602,
+    "sha256": "1631a48a909168bbc63bbb84164e5da2c0912f8fcb1c3f78faea87a797103ddf",
+    "downloadVerified": true,
+    "sourceVerification": "Git-normalized LF hash equality"
+  },
+  "evidence": {
+    "review": ".impeccable/review/finish-review-1.json",
+    "verdict": ".impeccable/review/finish-verdict-1.json",
+    "verdictScope": "F1-F3 all resolved. No whole-product acceptance claimed.",
+    "captures": ".impeccable/review/captures.json",
+    "inputChecks": ".impeccable/review/fix-interaction-checks.json",
+    "inputMethod": "DOM-dispatched click/keyboard/focus checks; native click automation timed out.",
+    "design": [
+      "DESIGN.md",
+      ".impeccable/design.json"
+    ]
+  },
+  "limits": [
+    "All provider replies, usage, credentials, saves and sync are synthetic fixtures.",
+    "No real AI/account requests or credentials.",
+    "No persistence, production implementation or complete chess-rules engine.",
+    "Actual assistive-technology and native-browser/device acceptance unperformed."
+  ],
+  "next": "Query KHA-13, Choose the application architecture and data boundaries, and claim it before starting. Preserve approved A and all prior policies; do not merge the throwaway prototype into main.",
+  "approval": {
+    "selection": "A, Classic workspace",
+    "ownerQuote": "yeah let's go with A",
+    "date": "2026-10-16",
+    "scope": "Interface layout and interaction/input requirements. Production and native/assistive-technology acceptance remain pending."
+  }
+}

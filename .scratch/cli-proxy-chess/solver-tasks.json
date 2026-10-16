@@ -1,0 +1,87 @@
+{
+  "ownerAnswer": "Keep exact rules; research solver",
+  "choiceCommentId": "c4b31f8e-fcde-445c-920b-0632092bbb70",
+  "baseCommit": "27a53c1",
+  "tasks": {
+    "solver_browser": {
+      "issue": "KHA-24",
+      "title": "Verify browser-local chess adjudication solver portability and resource limits",
+      "url": "https://linear.app/kamkm/issue/KHA-24/verify-browser-local-chess-adjudication-solver-portability-and",
+      "taskId": "node:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-solver-browser-20261016-r1",
+      "childThreadId": "thread:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-solver-browser-20261016-r1",
+      "status": "completed",
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "brief": "## Question\n\nCan a pinned specialized chess unwinnability solver run wholly inside the required browsers with usable resource limits, cancellation, and honest exact/unknown outcomes?\n\nThe owner explicitly chose to keep exact dead-position and position-sensitive timeout rules, rather than accept rare material-based exceptions. This research unblocks [Choose the application architecture and data boundaries](https://linear.app/kamkm/issue/KHA-13/choose-the-application-architecture-and-data-boundaries), using [the dependency research](https://linear.app/kamkm/issue/KHA-22/verify-chess-rules-board-accessibility-and-dependency-licenses) as the baseline.\n\nInvestigate CHA-Solver 3.0.0 at commit 3484c7e65247003fac8705a9290dc2b5d0978b94 first. Build a disposable browser-local WASM/worker probe if feasible. Verify actual target build, dependencies, FEN/coordinate/color handling, and result distinctions. Reuse prior locked-wall, asymmetric wall, bare-king/rook, and knight/rook fixtures; verify mating witnesses locally without exposing them to a model. Add justified stress, invalid-input and unknown-path controls. Record build/tool versions, artifact and compressed sizes, licenses, latency/memory observations, tested environments, and untested targets.\n\nUse Web Workers or an equivalent isolated browser execution approach to study cancellation and stale-result fencing without blocking rendering or clocks. Termination/budget exhaustion is unknown, never proof of mate or inability to mate. Do not solve timeout unknowns by silently changing the product rule or freezing its clock. Identify deployment constraints such as COOP/COEP, threads, SharedArrayBuffer, CSP, and mobile memory only when actually relevant. Required native acceptance targets are Windows Chrome/Edge/Firefox, macOS Safari, iOS Safari, Android Chrome; document actual coverage honestly.\n\nKeep experiments and raw evidence under experiments/browser-adjudication-solver/ and a cited report at research/browser-adjudication-solver.md. No production integration, backend adjudication, live providers, credentials, paid services, or weakening of requirements. Source soundness/general completeness is a separate concurrent research ticket; coordinate through the parent, not shared edits.",
+      "ticketState": "Done",
+      "consumed": true,
+      "sourceCommit": "cc8377df01759f49e896f943f702540c796f225a",
+      "integratedCommit": "2fd8607",
+      "worktree": "C:/Users/Lenovo/.t3/worktrees/kamkmchess/t3-faf7b892",
+      "report": "research/browser-adjudication-solver.md",
+      "evidence": "experiments/browser-adjudication-solver/",
+      "attachmentIds": [
+        "17e585c2-bce6-4ea8-874a-b245cf55d350",
+        "e545b570-d07c-45bc-95d1-039beda63017"
+      ],
+      "reportSha256": "d3d0079b9c49b5153161325450627d4d11651bd1a3256c7e5116583ede8b020b",
+      "bundleSha256": "d607364cec10cb4f642c82cef7143c501605e17e5acf3e3b27173495ae8794c0",
+      "downloadsVerified": true,
+      "resolutionCommentId": "c5884f8e-ebd4-49cd-8162-af1dd90baec6",
+      "review": "Saved-evidence verifier and JS syntax passed. Verified 40 normalized hashes and 48 references/local links. Existing WASM hash matched; two representative queries executed in Node. No new browser run. Automatic review rejected detached replay-server launch as blocked by policy; no server/tab/helper started.",
+      "findings": [
+        "Pinned solver builds and runs WASM in Worker in sampled Windows Helium; all six required native targets remain untested.",
+        "Actual hard query remains unknown after five seconds; resource caps are not an exact fallback.",
+        "Counter99 witness crosses automatic product draw threshold; canonical counters/ep and hypothetical mate semantics must be reconciled with exactness report."
+      ]
+    },
+    "solver_exactness": {
+      "issue": "KHA-25",
+      "title": "Establish soundness and complete outcomes for exact chess adjudication",
+      "url": "https://linear.app/kamkm/issue/KHA-25/establish-soundness-and-complete-outcomes-for-exact-chess-adjudication",
+      "taskId": "node:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-solver-exactness-20261016-r1",
+      "childThreadId": "thread:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-solver-exactness-20261016-r1",
+      "status": "completed",
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "brief": "## Question\n\nWhat evidence and exact fallback can support correct dead-position and side-specific possible-mate decisions for every permitted custom board, including a specialized solver's undecided result?\n\nThe owner chose \"Keep exact rules; research solver.\" This research unblocks [Choose the application architecture and data boundaries](https://linear.app/kamkm/issue/KHA-13/choose-the-application-architecture-and-data-boundaries), building on [the chess dependency report](https://linear.app/kamkm/issue/KHA-22/verify-chess-rules-board-accessibility-and-dependency-licenses).\n\nAudit pinned CHA-Solver 3.0.0 source, its primary paper and tests, and a small set of credible exact alternatives. Distinguish proofs, upstream claims, reproduced observations, and unresolved assumptions. Investigate soundness of unwinnability rules, witness verification for positive results, what fast false/full None mean, search limits, and source/test cases known to be inconclusive. Do not present finite fixture coverage as universal proof.\n\nCompare the accepted input domain, current-board/state consistency without full historical reachability proof, with the solver and Rust chess dependency's assumptions, accepted piece/rights/ep/check/counter states, and normalization/panic/rejection paths. Evaluate all relevant side-specific cases and prove why optimal-play WDL or inability to force mate is insufficient. Explain whether automatic product threefold/100-halfmove thresholds, custom-start history, checkmate precedence, and the FIDE any-legal-sequence predicate introduce an unresolved semantic mismatch; do not silently redefine the settled contract.\n\nInvestigate a sound, complete fallback or coverage strategy for unknown results, including exact cooperative reachability and proof certificates where appropriate. Separate theoretical termination from practical browser resource bounds. If no practical guaranteed solution is established, say so and identify the smallest precise unresolved constraint or next question. No heuristic fallback, guessed result, temporary win rewritten later, solver-generated move advice, server chess authority, or silent restriction of valid custom positions is allowed.\n\nWrite research/exact-adjudication-coverage.md and isolated reproducible evidence under experiments/exact-adjudication-coverage/. No browser-port work, which belongs to a separate concurrent research ticket. No production implementation, backend adjudication, paid service, live provider, credential, tracker mutation, or push.",
+      "ticketState": "Done",
+      "consumed": true,
+      "sourceCommit": "866c278fe65bd0670dde946ddf451e583d100d09",
+      "integratedCommit": "7b8bd05",
+      "worktree": "C:/Users/Lenovo/.t3/worktrees/kamkmchess/t3-1fec5d98",
+      "report": "research/exact-adjudication-coverage.md",
+      "evidence": "experiments/exact-adjudication-coverage/",
+      "attachmentIds": [
+        "aa291772-c8cb-4292-8ac9-10ee439c5c98",
+        "d69e06a6-a92b-4967-a1a0-b4445b107035"
+      ],
+      "reportSha256": "8be117f626dd2898005ab8469d51b50e8c116af939c8a0a883c9f219650cf606",
+      "bundleSha256": "0e43bb75b5d18ceb3dc87cfb637910d9034801806ddba18f085f137655da8c97",
+      "downloadsVerified": true,
+      "resolutionCommentId": "d9165000-2afb-4506-bc70-84c3914b2630",
+      "review": "Coordinator reran evidence verifier and 86 independent recorded witness replays, recomputed four-state closure, unresolved state-bound control, and all 22 counter99 successors. Verified 21 hashes/42 references, inspected move-origin unchecked writes and witness branch. Native queries/unit tests not rerun; no browser work.",
+      "findings": [
+        "No practical guaranteed full-domain classifier established; complete graph exhaustion is theoretical and resource cutoffs unresolved.",
+        "Parser accepts 21 movable origins but Rust generator has unchecked 18-entry buffer. Unsafe execution deliberately avoided; no crash observed.",
+        "Changed Rust deductions lack a complete paper-based proof; one source branch omits witness path reconstruction, no sampled public failure reproduced.",
+        "Counter99 fixture proves different answers under board-only versus automatic-draw-aware hypothetical mating predicates."
+      ]
+    }
+  },
+  "constraints": "Exact outcomes remain mandatory. Unknown is not an outcome; no backend adjudication, clock pause, heuristic exception, or production integration is approved.",
+  "next": "Both solver research tasks are completed/consumed/integrated/published. Their limits are incorporated in the resolved architecture, including board-based mating semantics and allowed pending outcomes. No task is active. Next is acceptance/specification handoff.",
+  "pendingQuestion": null,
+  "confirmedMatingPredicate": {
+    "ownerAnswer": "Use legal moves alone (Recommended)",
+    "commentId": "80a638a0-55e8-4cf8-8cf7-3814a6ab832b",
+    "policy": "Hypothetical cooperative mate ignores future repetition/move-count draw thresholds. Actual play still applies automatic third repetition/100-halfmove endings with checkmate precedence."
+  },
+  "confirmedPendingAdjudication": {
+    "ownerAnswer": "Allow unresolved pending games (Recommended)",
+    "commentId": "abb8709e-42c3-4a03-8549-117d459ea7df",
+    "policy": "Save exact query and position with no declared result or promised finish time. Play waits; an unexpired active clock continues. Preserve expiry/event order and immutable accepted results."
+  },
+  "architectureState": "Done",
+  "architectureResolutionCommentId": "64e0511f-3e26-4b79-a3c8-4f834605736c"
+}

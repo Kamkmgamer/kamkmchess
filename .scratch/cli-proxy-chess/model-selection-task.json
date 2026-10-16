@@ -1,0 +1,18 @@
+{
+  "issue": "KHA-9",
+  "title": "Choose the model catalog and opponent selection rules",
+  "url": "https://linear.app/kamkm/issue/KHA-9/choose-the-model-catalog-and-opponent-selection-rules",
+  "status": "Done",
+  "resolutionCommentId": "6cf8d029-1457-4d8d-bc15-ef622a8da4e3",
+  "ownerChoice": "Check new or changed selections (Recommended)",
+  "acceptedSwitchCheckPolicy": "Check selections without a reusable current-session pass or with material configuration changes. Unchanged checked selections use their next real move to test the current full retained history. Generation failures require explicit recovery while the chess clock continues.",
+  "routineDefaultsAuthority": {
+    "source": "move-contract-task.json#routineDefaultsAuthority",
+    "ownerQuote": "I think it is going to yes's till the the end",
+    "application": "Preserve explicit choices, choose routine defaults, and ask only about consequential tradeoffs."
+  },
+  "downstreamIssuesUpdated": ["KHA-12", "KHA-13", "KHA-14"],
+  "mapUpdated": "KHA-5",
+  "evidenceBoundary": "Planning resolution only. No implementation, new browser test, credential access, model request, or paid usage. Exact live verification candidates remain unselected pending separately authorized acceptance work.",
+  "canonicalDecision": "The Linear resolution comment contains the specification; this file records session provenance only."
+}

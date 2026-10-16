@@ -1,0 +1,40 @@
+{
+  "issue": "KHA-14",
+  "title": "Agree on MVP acceptance criteria and the specification handoff",
+  "state": "Done",
+  "discussionCommentId": "b461c660-3053-4e6b-8a69-2498cd32129a",
+  "pendingQuestion": {
+    "topic": "reference-game affordability target",
+    "options": [
+      "US$0.50 per reference game",
+      "US$1.00 per reference game",
+      "Show costs without a fixed target"
+    ],
+    "recommended": "US$0.50 for at least one cost-conscious configuration, about 40 model turns including diagnostic/cache/retry charges; no model allowlist or spending authorization.",
+    "answered": true,
+    "answer": "Show costs without a fixed target",
+    "resolutionCommentId": "80adad92-20e5-4280-af73-9fc68e449a46",
+    "policy": "No per-game price target or price-based model allowlist. Preserve transparent usage/cost, actual-versus-estimated-versus-unknown labels, prompt caching and separately authorized reference-game evidence."
+  },
+  "plannedArtifacts": [
+    "docs/spec/mvp-handoff.md",
+    "docs/spec/mvp-acceptance.json"
+  ],
+  "humanHandoffAgreement": "Owner answered yes to the explicit final handoff question on 2026-10-16. Revision 1 approved.",
+  "resolutionCommentId": "3bcd24a7-2bd5-43fb-8a35-095bac2575f2",
+  "mapState": "Done",
+  "mapClosureCommentId": "ea806dd6-8510-4957-b472-6a2dbd4b1ed2",
+  "closedChildCount": 20,
+  "packetCommit": "35444e0",
+  "readyForReviewCommentId": "73feb3e0-2e48-4b01-a5f1-0c4c6e973fba",
+  "readyCommentReadback": "Exact body match verified.",
+  "attachments": {
+    "handoff": "71c7ec3f-2d9b-41b1-b541-de23c1003c41",
+    "matrix": "67508387-f236-4d51-8137-a27764e40ec0"
+  },
+  "attachmentVerification": "Both downloaded attachments matched source SHA-256 and byte counts. See mcp-handoff-verification.json.",
+  "productAcceptanceCases": 79,
+  "productAcceptanceStatus": "All not_run; documentation consistency checks only have passed.",
+  "authorizedScope": "Planning, tracker and handoff artifact preparation. No production implementation, provisioning, live/paid tests or credential access.",
+  "next": "Planning is complete. Implementation requires a separate execution instruction. All 79 product acceptance cases remain not_run."
+}

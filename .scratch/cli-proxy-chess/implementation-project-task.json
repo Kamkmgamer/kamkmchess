@@ -1,0 +1,1126 @@
+{
+  "projectName": "AI Chess MVP",
+  "team": "Khalil",
+  "teamId": "19203de1-2c4b-47b7-b1f9-9f3541d93de7",
+  "approvedReviewCommit": "35444e0",
+  "approvalMetadataCommit": "e9f0c9f",
+  "approvedHandoffIssue": "KHA-14",
+  "planningMap": "KHA-5",
+  "scope": "Tracker/project organization and implementation ticket creation only. No execution, provisioning, credentials, live requests or spending.",
+  "milestones": [
+    {
+      "key": "spec",
+      "name": "Specification agreed",
+      "description": "Approved planning map and its 20 completed decision/research tickets."
+    },
+    {
+      "key": "local",
+      "name": "Local chess and exact rules",
+      "description": "Build foundation, orthodox rules, archives, continuous clocks, checked proofs/pending and guest lifecycle."
+    },
+    {
+      "key": "ai",
+      "name": "AI opponents and accessible play",
+      "description": "Direct browser providers, full-history caching/accounting, catalog/diagnostics, queued switches and approved accessible Classic workspace."
+    },
+    {
+      "key": "accounts",
+      "name": "Private accounts and hosted operations",
+      "description": "Google PKCE, owner-only sync/conflicts, free-tier staging and verified encrypted backup/restore before public account storage."
+    },
+    {
+      "key": "verification",
+      "name": "Native acceptance and launch",
+      "description": "Integrated invariants, actual desktop/mobile AT, authorized live routes/cache/cost, security/license review and separate launch decision."
+    }
+  ],
+  "tickets": [
+    {
+      "key": "foundation",
+      "title": "Establish the React/TypeScript application and build checks",
+      "milestone": "local",
+      "dependencies": [],
+      "acceptance_cases": [
+        "OPS-01",
+        "OPS-05"
+      ],
+      "outcome": "Create a locked static application that future work can build and verify.",
+      "scope": [
+        "Initialize React/TypeScript/Vite with a supported Node LTS and static build. Add meaningful type/lint/build checks and fixture test entry points.",
+        "Define module boundaries for controller, rules, clocks, proofs, archive/replay, storage, providers and cloud ordering. UI emits intents and renders committed state.",
+        "Add MIT original-code license and initial dependency/asset notice inventory. Use the approved prototype as reference, without merging disposable source."
+      ],
+      "done": [
+        "A clean checkout installs reproducibly and passes documented checks.",
+        "Static build contains no server generation relay or administrative secrets; distribution notices start with actual selected versions."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "rules",
+      "title": "Implement strict orthodox rules, FEN and repetition state",
+      "milestone": "local",
+      "dependencies": [
+        "foundation"
+      ],
+      "acceptance_cases": [
+        "RUL-01",
+        "RUL-02",
+        "RUL-03",
+        "RUL-05",
+        "RUL-06",
+        "RUL-07"
+      ],
+      "outcome": "Expose authoritative legal transitions and exact setup state behind the chess.js adapter.",
+      "scope": [
+        "Validate all six FEN fields and actionable current-state consistency, not historical reachability. Preserve decimal counters and valid rights outside lossy library state.",
+        "Own repetition identity/ledger, including legally usable en passant, imported ineffective-EP and rights changes.",
+        "Handle legal moves, king safety, castling, en passant, all promotions and actual third repetition/100-halfmove rules with checkmate precedence. Generic library draw flags cannot declare exact deadness."
+      ],
+      "done": [
+        "Independent expected fixtures cover all special moves, boundary counters, custom unreachable-but-consistent boards and repetition equivalence.",
+        "No silent piece-count/four-digit limit, counter rounding or legal-move advice to the model."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "archive",
+      "title": "Build atomic local checkpoints and lossless game archives",
+      "milestone": "local",
+      "dependencies": [
+        "foundation"
+      ],
+      "acceptance_cases": [
+        "DAT-01",
+        "DAT-02",
+        "DAT-08",
+        "HIS-05"
+      ],
+      "outcome": "Make committed game state and received content recoverable without hiding storage failures.",
+      "scope": [
+        "Implement IndexedDB append-only chunks/events, current/discarded line references, versioned atomic checkpoints and idempotent outbox records.",
+        "Wait for transaction completion. Store all rules/history/clock/budget/selection/result/practice state, never FEN alone. No transaction spans a network wait.",
+        "Add full versioned export/import, persistent-storage request/status, quota/upgrade/abort recovery and accurate memory/local/sync status.",
+        "Keep game/export/sync DTOs separate from credentials; recognized credential echoes remain exact locally and block affected egress. Document receive-to-commit crash limits."
+      ],
+      "done": [
+        "Digest/event-order round trips preserve multibyte/unknown/duplicate fields and discarded data.",
+        "Fault injection proves no false saved state, silent pruning or secret export."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "controller",
+      "title": "Implement serialized match transitions and continuous clocks",
+      "milestone": "local",
+      "dependencies": [
+        "rules",
+        "archive"
+      ],
+      "acceptance_cases": [
+        "MOV-08",
+        "CLK-01",
+        "CLK-02",
+        "CLK-03",
+        "CLK-04",
+        "CLK-05",
+        "CLK-07",
+        "LIF-02"
+      ],
+      "outcome": "Give one browser controller authority over moves, effective event times and immutable results.",
+      "scope": [
+        "Define versioned intents/events carrying game, segment, side, revision, request/analysis generation and ownership epoch. Fence duplicates, old callbacks and React remounts.",
+        "Implement 15+10 default, White/Black/Random setup, single increments and continuously running deadlines across errors/Stop/Undo/navigation/closure/sleep.",
+        "Reconcile time before actions. Sample decision time before checkpoint write; expiry wins at or beyond deadline. Await commit before accepting a move/follow-up; charge commit delay to next bank. Abort grants no move.",
+        "Preserve monotonic/wall/host reference evidence and detected clock discrepancies. Support unresolved candidate events so later adjudication cannot rewrite a final result."
+      ],
+      "done": [
+        "Deterministic before/equal/after-deadline, delayed-commit, abort and repeated-FEN races resolve once.",
+        "Restore/closure/sleep fixtures grant no new time or retrospective abandoned move; native verification remains downstream."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "proofs",
+      "title": "Implement checked mating witnesses and sound impossibility proofs",
+      "milestone": "local",
+      "dependencies": [
+        "rules"
+      ],
+      "acceptance_cases": [
+        "ADJ-01",
+        "ADJ-02",
+        "ADJ-03",
+        "ADJ-04",
+        "ADJ-09"
+      ],
+      "outcome": "Accept exact adjudication evidence only through reviewed independent checks.",
+      "scope": [
+        "Specify cooperative legal-move-only mating predicate, separate global deadness and opponent-only timeout queries, and ignore hypothetical future count/repetition draws.",
+        "Replay every positive witness to legal intended-color checkmate. Implement only reviewed negative sufficient proofs with explicit checked preconditions.",
+        "Define closed-set certificate validation that regenerates every legal successor and compares full states. Keep all proof output out of model advice.",
+        "Bypass the unsafe stock Rust custom-input/witness path unless it is comprehensively repaired and reviewed. Do not execute the unchecked 21-origin hazard or trust unsupported negative deductions."
+      ],
+      "done": [
+        "Review the trusted transition/checker assumptions and reject missing/partial/illegal/wrong-color/corrupt evidence.",
+        "Use dead wall, asymmetric mirrors, bare king/rook, knight support, two knights and counter-99 controls with independently justified expectations."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "graph",
+      "title": "Build resumable exact cooperative graph analysis",
+      "milestone": "local",
+      "dependencies": [
+        "proofs",
+        "archive"
+      ],
+      "acceptance_cases": [
+        "ADJ-03",
+        "ADJ-05",
+        "ADJ-08",
+        "ADJ-09"
+      ],
+      "outcome": "Provide the complete graph fallback while preserving honest resource unknowns.",
+      "scope": [
+        "Implement full-state visited/frontier/parent records and complete legal-successor exploration for either target winner.",
+        "Produce a checked positive path or complete negative closure; partial frontiers, hash collisions and skipped successors cannot yield a verdict.",
+        "Start with a 10,000-discovered-state and five-second foreground pass policy, chunked validated checkpoints and explicit resume/cancel. A timer is not a hard real-time guarantee.",
+        "Version checkpoints by predicate/rules/schema/proof implementation and restart incompatible/corrupt checkpoints safely. Treat the researched 128 MiB WASM linear cap separately from total memory."
+      ],
+      "done": [
+        "Exhaust small known finite graphs correctly and replay positives; fault/resource/corruption controls remain unknown.",
+        "The real five-second unknown fixture stays honest. No universal practical completion or mobile memory claim."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "pending",
+      "title": "Integrate exact endings and saved pending adjudication",
+      "milestone": "local",
+      "dependencies": [
+        "controller",
+        "proofs",
+        "graph"
+      ],
+      "acceptance_cases": [
+        "ADJ-06",
+        "ADJ-07",
+        "ADJ-08",
+        "CLK-07",
+        "RUL-04",
+        "RUL-07"
+      ],
+      "outcome": "Connect proof results to setup, game endings and original event-time ordering.",
+      "scope": [
+        "Classify setup before clocks or game diagnostic. Save unresolved setup with Start unavailable and editable state.",
+        "During play save query, position, ordered candidate/expiry facts and checkpoint; stop play with Adjudication pending and no promised finish time while an unexpired clock runs.",
+        "Add explicit Continue/Stop analysis. Fence stale/canceled/ownership-changed results; do not restart expensive analysis indefinitely.",
+        "At flag record original expiry, stop actionable generation, and settle earlier unresolved deadness/flag candidate only with checked evidence. Never rewrite accepted result."
+      ],
+      "done": [
+        "Setup/in-game unknown, late proof, expiry, reload and stale-generation races preserve exact facts and no guessed win/draw.",
+        "Known supported proofs yield correct global/one-sided endings; unsupported queries can remain pending."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "lifecycle",
+      "title": "Add guest recovery, Undo, rematch and timed practice",
+      "milestone": "local",
+      "dependencies": [
+        "pending"
+      ],
+      "acceptance_cases": [
+        "HIS-03",
+        "HIS-04",
+        "CLK-06",
+        "DAT-07",
+        "LIF-01",
+        "LIF-03",
+        "LIF-04",
+        "RUL-04"
+      ],
+      "outcome": "Complete local match lifecycle without rewriting results or discarded context.",
+      "scope": [
+        "Restore full guest game/checkpoint and reconcile expiry before enabling actions. Abandoned requests need explicit recovery.",
+        "Undo to previous human decision, restore rules/ledger/budgets/selection and archive discarded records without replay or summary. Fence queued/inflight work and advance versions.",
+        "Keep elapsed charges, remove undone increments and reject nonpositive banks. No increment farming or erasure of earlier expiry.",
+        "Restart/rematch/custom edits create separate games. Explicit unscored post-model-loss practice gets fresh clocks/context/budgets after diagnostic while retaining actual rules/repetition and original result."
+      ],
+      "done": [
+        "Round trips and repeated Undo prove archive/replay separation, correct time charges and boundary behavior.",
+        "No automatic practice, terminal-board generation, context leakage or final-result rewrite."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "connections",
+      "title": "Implement direct-browser connection profiles and local credentials",
+      "milestone": "ai",
+      "dependencies": [
+        "archive"
+      ],
+      "acceptance_cases": [
+        "CON-01",
+        "CON-02",
+        "CON-03",
+        "CON-04",
+        "CON-05",
+        "CON-06",
+        "CON-07",
+        "CON-08",
+        "DAT-03",
+        "DAT-08"
+      ],
+      "outcome": "Let players deliberately configure routes and credentials without hidden requests or secret egress.",
+      "scope": [
+        "Implement OpenAI/Responses, OpenRouter/Chat, Anthropic/Messages defaults and explicit protocol alternatives/custom profiles; preserve path prefixes and show final generation/catalog URLs.",
+        "Support configured auth/header modes, destination-bound secret assignment, omitted fetch credentials and redirect rejection.",
+        "Default to device-local saved keys with replace/forget/clear-all and truthful write failures; separate guest/account-UUID namespaces.",
+        "Profile edit/save sends nothing; explicit Check connection is catalog-only. Include accurate first-request disclosure and scoped network errors without CORS guesses or automatic retries."
+      ],
+      "done": [
+        "Synthetic network/redirect/secret-canary and storage fixtures pass for each profile.",
+        "Another device receives no keys and requires deliberate local binding; optional loopback/LAN claims remain scoped."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "adapters",
+      "title": "Implement Chat, Responses and Messages streaming adapters",
+      "milestone": "ai",
+      "dependencies": [
+        "connections"
+      ],
+      "acceptance_cases": [
+        "CON-01",
+        "CON-05",
+        "MOV-03",
+        "MOV-07",
+        "MOV-09"
+      ],
+      "outcome": "Translate browser-direct provider wires into complete attributed records and actionable completion states.",
+      "scope": [
+        "Implement each documented protocol's auth/headers/request/stream/completion/error rules, including eligible native Anthropic browser access and ZDR restriction.",
+        "Accumulate answer/reasoning/choices/tool/unknown fields separately, preserve raw received data and do not act on partial output.",
+        "Map normal terminal events explicitly. Chat stop and proper stream termination are both required; DONE alone is insufficient.",
+        "Implement Stop/abort fencing and explicit technical recovery with no tools executed, hidden network retries, model/protocol fallback or extra app generation timeout."
+      ],
+      "done": [
+        "Fragmented/interleaved/multibyte/error/filter/truncation/tool/late/duplicate fixture corpus passes across all three adapters.",
+        "No synthetic result is described as authenticated generation; live verification remains separate."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "move-contract",
+      "title": "Implement move parsing and independent recovery budgets",
+      "milestone": "ai",
+      "dependencies": [
+        "controller",
+        "adapters"
+      ],
+      "acceptance_cases": [
+        "MOV-01",
+        "MOV-02",
+        "MOV-04",
+        "MOV-05",
+        "MOV-06",
+        "MOV-07",
+        "MOV-08",
+        "RUL-01"
+      ],
+      "outcome": "Classify completed model replies exactly once without choosing the model's move.",
+      "scope": [
+        "Parse completed choice-zero coordinate JSON/optional plan or explicit resignation; allow documented single-fence/final-Move/standalone fallback. Reject ambiguity/conflicting duplicate keys and missing promotion.",
+        "Never read commands from reasoning/plans/history/other choices or repair JSON strategically.",
+        "Apply rule-specific corrections without legal-move lists; initial plus three illegal retries, fourth illegal loss. Keep three independent automatic format corrections with no chess loss.",
+        "Manual Retry authorizes one request without refilling budgets; ordinary switches/technical errors preserve them. Explicit complete refusal resigns; quoted/filter/provider errors do not."
+      ],
+      "done": [
+        "Independent adversarial parser/refusal and mixed illegal/format/technical/switch fixtures prove counts and attribution.",
+        "Stop/expiry/stale events cannot spend attempts, add increments or change results."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "replay-cost",
+      "title": "Implement full-history replay, prompt caching and cost accounting",
+      "milestone": "ai",
+      "dependencies": [
+        "archive",
+        "adapters"
+      ],
+      "acceptance_cases": [
+        "HIS-01",
+        "HIS-02",
+        "HIS-05",
+        "CST-01",
+        "CST-03",
+        "CLK-02"
+      ],
+      "outcome": "Send complete retained history with reusable prefixes and transparent native usage accounting.",
+      "scope": [
+        "Build losslessly escaped attributed historical transcript and fresh current FEN/piece/color/clock suffix. Preserve received plans/reasoning/opaque data without inventing native private state.",
+        "Cover all nine ordered protocol pairs. Undo excludes discarded line, and capacity checks/rejections never trim, summarize, reset or substitute.",
+        "Keep instructions/history prefixes stable and use documented selected-model/protocol cache body/session controls; whole-response replay is not prompt caching.",
+        "Preserve raw billed categories/rates/currency/date. Distinguish provider-measured charges, rate estimates and unknowns; include diagnostics/retries/failures and avoid input/cache/reasoning double-counting."
+      ],
+      "done": [
+        "Payload comparisons prove complete attribution, fresh time, stable prefix and correct Undo/capacity behavior.",
+        "Provider-specific accounting fixtures pass; no fixed price target, allowlist or synthetic cache-hit claim."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "selection",
+      "title": "Implement model catalogs, diagnostics and queued handoffs",
+      "milestone": "ai",
+      "dependencies": [
+        "move-contract",
+        "replay-cost",
+        "lifecycle"
+      ],
+      "acceptance_cases": [
+        "MOD-01",
+        "MOD-02",
+        "MOD-03",
+        "MOD-04",
+        "MOD-05",
+        "MOD-06",
+        "MOD-07",
+        "HIS-02"
+      ],
+      "outcome": "Support every advertised/manual selection with explicit compatibility evidence and safe switching.",
+      "scope": [
+        "Implement scoped exact IDs, aliases/logos, pagination, partial/stale/removed/cooldown catalogs and manual entry without capability/name guesses.",
+        "Run disclosed fixed-coordinate/unique-prior-plan diagnostics before new-game/practice clocks. Keep diagnostic budgets/history separate.",
+        "Reuse unchanged current-session midgame passes and invalidate material route/protocol/adapter/credential/options/routing or session/device changes.",
+        "Queue until active response settles, replace candidates, distinguish committed/queued/producing identities and commit only first interpretable real candidate reply. Failed candidate needs explicit recovery; no prior-model auto-fallback."
+      ],
+      "done": [
+        "Discovery/marker/reuse/invalidation and queued/error/Undo/expiry race fixtures pass with exact request counts.",
+        "All retained history travels on real moves; catalogs/diagnostics imply no full-match/cache/backend certification."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "board-ui",
+      "title": "Build the accessible Classic match board and position editor",
+      "milestone": "ai",
+      "dependencies": [
+        "lifecycle"
+      ],
+      "acceptance_cases": [
+        "UX-01",
+        "UX-02",
+        "RUL-02",
+        "RUL-03",
+        "RUL-04",
+        "CLK-01",
+        "LIF-01",
+        "LIF-03"
+      ],
+      "outcome": "Implement the approved board/player/clock and details layout with shared-controller inputs.",
+      "scope": [
+        "Use cm-chessboard within approved A Classic workspace, normal Chess.com arrangement and actual T3 themes; keep disposable prototype off main.",
+        "Connect mouse/touch/keyboard/coordinate forms to one controller with named square/piece inspection, orientation and explicit four-piece promotion.",
+        "Implement FEN/visual editor, field/square errors, terminal/pending setup, clocks, Undo, results, new games and practice.",
+        "Provide semantic focus/restoration, responsive zoom/reflow, contrast and reduced-motion behavior; clock ticks must not cause speech chatter."
+      ],
+      "done": [
+        "Synthetic controller journeys and accessibility checks show no duplicate transitions or obscured actions.",
+        "All input/promotion/editor controls are available to keyboard/AT. Actual native screen-reader certification is downstream."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "recovery-ui",
+      "title": "Build connection, opponent and recovery journeys",
+      "milestone": "ai",
+      "dependencies": [
+        "board-ui",
+        "connections",
+        "selection"
+      ],
+      "acceptance_cases": [
+        "CON-07",
+        "MOD-06",
+        "MOD-07",
+        "UX-01",
+        "UX-03",
+        "UX-04",
+        "UX-05"
+      ],
+      "outcome": "Expose connection/model state and recovery clearly throughout the approved workspace.",
+      "scope": [
+        "Implement profiles, catalogs/manual IDs, quota-bearing diagnostic disclosure and committed/producing/queued identities.",
+        "Connect provider/format/capacity errors, Stop/Retry/Switch/Resume, archive/conversation, save status and pending analysis with continuous clocks.",
+        "Make setup/dialogs/errors/focus/announcements work for complete screen-reader journeys and preserve original-result/practice distinctions.",
+        "Display measured/estimated/unknown costs honestly, with no fixed affordability gate or repeated consent flow."
+      ],
+      "done": [
+        "End-to-end fixture journeys cover failed switches, errors, Undo, practice, save failure, pending and expiry without lost focus.",
+        "No UI element executes generation or adjudicates independently; real AT observations remain required."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "cloud-schema",
+      "title": "Implement owner-only Supabase schema and revision operations",
+      "milestone": "accounts",
+      "dependencies": [
+        "archive"
+      ],
+      "acceptance_cases": [
+        "DAT-04",
+        "DAT-05",
+        "DAT-09",
+        "OPS-01"
+      ],
+      "outcome": "Create database migrations and transactional storage ordering without server chess authority.",
+      "scope": [
+        "Define versioned owner-only game/chunk/checkpoint/ownership/outbox metadata with RLS on every table/RPC/access path.",
+        "Implement expected-revision/epoch CAS, idempotent operation lookup, immutable finals and deletion tombstones. Remove direct-write/upsert bypass.",
+        "Use browser publishable key/user sessions only; keep service-role/admin keys out of bundle.",
+        "Prepare migration and local test fixtures; deployed two-user denial and bypass checks must also run after staging setup."
+      ],
+      "done": [
+        "Database tests cover two users/unauthenticated access, stale revision/epoch, duplicate/lost acknowledgment, immutable results and tombstones.",
+        "No hosted operation decides chess legality or receives AI secrets."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "auth",
+      "title": "Implement Google PKCE accounts and identity isolation",
+      "milestone": "accounts",
+      "dependencies": [
+        "cloud-schema",
+        "connections"
+      ],
+      "acceptance_cases": [
+        "DAT-03",
+        "DAT-07",
+        "CON-04",
+        "OPS-02"
+      ],
+      "outcome": "Add optional accounts without changing guest clocks, keys or ownership.",
+      "scope": [
+        "Implement Google OAuth explicit PKCE, exact callbacks, refresh, canceled/overlapping/expired/missing-verifier flows and native return-context support.",
+        "Offer explicit guest import preserving IDs/results/current/discarded/practice state. Another device deliberately rebinds its local AI connection.",
+        "Sign-out fences requests, deletes departing account's AI keys, clears in-memory identity and hides private views. Retain cached games/outbox under original UUID for same-account recovery.",
+        "Add explicit remove-device warning for unsynced data; prevent account A/guest/B inheritance. No clock reset or implicit email-auth/SMTP path."
+      ],
+      "done": [
+        "A-to-B-to-A, offline sign-out/import and auth-recovery fixtures preserve isolation and continuous time.",
+        "Deployed callback/native-device checks are linked execution evidence; account UI remains accessible."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "sync",
+      "title": "Implement cloud sync, takeover and preserved conflicts",
+      "milestone": "accounts",
+      "dependencies": [
+        "auth",
+        "lifecycle"
+      ],
+      "acceptance_cases": [
+        "DAT-05",
+        "DAT-06",
+        "DAT-07",
+        "DAT-09",
+        "HIS-04",
+        "CLK-04",
+        "CLK-05"
+      ],
+      "outcome": "Keep one accepted cloud history while retaining offline local continuations.",
+      "scope": [
+        "Coordinate tabs with Web Locks plus IndexedDB epoch/revision fencing and channel notices, with transactional fallback.",
+        "Sync immutable deltas/checkpoints idempotently; query uncertain operation IDs and explicitly take over from last acknowledged cloud state.",
+        "Allow offline local play with unsynced warning and live deadlines. Preserve divergence separately; no automatic branch merge, last-write-wins or stale overwrite of Undo/finals/deletion.",
+        "Sync pending query/event facts while analysis frontiers remain local. Apply owner deletion across records/chunks/caches/outbox and tombstones."
+      ],
+      "done": [
+        "True-device network partition/takeover/reconnect and two-tab fallback tests preserve both accepted history and separate conflict.",
+        "No promise of immediate offline revocation notice, globally stopped provider requests or server chess authority."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "deployment",
+      "title": "Prepare free-tier HTTPS staging and auth configuration",
+      "milestone": "accounts",
+      "dependencies": [
+        "recovery-ui",
+        "sync"
+      ],
+      "acceptance_cases": [
+        "OPS-01",
+        "OPS-02",
+        "OPS-03",
+        "CON-06",
+        "CON-08"
+      ],
+      "outcome": "Establish an owned staging route for deployed/native verification and record operating limits.",
+      "scope": [
+        "Prepare Cloudflare Pages static HTTPS/deep links, Supabase project/migrations, exact Google redirects and publishable config on managed free tiers.",
+        "Configure/review CSP, Worker/WASM MIME and explicit direct endpoint profiles. Do not cache auth/private/provider traffic as generic assets.",
+        "Measure schema/archive capacity and document quotas, inactivity pausing/read-only modes and local/outbox recovery; no synthetic keepalive dependency.",
+        "Keep public account storage disabled until backup/restore readiness and public release approval. Use only deliberate test accounts/data for staging."
+      ],
+      "done": [
+        "Staging build and config evidence demonstrate direct browser boundaries, callback/error routes and versioning.",
+        "Current no-cost limits/recovery are documented; return specific unmet constraints before any paid upgrade."
+      ],
+      "gate": "Creating this ticket provisions nothing. Execution needs owner-controlled hosting/auth access and approved production/staging origins. Free tiers only; any paid upgrade returns to the owner."
+    },
+    {
+      "key": "backups",
+      "title": "Implement encrypted backups, restore and deletion recovery",
+      "milestone": "accounts",
+      "dependencies": [
+        "deployment"
+      ],
+      "acceptance_cases": [
+        "OPS-03",
+        "OPS-04",
+        "DAT-09"
+      ],
+      "outcome": "Demonstrate protected account data and no-cost capacity before public account storage.",
+      "scope": [
+        "Configure private encrypted logical exports and automation at a verified no-cost destination.",
+        "Target daily exports with seven daily/four weekly rotation; restore all chunks/checkpoints and reapply deletion tombstones through the rotation.",
+        "Rehearse quota/pause/read-only/failure, lost backup/credentials and stale offline resurrection recovery with truthful retention limits.",
+        "Maintain owner export/deletion behavior and no application age purge; separate live removal from eventual backup expiry."
+      ],
+      "done": [
+        "Actual backup/automation/rotation/restore digest and deletion rehearsal evidence exists.",
+        "If no-cost feasibility fails, record the concrete operating constraint and return it before claiming protected public storage or purchasing."
+      ],
+      "gate": "Execution requires owner-controlled private backup destination and secret access through approved private entry. Ticket creation authorizes no provisioning or spending."
+    },
+    {
+      "key": "conformance",
+      "title": "Verify integrated rules, recovery and concurrency invariants",
+      "milestone": "verification",
+      "dependencies": [
+        "recovery-ui",
+        "sync",
+        "pending"
+      ],
+      "acceptance_cases": [
+        "MOV-01",
+        "MOV-02",
+        "MOV-03",
+        "MOV-04",
+        "MOV-05",
+        "MOV-06",
+        "MOV-07",
+        "MOV-08",
+        "MOV-09",
+        "HIS-01",
+        "HIS-02",
+        "HIS-03",
+        "HIS-04",
+        "HIS-05",
+        "RUL-01",
+        "RUL-02",
+        "RUL-03",
+        "RUL-04",
+        "RUL-05",
+        "RUL-06",
+        "RUL-07",
+        "ADJ-01",
+        "ADJ-02",
+        "ADJ-03",
+        "ADJ-04",
+        "ADJ-05",
+        "ADJ-06",
+        "ADJ-07",
+        "ADJ-08",
+        "ADJ-09",
+        "CLK-01",
+        "CLK-02",
+        "CLK-03",
+        "CLK-04",
+        "CLK-05",
+        "CLK-06",
+        "CLK-07",
+        "DAT-01",
+        "DAT-02",
+        "DAT-03",
+        "DAT-04",
+        "DAT-05",
+        "DAT-06",
+        "DAT-07",
+        "DAT-08",
+        "DAT-09",
+        "LIF-01",
+        "LIF-02",
+        "LIF-03",
+        "LIF-04"
+      ],
+      "outcome": "Produce integrated evidence that module interactions preserve the approved contract.",
+      "scope": [
+        "Run independent expected fixtures and fault/race scenarios against the actual integrated build, not a reproduction of implementation internals.",
+        "Cover protocol completion/parser/budgets, full-history/Undo archives, rules/repetition, checked proofs/pending, commit/expiry and duplicate/ownership races.",
+        "Exercise quota/crash/checkpoint/auth/import/delete/outbox conflicts and secret-canary egress, including deployed database denial checks.",
+        "Update acceptance evidence with build/date/method/expected/observed/artifact/limits. Preserve unrun native/live coverage rather than marking parent cases passed prematurely."
+      ],
+      "done": [
+        "All applicable deterministic/build/cloud fixture subruns have evidence and actionable failures resolved.",
+        "No research/prototype/synthetic result is counted as native/AT/live/cache/cost certification."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "desktop",
+      "title": "Run native Windows and macOS screen-reader acceptance",
+      "milestone": "verification",
+      "dependencies": [
+        "conformance",
+        "deployment"
+      ],
+      "acceptance_cases": [
+        "UX-01",
+        "UX-02",
+        "UX-03",
+        "UX-04",
+        "UX-05",
+        "CON-04",
+        "CLK-04",
+        "CLK-05",
+        "DAT-02",
+        "ADJ-05",
+        "OPS-02"
+      ],
+      "outcome": "Validate actual desktop browser and AT journeys on the shipped candidate.",
+      "scope": [
+        "Run stable Windows Chrome+NVDA, Edge+NVDA, Firefox+NVDA and macOS Safari+VoiceOver on actual devices.",
+        "Complete setup, a legal full game, board/coordinate inspection, all promotions, custom setup, diagnostics/switches, errors/Stop/Retry, Undo/practice, dialogs/focus, pending and expiry/results.",
+        "Exercise native storage/credentials, stream/abort, Worker/MIME/CSP, sleep/closure/time anomaly and OAuth returns. Record versions/devices/origin/input and actual AT observations.",
+        "Use fixture transport where live authorization is absent; record it accurately and leave provider-specific live subruns unrun."
+      ],
+      "done": [
+        "Every desktop target has evidence for required native/AT subruns; no timer-tick speech, focus traps or pointer-only actions.",
+        "Emulation/Helium/automated scans are supporting evidence only; log missing devices as unmet prerequisites."
+      ],
+      "gate": "Requires actual Windows/macOS devices and NVDA/VoiceOver. No credentials or live usage implied."
+    },
+    {
+      "key": "mobile",
+      "title": "Run native iOS and Android screen-reader acceptance",
+      "milestone": "verification",
+      "dependencies": [
+        "conformance",
+        "deployment"
+      ],
+      "acceptance_cases": [
+        "UX-01",
+        "UX-02",
+        "UX-03",
+        "UX-04",
+        "UX-05",
+        "CON-04",
+        "CLK-04",
+        "CLK-05",
+        "DAT-02",
+        "ADJ-05",
+        "OPS-02"
+      ],
+      "outcome": "Validate actual mobile browser, touch and AT journeys on the shipped candidate.",
+      "scope": [
+        "Run stable iOS Safari+VoiceOver and Android Chrome+TalkBack on actual representative devices.",
+        "Complete the same full-game/setup/editor/promotion/error/switch/Undo/practice/pending/result journeys with touch/AT gestures and representative external-keyboard access.",
+        "Exercise native storage/credential re-entry, OAuth return context, Worker resources, background/sleep/closure and time reconciliation.",
+        "Use fixture transport without live permission and leave exact provider live coverage to its gate; do not infer phone-to-PC proxy access from desktop loopback."
+      ],
+      "done": [
+        "Both native targets have versioned device/AT/input evidence and all required mobile journeys pass.",
+        "No viewport emulation, mobile memory guarantee or blanket local-network certification."
+      ],
+      "gate": "Requires actual iOS/Android devices and VoiceOver/TalkBack. No credentials or live usage implied."
+    },
+    {
+      "key": "audit",
+      "title": "Audit credential boundaries, deployed configuration and licenses",
+      "milestone": "verification",
+      "dependencies": [
+        "conformance",
+        "deployment",
+        "backups"
+      ],
+      "acceptance_cases": [
+        "CON-03",
+        "CON-08",
+        "DAT-03",
+        "DAT-04",
+        "DAT-08",
+        "OPS-01",
+        "OPS-03",
+        "OPS-04",
+        "OPS-05"
+      ],
+      "outcome": "Verify the distribution and hosted setup meet the approved privacy and operations boundaries.",
+      "scope": [
+        "Review actual bundle/network/CSP/telemetry/export/sync paths with secret canaries, untrusted provider HTML/errors and destination changes.",
+        "Verify two-user RLS/CAS and no administrative or AI key leakage, unsafe solver entry, native-state replay shortcuts or generated server relay.",
+        "Reconcile pinned dependencies/assets/licenses and art credits/modifications, excluding optional NonCommercial pieces and research-only GPL replay code.",
+        "Inspect free capacity, backup/restore/deletion evidence and public-account disabled state before release."
+      ],
+      "done": [
+        "A reproducible security/configuration/license report identifies actual build and tested boundaries; findings are fixed or explicit launch blockers.",
+        "No blanket security or universal solver proof claim from finite samples."
+      ],
+      "gate": ""
+    },
+    {
+      "key": "live",
+      "title": "Verify authorized provider routes and cross-provider handoffs",
+      "milestone": "verification",
+      "dependencies": [
+        "desktop",
+        "mobile",
+        "audit"
+      ],
+      "acceptance_cases": [
+        "CON-01",
+        "CON-05",
+        "CON-06",
+        "MOD-04",
+        "MOD-05",
+        "MOD-06",
+        "MOD-07",
+        "MOV-03",
+        "MOV-07",
+        "HIS-01",
+        "HIS-02",
+        "UX-05"
+      ],
+      "outcome": "Gather exact authenticated route evidence across required native platforms.",
+      "scope": [
+        "Choose exact available model/connection/protocol versions with the owner at execution. No fixed model-family trio or capability allowlist.",
+        "Across all six native targets exercise OpenAI Responses, OpenRouter Chat, eligible native Anthropic Messages and public HTTPS custom Chat/CLIProxyAPI baseline: diagnostic, legal move/full-history continuation, Stop and explicit recovery.",
+        "Test explicit alternative routes before calling them verified. Record unknown/blocked/account restrictions honestly; optional local routes need separate qualified evidence.",
+        "Exercise live Chat-to-Responses, Responses-to-Messages and Messages-to-Chat plus return to checked unchanged selection, received plans, failed candidate, Undo and capacity rejection."
+      ],
+      "done": [
+        "Per-route/target records identify actual requested/reported IDs, adapter/build/origin, outcomes, raw usage and limits.",
+        "Synthetic transport/diagnostic evidence never certifies every catalog model/custom deployment or pooled backend."
+      ],
+      "gate": "Requires explicit exact-configuration approval, private credentials and live/spend authorization at execution. This ticket and project creation authorize no model call."
+    },
+    {
+      "key": "cache-cost",
+      "title": "Measure prompt-cache behavior and reference-game costs",
+      "milestone": "verification",
+      "dependencies": [
+        "live"
+      ],
+      "acceptance_cases": [
+        "CST-02",
+        "CST-03",
+        "CST-04"
+      ],
+      "outcome": "Show real cache/usage evidence with no fixed price benchmark.",
+      "scope": [
+        "Demonstrate a real warm prompt-cache read on at least one eligible configuration while generating fresh moves with complete retained history.",
+        "Measure cold/warm/expiry/long-pause/Undo/retry/provider-switch behavior and native write/read/uncached/output/reasoning categories.",
+        "Include billed diagnostics/corrections/retries/failed requests and reconcile native categories/rates/available charge records without double-counting.",
+        "Report actual turns/requests/outcomes/tokens/history growth/latency/cost and about-40-turn reference. Label projections/assumptions separately; never pad an ended game or call early failure proof of cheap full-history play."
+      ],
+      "done": [
+        "Raw authorized per-request usage supports scoped cache claims and measured/estimated/unknown accounting.",
+        "No dollar ceiling, price-based model restriction, promised cache hit or platform-funded usage."
+      ],
+      "gate": "Requires separately agreed runs, private credentials and explicit spend authorization. No live request or spending is authorized by creating this ticket."
+    },
+    {
+      "key": "launch",
+      "title": "Complete the acceptance evidence review and release handoff",
+      "milestone": "verification",
+      "dependencies": [
+        "conformance",
+        "desktop",
+        "mobile",
+        "live",
+        "cache-cost",
+        "audit",
+        "backups"
+      ],
+      "acceptance_cases": [
+        "CON-01",
+        "CON-02",
+        "CON-03",
+        "CON-04",
+        "CON-05",
+        "CON-06",
+        "CON-07",
+        "CON-08",
+        "MOD-01",
+        "MOD-02",
+        "MOD-03",
+        "MOD-04",
+        "MOD-05",
+        "MOD-06",
+        "MOD-07",
+        "UX-03",
+        "UX-04",
+        "UX-05",
+        "CST-01",
+        "CST-02",
+        "CST-03",
+        "CST-04",
+        "OPS-01",
+        "OPS-02",
+        "OPS-03",
+        "OPS-04",
+        "OPS-05"
+      ],
+      "outcome": "Make the production readiness decision reviewable against all 79 approved cases.",
+      "scope": [
+        "Review every required applicable coverage subrun for the actual candidate build, using acceptance evidence records and scoped route claims.",
+        "Ensure fixtures, native/AT, deployed cloud/auth/conflict/restore, live handoff and actual cache/cost evidence remain distinct. Required fail/blocked/unrun is no waiver.",
+        "Verify exact accepted verdicts or correctly saved pending cases, no universal practical-completion promise, immutable results and truthful free-tier/data limits.",
+        "Prepare public release/rollback/recovery documentation, dependency notices and account-storage enablement steps; present concrete release result to owner for final launch decision."
+      ],
+      "done": [
+        "All 79 cases have complete applicable evidence and no hidden required failure/unrun subrun, or the release remains blocked with precise reasons.",
+        "Owner launch decision is recorded before publishing/enabling public accounts; specification approval is not launch approval."
+      ],
+      "gate": "Public release and account-storage enablement require the owner's separate final launch decision. This planning task executes neither."
+    }
+  ],
+  "creation": {
+    "project": {
+      "id": "P-KHA-1",
+      "url": "https://linear.app/kamkm/project/ai-chess-mvp-8a102853ce2c",
+      "name": "AI Chess MVP"
+    },
+    "milestones": {
+      "spec": {
+        "id": "8f3926d0-0105-4001-a2b6-7b899bda0aa6",
+        "name": "Specification agreed"
+      },
+      "local": {
+        "id": "7a8f5e8e-dcfc-4438-aa04-7070a27ea45a",
+        "name": "Local chess and exact rules"
+      },
+      "ai": {
+        "id": "8b350133-c7aa-4fc5-8730-58285f39d1f4",
+        "name": "AI opponents and accessible play"
+      },
+      "accounts": {
+        "id": "a5738eb5-8dba-4640-ae52-b1826862b98a",
+        "name": "Private accounts and hosted operations"
+      },
+      "verification": {
+        "id": "1a959dc4-b496-42df-8ea0-8b9dc047a301",
+        "name": "Native acceptance and launch"
+      }
+    },
+    "movedIssues": [
+      "KHA-5",
+      "KHA-14",
+      "KHA-13",
+      "KHA-11",
+      "KHA-25",
+      "KHA-24",
+      "KHA-22",
+      "KHA-23",
+      "KHA-12",
+      "KHA-9",
+      "KHA-8",
+      "KHA-21",
+      "KHA-20",
+      "KHA-17",
+      "KHA-10",
+      "KHA-15",
+      "KHA-6",
+      "KHA-19",
+      "KHA-18",
+      "KHA-7",
+      "KHA-16"
+    ],
+    "createdIssues": {
+      "foundation": {
+        "id": "KHA-26",
+        "url": "https://linear.app/kamkm/issue/KHA-26/establish-the-reacttypescript-application-and-build-checks",
+        "title": "Establish the React/TypeScript application and build checks"
+      },
+      "rules": {
+        "id": "KHA-27",
+        "url": "https://linear.app/kamkm/issue/KHA-27/implement-strict-orthodox-rules-fen-and-repetition-state",
+        "title": "Implement strict orthodox rules, FEN and repetition state"
+      },
+      "archive": {
+        "id": "KHA-28",
+        "url": "https://linear.app/kamkm/issue/KHA-28/build-atomic-local-checkpoints-and-lossless-game-archives",
+        "title": "Build atomic local checkpoints and lossless game archives"
+      },
+      "controller": {
+        "id": "KHA-29",
+        "url": "https://linear.app/kamkm/issue/KHA-29/implement-serialized-match-transitions-and-continuous-clocks",
+        "title": "Implement serialized match transitions and continuous clocks"
+      },
+      "proofs": {
+        "id": "KHA-30",
+        "url": "https://linear.app/kamkm/issue/KHA-30/implement-checked-mating-witnesses-and-sound-impossibility-proofs",
+        "title": "Implement checked mating witnesses and sound impossibility proofs"
+      },
+      "graph": {
+        "id": "KHA-31",
+        "url": "https://linear.app/kamkm/issue/KHA-31/build-resumable-exact-cooperative-graph-analysis",
+        "title": "Build resumable exact cooperative graph analysis"
+      },
+      "pending": {
+        "id": "KHA-32",
+        "url": "https://linear.app/kamkm/issue/KHA-32/integrate-exact-endings-and-saved-pending-adjudication",
+        "title": "Integrate exact endings and saved pending adjudication"
+      },
+      "lifecycle": {
+        "id": "KHA-33",
+        "url": "https://linear.app/kamkm/issue/KHA-33/add-guest-recovery-undo-rematch-and-timed-practice",
+        "title": "Add guest recovery, Undo, rematch and timed practice"
+      },
+      "connections": {
+        "id": "KHA-34",
+        "url": "https://linear.app/kamkm/issue/KHA-34/implement-direct-browser-connection-profiles-and-local-credentials",
+        "title": "Implement direct-browser connection profiles and local credentials"
+      },
+      "adapters": {
+        "id": "KHA-35",
+        "url": "https://linear.app/kamkm/issue/KHA-35/implement-chat-responses-and-messages-streaming-adapters",
+        "title": "Implement Chat, Responses and Messages streaming adapters"
+      },
+      "move-contract": {
+        "id": "KHA-36",
+        "url": "https://linear.app/kamkm/issue/KHA-36/implement-move-parsing-and-independent-recovery-budgets",
+        "title": "Implement move parsing and independent recovery budgets"
+      },
+      "replay-cost": {
+        "id": "KHA-37",
+        "url": "https://linear.app/kamkm/issue/KHA-37/implement-full-history-replay-prompt-caching-and-cost-accounting",
+        "title": "Implement full-history replay, prompt caching and cost accounting"
+      },
+      "selection": {
+        "id": "KHA-38",
+        "url": "https://linear.app/kamkm/issue/KHA-38/implement-model-catalogs-diagnostics-and-queued-handoffs",
+        "title": "Implement model catalogs, diagnostics and queued handoffs"
+      },
+      "board-ui": {
+        "id": "KHA-39",
+        "url": "https://linear.app/kamkm/issue/KHA-39/build-the-accessible-classic-match-board-and-position-editor",
+        "title": "Build the accessible Classic match board and position editor"
+      },
+      "recovery-ui": {
+        "id": "KHA-40",
+        "url": "https://linear.app/kamkm/issue/KHA-40/build-connection-opponent-and-recovery-journeys",
+        "title": "Build connection, opponent and recovery journeys"
+      },
+      "cloud-schema": {
+        "id": "KHA-41",
+        "url": "https://linear.app/kamkm/issue/KHA-41/implement-owner-only-supabase-schema-and-revision-operations",
+        "title": "Implement owner-only Supabase schema and revision operations"
+      },
+      "auth": {
+        "id": "KHA-42",
+        "url": "https://linear.app/kamkm/issue/KHA-42/implement-google-pkce-accounts-and-identity-isolation",
+        "title": "Implement Google PKCE accounts and identity isolation"
+      },
+      "sync": {
+        "id": "KHA-43",
+        "url": "https://linear.app/kamkm/issue/KHA-43/implement-cloud-sync-takeover-and-preserved-conflicts",
+        "title": "Implement cloud sync, takeover and preserved conflicts"
+      },
+      "deployment": {
+        "id": "KHA-44",
+        "url": "https://linear.app/kamkm/issue/KHA-44/prepare-free-tier-https-staging-and-auth-configuration",
+        "title": "Prepare free-tier HTTPS staging and auth configuration"
+      },
+      "backups": {
+        "id": "KHA-45",
+        "url": "https://linear.app/kamkm/issue/KHA-45/implement-encrypted-backups-restore-and-deletion-recovery",
+        "title": "Implement encrypted backups, restore and deletion recovery"
+      },
+      "conformance": {
+        "id": "KHA-46",
+        "url": "https://linear.app/kamkm/issue/KHA-46/verify-integrated-rules-recovery-and-concurrency-invariants",
+        "title": "Verify integrated rules, recovery and concurrency invariants"
+      },
+      "desktop": {
+        "id": "KHA-47",
+        "url": "https://linear.app/kamkm/issue/KHA-47/run-native-windows-and-macos-screen-reader-acceptance",
+        "title": "Run native Windows and macOS screen-reader acceptance"
+      },
+      "mobile": {
+        "id": "KHA-48",
+        "url": "https://linear.app/kamkm/issue/KHA-48/run-native-ios-and-android-screen-reader-acceptance",
+        "title": "Run native iOS and Android screen-reader acceptance"
+      },
+      "audit": {
+        "id": "KHA-49",
+        "url": "https://linear.app/kamkm/issue/KHA-49/audit-credential-boundaries-deployed-configuration-and-licenses",
+        "title": "Audit credential boundaries, deployed configuration and licenses"
+      },
+      "live": {
+        "id": "KHA-50",
+        "url": "https://linear.app/kamkm/issue/KHA-50/verify-authorized-provider-routes-and-cross-provider-handoffs",
+        "title": "Verify authorized provider routes and cross-provider handoffs"
+      },
+      "cache-cost": {
+        "id": "KHA-51",
+        "url": "https://linear.app/kamkm/issue/KHA-51/measure-prompt-cache-behavior-and-reference-game-costs",
+        "title": "Measure prompt-cache behavior and reference-game costs"
+      },
+      "launch": {
+        "id": "KHA-52",
+        "url": "https://linear.app/kamkm/issue/KHA-52/complete-the-acceptance-evidence-review-and-release-handoff",
+        "title": "Complete the acceptance evidence review and release handoff"
+      }
+    },
+    "wiredIssues": [
+      "rules",
+      "archive",
+      "controller",
+      "proofs",
+      "graph",
+      "pending",
+      "lifecycle",
+      "connections",
+      "adapters",
+      "move-contract",
+      "replay-cost",
+      "selection",
+      "board-ui",
+      "recovery-ui",
+      "cloud-schema",
+      "auth",
+      "sync",
+      "deployment",
+      "backups",
+      "conformance",
+      "desktop",
+      "mobile",
+      "audit",
+      "live",
+      "cache-cost",
+      "launch"
+    ],
+    "projectDocument": {
+      "id": "052b5dd1-764c-4286-96bf-067a815bfcb9",
+      "url": "https://linear.app/kamkm/document/implementation-roadmap-and-acceptance-trace-7232ae4a1fae",
+      "title": "Implementation roadmap and acceptance trace"
+    }
+  },
+  "coverage": {
+    "expected": 79,
+    "mapped": 79,
+    "missing": [],
+    "extra": [],
+    "acyclic": true
+  }
+}

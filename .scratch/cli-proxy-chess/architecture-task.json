@@ -1,0 +1,183 @@
+{
+  "issue": "KHA-13",
+  "title": "Choose the application architecture and data boundaries",
+  "state": "Done",
+  "owner": "45fdeba7-e6d5-4b71-912f-02932bc83a91",
+  "sourceDate": "2026-10-16",
+  "discussionCommentId": "638fdc55-045f-4e99-9571-5bc23e77d720",
+  "confirmedHosting": {
+    "budget": "Free tiers initially",
+    "operations": "Prefer managed hosting",
+    "paidUpgrades": "Bring back to owner before incurring charges",
+    "ownerAnswer": "Free tiers initially (Recommended)",
+    "commentId": "5f953b59-6ec6-4b7b-9f5e-cbe234ddc5a2"
+  },
+  "licenseDefault": {
+    "ownerAnswer": "I don't really care about that.",
+    "commentId": "91ca92e6-05ba-48b8-b415-d034d0bedc36",
+    "meaning": "Owner has no permissive-versus-copyleft preference. Use standing routine-default authority; do not ask again.",
+    "initialChoice": "MIT for the project's own code, subject to dependency-compatible final distribution",
+    "limits": "Preserve third-party notices. Do not call a GPL-covered combined work MIT-only. A compatible copyleft choice may be made and recorded if selected dependencies justify it."
+  },
+  "pendingQuestion": null,
+  "researchTasks": {
+    "rules": {
+      "issue": "KHA-22",
+      "taskId": "node:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-rules-architecture-20261016-r1",
+      "childThreadId": "thread:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-rules-architecture-20261016-r1",
+      "status": "completed",
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "ticketState": "Done",
+      "consumed": true,
+      "sourceCommit": "47b57a492f61c5675301fb3e4dd33fa4d79930de",
+      "integratedCommit": "27a53c1",
+      "report": "research/chess-dependencies.md",
+      "evidence": "experiments/chess-dependencies/",
+      "attachmentIds": [
+        "d6c8fe58-5781-4da3-b737-3a765a7a2486",
+        "b838d3c8-6f96-4c70-80ea-1ea6aca0f6c5"
+      ],
+      "resolutionCommentId": "94aa261c-0c01-4973-b0de-73fc2c455782",
+      "reportSha256": "d459fa7c88eb2b9a2031fee71eadf82e29450d57861eabb997b9175a75874050",
+      "bundleSha256": "fffdbf6b659dc26cc0cf9193f38abcfea9f1cf52e489537d5fd51a3ed97fd464",
+      "downloadsVerified": true,
+      "review": "Coordinator reran JS probe: all 12 assertions passed and full result JSON equaled recorded evidence, including 768 states/3808 transitions. Verified 26 normalized checksums and 62 references/local paths. Native solver/AT/WASM not rerun or certified."
+    },
+    "hosted": {
+      "issue": "KHA-23",
+      "taskId": "node:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-hosted-architecture-20261016-r1",
+      "childThreadId": "thread:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-hosted-architecture-20261016-r1",
+      "status": "completed",
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "ticketState": "Done",
+      "consumed": true,
+      "sourceCommit": "766bef0aa9910120b00ce1989c741947bdff76d4",
+      "integratedCommit": "ff40ae9",
+      "report": "research/browser-persistence-hosting.md",
+      "attachmentId": "e91c8309-0563-402a-8b39-96ae2e365220",
+      "resolutionCommentId": "1e20eb37-16bd-4f7a-8cff-08f9a53d8a25",
+      "sha256": "8b7545901cbcf2d35eb561a0ba989ee79862b63eee93c10d5c99d04100a55459",
+      "downloadVerified": true,
+      "review": "Inspected report/clean source tree, validated 23 references and embedded JSON, syntax-checked appendix JS, checked primary quota/SMTP/static limits. Browser experiment not rerun."
+    },
+    "solver_browser": {
+      "issue": "KHA-24",
+      "title": "Verify browser-local chess adjudication solver portability and resource limits",
+      "url": "https://linear.app/kamkm/issue/KHA-24/verify-browser-local-chess-adjudication-solver-portability-and",
+      "taskId": "node:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-solver-browser-20261016-r1",
+      "childThreadId": "thread:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-solver-browser-20261016-r1",
+      "status": "completed",
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "ticketState": "Done",
+      "consumed": true,
+      "sourceCommit": "cc8377df01759f49e896f943f702540c796f225a",
+      "integratedCommit": "2fd8607",
+      "worktree": "C:/Users/Lenovo/.t3/worktrees/kamkmchess/t3-faf7b892",
+      "report": "research/browser-adjudication-solver.md",
+      "evidence": "experiments/browser-adjudication-solver/",
+      "attachmentIds": [
+        "17e585c2-bce6-4ea8-874a-b245cf55d350",
+        "e545b570-d07c-45bc-95d1-039beda63017"
+      ],
+      "reportSha256": "d3d0079b9c49b5153161325450627d4d11651bd1a3256c7e5116583ede8b020b",
+      "bundleSha256": "d607364cec10cb4f642c82cef7143c501605e17e5acf3e3b27173495ae8794c0",
+      "downloadsVerified": true,
+      "resolutionCommentId": "c5884f8e-ebd4-49cd-8162-af1dd90baec6",
+      "review": "Saved-evidence verifier and JS syntax passed. Verified 40 normalized hashes and 48 references/local links. Existing WASM hash matched; two representative queries executed in Node. No new browser run. Automatic review rejected detached replay-server launch as blocked by policy; no server/tab/helper started.",
+      "findings": [
+        "Pinned solver builds and runs WASM in Worker in sampled Windows Helium; all six required native targets remain untested.",
+        "Actual hard query remains unknown after five seconds; resource caps are not an exact fallback.",
+        "Counter99 witness crosses automatic product draw threshold; canonical counters/ep and hypothetical mate semantics must be reconciled with exactness report."
+      ]
+    },
+    "solver_exactness": {
+      "issue": "KHA-25",
+      "title": "Establish soundness and complete outcomes for exact chess adjudication",
+      "url": "https://linear.app/kamkm/issue/KHA-25/establish-soundness-and-complete-outcomes-for-exact-chess-adjudication",
+      "taskId": "node:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-solver-exactness-20261016-r1",
+      "childThreadId": "thread:delegated-task:command%3Amcp%3Adaf8deae-3a71-4385-803a-981c537b5ef2%3Adelegate-task%3Awayfinder-chess-solver-exactness-20261016-r1",
+      "status": "completed",
+      "provider": "codex",
+      "model": "gpt-6.1-sol",
+      "ticketState": "Done",
+      "consumed": true,
+      "sourceCommit": "866c278fe65bd0670dde946ddf451e583d100d09",
+      "integratedCommit": "7b8bd05",
+      "worktree": "C:/Users/Lenovo/.t3/worktrees/kamkmchess/t3-1fec5d98",
+      "report": "research/exact-adjudication-coverage.md",
+      "evidence": "experiments/exact-adjudication-coverage/",
+      "attachmentIds": [
+        "aa291772-c8cb-4292-8ac9-10ee439c5c98",
+        "d69e06a6-a92b-4967-a1a0-b4445b107035"
+      ],
+      "reportSha256": "8be117f626dd2898005ab8469d51b50e8c116af939c8a0a883c9f219650cf606",
+      "bundleSha256": "0e43bb75b5d18ceb3dc87cfb637910d9034801806ddba18f085f137655da8c97",
+      "downloadsVerified": true,
+      "resolutionCommentId": "d9165000-2afb-4506-bc70-84c3914b2630",
+      "review": "Coordinator reran evidence verifier and 86 independent recorded witness replays, recomputed four-state closure, unresolved state-bound control, and all 22 counter99 successors. Verified 21 hashes/42 references, inspected move-origin unchecked writes and witness branch. Native queries/unit tests not rerun; no browser work.",
+      "findings": [
+        "No practical guaranteed full-domain classifier established; complete graph exhaustion is theoretical and resource cutoffs unresolved.",
+        "Parser accepts 21 movable origins but Rust generator has unchecked 18-entry buffer. Unsafe execution deliberately avoided; no crash observed.",
+        "Changed Rust deductions lack a complete paper-based proof; one source branch omits witness path reconstruction, no sampled public failure reproduced.",
+        "Counter99 fixture proves different answers under board-only versus automatic-draw-aware hypothetical mating predicates."
+      ]
+    }
+  },
+  "pendingConsequentialChoices": [],
+  "preservedDecisions": [
+    "browser-owned game/rules/clocks and direct provider requests",
+    "hosted accounts and optional owner-only sync",
+    "device-local AI credential saving by default",
+    "approved A Classic workspace",
+    "complete screen-reader, keyboard, mouse, touch play",
+    "full retained history with separate Undo archive",
+    "continuous clocks and final results",
+    "required desktop and mobile browser matrix"
+  ],
+  "routineDefaultsAuthority": ".scratch/cli-proxy-chess/move-contract-task.json#routineDefaultsAuthority",
+  "constraints": "No production code, service provisioning, paid usage, real credentials, or model generation authorized by this planning ticket.",
+  "next": "Architecture is resolved. Query KHA-14, Agree on MVP acceptance criteria and the specification handoff, before claiming the next ticket in a later session. Preserve all owner choices. Do not restart research, reopen settled questions or start production implementation before the specification handoff.",
+  "confirmedOfflineContinuation": {
+    "ownerAnswer": "Continue locally, preserve conflicts (Recommended)",
+    "commentId": "b94b7653-aa8d-411c-af60-c7fe185b6ce4",
+    "policy": "Continue local account play with an unsynced warning. On takeover/revision conflict, preserve the continuation separately without overwriting accepted cloud history or final result. Clocks continue."
+  },
+  "confirmedExactAdjudication": {
+    "ownerAnswer": "Keep exact rules; research solver",
+    "commentId": "c4b31f8e-fcde-445c-920b-0632092bbb70",
+    "rareExceptionsAccepted": false
+  },
+  "resolutionCommentId": "64e0511f-3e26-4b79-a3c8-4f834605736c",
+  "resolutionTextVerified": true,
+  "confirmedMatingPredicate": {
+    "ownerAnswer": "Use legal moves alone (Recommended)",
+    "commentId": "80a638a0-55e8-4cf8-8cf7-3814a6ab832b",
+    "policy": "Hypothetical cooperative mate ignores future repetition/move-count draw thresholds. Actual play still applies automatic third repetition/100-halfmove endings with checkmate precedence."
+  },
+  "confirmedPendingAdjudication": {
+    "ownerAnswer": "Allow unresolved pending games (Recommended)",
+    "commentId": "abb8709e-42c3-4a03-8549-117d459ea7df",
+    "policy": "Save exact query and position with no declared result or promised finish time. Play waits; an unexpired active clock continues. Preserve expiry/event order and immutable accepted results."
+  },
+  "selectedArchitecture": {
+    "frontend": "React/TypeScript/Vite",
+    "staticHosting": "Cloudflare Pages, free initially",
+    "hostedAccountsAndSync": "Supabase Auth/Postgres, free initially",
+    "initialAuth": "Google OAuth with explicit PKCE",
+    "board": "cm-chessboard with application accessibility/promotion/editor integration",
+    "rules": "chess.js behind strict orthodox validation, counter and repetition adapters",
+    "localPersistence": "IndexedDB chunks/checkpoints/outbox and separate credential namespaces",
+    "adjudication": "Browser proof-checking Worker, checked evidence, exact cooperative exploration or saved pending state. Stock unsafe Rust path gated/bypassed.",
+    "license": "MIT original code plus compatible dependency notices; separately credited BY-SA standard art"
+  },
+  "verification": "All four research tasks consumed, integrated and attached with verified downloads. Final 20,814-character resolution read back from Linear exactly. Architecture Done; acceptance is unassigned Backlog with resolved blockers.",
+  "remainingImplementationAndAcceptance": [
+    "No production implementation/provisioning or native/AT acceptance performed",
+    "Safe proof checker/transition code and optional Rust hardening still must be implemented and tested",
+    "Universal practical completion explicitly not promised; truthful pending paths required",
+    "Native six-browser/actual-AT, clock/storage/RLS/CAS/auth/backup, and separately authorized live cache/cost evidence remain acceptance work"
+  ]
+}

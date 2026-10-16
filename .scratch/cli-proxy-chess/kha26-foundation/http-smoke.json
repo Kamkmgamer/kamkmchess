@@ -1,0 +1,40 @@
+{
+  "method": "HTTP reads of Vite production preview, not a browser render or deployed Cloudflare check",
+  "checks": [
+    {
+      "url": "http://127.0.0.1:4173/",
+      "status": 200,
+      "content_type": "text/html"
+    },
+    {
+      "url": "http://127.0.0.1:4173/assets/index-CE2xj8Mp.js",
+      "status": 200,
+      "content_type": "text/javascript",
+      "bytes": 219192
+    },
+    {
+      "url": "http://127.0.0.1:4173/assets/index-Dn1Kj2XK.css",
+      "status": 200,
+      "content_type": "text/css",
+      "bytes": 562
+    },
+    {
+      "url": "http://127.0.0.1:4173/LICENSE.txt",
+      "status": 200,
+      "content_type": "text/plain",
+      "bytes": 1080
+    },
+    {
+      "url": "http://127.0.0.1:4173/THIRD_PARTY_NOTICES.txt",
+      "status": 200,
+      "content_type": "text/plain",
+      "bytes": 3646
+    },
+    {
+      "url": "http://127.0.0.1:4173/DEPENDENCY_INVENTORY.json",
+      "status": 200,
+      "content_type": "application/json",
+      "bytes": 32735
+    }
+  ]
+}
