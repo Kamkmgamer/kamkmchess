@@ -1,4 +1,6 @@
-# KHA-41 local SQL evidence
+# KHA-41 local SQL evidence (historical Supabase design)
+
+The owner later changed the target backend to a Go API, PostgreSQL and Clerk Auth on Vercel. This report documents the earlier Supabase-specific implementation and is retained for provenance; it does not pass or constrain the replacement KHA-41 work.
 
 ## Recorded execution
 

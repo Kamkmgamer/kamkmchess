@@ -105,7 +105,7 @@
       ]
     },
     "cloud": {
-      "description": "Deployed owner-only Supabase auth/database with at least two real user accounts and two actual devices. Include real offline divergence, direct-write denial and restore."
+      "description": "Deployed Clerk-authenticated Go API with PostgreSQL owner checks, tested with at least two real accounts and two actual devices. Include real offline divergence, direct database access denial, stale revision/epoch rejection and restore."
     },
     "build": {
       "description": "Actual locked production distribution, dependency and asset inventory, schema/configuration review."
@@ -1960,7 +1960,7 @@
         "security",
         "network"
       ],
-      "required_behavior": "Locked supported static React/TypeScript/Vite build on HTTPS Cloudflare Pages with SPA/callback fallback. Browser-only chess/generation. Version storage/RPC/checkpoints; incompatible cached tabs cannot overwrite. CSP allows explicit routes/Workers while restricting scripts; do not generically cache private/auth/provider traffic.",
+      "required_behavior": "Locked React/TypeScript/Vite browser build and Go API on HTTPS Vercel, backed by PostgreSQL and Clerk Auth. Verify SPA and auth callback routing. Browser-only chess/generation. Version storage/API/checkpoints; incompatible cached tabs cannot overwrite. CSP allows explicit routes/Workers while restricting scripts; do not generically cache private/auth/provider traffic.",
       "evidence_needed": [
         "Production build and schema migration review",
         "Deployed MIME/CSP/routes/bundle/network evidence"
@@ -1982,7 +1982,7 @@
         "journey",
         "security"
       ],
-      "required_behavior": "Google OAuth uses explicit PKCE and exact redirects. Test all native return contexts, cancel/overlap, missing/expired verifier and token refresh. Guest remains account-free. No unconfigured public SMTP assumption or implicit email-auth route.",
+      "required_behavior": "Clerk provides Google sign-in and sessions. The Go API verifies Clerk session tokens and enforces owner identity. Test production redirects, cancel/overlap, expired sessions, refresh and native return contexts. Guest remains account-free. Do not build a second app-owned OAuth/session flow.",
       "evidence_needed": [
         "Actual production-origin OAuth traces with secrets removed",
         "Failed/canceled/overlapping flow and refresh checks"

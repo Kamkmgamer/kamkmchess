@@ -1,4 +1,6 @@
-# Cloud schema
+# Historical Supabase cloud schema
+
+The owner later changed the target backend to a Go API with PostgreSQL, Clerk Auth, and Vercel hosting. This file records the earlier Supabase-specific KHA-41 implementation and its local evidence. Keep it for provenance; do not extend it as the target production schema or API. The replacement work belongs in [KHA-41](https://linear.app/kamkm/issue/KHA-41).
 
 The KHA-41 migration is `supabase/migrations/20261016000100_owner_only_cloud_storage.sql`. It stores an exact versioned `GameCheckpointV1`, exact versioned `CloudArchiveBatchV1` bytes, and owner ordering metadata. PostgreSQL checks storage shape, identity, digests, and CAS ordering. It never decides chess legality, creates a chess result, or relays AI credentials.
 
@@ -55,7 +57,7 @@ The separate local SQL lane ran source `f8a8b2013e25c155319923f436107d30a1ed947a
 
 Earlier source revisions exposed fixture syntax, metadata-role, request-encoding and expected-value errors, plus a schema-variable collision in the commit RPC. Those failures and their corrections remain in the evidence history. PGlite uses one in-memory connection and does not verify multi-session races.
 
-All 79 product acceptance checks remain not run. No hosted Supabase database, real two-account denial check, deployed direct-write bypass check, multi-session race, browser bundle, backup restore, native, or assistive-technology run is claimed. No deployment or credential access was used. KHA-41 remains open for KHA-28 adapter integration and the later deployed gates.
+All 79 product acceptance checks remain not run. No hosted Supabase database, real two-account denial check, deployed direct-write bypass check, multi-session race, browser bundle, backup restore, native, or assistive-technology run is claimed. No deployment or credential access was used. The target KHA-41 work now replaces this Supabase implementation with a Go API and PostgreSQL. The earlier local SQL evidence does not pass the replacement work's acceptance cases.
 
 ## KHA-28 integration boundary
 
