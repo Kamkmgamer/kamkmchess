@@ -1,0 +1,11 @@
+.scratch/
+__pycache__/
+node_modules/
+/dist/
+/coverage/
+*.tsbuildinfo
+*.zip
+*.log
+.env
+.env.*
+!.env.example

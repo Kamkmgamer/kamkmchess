@@ -1,0 +1,2058 @@
+{
+  "schema_version": 1,
+  "revision": 1,
+  "prepared_at": "2026-10-16",
+  "issue": "KHA-14",
+  "scope": "Specification handoff. No production or launch acceptance claimed.",
+  "owner_handoff_agreement": "approved",
+  "owner_handoff_agreement_date": "2026-10-16",
+  "owner_handoff_resolution_comment": "3bcd24a7-2bd5-43fb-8a35-095bac2575f2",
+  "approved_review_commit": "35444e0",
+  "canonical_sources": {
+    "connections": {
+      "issue": "KHA-8",
+      "comment": "bab521f6-8e67-4a3c-8b7e-0c18df1cd564",
+      "url": "https://linear.app/kamkm/issue/KHA-8"
+    },
+    "caching": {
+      "issue": "KHA-8",
+      "comment": "30b80ea3-97ee-4885-96f4-0aeb4fd9ca2d",
+      "url": "https://linear.app/kamkm/issue/KHA-8"
+    },
+    "selection": {
+      "issue": "KHA-9",
+      "comment": "6cf8d029-1457-4d8d-bc15-ef622a8da4e3",
+      "url": "https://linear.app/kamkm/issue/KHA-9"
+    },
+    "moves": {
+      "issue": "KHA-10",
+      "comment": "64c107b9-2653-44f4-8496-2de310dbcb81",
+      "url": "https://linear.app/kamkm/issue/KHA-10"
+    },
+    "lifecycle": {
+      "issue": "KHA-11",
+      "comment": "084530f6-8495-4a8c-b5b8-bcc93f7b10ac",
+      "url": "https://linear.app/kamkm/issue/KHA-11"
+    },
+    "interface": {
+      "issue": "KHA-12",
+      "comment": "d83e2c28-a5ba-48a4-a9b7-efee6228d228",
+      "url": "https://linear.app/kamkm/issue/KHA-12"
+    },
+    "architecture": {
+      "issue": "KHA-13",
+      "comment": "64e0511f-3e26-4b79-a3c8-4f834605736c",
+      "url": "https://linear.app/kamkm/issue/KHA-13"
+    },
+    "conflicts": {
+      "issue": "KHA-13",
+      "comment": "b94b7653-aa8d-411c-af60-c7fe185b6ce4",
+      "url": "https://linear.app/kamkm/issue/KHA-13"
+    },
+    "mating": {
+      "issue": "KHA-13",
+      "comment": "80a638a0-55e8-4cf8-8cf7-3814a6ab832b",
+      "url": "https://linear.app/kamkm/issue/KHA-13"
+    },
+    "pending": {
+      "issue": "KHA-13",
+      "comment": "abb8709e-42c3-4a03-8549-117d459ea7df",
+      "url": "https://linear.app/kamkm/issue/KHA-13"
+    },
+    "disclosure": {
+      "issue": "KHA-17",
+      "comment": "89ae3dca-03b6-4354-87d3-d28d784b593c",
+      "url": "https://linear.app/kamkm/issue/KHA-17"
+    },
+    "custom": {
+      "issue": "KHA-19",
+      "comment": "549fc01e-8804-423d-a6f1-338981f2ae3d",
+      "url": "https://linear.app/kamkm/issue/KHA-19"
+    },
+    "costs": {
+      "issue": "KHA-14",
+      "comment": "80adad92-20e5-4280-af73-9fc68e449a46",
+      "url": "https://linear.app/kamkm/issue/KHA-14"
+    }
+  },
+  "coverage_sets": {
+    "deterministic": {
+      "description": "Offline deterministic fixtures against the eventual production controller/adapters/checkers, with independent expected outcomes and fault injection."
+    },
+    "protocols": {
+      "description": "Chat Completions, Responses and native Anthropic Messages; all nine ordered source/destination pairs for replay fixtures."
+    },
+    "native": {
+      "description": "Every actual stable native launch browser below. Each required subrun must pass.",
+      "targets": [
+        "win-chrome",
+        "win-edge",
+        "win-firefox",
+        "mac-safari",
+        "ios-safari",
+        "android-chrome"
+      ]
+    },
+    "at": {
+      "description": "Complete real assistive-technology journeys on every target, including external-keyboard mobile checks. Emulation does not qualify.",
+      "targets": [
+        "win-chrome",
+        "win-edge",
+        "win-firefox",
+        "mac-safari",
+        "ios-safari",
+        "android-chrome"
+      ]
+    },
+    "cloud": {
+      "description": "Deployed owner-only Supabase auth/database with at least two real user accounts and two actual devices. Include real offline divergence, direct-write denial and restore."
+    },
+    "build": {
+      "description": "Actual locked production distribution, dependency and asset inventory, schema/configuration review."
+    },
+    "live-primary": {
+      "description": "Separately authorized exact configurations: OpenAI Responses, OpenRouter Chat, eligible native Anthropic Messages and public HTTPS custom Chat, pinned CLIProxyAPI baseline when available. Each primary route on all six native targets. Diagnostic, legal move/full-history continuation, Stop and explicit recovery. No fixed model-family trio.",
+      "targets": [
+        "win-chrome",
+        "win-edge",
+        "win-firefox",
+        "mac-safari",
+        "ios-safari",
+        "android-chrome"
+      ],
+      "status": "not_run",
+      "configurations": []
+    },
+    "live-alternatives": {
+      "description": "Targeted authorized exact-route runs before claiming verified OpenAI Chat, OpenRouter Responses/Messages or custom Responses/Messages. Unknown/unavailable routes retain qualified labels; no universal deployment certification.",
+      "status": "not_run",
+      "configurations": []
+    },
+    "live-handoffs": {
+      "description": "Authorized Chat-to-Responses, Responses-to-Messages and Messages-to-Chat live transitions, plus return to checked unchanged selection. Include failed switch, Undo and full-history capacity rejection. Synthetic fixtures cover all ordered adapter pairs.",
+      "status": "not_run",
+      "configurations": []
+    },
+    "live-cache-cost": {
+      "description": "Separately authorized actual eligible configurations. Effective cache evidence and about-40-turn reporting have no dollar gate. Do not pad games. Preserve cold/warm/expiry/Undo/retry/switch evidence, billed diagnostics/failures, native category semantics and projections.",
+      "status": "not_run",
+      "configurations": []
+    },
+    "optional-routes": {
+      "description": "Loopback/LAN/private HTTPS and other custom deployments need their own actual platform/network/permission evidence before any support claim. Outside common public HTTPS certification; do not infer mobile-to-PC from desktop loopback."
+    }
+  },
+  "native_targets": [
+    {
+      "id": "win-chrome",
+      "os": "Windows",
+      "browser": "Chrome",
+      "at": "NVDA",
+      "status": "not_run"
+    },
+    {
+      "id": "win-edge",
+      "os": "Windows",
+      "browser": "Edge",
+      "at": "NVDA",
+      "status": "not_run"
+    },
+    {
+      "id": "win-firefox",
+      "os": "Windows",
+      "browser": "Firefox",
+      "at": "NVDA",
+      "status": "not_run"
+    },
+    {
+      "id": "mac-safari",
+      "os": "macOS",
+      "browser": "Safari",
+      "at": "VoiceOver",
+      "status": "not_run"
+    },
+    {
+      "id": "ios-safari",
+      "os": "iOS",
+      "browser": "Safari",
+      "at": "VoiceOver",
+      "status": "not_run"
+    },
+    {
+      "id": "android-chrome",
+      "os": "Android",
+      "browser": "Chrome",
+      "at": "TalkBack",
+      "status": "not_run"
+    }
+  ],
+  "status_rules": {
+    "allowed": [
+      "not_run",
+      "pass",
+      "fail",
+      "blocked"
+    ],
+    "initial": "All product cases and native/live subruns are not_run. Research does not populate product pass evidence.",
+    "pass": "Required behavior and every required applicable coverage subrun pass for the shipped build, with linked evidence. Parent pass cannot conceal unrun/failed required subruns.",
+    "blocked": "Unmet prerequisite, not a scope waiver or pass. A launch gate remains unresolved.",
+    "pending_adjudication": "A correct saved pending state may pass the unknown-path case without solving the chess query. Every accepted verdict requires checked proof. No universal practical completion deadline.",
+    "launch": "All required cases and coverage must pass before their launch claims. Specification agreement alone is not implementation, spend authorization or launch approval."
+  },
+  "evidence_record_contract": {
+    "required": [
+      "case_id",
+      "coverage_key",
+      "status",
+      "app_commit_or_build",
+      "date_utc",
+      "method",
+      "steps_and_inputs",
+      "expected",
+      "observed",
+      "artifact_paths_or_urls",
+      "limits"
+    ],
+    "native_required": [
+      "target_id",
+      "browser_version",
+      "os_version",
+      "device_model",
+      "origin",
+      "input_modes"
+    ],
+    "at_required": [
+      "at_name_and_version",
+      "journey_observations",
+      "focus_and_announcements"
+    ],
+    "live_required": [
+      "authorization_reference",
+      "connection_configuration_revision",
+      "endpoint_and_protocol",
+      "adapter_version",
+      "requested_model_id",
+      "reported_model_id_if_available",
+      "routing_limits",
+      "request_purpose",
+      "usage_and_cost_classification"
+    ],
+    "prohibitions": [
+      "No credentials/auth tokens or private endpoint secrets in published evidence.",
+      "Raw provider usage must retain category semantics; sanitized shared artifacts must not erase the sole exact local received archive."
+    ]
+  },
+  "prerequisites": [
+    "Owner agreement obtained on 2026-10-16 for the concrete specification packet at commit 35444e0.",
+    "Separate implementation instruction, safe proof/checker implementation and review.",
+    "Actual native devices and assistive technologies.",
+    "Owner-controlled free hosting/auth and verified private encrypted backup destination/automation before public account storage.",
+    "Private exact live credential bindings and explicit live/spend authorization at execution.",
+    "Completed product evidence and separate launch decision."
+  ],
+  "cases": [
+    {
+      "id": "CON-01",
+      "sources": [
+        "connections",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "live-primary",
+        "live-alternatives"
+      ],
+      "methods": [
+        "fixture",
+        "network",
+        "native-live"
+      ],
+      "required_behavior": "Select explicit Chat, Responses or Messages. OpenAI defaults to Responses, OpenRouter to Chat, Anthropic to Messages; custom requires protocol selection. Correct auth/version/browser headers. Preserve URL prefixes and append paths once; show final URLs. No fallback guessing.",
+      "evidence_needed": [
+        "Exact payload/URL/header assertions with synthetic credentials",
+        "Exact route/configuration live records, including Anthropic organization restriction"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CON-02",
+      "sources": [
+        "connections",
+        "selection"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "network",
+        "journey"
+      ],
+      "required_behavior": "Editing/saving/opening profiles and cached catalogs sends no request. Only explicit catalog actions GET; no hidden completion or background catalog polling. Manual IDs work without catalog access.",
+      "evidence_needed": [
+        "Network request ledger for each action",
+        "Catalog-only check and manual recovery journey"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CON-03",
+      "sources": [
+        "connections",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "network",
+        "storage"
+      ],
+      "required_behavior": "Keys and secret headers bind deliberately to approved destinations. Destination changes require deliberate assignment. Fetch omits credentials and rejects redirects. Secrets are absent from hosted requests, URLs, exports and routine telemetry.",
+      "evidence_needed": [
+        "Redirect/cookie/destination fixtures",
+        "Captured allowlisted DTOs and secret-canary scans"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CON-04",
+      "sources": [
+        "connections",
+        "architecture"
+      ],
+      "coverage": [
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "journey",
+        "storage",
+        "network"
+      ],
+      "required_behavior": "Credentials save locally by default with truthful write failure. Replace, forget and clear-all work. Another device restores no AI key and sends no request until a local binding is deliberate.",
+      "evidence_needed": [
+        "Persistence/failure/control traces",
+        "Actual second-device binding capture"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CON-05",
+      "sources": [
+        "connections",
+        "moves"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "live-primary"
+      ],
+      "methods": [
+        "fixture",
+        "journey",
+        "native-live"
+      ],
+      "required_behavior": "Separate authentication, permission, quota/rate, endpoint, capacity, malformed output, interrupted stream and expiry. Display sanitized available status/message; a fetch failure alone does not diagnose CORS. Respect retry-after and offer explicit recovery without generation retry.",
+      "evidence_needed": [
+        "Error taxonomy/control fixtures",
+        "Sanitized visible messages and request counts with running clock"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CON-06",
+      "sources": [
+        "connections"
+      ],
+      "coverage": [
+        "native",
+        "live-primary",
+        "optional-routes"
+      ],
+      "methods": [
+        "network",
+        "native-live",
+        "journey"
+      ],
+      "required_behavior": "Common certification is public HTTPS across required targets. Optional loopback/LAN/private routes need scoped evidence and permission recovery. A phone's loopback is that phone. No universal custom-deployment or account eligibility claim.",
+      "evidence_needed": [
+        "Origin/route/platform evidence",
+        "Permission grant/denial and unreachable controls for any advertised optional route"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CON-07",
+      "sources": [
+        "disclosure",
+        "connections"
+      ],
+      "coverage": [
+        "native",
+        "at"
+      ],
+      "methods": [
+        "journey",
+        "accessibility"
+      ],
+      "required_behavior": "Before first request explain provider restrictions, responsibility, quota/credit consumption and possible account/access consequences with current provider links. Scope direct/proxy text accurately. No repeated consent flow, permission guarantee or funding enforcement allowlist.",
+      "evidence_needed": [
+        "Visible and screen-reader notice journey",
+        "Documentation/link review and first-request ordering"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CON-08",
+      "sources": [
+        "connections",
+        "moves",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "network",
+        "security"
+      ],
+      "required_behavior": "Browser performs direct generation and discovery; hosted service never relays generation or receives AI keys. Render provider text as untrusted text, including HTML/script/error controls.",
+      "evidence_needed": [
+        "Architecture/request destination review",
+        "Injection fixtures and bundle/log/request secret scans"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOD-01",
+      "sources": [
+        "selection"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "Display every advertised model and exact manual IDs. Reject empty/surrounding-whitespace IDs; preserve case/punctuation otherwise. Identical IDs on different connections differ; exact catalog/manual match on one connection is one selection.",
+      "evidence_needed": [
+        "Catalog/manual/collision fixture assertions",
+        "Requested and reported ID displays"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOD-02",
+      "sources": [
+        "selection"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "Paginate catalogs. Preserve cached entries on partial/failed refresh with time/stale status. Mark removed entries without replacing a selected opponent. Keep cooldown, manual access and current requests stable.",
+      "evidence_needed": [
+        "Pagination/partial/stale/removed/cooldown fixtures",
+        "Refresh-during-request trace"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOD-03",
+      "sources": [
+        "selection",
+        "connections"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "Separate advertised, unknown, incompatible, temporary failure and passed observations. Logos/family/player labels imply no capabilities. Mutable aliases and reported IDs certify only observed routing, not all backends.",
+      "evidence_needed": [
+        "Ambiguous alias and unknown metadata fixtures",
+        "ZDR/retired/nontext incompatibility and quota controls"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOD-04",
+      "sources": [
+        "selection",
+        "moves",
+        "lifecycle"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "live-primary"
+      ],
+      "methods": [
+        "fixture",
+        "native-live",
+        "journey"
+      ],
+      "required_behavior": "Before every new game/practice complete disclosed diagnostic before clocks. Fixed coordinate exercise and unique synthetic prior-plan marker test envelope/completion/plan parsing, not chess strength. Formatting recovery is bounded and separate from game attempts.",
+      "evidence_needed": [
+        "Marker and false-positive controls",
+        "Clock/budget/request trace for pass/fail/retry"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOD-05",
+      "sources": [
+        "selection",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "live-handoffs"
+      ],
+      "methods": [
+        "fixture",
+        "journey",
+        "native-live"
+      ],
+      "required_behavior": "Reuse midgame passes only for unchanged exact configuration in current live session. Invalidate model/destination/protocol/adapter/credential/relevant-header/options/routing changes and reload/device/session changes. Labels alone do not invalidate. No hidden recovery probe.",
+      "evidence_needed": [
+        "Invalidation table with request counts",
+        "Return-to-checked-selection live record"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOD-06",
+      "sources": [
+        "selection",
+        "moves",
+        "lifecycle"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "live-handoffs"
+      ],
+      "methods": [
+        "fixture",
+        "journey",
+        "native-live"
+      ],
+      "required_behavior": "Queue switch until active reply settles under original attribution. New candidate replaces prior queued candidate; reselect active cancels queue. Distinguish committed/queued/producing identities. Interpretable first real candidate reply commits selection under normal move/refusal/illegal rules.",
+      "evidence_needed": [
+        "Queue/replacement/no-op and first-response traces",
+        "Completed malformed/illegal/refusal and final-old-reply controls"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOD-07",
+      "sources": [
+        "selection",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "live-handoffs"
+      ],
+      "methods": [
+        "fixture",
+        "journey",
+        "native-live"
+      ],
+      "required_behavior": "Failed candidate check/capacity/technical reply leaves prior selection and board intact, candidate explicit and generation blocked. Only explicit Retry/other candidate/Resume prior recovers. Stop/Undo/expiry/ownership fence selection effects. Preserve turn budgets.",
+      "evidence_needed": [
+        "Failed-switch recovery and fencing races",
+        "Exact outgoing retained-history capture"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOV-01",
+      "sources": [
+        "moves"
+      ],
+      "coverage": [
+        "deterministic",
+        "protocols"
+      ],
+      "methods": [
+        "fixture"
+      ],
+      "required_behavior": "Only completed choice-zero answer acts. Coordinate JSON with optional plan, one fence and harmless extra fields works. Normalize coordinate whitespace/case; castling uses king squares, en passant pawn squares and promotion explicit q/r/b/n.",
+      "evidence_needed": [
+        "Parser table with expected accepted move and archived fields",
+        "Special-notation controls"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOV-02",
+      "sources": [
+        "moves"
+      ],
+      "coverage": [
+        "deterministic",
+        "protocols"
+      ],
+      "methods": [
+        "fixture"
+      ],
+      "required_behavior": "Reject conflicting duplicate move keys, move plus resignation and competing explicit answers. Missing promotion needs formatting clarification. Fallback accepts standalone coordinate or explicit final Move line with harmless punctuation/backticks. Never repair JSON or infer narrative/plan/reasoning/other-choice moves.",
+      "evidence_needed": [
+        "Ambiguity and fallback adversarial fixtures",
+        "No-action assertions for narrative and reasoning"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOV-03",
+      "sources": [
+        "moves",
+        "connections"
+      ],
+      "coverage": [
+        "deterministic",
+        "protocols",
+        "native",
+        "live-primary"
+      ],
+      "methods": [
+        "fixture",
+        "network",
+        "native-live"
+      ],
+      "required_behavior": "Accumulate fields separately and act only on normal protocol-complete answer. Chat needs stop plus normal termination; DONE alone is insufficient. Responses/Messages require equivalent documented normal terminal events. No partial/truncated/error/filter/tool interruption acts.",
+      "evidence_needed": [
+        "Fragmented/interleaved/multibyte and missing-terminal stream fixtures",
+        "Raw terminal/error event assertions"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOV-04",
+      "sources": [
+        "moves"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "Deterministic rule-specific corrections supply no replacement or legal list. Initial plus three illegal retries; fourth illegal loses. Illegal counter survives formatting, technical recovery and ordinary switches; legal accepted move resets turn budgets.",
+      "evidence_needed": [
+        "Mixed illegal/format/technical/model-switch sequence",
+        "Exactly four illegal attempts and immutable loss"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOV-05",
+      "sources": [
+        "moves",
+        "selection"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "At most three automatic formatting-correction requests independently of chess attempts. No format chess loss. Manual Retry adds one request without refilling format or erasing illegal attempts. Switch preserves budgets; classify each response once.",
+      "evidence_needed": [
+        "Interleaved budget fixture with request counts",
+        "Exhausted-format manual Retry and switch trace"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOV-06",
+      "sources": [
+        "moves",
+        "lifecycle"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "Explicit complete resign:true, final resignation or refusal to move loses immediately. Quoted/hypothetical/history/error/filter refusal does not. Ambiguous move/refusal needs format recovery. Human resignation resolves earlier expiry first.",
+      "evidence_needed": [
+        "Positive/negative refusal corpus",
+        "Human/model resignation and expiry ordering"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOV-07",
+      "sources": [
+        "moves",
+        "lifecycle"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "live-primary"
+      ],
+      "methods": [
+        "fixture",
+        "journey",
+        "native-live"
+      ],
+      "required_behavior": "Technical failure causes no immediate chess loss or spent attempt. One manual Retry sends one logical request; no app automatic network retry or extra generation timeout. Stop fences late replies while clock runs and discloses upstream cancellation/refund uncertainty.",
+      "evidence_needed": [
+        "Error/retry/Stop request counts",
+        "Late-completion and continuing-clock assertions"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOV-08",
+      "sources": [
+        "moves",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "concurrency"
+      ],
+      "required_behavior": "Duplicate/stale/canceled/superseded replies cannot apply moves, attempts, increments or results. Fence game/segment/side/revision/request generation/ownership. Repeated FEN cannot revive eligibility. React remount/effect replay creates no second actionable controller.",
+      "evidence_needed": [
+        "Concurrency and remount/repeated-FEN fixture traces",
+        "At-most-once transition invariants"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MOV-09",
+      "sources": [
+        "moves",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "protocols"
+      ],
+      "methods": [
+        "fixture",
+        "security"
+      ],
+      "required_behavior": "No tools declared/executed. Preserve unexpected tool records/opaque content; unsupported incomplete representation stops generation. No fabricated tool results. Only text supported by portable replay is interpreted as historical data.",
+      "evidence_needed": [
+        "Outgoing no-tools payload and unexpected-tool fixtures",
+        "Exact archive and blocked-response assertions"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-01",
+      "sources": [
+        "moves",
+        "architecture",
+        "caching"
+      ],
+      "coverage": [
+        "deterministic",
+        "protocols",
+        "live-handoffs"
+      ],
+      "methods": [
+        "fixture",
+        "payload-review",
+        "native-live"
+      ],
+      "required_behavior": "Full retained attributed transcript includes instructions, inputs, rejected replies, plans/reasoning received, corrections, other choices and diagnostic records. Preserve roles/order/IDs and exact opaque records. Historical text never becomes current system instruction. No unavailable private reasoning invented.",
+      "evidence_needed": [
+        "Archive-to-payload field/order comparison",
+        "Escaping/instruction-injection controls"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-02",
+      "sources": [
+        "moves",
+        "selection",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "protocols",
+        "live-handoffs"
+      ],
+      "methods": [
+        "fixture",
+        "payload-review",
+        "native-live"
+      ],
+      "required_behavior": "Every ordered protocol pair transfers full retained text. Destination capacity includes actual encoding and output/reasoning headroom. Known/actual capacity rejection blocks without trimming, summary, reset, fallback or provider-native history shortcut.",
+      "evidence_needed": [
+        "Nine ordered adapter-pair payload fixtures",
+        "Live three-protocol handoffs and capacity rejection record"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-03",
+      "sources": [
+        "lifecycle",
+        "moves",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "fixture",
+        "storage",
+        "journey"
+      ],
+      "required_behavior": "Undo restores previous human decision's board/rights/counters/repetition/budgets/selection. Exclude all discarded replies/plans/corrections/diagnostics from replay without telling model what was undone. Preserve exact discarded archive; never use continuation IDs that retain it.",
+      "evidence_needed": [
+        "Checkpoint/archive/replay comparisons",
+        "Repeated Undo, initial-unavailable and practice-boundary controls"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-04",
+      "sources": [
+        "lifecycle",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "fixture",
+        "concurrency",
+        "storage"
+      ],
+      "required_behavior": "Undo fences inflight/queued work and advances versions even at repeated FEN. Outbox/cloud recovery cannot resurrect the discarded line. Preserve attribution of late records as stale.",
+      "evidence_needed": [
+        "Undo-during-stream/takeover/reconnect traces",
+        "Stale local/cloud write rejection"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-05",
+      "sources": [
+        "moves",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "storage"
+      ],
+      "required_behavior": "Preserve application-received raw bytes or ordered events separately from normalized replay, including whitespace/duplicates/unknown fields/multibyte chunks. Truthfully distinguish incomplete data and receive-to-commit crash loss; never claim unconditional retention.",
+      "evidence_needed": [
+        "Byte/event digest round trip",
+        "Crash-window and unknown-field fixture evidence"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "RUL-01",
+      "sources": [
+        "lifecycle",
+        "moves",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "Only side to move may play. Validate king safety, castling rights/through check, en passant and all promotions including underpromotion. Reject human illegal input with live clock and no model attempt charge. Generic library draw flags have no authority.",
+      "evidence_needed": [
+        "Independent expected special-move/illegal fixtures",
+        "Human and model promotion traces"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "RUL-02",
+      "sources": [
+        "custom",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "at"
+      ],
+      "methods": [
+        "fixture",
+        "journey",
+        "accessibility"
+      ],
+      "required_behavior": "Visual editor and six-field FEN support actionable square/field errors. Validate structure, kings, pawn ranks, nonmoving-side/check consistency, orthodox rights and en passant. Keep draft editable. Require no normal-start history or silent piece-count limit.",
+      "evidence_needed": [
+        "Valid/invalid/unreachable-but-current-consistent fixture corpus",
+        "Accessible editor correction journey"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "RUL-03",
+      "sources": [
+        "custom",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "storage"
+      ],
+      "required_behavior": "Preserve exact decimal counters, turn and valid rights through import/play/save/restore/Undo/export. Keep counters outside lossy library representations. No four-digit cap, rounding or silent normalization.",
+      "evidence_needed": [
+        "Large-counter and special-rights round trips",
+        "Canonical authoritative FEN versus library conversion assertions"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "RUL-04",
+      "sources": [
+        "custom",
+        "lifecycle",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "Terminal custom boards stay editable with Start disabled and reason. Custom edits create separately labeled scored game preserving source/result with fresh model context and repetition ledger from start. Pending setup stays saved and unstarted.",
+      "evidence_needed": [
+        "Terminal/edit/new-ID/source-integrity controls",
+        "Fresh context and no invented prehistory capture"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "RUL-05",
+      "sources": [
+        "lifecycle",
+        "custom",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture"
+      ],
+      "required_behavior": "Automatic third repetition and 100 halfmoves apply in actual play. Pawn move/capture reset counter. Checkmate on boundary move precedes move-count draw. Imported counters and Undo ledger preserved.",
+      "evidence_needed": [
+        "Second/third occurrence and 99/100 controls",
+        "Checkmate boundary, pawn/capture and Undo cases"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "RUL-06",
+      "sources": [
+        "architecture",
+        "lifecycle"
+      ],
+      "coverage": [
+        "deterministic"
+      ],
+      "methods": [
+        "fixture",
+        "review"
+      ],
+      "required_behavior": "Canonical repetition identity uses placement, turn, castling and legally usable en passant. Ineffective/pinned en-passant declarations do not create false distinct positions. Restore full ledger, not FEN-only state.",
+      "evidence_needed": [
+        "Independent repetition equivalence/inequivalence corpus",
+        "Imported ineffective-EP and rights-loss controls"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "RUL-07",
+      "sources": [
+        "lifecycle",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "Precheck terminal state before any move request. Distinguish checkmate/stalemate/deadness, resignation, illegal-attempt loss, time loss and each draw reason. Final latch prevents any later transition changing result.",
+      "evidence_needed": [
+        "Result/reason table",
+        "Terminal-request count and immutable-latch races"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ADJ-01",
+      "sources": [
+        "architecture",
+        "mating",
+        "lifecycle"
+      ],
+      "coverage": [
+        "deterministic"
+      ],
+      "methods": [
+        "fixture",
+        "proof-review"
+      ],
+      "required_behavior": "Mating possibility is cooperative legal-move reachability ignoring hypothetical repetition/count draws. Global deadness needs neither side possible; timeout queries opponent of expired side. Optimal-play WDL/material or failed search is insufficient.",
+      "evidence_needed": [
+        "All four side-possibility pairs and color mirrors",
+        "Counter-99 controls and actual-threshold separation"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ADJ-02",
+      "sources": [
+        "architecture",
+        "mating"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "proof-review"
+      ],
+      "required_behavior": "Every accepted positive path legally replays from canonical queried state and ends in intended winner's checkmate. Reject illegal/missing/wrong-color/partial witness. No witness/evaluation enters model input.",
+      "evidence_needed": [
+        "Positive and deliberately corrupted witness suite",
+        "Both colors and special moves",
+        "Payload separation assertions"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ADJ-03",
+      "sources": [
+        "architecture",
+        "mating"
+      ],
+      "coverage": [
+        "deterministic"
+      ],
+      "methods": [
+        "fixture",
+        "proof-review"
+      ],
+      "required_behavior": "Negative verdict requires reviewed sound proof with checked preconditions or complete closed-set certificate. Implement complete cooperative graph exploration as fallback with full state identity, visited set, frontier and parent/path records. Checker regenerates every legal successor; full states resolve hash collisions. Partial frontier, skipped successor or unsupported solver negative never proves impossibility. Resource cutoff remains unknown, with no practical universal completion bound.",
+      "evidence_needed": [
+        "Documented proof assumptions and checker review",
+        "Four-state closure, dead pawn wall, corrupt/omitted successor and hash-collision controls"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ADJ-04",
+      "sources": [
+        "architecture",
+        "custom"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "review",
+        "fixture"
+      ],
+      "required_behavior": "Repair and review optional Rust input/generator/witness assumptions or bypass unsafe path. No unsafe 21-origin execution. No silent custom restriction or trust of changed negative deductions. Validate every admitted input transition in safe code.",
+      "evidence_needed": [
+        "Safety/bypass design and dependency inventory",
+        "Guarded 21-origin domain fixture",
+        "Witness reconstruction/proof-path review"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ADJ-05",
+      "sources": [
+        "architecture",
+        "pending"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "resource",
+        "journey"
+      ],
+      "required_behavior": "Five-second foreground pass and 10,000 discovered-state initial graph limit yield honest non-result on exhaustion. Cutoffs/errors/OOM/None/cancel/rejected proof never imply draw/loss. 128 MiB WASM linear cap is not total memory. No indefinite automatic repeats.",
+      "evidence_needed": [
+        "Actual five-second-unknown fixture and lower-budget controls",
+        "Responsive UI, Worker startup/MIME/CSP and resource traces"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ADJ-06",
+      "sources": [
+        "architecture",
+        "pending"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "at"
+      ],
+      "methods": [
+        "fixture",
+        "storage",
+        "journey",
+        "accessibility"
+      ],
+      "required_behavior": "Pending setup saves query with clocks unstarted and no game diagnostic. Existing-game pending stops play, shows no verdict/finish promise, keeps unexpired active clock running and saves canonical query/event/deadline/checkpoint. Explicit Continue/Stop analysis work.",
+      "evidence_needed": [
+        "Setup/in-game pending save/reload journeys",
+        "No move/provider request/result and correct clock assertions"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ADJ-07",
+      "sources": [
+        "architecture",
+        "pending",
+        "lifecycle"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "fixture",
+        "concurrency"
+      ],
+      "required_behavior": "Preserve earlier position-entry candidate before later flag. Record original expiry, fence late moves/generation, distinguish elapsed bank from final time result. Later proof settles only unresolved event at its effective time and never rewrites final result.",
+      "evidence_needed": [
+        "Earlier-deadness/later-flag and possible/not-possible/unknown races",
+        "Late move and final-latch assertions"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ADJ-08",
+      "sources": [
+        "architecture",
+        "pending"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "storage",
+        "concurrency"
+      ],
+      "required_behavior": "Version and validate checkpoints by predicate/rules/schema/proof implementation. Corrupt/incompatible checkpoint restarts from saved query, not accepted evidence. Fence stale generation/ownership/repeated-FEN results. Another device may restart local analysis from synced facts.",
+      "evidence_needed": [
+        "Corrupt/old checkpoint/reload/takeover tests",
+        "Valid resume and stale-positive/negative controls"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ADJ-09",
+      "sources": [
+        "architecture",
+        "mating",
+        "pending"
+      ],
+      "coverage": [
+        "deterministic"
+      ],
+      "methods": [
+        "fixture",
+        "proof-review"
+      ],
+      "required_behavior": "Use researched dead wall, asymmetric wall and mirror, bare king/rook, knight aided by rook, two knights, forced cycle and counter-99 controls. Correct implemented proof paths return exact outcomes; unsupported cases remain pending. Finite fixtures do not claim universal bounded completion.",
+      "evidence_needed": [
+        "Expected outcome/proof provenance for each fixture",
+        "Separate correctness and availability report"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CLK-01",
+      "sources": [
+        "lifecycle",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "White/Black/Random and custom side start correct clock after setup/check. Default White, 15+10; starting time positive, increment nonnegative. Only accepted legal move earns increment once; no pause control.",
+      "evidence_needed": [
+        "Setup/turn/bank/increment assertions",
+        "Promotion-open and rejected/duplicate input controls"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CLK-02",
+      "sources": [
+        "lifecycle",
+        "architecture",
+        "pending"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "Active clock runs during thinking/stream/corrections/errors/rate/capacity/Retry/Stop/switch/Undo/pending/auth/sync/navigation. Fresh snapshot before every move/correction/manual retry; history readings labeled historical. No timer-tick model prompts.",
+      "evidence_needed": [
+        "Action-by-action elapsed trace",
+        "Outgoing current FEN/piece/time-control/both-bank suffixes"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CLK-03",
+      "sources": [
+        "architecture",
+        "lifecycle"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "storage",
+        "concurrency"
+      ],
+      "required_behavior": "Sample decision time immediately before checkpoint write after eligibility/revision checks. At deadline or later expiry wins. Predeadline completed legal move may commit at effective time; await transaction completion, count commit delay against next bank. Abort accepts no move or increment.",
+      "evidence_needed": [
+        "Before/equal/after deadline and delayed commit/abort tests",
+        "No first-token/provider-time backdating or follow-up-before-commit"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CLK-04",
+      "sources": [
+        "lifecycle",
+        "architecture"
+      ],
+      "coverage": [
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "native-recovery",
+        "storage"
+      ],
+      "required_behavior": "Actual refresh/navigation/tab closure/browser termination/device sleep/background/takeover reconciles elapsed time before enabling action. No generation auto-replay, restarted bank or retrospective abandoned move. Expiry effective instant preserved.",
+      "evidence_needed": [
+        "Real-device timed recovery traces with recorded reference times",
+        "Expired and unexpired controls"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CLK-05",
+      "sources": [
+        "architecture",
+        "lifecycle"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "fixture",
+        "native-recovery"
+      ],
+      "required_behavior": "Use monotonic live reference plus wall comparison, persisted absence anchors and hosted offset metadata when available. Detected discrepancy preserves readings and blocks moves until reconciliation, with no silent time grant. State honest-device/offline clock assumptions.",
+      "evidence_needed": [
+        "Forward/backward wall/time-zone/sleep and cross-device offset controls",
+        "Unresolved timing disclosure"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CLK-06",
+      "sources": [
+        "lifecycle",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "Undo charges elapsed time through accepted event, removes only undone increment credits and starts restored turn from resulting bank. Reject Undo if either bank would be nonpositive. Reconcile expiry first, never erase it.",
+      "evidence_needed": [
+        "Repeated takeback/increment-farming controls",
+        "Both-side nonpositive and expired Undo rejection"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CLK-07",
+      "sources": [
+        "lifecycle",
+        "architecture",
+        "mating",
+        "pending"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "concurrency"
+      ],
+      "required_behavior": "Clock expiry queries opponent possibility, producing time loss if proven possible or draw if proven impossible. Unknown remains saved pending. Simultaneous Stop/Undo/resign/move/worker/sync resolves once under effective ordering.",
+      "evidence_needed": [
+        "One-sided mating and all-event ordering table",
+        "Single final result and no restored playable time"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "DAT-01",
+      "sources": [
+        "architecture",
+        "lifecycle"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "storage",
+        "native-recovery"
+      ],
+      "required_behavior": "Atomic checkpoint includes rules/history/clocks/versions/budgets/selections/archive pointers/result/practice/outbox. Request success alone is not saved; observe transaction complete. No transactions held across network waits.",
+      "evidence_needed": [
+        "Full-state round trip",
+        "Transaction abort/lost acknowledgment/idempotent operation recovery"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "DAT-02",
+      "sources": [
+        "architecture",
+        "lifecycle"
+      ],
+      "coverage": [
+        "native"
+      ],
+      "methods": [
+        "storage",
+        "native-recovery",
+        "journey"
+      ],
+      "required_behavior": "Exercise quota/open/upgrade/write failure, blocked upgrades, eviction/deletion/private session and crash windows. Correct memory/local/sync/failure status; no silent archive trimming/deletion. Versioned full export/import and persistence permission are truthful.",
+      "evidence_needed": [
+        "Native storage failure/recovery traces",
+        "Export digest checks and requested-versus-granted persistence status"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "DAT-03",
+      "sources": [
+        "architecture",
+        "connections",
+        "lifecycle"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "fixture",
+        "security",
+        "journey"
+      ],
+      "required_behavior": "Separate guest/account-UUID/credentials. Sign-out fences requests, clears identity and departing account's saved AI keys, hides private views, preserves games/outbox under original UUID. Account B/guest cannot inherit A. Local auth sign-out scope and explicit remove-device warning respected.",
+      "evidence_needed": [
+        "A-to-B-to-A/offline sign-out tests",
+        "Key deletion and unsynced data ownership assertions"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "DAT-04",
+      "sources": [
+        "architecture",
+        "lifecycle"
+      ],
+      "coverage": [
+        "cloud",
+        "native"
+      ],
+      "methods": [
+        "security",
+        "journey",
+        "network"
+      ],
+      "required_behavior": "Actual owner RLS protects every game/chunk/RPC/access path. Publishable key only in browser; no admin key. Transactional expected revision/epoch prevents bypass writes, idempotent duplicates and final/deletion rewrites. Hosted service does not adjudicate chess.",
+      "evidence_needed": [
+        "Two actual accounts and unauthenticated denial tests",
+        "Direct-write bypass attempts and RPC transaction review"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "DAT-05",
+      "sources": [
+        "architecture",
+        "conflicts"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "fixture",
+        "concurrency",
+        "journey"
+      ],
+      "required_behavior": "Same-device Web Locks and IndexedDB epoch/revision fencing work with fallback when locks/channel unavailable. Explicit cross-device takeover advances accepted cloud epoch from acknowledged checkpoint. Fence old responses without claiming globally canceled requests.",
+      "evidence_needed": [
+        "Actual two tabs/devices and lock/channel-disabled controls",
+        "Stale epoch/revision and provider-response rejection"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "DAT-06",
+      "sources": [
+        "architecture",
+        "conflicts",
+        "lifecycle"
+      ],
+      "coverage": [
+        "cloud",
+        "native"
+      ],
+      "methods": [
+        "concurrency",
+        "journey",
+        "storage"
+      ],
+      "required_behavior": "Continue locally while offline with unsynced warning and running clock. Lost acknowledgments query operation IDs. Reconnect same base idempotently; diverged/old-epoch continuation saves separately and cannot overwrite cloud line/Undo/final/deletion. No automatic chess merge.",
+      "evidence_needed": [
+        "True-device partition/takeover/divergence trace",
+        "Saved conflict export and accepted cloud digest comparison"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "DAT-07",
+      "sources": [
+        "architecture",
+        "lifecycle"
+      ],
+      "coverage": [
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "journey",
+        "storage"
+      ],
+      "required_behavior": "Guest autosave/reopen needs no account. Account import is offered explicitly, preserving IDs/results/current/discarded/practice state without unrelated merge. Other device restores game but rebinds its own connection. No sign-in/import clock reset.",
+      "evidence_needed": [
+        "Guest-to-account and actual second-device round trips",
+        "Expired-game and incomplete-request explicit recovery"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "DAT-08",
+      "sources": [
+        "architecture",
+        "connections"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "security",
+        "fixture",
+        "storage"
+      ],
+      "required_behavior": "Sync/export DTOs exclude keys, auth tokens, secret headers and secret endpoint data. Recognized credential echoes remain exact locally and block affected sync/export until resolved; do not silently redact sole archive and claim losslessness. Routine logs exclude transcript/raw errors/private URLs.",
+      "evidence_needed": [
+        "Canary-secret/echo fixtures through all egress paths",
+        "Blocked-export and sanitized diagnostic review"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "DAT-09",
+      "sources": [
+        "architecture",
+        "lifecycle"
+      ],
+      "coverage": [
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "storage",
+        "security",
+        "journey"
+      ],
+      "required_behavior": "Owner deletion is idempotent across metadata/chunks/local caches/outbox with tombstones rejecting stale resurrection. Reapply tombstones on restore through backup rotation. Explain live removal versus backup expiry; no application age purge.",
+      "evidence_needed": [
+        "Delete/offline reconnect/backup restore rehearsal",
+        "Owner-only deletion and retention documentation"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "UX-01",
+      "sources": [
+        "interface",
+        "architecture"
+      ],
+      "coverage": [
+        "native",
+        "at"
+      ],
+      "methods": [
+        "journey",
+        "accessibility"
+      ],
+      "required_behavior": "Trace implementation to approved Classic workspace with board/player/clocks and opponent/moves/conversation details, T3 actual themes and responsive reflow. Distinguish committed/producing/queued selection. Actions remain visible and focus stable.",
+      "evidence_needed": [
+        "Desktop/mobile captures and prototype-reference comparison",
+        "Actual theme/reflow/zoom/contrast/reduced-motion review"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "UX-02",
+      "sources": [
+        "interface",
+        "lifecycle",
+        "custom"
+      ],
+      "coverage": [
+        "native",
+        "at"
+      ],
+      "methods": [
+        "journey",
+        "accessibility"
+      ],
+      "required_behavior": "Pointer, touch, keyboard and coordinate form route through same controller. Named squares/pieces support inspection and selection; accessible promotion includes all four pieces with clock running. Board orientation and errors are understandable.",
+      "evidence_needed": [
+        "Desktop mouse/keyboard and mobile touch/AT/external-keyboard records",
+        "All-promotion and board/editor inspection journey"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "UX-03",
+      "sources": [
+        "interface",
+        "lifecycle",
+        "selection"
+      ],
+      "coverage": [
+        "at"
+      ],
+      "methods": [
+        "accessibility",
+        "native-journey"
+      ],
+      "required_behavior": "Each required real browser/AT pairing completes setup and an entire legal game unaided by pointer, including model selection and move entry. No keyboard trap; logical focus/restoration and concise turns/errors/results without timer-tick chatter.",
+      "evidence_needed": [
+        "Versioned NVDA/VoiceOver/TalkBack full-game observations",
+        "Focus/announcement defects and retest record"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "UX-04",
+      "sources": [
+        "interface",
+        "architecture",
+        "pending"
+      ],
+      "coverage": [
+        "native",
+        "at"
+      ],
+      "methods": [
+        "journey",
+        "accessibility"
+      ],
+      "required_behavior": "All pairings cover dialogs, errors, Stop/retry, queued/failed switch, Undo, practice, custom/FEN invalid/terminal setup, save failure, pending and expiry/results. Announce state changes without losing user position or exposing secrets.",
+      "evidence_needed": [
+        "Journey checklist with actual AT observations",
+        "Dialog close/route-change focus restoration"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "UX-05",
+      "sources": [
+        "interface",
+        "connections",
+        "architecture"
+      ],
+      "coverage": [
+        "native"
+      ],
+      "methods": [
+        "journey",
+        "native-recovery"
+      ],
+      "required_behavior": "Native transport/stream/abort, credential persistence, account recovery, Worker/pending UI and continuous clocks pass on every launch target. Viewport emulation, Helium and automated scans are supporting evidence only.",
+      "evidence_needed": [
+        "Six actual platform run records",
+        "Build/origin/device/version/input evidence"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "LIF-01",
+      "sources": [
+        "lifecycle",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "Start fixes colors/position/control; later edits create new game. Restart preserves old record and running old clock. Rematch creates separate game with prior position/model/control and swapped colors, editable before Start.",
+      "evidence_needed": [
+        "Separate IDs/archive/results and running-old-game checks",
+        "Default/Random/custom start assertions"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "LIF-02",
+      "sources": [
+        "lifecycle",
+        "moves",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "fixture",
+        "concurrency",
+        "journey"
+      ],
+      "required_behavior": "Final result cannot change through Retry/switch/Undo/late reply/sync conflict/practice. Distinct result reasons retained. Leaving or starting another game never implies resignation.",
+      "evidence_needed": [
+        "Finalization mutation/race matrix",
+        "Old record digest and reason assertions"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "LIF-03",
+      "sources": [
+        "lifecycle",
+        "moves"
+      ],
+      "coverage": [
+        "deterministic",
+        "native",
+        "at"
+      ],
+      "methods": [
+        "fixture",
+        "journey",
+        "accessibility"
+      ],
+      "required_behavior": "After model resignation/illegal-attempt/time loss on playable board, explicit Start practice creates unscored timed segment with fresh conversation/budgets/clocks after diagnostic. Keep actual rights/counters/repetition and original result. Switches carry full segment history.",
+      "evidence_needed": [
+        "All model-loss reasons and fresh segment payloads",
+        "Original result unchanged; practice clock and rules checks"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "LIF-04",
+      "sources": [
+        "lifecycle",
+        "custom",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "native"
+      ],
+      "methods": [
+        "fixture",
+        "journey"
+      ],
+      "required_behavior": "No practice generation on terminal board and no automatic practice from queued selection. Editing final board creates separate scored custom game. Undo cannot cross start/practice boundary or apply to finalized segment.",
+      "evidence_needed": [
+        "Terminal/queued/final Undo controls",
+        "Practice-versus-custom ID/result/context comparisons"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CST-01",
+      "sources": [
+        "caching",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "protocols"
+      ],
+      "methods": [
+        "fixture",
+        "payload-review"
+      ],
+      "required_behavior": "Keep instructions/retained history prefixes stable and append fresh position/clock suffix. Apply only supported model/protocol cache body controls; no unverified cache header. No history truncation, stale response replay or claimed context enlargement.",
+      "evidence_needed": [
+        "Successive payload prefix comparison",
+        "Anthropic controls and model-specific cache/session option fixtures"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CST-02",
+      "sources": [
+        "caching",
+        "costs"
+      ],
+      "coverage": [
+        "live-cache-cost"
+      ],
+      "methods": [
+        "native-live",
+        "billing-review"
+      ],
+      "required_behavior": "At least one eligible configuration demonstrates actual cold/warm prompt-cache behavior with new full-history moves. Exercise expiry/long pause, Undo/retries and model/provider switches. Report misses/write premiums/routing uncertainty honestly; whole-response replay proves no prompt hit.",
+      "evidence_needed": [
+        "Authorized raw per-request cache usage and fresh output",
+        "Cold/warm/expiry/Undo/retry/switch evidence with exact configuration"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CST-03",
+      "sources": [
+        "caching",
+        "costs",
+        "architecture"
+      ],
+      "coverage": [
+        "deterministic",
+        "live-cache-cost"
+      ],
+      "methods": [
+        "fixture",
+        "billing-review"
+      ],
+      "required_behavior": "Show measured provider charges, rate-derived estimates and unknowns distinctly. Include diagnostics/corrections/manual retries/failures where billed. Preserve native usage meanings, rates/currency/date. Do not double-count included cache tokens or reasoning output. Missing usage/rate is not zero.",
+      "evidence_needed": [
+        "Provider-specific accounting fixtures",
+        "Raw usage-to-total reconciliation and available charge records"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "CST-04",
+      "sources": [
+        "costs",
+        "caching"
+      ],
+      "coverage": [
+        "live-cache-cost"
+      ],
+      "methods": [
+        "native-live",
+        "billing-review"
+      ],
+      "required_behavior": "Report about 40 model turns as reference workload with actual turns/requests/outcome/history growth/cache/tokens/latency/cost. No fixed dollar target or price allowlist. Label projections and assumptions separately, never pad ended games or claim early failure proves affordable full history.",
+      "evidence_needed": [
+        "Actual-run report plus separately labeled projection if needed",
+        "Diagnostic/retry/cache/failed-charge inclusion and no fixed-price gate"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "OPS-01",
+      "sources": [
+        "architecture",
+        "connections"
+      ],
+      "coverage": [
+        "build",
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "review",
+        "security",
+        "network"
+      ],
+      "required_behavior": "Locked supported static React/TypeScript/Vite build on HTTPS Cloudflare Pages with SPA/callback fallback. Browser-only chess/generation. Version storage/RPC/checkpoints; incompatible cached tabs cannot overwrite. CSP allows explicit routes/Workers while restricting scripts; do not generically cache private/auth/provider traffic.",
+      "evidence_needed": [
+        "Production build and schema migration review",
+        "Deployed MIME/CSP/routes/bundle/network evidence"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "OPS-02",
+      "sources": [
+        "architecture",
+        "lifecycle"
+      ],
+      "coverage": [
+        "native",
+        "cloud"
+      ],
+      "methods": [
+        "journey",
+        "security"
+      ],
+      "required_behavior": "Google OAuth uses explicit PKCE and exact redirects. Test all native return contexts, cancel/overlap, missing/expired verifier and token refresh. Guest remains account-free. No unconfigured public SMTP assumption or implicit email-auth route.",
+      "evidence_needed": [
+        "Actual production-origin OAuth traces with secrets removed",
+        "Failed/canceled/overlapping flow and refresh checks"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "OPS-03",
+      "sources": [
+        "architecture"
+      ],
+      "coverage": [
+        "cloud",
+        "native"
+      ],
+      "methods": [
+        "review",
+        "journey",
+        "storage"
+      ],
+      "required_behavior": "Managed free tiers initially. Verify archive capacity, quotas, inactivity pause/read-only/failure recovery and honest status; local/outbox preserved. No silent retention purge, synthetic keepalive dependency or paid upgrade. Return specific no-cost constraint to owner if contract cannot be met.",
+      "evidence_needed": [
+        "Current plan limits/configuration and measured storage growth",
+        "Pause/quota/recovery exercise and no-cost feasibility record"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "OPS-04",
+      "sources": [
+        "architecture"
+      ],
+      "coverage": [
+        "cloud"
+      ],
+      "methods": [
+        "storage",
+        "security",
+        "review"
+      ],
+      "required_behavior": "Before public account storage, demonstrate encrypted operator logical exports to private no-cost destination, daily automation target, seven daily/four weekly rotation and restore rehearsal. Restore full chunks/checkpoints and reapply deletion tombstones. Secrets/access and lost-backup failures handled truthfully.",
+      "evidence_needed": [
+        "Encrypted backup, scheduled execution/rotation evidence",
+        "Restore/digest/deletion rehearsal",
+        "Owner constraint record if no-cost feasibility fails"
+      ],
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "OPS-05",
+      "sources": [
+        "architecture",
+        "interface"
+      ],
+      "coverage": [
+        "build"
+      ],
+      "methods": [
+        "review"
+      ],
+      "required_behavior": "Pin actual dependencies/assets and review changes from researched chess.js 1.4.0/cm-chessboard 8.15.3. MIT original code, required BSD/MIT notices and separate CC BY-SA standard-art credits/source/modification notices. Exclude optional NonCommercial pieces and research-only GPL dependencies.",
+      "evidence_needed": [
+        "Distribution dependency/asset/license inventory",
+        "Bundle/source/notices audit and art attribution"
+      ],
+      "status": "not_run",
+      "evidence": []
+    }
+  ]
+}
