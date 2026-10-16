@@ -1,0 +1,841 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-16",
+  "project": {
+    "id": "P-KHA-1",
+    "url": "https://linear.app/kamkm/project/ai-chess-mvp-8a102853ce2c",
+    "name": "AI Chess MVP"
+  },
+  "source_handoff": "docs/spec/mvp-handoff.md",
+  "acceptance_matrix": "docs/spec/mvp-acceptance.json",
+  "approved_review_commit": "35444e0",
+  "approval_metadata_commit": "e9f0c9f",
+  "planning_map": {
+    "id": "KHA-5",
+    "status": "Done",
+    "children": 20
+  },
+  "milestones": [
+    {
+      "id": "8f3926d0-0105-4001-a2b6-7b899bda0aa6",
+      "name": "Specification agreed",
+      "key": "spec"
+    },
+    {
+      "id": "7a8f5e8e-dcfc-4438-aa04-7070a27ea45a",
+      "name": "Local chess and exact rules",
+      "key": "local"
+    },
+    {
+      "id": "8b350133-c7aa-4fc5-8730-58285f39d1f4",
+      "name": "AI opponents and accessible play",
+      "key": "ai"
+    },
+    {
+      "id": "a5738eb5-8dba-4640-ae52-b1826862b98a",
+      "name": "Private accounts and hosted operations",
+      "key": "accounts"
+    },
+    {
+      "id": "1a959dc4-b496-42df-8ea0-8b9dc047a301",
+      "name": "Native acceptance and launch",
+      "key": "verification"
+    }
+  ],
+  "implementation_tickets": [
+    {
+      "id": "KHA-26",
+      "url": "https://linear.app/kamkm/issue/KHA-26/establish-the-reacttypescript-application-and-build-checks",
+      "title": "Establish the React/TypeScript application and build checks",
+      "key": "foundation",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "7a8f5e8e-dcfc-4438-aa04-7070a27ea45a",
+        "name": "Local chess and exact rules"
+      },
+      "blocked_by": [],
+      "acceptance_cases": [
+        "OPS-01",
+        "OPS-05"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-27",
+      "url": "https://linear.app/kamkm/issue/KHA-27/implement-strict-orthodox-rules-fen-and-repetition-state",
+      "title": "Implement strict orthodox rules, FEN and repetition state",
+      "key": "rules",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "7a8f5e8e-dcfc-4438-aa04-7070a27ea45a",
+        "name": "Local chess and exact rules"
+      },
+      "blocked_by": [
+        "KHA-26"
+      ],
+      "acceptance_cases": [
+        "RUL-01",
+        "RUL-02",
+        "RUL-03",
+        "RUL-05",
+        "RUL-06",
+        "RUL-07"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-28",
+      "url": "https://linear.app/kamkm/issue/KHA-28/build-atomic-local-checkpoints-and-lossless-game-archives",
+      "title": "Build atomic local checkpoints and lossless game archives",
+      "key": "archive",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "7a8f5e8e-dcfc-4438-aa04-7070a27ea45a",
+        "name": "Local chess and exact rules"
+      },
+      "blocked_by": [
+        "KHA-26"
+      ],
+      "acceptance_cases": [
+        "DAT-01",
+        "DAT-02",
+        "DAT-08",
+        "HIS-05"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-29",
+      "url": "https://linear.app/kamkm/issue/KHA-29/implement-serialized-match-transitions-and-continuous-clocks",
+      "title": "Implement serialized match transitions and continuous clocks",
+      "key": "controller",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "7a8f5e8e-dcfc-4438-aa04-7070a27ea45a",
+        "name": "Local chess and exact rules"
+      },
+      "blocked_by": [
+        "KHA-27",
+        "KHA-28"
+      ],
+      "acceptance_cases": [
+        "MOV-08",
+        "CLK-01",
+        "CLK-02",
+        "CLK-03",
+        "CLK-04",
+        "CLK-05",
+        "CLK-07",
+        "LIF-02"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-30",
+      "url": "https://linear.app/kamkm/issue/KHA-30/implement-checked-mating-witnesses-and-sound-impossibility-proofs",
+      "title": "Implement checked mating witnesses and sound impossibility proofs",
+      "key": "proofs",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "7a8f5e8e-dcfc-4438-aa04-7070a27ea45a",
+        "name": "Local chess and exact rules"
+      },
+      "blocked_by": [
+        "KHA-27"
+      ],
+      "acceptance_cases": [
+        "ADJ-01",
+        "ADJ-02",
+        "ADJ-03",
+        "ADJ-04",
+        "ADJ-09"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-31",
+      "url": "https://linear.app/kamkm/issue/KHA-31/build-resumable-exact-cooperative-graph-analysis",
+      "title": "Build resumable exact cooperative graph analysis",
+      "key": "graph",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "7a8f5e8e-dcfc-4438-aa04-7070a27ea45a",
+        "name": "Local chess and exact rules"
+      },
+      "blocked_by": [
+        "KHA-30",
+        "KHA-28"
+      ],
+      "acceptance_cases": [
+        "ADJ-03",
+        "ADJ-05",
+        "ADJ-08",
+        "ADJ-09"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-32",
+      "url": "https://linear.app/kamkm/issue/KHA-32/integrate-exact-endings-and-saved-pending-adjudication",
+      "title": "Integrate exact endings and saved pending adjudication",
+      "key": "pending",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "7a8f5e8e-dcfc-4438-aa04-7070a27ea45a",
+        "name": "Local chess and exact rules"
+      },
+      "blocked_by": [
+        "KHA-29",
+        "KHA-30",
+        "KHA-31"
+      ],
+      "acceptance_cases": [
+        "ADJ-06",
+        "ADJ-07",
+        "ADJ-08",
+        "CLK-07",
+        "RUL-04",
+        "RUL-07"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-33",
+      "url": "https://linear.app/kamkm/issue/KHA-33/add-guest-recovery-undo-rematch-and-timed-practice",
+      "title": "Add guest recovery, Undo, rematch and timed practice",
+      "key": "lifecycle",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "7a8f5e8e-dcfc-4438-aa04-7070a27ea45a",
+        "name": "Local chess and exact rules"
+      },
+      "blocked_by": [
+        "KHA-32"
+      ],
+      "acceptance_cases": [
+        "HIS-03",
+        "HIS-04",
+        "CLK-06",
+        "DAT-07",
+        "LIF-01",
+        "LIF-03",
+        "LIF-04",
+        "RUL-04"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-34",
+      "url": "https://linear.app/kamkm/issue/KHA-34/implement-direct-browser-connection-profiles-and-local-credentials",
+      "title": "Implement direct-browser connection profiles and local credentials",
+      "key": "connections",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "8b350133-c7aa-4fc5-8730-58285f39d1f4",
+        "name": "AI opponents and accessible play"
+      },
+      "blocked_by": [
+        "KHA-28"
+      ],
+      "acceptance_cases": [
+        "CON-01",
+        "CON-02",
+        "CON-03",
+        "CON-04",
+        "CON-05",
+        "CON-06",
+        "CON-07",
+        "CON-08",
+        "DAT-03",
+        "DAT-08"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-35",
+      "url": "https://linear.app/kamkm/issue/KHA-35/implement-chat-responses-and-messages-streaming-adapters",
+      "title": "Implement Chat, Responses and Messages streaming adapters",
+      "key": "adapters",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "8b350133-c7aa-4fc5-8730-58285f39d1f4",
+        "name": "AI opponents and accessible play"
+      },
+      "blocked_by": [
+        "KHA-34"
+      ],
+      "acceptance_cases": [
+        "CON-01",
+        "CON-05",
+        "MOV-03",
+        "MOV-07",
+        "MOV-09"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-36",
+      "url": "https://linear.app/kamkm/issue/KHA-36/implement-move-parsing-and-independent-recovery-budgets",
+      "title": "Implement move parsing and independent recovery budgets",
+      "key": "move-contract",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "8b350133-c7aa-4fc5-8730-58285f39d1f4",
+        "name": "AI opponents and accessible play"
+      },
+      "blocked_by": [
+        "KHA-29",
+        "KHA-35"
+      ],
+      "acceptance_cases": [
+        "MOV-01",
+        "MOV-02",
+        "MOV-04",
+        "MOV-05",
+        "MOV-06",
+        "MOV-07",
+        "MOV-08",
+        "RUL-01"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-37",
+      "url": "https://linear.app/kamkm/issue/KHA-37/implement-full-history-replay-prompt-caching-and-cost-accounting",
+      "title": "Implement full-history replay, prompt caching and cost accounting",
+      "key": "replay-cost",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "8b350133-c7aa-4fc5-8730-58285f39d1f4",
+        "name": "AI opponents and accessible play"
+      },
+      "blocked_by": [
+        "KHA-28",
+        "KHA-35"
+      ],
+      "acceptance_cases": [
+        "HIS-01",
+        "HIS-02",
+        "HIS-05",
+        "CST-01",
+        "CST-03",
+        "CLK-02"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-38",
+      "url": "https://linear.app/kamkm/issue/KHA-38/implement-model-catalogs-diagnostics-and-queued-handoffs",
+      "title": "Implement model catalogs, diagnostics and queued handoffs",
+      "key": "selection",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "8b350133-c7aa-4fc5-8730-58285f39d1f4",
+        "name": "AI opponents and accessible play"
+      },
+      "blocked_by": [
+        "KHA-36",
+        "KHA-37",
+        "KHA-33"
+      ],
+      "acceptance_cases": [
+        "MOD-01",
+        "MOD-02",
+        "MOD-03",
+        "MOD-04",
+        "MOD-05",
+        "MOD-06",
+        "MOD-07",
+        "HIS-02"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-39",
+      "url": "https://linear.app/kamkm/issue/KHA-39/build-the-accessible-classic-match-board-and-position-editor",
+      "title": "Build the accessible Classic match board and position editor",
+      "key": "board-ui",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "8b350133-c7aa-4fc5-8730-58285f39d1f4",
+        "name": "AI opponents and accessible play"
+      },
+      "blocked_by": [
+        "KHA-33"
+      ],
+      "acceptance_cases": [
+        "UX-01",
+        "UX-02",
+        "RUL-02",
+        "RUL-03",
+        "RUL-04",
+        "CLK-01",
+        "LIF-01",
+        "LIF-03"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-40",
+      "url": "https://linear.app/kamkm/issue/KHA-40/build-connection-opponent-and-recovery-journeys",
+      "title": "Build connection, opponent and recovery journeys",
+      "key": "recovery-ui",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "8b350133-c7aa-4fc5-8730-58285f39d1f4",
+        "name": "AI opponents and accessible play"
+      },
+      "blocked_by": [
+        "KHA-39",
+        "KHA-34",
+        "KHA-38"
+      ],
+      "acceptance_cases": [
+        "CON-07",
+        "MOD-06",
+        "MOD-07",
+        "UX-01",
+        "UX-03",
+        "UX-04",
+        "UX-05"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-41",
+      "url": "https://linear.app/kamkm/issue/KHA-41/implement-owner-only-supabase-schema-and-revision-operations",
+      "title": "Implement owner-only Supabase schema and revision operations",
+      "key": "cloud-schema",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "a5738eb5-8dba-4640-ae52-b1826862b98a",
+        "name": "Private accounts and hosted operations"
+      },
+      "blocked_by": [
+        "KHA-28"
+      ],
+      "acceptance_cases": [
+        "DAT-04",
+        "DAT-05",
+        "DAT-09",
+        "OPS-01"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-42",
+      "url": "https://linear.app/kamkm/issue/KHA-42/implement-google-pkce-accounts-and-identity-isolation",
+      "title": "Implement Google PKCE accounts and identity isolation",
+      "key": "auth",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "a5738eb5-8dba-4640-ae52-b1826862b98a",
+        "name": "Private accounts and hosted operations"
+      },
+      "blocked_by": [
+        "KHA-41",
+        "KHA-34"
+      ],
+      "acceptance_cases": [
+        "DAT-03",
+        "DAT-07",
+        "CON-04",
+        "OPS-02"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-43",
+      "url": "https://linear.app/kamkm/issue/KHA-43/implement-cloud-sync-takeover-and-preserved-conflicts",
+      "title": "Implement cloud sync, takeover and preserved conflicts",
+      "key": "sync",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "a5738eb5-8dba-4640-ae52-b1826862b98a",
+        "name": "Private accounts and hosted operations"
+      },
+      "blocked_by": [
+        "KHA-42",
+        "KHA-33"
+      ],
+      "acceptance_cases": [
+        "DAT-05",
+        "DAT-06",
+        "DAT-07",
+        "DAT-09",
+        "HIS-04",
+        "CLK-04",
+        "CLK-05"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-44",
+      "url": "https://linear.app/kamkm/issue/KHA-44/prepare-free-tier-https-staging-and-auth-configuration",
+      "title": "Prepare free-tier HTTPS staging and auth configuration",
+      "key": "deployment",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "a5738eb5-8dba-4640-ae52-b1826862b98a",
+        "name": "Private accounts and hosted operations"
+      },
+      "blocked_by": [
+        "KHA-40",
+        "KHA-43"
+      ],
+      "acceptance_cases": [
+        "OPS-01",
+        "OPS-02",
+        "OPS-03",
+        "CON-06",
+        "CON-08"
+      ],
+      "execution_prerequisite": "Creating this ticket provisions nothing. Execution needs owner-controlled hosting/auth access and approved production/staging origins. Free tiers only; any paid upgrade returns to the owner."
+    },
+    {
+      "id": "KHA-45",
+      "url": "https://linear.app/kamkm/issue/KHA-45/implement-encrypted-backups-restore-and-deletion-recovery",
+      "title": "Implement encrypted backups, restore and deletion recovery",
+      "key": "backups",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "a5738eb5-8dba-4640-ae52-b1826862b98a",
+        "name": "Private accounts and hosted operations"
+      },
+      "blocked_by": [
+        "KHA-44"
+      ],
+      "acceptance_cases": [
+        "OPS-03",
+        "OPS-04",
+        "DAT-09"
+      ],
+      "execution_prerequisite": "Execution requires owner-controlled private backup destination and secret access through approved private entry. Ticket creation authorizes no provisioning or spending."
+    },
+    {
+      "id": "KHA-46",
+      "url": "https://linear.app/kamkm/issue/KHA-46/verify-integrated-rules-recovery-and-concurrency-invariants",
+      "title": "Verify integrated rules, recovery and concurrency invariants",
+      "key": "conformance",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "1a959dc4-b496-42df-8ea0-8b9dc047a301",
+        "name": "Native acceptance and launch"
+      },
+      "blocked_by": [
+        "KHA-40",
+        "KHA-43",
+        "KHA-32"
+      ],
+      "acceptance_cases": [
+        "MOV-01",
+        "MOV-02",
+        "MOV-03",
+        "MOV-04",
+        "MOV-05",
+        "MOV-06",
+        "MOV-07",
+        "MOV-08",
+        "MOV-09",
+        "HIS-01",
+        "HIS-02",
+        "HIS-03",
+        "HIS-04",
+        "HIS-05",
+        "RUL-01",
+        "RUL-02",
+        "RUL-03",
+        "RUL-04",
+        "RUL-05",
+        "RUL-06",
+        "RUL-07",
+        "ADJ-01",
+        "ADJ-02",
+        "ADJ-03",
+        "ADJ-04",
+        "ADJ-05",
+        "ADJ-06",
+        "ADJ-07",
+        "ADJ-08",
+        "ADJ-09",
+        "CLK-01",
+        "CLK-02",
+        "CLK-03",
+        "CLK-04",
+        "CLK-05",
+        "CLK-06",
+        "CLK-07",
+        "DAT-01",
+        "DAT-02",
+        "DAT-03",
+        "DAT-04",
+        "DAT-05",
+        "DAT-06",
+        "DAT-07",
+        "DAT-08",
+        "DAT-09",
+        "LIF-01",
+        "LIF-02",
+        "LIF-03",
+        "LIF-04"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-47",
+      "url": "https://linear.app/kamkm/issue/KHA-47/run-native-windows-and-macos-screen-reader-acceptance",
+      "title": "Run native Windows and macOS screen-reader acceptance",
+      "key": "desktop",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "1a959dc4-b496-42df-8ea0-8b9dc047a301",
+        "name": "Native acceptance and launch"
+      },
+      "blocked_by": [
+        "KHA-46",
+        "KHA-44"
+      ],
+      "acceptance_cases": [
+        "UX-01",
+        "UX-02",
+        "UX-03",
+        "UX-04",
+        "UX-05",
+        "CON-04",
+        "CLK-04",
+        "CLK-05",
+        "DAT-02",
+        "ADJ-05",
+        "OPS-02"
+      ],
+      "execution_prerequisite": "Requires actual Windows/macOS devices and NVDA/VoiceOver. No credentials or live usage implied."
+    },
+    {
+      "id": "KHA-48",
+      "url": "https://linear.app/kamkm/issue/KHA-48/run-native-ios-and-android-screen-reader-acceptance",
+      "title": "Run native iOS and Android screen-reader acceptance",
+      "key": "mobile",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "1a959dc4-b496-42df-8ea0-8b9dc047a301",
+        "name": "Native acceptance and launch"
+      },
+      "blocked_by": [
+        "KHA-46",
+        "KHA-44"
+      ],
+      "acceptance_cases": [
+        "UX-01",
+        "UX-02",
+        "UX-03",
+        "UX-04",
+        "UX-05",
+        "CON-04",
+        "CLK-04",
+        "CLK-05",
+        "DAT-02",
+        "ADJ-05",
+        "OPS-02"
+      ],
+      "execution_prerequisite": "Requires actual iOS/Android devices and VoiceOver/TalkBack. No credentials or live usage implied."
+    },
+    {
+      "id": "KHA-49",
+      "url": "https://linear.app/kamkm/issue/KHA-49/audit-credential-boundaries-deployed-configuration-and-licenses",
+      "title": "Audit credential boundaries, deployed configuration and licenses",
+      "key": "audit",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "1a959dc4-b496-42df-8ea0-8b9dc047a301",
+        "name": "Native acceptance and launch"
+      },
+      "blocked_by": [
+        "KHA-46",
+        "KHA-44",
+        "KHA-45"
+      ],
+      "acceptance_cases": [
+        "CON-03",
+        "CON-08",
+        "DAT-03",
+        "DAT-04",
+        "DAT-08",
+        "OPS-01",
+        "OPS-03",
+        "OPS-04",
+        "OPS-05"
+      ],
+      "execution_prerequisite": null
+    },
+    {
+      "id": "KHA-50",
+      "url": "https://linear.app/kamkm/issue/KHA-50/verify-authorized-provider-routes-and-cross-provider-handoffs",
+      "title": "Verify authorized provider routes and cross-provider handoffs",
+      "key": "live",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "1a959dc4-b496-42df-8ea0-8b9dc047a301",
+        "name": "Native acceptance and launch"
+      },
+      "blocked_by": [
+        "KHA-47",
+        "KHA-48",
+        "KHA-49"
+      ],
+      "acceptance_cases": [
+        "CON-01",
+        "CON-05",
+        "CON-06",
+        "MOD-04",
+        "MOD-05",
+        "MOD-06",
+        "MOD-07",
+        "MOV-03",
+        "MOV-07",
+        "HIS-01",
+        "HIS-02",
+        "UX-05"
+      ],
+      "execution_prerequisite": "Requires explicit exact-configuration approval, private credentials and live/spend authorization at execution. This ticket and project creation authorize no model call."
+    },
+    {
+      "id": "KHA-51",
+      "url": "https://linear.app/kamkm/issue/KHA-51/measure-prompt-cache-behavior-and-reference-game-costs",
+      "title": "Measure prompt-cache behavior and reference-game costs",
+      "key": "cache-cost",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "1a959dc4-b496-42df-8ea0-8b9dc047a301",
+        "name": "Native acceptance and launch"
+      },
+      "blocked_by": [
+        "KHA-50"
+      ],
+      "acceptance_cases": [
+        "CST-02",
+        "CST-03",
+        "CST-04"
+      ],
+      "execution_prerequisite": "Requires separately agreed runs, private credentials and explicit spend authorization. No live request or spending is authorized by creating this ticket."
+    },
+    {
+      "id": "KHA-52",
+      "url": "https://linear.app/kamkm/issue/KHA-52/complete-the-acceptance-evidence-review-and-release-handoff",
+      "title": "Complete the acceptance evidence review and release handoff",
+      "key": "launch",
+      "status": "Backlog",
+      "assignee": null,
+      "parent_id": null,
+      "milestone": {
+        "id": "1a959dc4-b496-42df-8ea0-8b9dc047a301",
+        "name": "Native acceptance and launch"
+      },
+      "blocked_by": [
+        "KHA-46",
+        "KHA-47",
+        "KHA-48",
+        "KHA-50",
+        "KHA-51",
+        "KHA-49",
+        "KHA-45"
+      ],
+      "acceptance_cases": [
+        "CON-01",
+        "CON-02",
+        "CON-03",
+        "CON-04",
+        "CON-05",
+        "CON-06",
+        "CON-07",
+        "CON-08",
+        "MOD-01",
+        "MOD-02",
+        "MOD-03",
+        "MOD-04",
+        "MOD-05",
+        "MOD-06",
+        "MOD-07",
+        "UX-03",
+        "UX-04",
+        "UX-05",
+        "CST-01",
+        "CST-02",
+        "CST-03",
+        "CST-04",
+        "OPS-01",
+        "OPS-02",
+        "OPS-03",
+        "OPS-04",
+        "OPS-05"
+      ],
+      "execution_prerequisite": "Public release and account-storage enablement require the owner's separate final launch decision. This planning task executes neither."
+    }
+  ],
+  "coverage": {
+    "date": "2026-10-16",
+    "project": {
+      "id": "P-KHA-1",
+      "url": "https://linear.app/kamkm/project/ai-chess-mvp-8a102853ce2c",
+      "name": "AI Chess MVP"
+    },
+    "projectIssues": 48,
+    "historicalDone": 21,
+    "newBacklog": 27,
+    "caseCoverage": 79,
+    "dependencyEdges": 53,
+    "errors": []
+  },
+  "note": "This is the tracker-creation snapshot. Query Linear for current status before execution. All 79 product acceptance cases remain not_run; no implementation or live/paid test was executed."
+}
