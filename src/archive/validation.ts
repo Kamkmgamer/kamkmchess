@@ -479,6 +479,7 @@ function readResult(value: unknown): GameResultV1 {
         'fifty-move-rule',
         'resignation',
         'illegal-move',
+        'stalemate',
       ] as const,
       'checkpoint.result.reason',
     ),

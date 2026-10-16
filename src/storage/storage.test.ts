@@ -1262,6 +1262,82 @@ describe('IndexedDB checkpoint commits', () => {
     store.close();
   });
 
+  it('round-trips a stalemate draw through checkpoint storage and the public archive API', async () => {
+    const name = databaseName();
+    const factory = new IDBFactory();
+    const initial = makeCheckpoint();
+    const stalemate: GameCheckpointV1 = {
+      ...initial,
+      result: {
+        kind: 'final',
+        winner: 'draw',
+        reason: 'stalemate',
+        eventId: 'event-1',
+        decidedAtMs: 1450,
+      },
+    };
+    const source = await openGameStore({ databaseName: name, factory, now: () => 1450 });
+    await source.commitCheckpoint({
+      gameId: initial.gameId,
+      expectedRevision: null,
+      expectedEpoch: 0,
+      events: [makeEvent(['chunk-1'])],
+      chunks: [makeChunk('chunk-1', 1, 'stalemate result archive')],
+      knownCredentials: [],
+      decide: (decisionTimeMs) => ({
+        checkpoint: { ...stalemate, updatedAtMs: decisionTimeMs },
+        outboxOperationIds: [],
+      }),
+    });
+    expect((await source.readGame(initial.gameId))?.checkpoint.result).toEqual(stalemate.result);
+    source.close();
+
+    const reopened = await openGameStore({ databaseName: name, factory });
+    expect((await reopened.readGame(initial.gameId))?.checkpoint.result).toEqual(stalemate.result);
+    const archive = await reopened.exportGameArchive(initial.gameId, []);
+    expect(archive.checkpoint.result).toEqual(stalemate.result);
+
+    const imported = await openGameStore({ databaseName: databaseName(), factory });
+    const restored = await imported.importGameArchive(JSON.parse(JSON.stringify(archive)));
+    expect(restored.checkpoint.result).toEqual(stalemate.result);
+    expect((await imported.readGame(initial.gameId))?.checkpoint.result).toEqual(stalemate.result);
+    reopened.close();
+    imported.close();
+  });
+
+  it('rejects an unsupported final result reason without committing any part', async () => {
+    const store = await openGameStore({ databaseName: databaseName(), factory: new IDBFactory(), now: () => 1500 });
+    const initial = makeCheckpoint();
+    const unsupported = JSON.parse(
+      JSON.stringify({
+        ...initial,
+        result: {
+          kind: 'final',
+          winner: 'draw',
+          reason: 'unsupported-draw-reason',
+          eventId: 'event-1',
+          decidedAtMs: 1500,
+        },
+      }),
+    ) as GameCheckpointV1;
+
+    await expect(
+      store.commitCheckpoint({
+        gameId: initial.gameId,
+        expectedRevision: null,
+        expectedEpoch: 0,
+        events: [makeEvent(['chunk-1'])],
+        chunks: [makeChunk('chunk-1', 1, 'invalid final reason')],
+        knownCredentials: [],
+        decide: () => ({ checkpoint: unsupported, outboxOperationIds: ['unsupported-reason-operation'] }),
+      }),
+    ).rejects.toMatchObject({ code: 'invalid-data' });
+
+    expect(await store.readGame(initial.gameId)).toBeNull();
+    expect(await store.readOutboxOperation('unsupported-reason-operation')).toBeNull();
+    store.close();
+  });
+
   it('reports persistent-storage support and grant status without claiming a save', async () => {
     const store = await openGameStore({ databaseName: databaseName(), factory: new IDBFactory() });
     expect(await store.requestPersistentStorage({})).toBe('unsupported');

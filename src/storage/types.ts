@@ -140,7 +140,8 @@ export type PendingResultReasonV1 =
 export type FinalResultReasonV1 =
   | PendingResultReasonV1
   | 'resignation'
-  | 'illegal-move';
+  | 'illegal-move'
+  | 'stalemate';
 
 export type GameResultV1 =
   | { kind: 'unresolved' }
