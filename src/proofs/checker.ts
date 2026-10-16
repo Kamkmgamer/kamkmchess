@@ -26,8 +26,13 @@ const MAX_WITNESS_PLIES = 100_000;
 const MAX_CERTIFICATE_STATES = 10_000;
 const MAX_CERTIFICATE_EDGES = 100_000;
 const MAX_CHECK_TIME_MS = 5_000;
+const MAX_RECORD_FIELDS = 16;
 
 type RecordValue = Record<string, unknown>;
+type SubmittedSuccessor = Readonly<{
+  move: CoordinateMove;
+  target: CanonicalProofStateKey;
+}>;
 
 class EvidenceRejection extends Error {
   constructor(readonly reason: string) {
@@ -49,15 +54,71 @@ function stop(reason: string): never {
   throw new CheckerLimit(reason);
 }
 
-function isRecord(value: unknown): value is RecordValue {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+function snapshotRecord(value: unknown, invalidReason: string): RecordValue {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) reject(invalidReason);
   const prototype = Object.getPrototypeOf(value);
-  return prototype === Object.prototype || prototype === null;
+  if (prototype !== Object.prototype && prototype !== null) reject(invalidReason);
+
+  const keys = Reflect.ownKeys(value);
+  if (keys.length > MAX_RECORD_FIELDS) reject(invalidReason);
+
+  const snapshot = Object.create(null) as RecordValue;
+  for (const key of keys) {
+    if (typeof key !== 'string') reject(invalidReason);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (
+      descriptor === undefined ||
+      !descriptor.enumerable ||
+      !Object.hasOwn(descriptor, 'value')
+    ) {
+      reject(invalidReason);
+    }
+    snapshot[key] = descriptor.value;
+  }
+  return snapshot;
 }
 
 function hasExactKeys(record: RecordValue, expected: readonly string[]): boolean {
   const actual = Object.keys(record);
   return actual.length === expected.length && actual.every((key) => expected.includes(key));
+}
+
+function snapshotArray(
+  value: unknown,
+  maximumLength: number,
+  invalidReason: string,
+  limitReason: string,
+  startedAt: number,
+): unknown[] {
+  if (!Array.isArray(value)) reject(invalidReason);
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length');
+  if (
+    lengthDescriptor === undefined ||
+    !Object.hasOwn(lengthDescriptor, 'value') ||
+    !Number.isSafeInteger(lengthDescriptor.value) ||
+    lengthDescriptor.value < 0
+  ) {
+    reject(invalidReason);
+  }
+
+  const length = lengthDescriptor.value as number;
+  if (length > maximumLength) stop(limitReason);
+
+  const snapshot = new Array<unknown>(length);
+  for (let index = 0; index < length; index += 1) {
+    if (index % 256 === 0) checkTime(startedAt);
+    const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+    if (
+      descriptor === undefined ||
+      !descriptor.enumerable ||
+      !Object.hasOwn(descriptor, 'value')
+    ) {
+      reject(invalidReason);
+    }
+    snapshot[index] = descriptor.value;
+  }
+  checkTime(startedAt);
+  return snapshot;
 }
 
 function isColor(value: unknown): value is Color {
@@ -94,8 +155,8 @@ function commonQueryKeys(): readonly string[] {
 }
 
 function validateQuery(input: unknown): { query: ProofQuery; position: Position } {
-  if (!isRecord(input)) reject('invalid-query');
-  const predicate = input.predicate;
+  const fields = snapshotRecord(input, 'invalid-query');
+  const predicate = fields.predicate;
   const expectedKeys =
     predicate === 'cooperative-mating-reachability'
       ? [...commonQueryKeys(), 'intendedColor']
@@ -104,12 +165,12 @@ function validateQuery(input: unknown): { query: ProofQuery; position: Position 
         : predicate === 'global-deadness'
           ? commonQueryKeys()
           : null;
-  if (expectedKeys === null || !hasExactKeys(input, expectedKeys)) reject('invalid-query-shape');
+  if (expectedKeys === null || !hasExactKeys(fields, expectedKeys)) reject('invalid-query-shape');
   if (
-    input.schemaVersion !== PROOF_SCHEMA_VERSION ||
-    input.proofCheckerVersion !== PROOF_CHECKER_VERSION ||
-    input.rulesAdapterVersion !== RULES_ADAPTER_VERSION ||
-    input.predicateVersion !== PROOF_PREDICATE_VERSION
+    fields.schemaVersion !== PROOF_SCHEMA_VERSION ||
+    fields.proofCheckerVersion !== PROOF_CHECKER_VERSION ||
+    fields.rulesAdapterVersion !== RULES_ADAPTER_VERSION ||
+    fields.predicateVersion !== PROOF_PREDICATE_VERSION
   ) {
     reject('unsupported-query-version');
   }
@@ -122,23 +183,23 @@ function validateQuery(input: unknown): { query: ProofQuery; position: Position 
     'positionFen',
     'queryIdentity',
   ]) {
-    if (typeof input[field] !== 'string' || input[field].length === 0) reject('invalid-query-identity');
+    if (typeof fields[field] !== 'string' || fields[field].length === 0) reject('invalid-query-identity');
   }
   if (
-    (predicate === 'cooperative-mating-reachability' && !isColor(input.intendedColor)) ||
-    (predicate === 'timeout-opponent-mating' && !isColor(input.expiredColor))
+    (predicate === 'cooperative-mating-reachability' && !isColor(fields.intendedColor)) ||
+    (predicate === 'timeout-opponent-mating' && !isColor(fields.expiredColor))
   ) {
     reject('invalid-query-color');
   }
 
   let position: Position;
   try {
-    position = parsePosition(input.positionFen as string);
+    position = parsePosition(fields.positionFen as string);
   } catch {
     reject('invalid-query-position');
   }
 
-  const query = input as unknown as ProofQuery;
+  const query = fields as unknown as ProofQuery;
   if (query.queryIdentity !== proofQueryIdentity(query)) reject('query-identity-mismatch');
   return { query, position };
 }
@@ -166,22 +227,22 @@ function evidenceBaseKeys(): readonly string[] {
 }
 
 function parseMove(input: unknown): CoordinateMove {
-  if (!isRecord(input)) reject('invalid-coordinate-move');
-  const hasPromotion = Object.hasOwn(input, 'promotion');
+  const move = snapshotRecord(input, 'invalid-coordinate-move');
+  const hasPromotion = Object.hasOwn(move, 'promotion');
   const keys = hasPromotion ? ['from', 'to', 'promotion'] : ['from', 'to'];
-  if (!hasExactKeys(input, keys)) reject('invalid-coordinate-move');
+  if (!hasExactKeys(move, keys)) reject('invalid-coordinate-move');
   if (
-    typeof input.from !== 'string' || !/^[a-h][1-8]$/.test(input.from) ||
-    typeof input.to !== 'string' || !/^[a-h][1-8]$/.test(input.to)
+    typeof move.from !== 'string' || !/^[a-h][1-8]$/.test(move.from) ||
+    typeof move.to !== 'string' || !/^[a-h][1-8]$/.test(move.to)
   ) {
     reject('invalid-coordinate-move');
   }
-  if (hasPromotion && input.promotion !== 'q' && input.promotion !== 'r' && input.promotion !== 'b' && input.promotion !== 'n') {
+  if (hasPromotion && move.promotion !== 'q' && move.promotion !== 'r' && move.promotion !== 'b' && move.promotion !== 'n') {
     reject('invalid-coordinate-move');
   }
   return hasPromotion
-    ? { from: input.from as CoordinateMove['from'], to: input.to as CoordinateMove['to'], promotion: input.promotion as NonNullable<CoordinateMove['promotion']> }
-    : { from: input.from as CoordinateMove['from'], to: input.to as CoordinateMove['to'] };
+    ? { from: move.from as CoordinateMove['from'], to: move.to as CoordinateMove['to'], promotion: move.promotion as NonNullable<CoordinateMove['promotion']> }
+    : { from: move.from as CoordinateMove['from'], to: move.to as CoordinateMove['to'] };
 }
 
 function moveKey(move: CoordinateMove): string {
@@ -254,10 +315,21 @@ function checkMateWitness(
   if (!isColor(evidence.intendedColor) || !expectedWitnessColor(query, evidence.intendedColor)) {
     reject('wrong-witness-color');
   }
-  if (!Array.isArray(evidence.moves)) reject('incomplete-witness');
-  if (evidence.moves.length > MAX_WITNESS_PLIES) stop('witness-ply-limit');
-
-  const moves = evidence.moves.map(parseMove);
+  const submittedMoves = snapshotArray(
+    evidence.moves,
+    MAX_WITNESS_PLIES,
+    'incomplete-witness',
+    'witness-ply-limit',
+    startedAt,
+  );
+  const moves: CoordinateMove[] = [];
+  let submittedMoveIndex = 0;
+  for (const submittedMove of submittedMoves) {
+    if (submittedMoveIndex % 256 === 0) checkTime(startedAt);
+    moves.push(parseMove(submittedMove));
+    submittedMoveIndex += 1;
+  }
+  checkTime(startedAt);
   let position = initial;
   for (const move of moves) {
     checkTime(startedAt);
@@ -280,26 +352,51 @@ function validateClosedSet(
   startedAt: number,
 ): ProofCheckResult {
   validateEvidenceBase(evidence, query, [...evidenceBaseKeys(), 'root', 'nodes']);
-  if (typeof evidence.root !== 'string' || !Array.isArray(evidence.nodes)) reject('incomplete-closed-set');
-  if (evidence.nodes.length === 0) reject('empty-closed-set');
-  if (evidence.nodes.length > MAX_CERTIFICATE_STATES) stop('certificate-state-limit');
+  if (typeof evidence.root !== 'string') reject('incomplete-closed-set');
+  const submittedNodes = snapshotArray(
+    evidence.nodes,
+    MAX_CERTIFICATE_STATES,
+    'incomplete-closed-set',
+    'certificate-state-limit',
+    startedAt,
+  );
+  if (submittedNodes.length === 0) reject('empty-closed-set');
 
   const rootKey = stateKey(initial);
   if (evidence.root !== rootKey) reject('closed-set-root-mismatch');
 
   const states = new Map<CanonicalProofStateKey, Position>();
-  const rawNodes = new Map<CanonicalProofStateKey, RecordValue>();
+  const submittedSuccessors = new Map<CanonicalProofStateKey, readonly SubmittedSuccessor[]>();
   let declaredEdgeCount = 0;
-  for (const rawNode of evidence.nodes) {
+  for (const rawNode of submittedNodes) {
     checkTime(startedAt);
-    if (!isRecord(rawNode) || !hasExactKeys(rawNode, ['state', 'successors'])) reject('invalid-closed-set-node');
-    if (typeof rawNode.state !== 'string' || !Array.isArray(rawNode.successors)) reject('invalid-closed-set-node');
-    if (states.has(rawNode.state)) reject('duplicate-closed-set-state');
-    const parsed = parseStateKey(rawNode.state);
+    const node = snapshotRecord(rawNode, 'invalid-closed-set-node');
+    if (!hasExactKeys(node, ['state', 'successors'])) reject('invalid-closed-set-node');
+    if (typeof node.state !== 'string') reject('invalid-closed-set-node');
+    const successors = snapshotArray(
+      node.successors,
+      MAX_CERTIFICATE_EDGES - declaredEdgeCount,
+      'invalid-closed-set-node',
+      'certificate-edge-limit',
+      startedAt,
+    );
+    if (states.has(node.state)) reject('duplicate-closed-set-state');
+    const parsed = parseStateKey(node.state);
+    declaredEdgeCount += successors.length;
+    const checkedSuccessors: SubmittedSuccessor[] = [];
+    let submittedSuccessorIndex = 0;
+    for (const rawSuccessor of successors) {
+      if (submittedSuccessorIndex % 256 === 0) checkTime(startedAt);
+      const successor = snapshotRecord(rawSuccessor, 'invalid-closed-set-successor');
+      if (!hasExactKeys(successor, ['move', 'target'])) reject('invalid-closed-set-successor');
+      const move = parseMove(successor.move);
+      if (typeof successor.target !== 'string') reject('invalid-closed-set-successor');
+      checkedSuccessors.push({ move, target: successor.target });
+      submittedSuccessorIndex += 1;
+    }
+    checkTime(startedAt);
     states.set(parsed.key, parsed.position);
-    rawNodes.set(parsed.key, rawNode);
-    declaredEdgeCount += rawNode.successors.length;
-    if (declaredEdgeCount > MAX_CERTIFICATE_EDGES) stop('certificate-edge-limit');
+    submittedSuccessors.set(parsed.key, checkedSuccessors);
   }
   if (!states.has(rootKey)) reject('closed-set-root-missing');
 
@@ -309,8 +406,8 @@ function validateClosedSet(
 
   for (const [key, position] of states) {
     checkTime(startedAt);
-    const node = rawNodes.get(key);
-    if (node === undefined || !Array.isArray(node.successors)) reject('invalid-closed-set-node');
+    const declaredSuccessors = submittedSuccessors.get(key);
+    if (declaredSuccessors === undefined) reject('invalid-closed-set-node');
 
     const legal = legalMoves(position);
     if (legal.length === 0 && isMateDeliveredBy(position, targetColorsInQuery)) {
@@ -327,14 +424,10 @@ function validateClosedSet(
     }
 
     const declared = new Map<string, string>();
-    for (const rawSuccessor of node.successors) {
-      if (!isRecord(rawSuccessor) || !hasExactKeys(rawSuccessor, ['move', 'target'])) reject('invalid-closed-set-successor');
-      const move = parseMove(rawSuccessor.move);
-      if (typeof rawSuccessor.target !== 'string') reject('invalid-closed-set-successor');
-      const targetKey = rawSuccessor.target;
-      const keyForMove = moveKey(move);
+    for (const successor of declaredSuccessors) {
+      const keyForMove = moveKey(successor.move);
       if (declared.has(keyForMove)) reject('duplicate-closed-set-edge');
-      declared.set(keyForMove, targetKey);
+      declared.set(keyForMove, successor.target);
     }
 
     if (declared.size !== expected.size) reject('closed-set-successor-count-mismatch');
@@ -377,12 +470,13 @@ export function checkProofEvidence(queryInput: unknown, evidenceInput: unknown):
 
   const startedAt = now();
   try {
-    if (!isRecord(evidenceInput) || typeof evidenceInput.kind !== 'string') reject('invalid-evidence');
-    if (evidenceInput.kind === 'mate-witness') {
-      return checkMateWitness(query, position, evidenceInput, startedAt);
+    const evidence = snapshotRecord(evidenceInput, 'invalid-evidence');
+    if (typeof evidence.kind !== 'string') reject('invalid-evidence');
+    if (evidence.kind === 'mate-witness') {
+      return checkMateWitness(query, position, evidence, startedAt);
     }
-    if (evidenceInput.kind === 'closed-successor-set') {
-      return validateClosedSet(query, position, evidenceInput, startedAt);
+    if (evidence.kind === 'closed-successor-set') {
+      return validateClosedSet(query, position, evidence, startedAt);
     }
     reject('unsupported-evidence-kind');
   } catch (error) {

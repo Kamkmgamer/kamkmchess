@@ -99,6 +99,116 @@ describe('[ADJ-01, ADJ-02, ADJ-03, ADJ-09] proof checker', () => {
     });
   });
 
+  it('rejects a query accessor that changes the position after validation', () => {
+    const mateFen = '7k/6Q1/5K2/8/8/8/8/8 b - - 0 1';
+    const otherFen = '7k/8/5KQ1/8/8/8/8/8 b - - 0 1';
+    const query = createMatingReachabilityQuery({
+      ...scope,
+      positionFen: otherFen,
+      intendedColor: 'w',
+    });
+    const emptyWitness = makeWitness(query, 'w', []);
+    let reads = 0;
+    const switched = { ...query };
+    Object.defineProperty(switched, 'positionFen', {
+      enumerable: true,
+      get: () => {
+        reads += 1;
+        return reads <= 3 ? mateFen : otherFen;
+      },
+    });
+
+    expect(checkProofEvidence(query, emptyWitness)).toMatchObject({ status: 'rejected' });
+    expect(checkProofEvidence(switched, emptyWitness)).toMatchObject({ status: 'rejected' });
+  });
+
+  it('rejects accessor-backed witness fields and nested move coordinates', () => {
+    const terminalQuery = createMatingReachabilityQuery({
+      ...scope,
+      positionFen: '7k/6Q1/5K2/8/8/8/8/8 b - - 0 1',
+      intendedColor: 'w',
+    });
+    const plainEmptyWitness = makeWitness(terminalQuery, 'w', []);
+    expect(checkProofEvidence(terminalQuery, plainEmptyWitness)).toMatchObject({
+      status: 'accepted',
+      conclusion: 'mate-reachable',
+    });
+
+    const movesAccessor = makeWitness(terminalQuery, 'w', []);
+    Object.defineProperty(movesAccessor, 'moves', {
+      enumerable: true,
+      get: () => [],
+    });
+    expect(checkProofEvidence(terminalQuery, movesAccessor)).toMatchObject({ status: 'rejected' });
+
+    const oneMoveQuery = createMatingReachabilityQuery({
+      ...scope,
+      positionFen: '6rk/8/3N3K/8/8/8/8/8 w - - 0 1',
+      intendedColor: 'w',
+    });
+    const validMoveWitness = makeWitness(oneMoveQuery, 'w', ['d6f7']);
+    expect(checkProofEvidence(oneMoveQuery, validMoveWitness)).toMatchObject({
+      status: 'accepted',
+      conclusion: 'mate-reachable',
+    });
+
+    const moveAccessorWitness = makeWitness(oneMoveQuery, 'w', ['d6f7']);
+    const move = { from: 'd6', to: 'f7' };
+    Object.defineProperty(move, 'from', {
+      enumerable: true,
+      get: () => 'd6',
+    });
+    moveAccessorWitness.moves = [move];
+    expect(checkProofEvidence(oneMoveQuery, moveAccessorWitness)).toMatchObject({ status: 'rejected' });
+
+    const moveArrayAccessorWitness = makeWitness(oneMoveQuery, 'w', ['d6f7']);
+    const firstMove = moveArrayAccessorWitness.moves[0];
+    if (firstMove === undefined) throw new Error('The checked witness move is missing.');
+    const moves = [firstMove];
+    Object.defineProperty(moves, '0', {
+      enumerable: true,
+      get: () => firstMove,
+    });
+    moveArrayAccessorWitness.moves = moves;
+    expect(checkProofEvidence(oneMoveQuery, moveArrayAccessorWitness)).toMatchObject({ status: 'rejected' });
+  });
+
+  it('rejects accessor-backed closed-set nodes and successors', () => {
+    const query = createDeadnessQuery({ ...scope, positionFen: forcedCycleFen });
+    expect(checkProofEvidence(query, makeClosedSet(query))).toMatchObject({
+      status: 'accepted',
+      conclusion: 'dead',
+    });
+
+    const nodeAccessor = structuredClone(forcedCycle);
+    const rootNode = nodeAccessor.nodes[0];
+    if (rootNode === undefined) throw new Error('The forced-cycle root is missing.');
+    Object.defineProperty(rootNode, 'state', {
+      enumerable: true,
+      get: () => forcedCycle.root,
+    });
+    expect(checkProofEvidence(query, makeClosedSet(query, nodeAccessor))).toMatchObject({ status: 'rejected' });
+
+    const targetAccessor = structuredClone(forcedCycle);
+    const rootSuccessor = targetAccessor.nodes[0]?.successors[0];
+    if (rootSuccessor === undefined) throw new Error('The forced-cycle root edge is missing.');
+    const target = rootSuccessor.target;
+    Object.defineProperty(rootSuccessor, 'target', {
+      enumerable: true,
+      get: () => target,
+    });
+    expect(checkProofEvidence(query, makeClosedSet(query, targetAccessor))).toMatchObject({ status: 'rejected' });
+
+    const nodesArrayAccessor = structuredClone(forcedCycle);
+    const firstNode = nodesArrayAccessor.nodes[0];
+    if (firstNode === undefined) throw new Error('The forced-cycle root is missing.');
+    Object.defineProperty(nodesArrayAccessor.nodes, '0', {
+      enumerable: true,
+      get: () => firstNode,
+    });
+    expect(checkProofEvidence(query, makeClosedSet(query, nodesArrayAccessor))).toMatchObject({ status: 'rejected' });
+  });
+
   it('replays researched rook-support, bare-king/rook, asymmetric, two-knight, and promotion witnesses', () => {
     for (const [name, fixture] of Object.entries(researchedPositiveWitnesses)) {
       const query = createMatingReachabilityQuery({

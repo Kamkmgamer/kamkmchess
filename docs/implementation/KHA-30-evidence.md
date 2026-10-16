@@ -12,6 +12,8 @@ KHA-27 formal review and its native gate remain active. This evidence does not c
 
 Each query records the exact six-field FEN and binds game, segment, revision, analysis generation, ownership epoch, schema, checker, rules adapter and predicate versions in a deterministic full-field identity. Board keys use full canonical strings with placement, side to move, castling rights and legally usable en-passant. They omit counters for hypothetical reachability; no numeric hash acts as identity.
 
+The checker snapshots each query and evidence record from own enumerable data descriptors. It rejects accessors, sparse evidence arrays and accessor-backed array entries. It copies and normalizes nested moves and certificate successors before replay or graph comparison. Query parsing, identity calculation, evidence checks and the returned identity use the same query snapshot. The checker returns no references to caller-owned objects.
+
 The [checker](../../src/proofs/checker.ts) accepts a positive witness only after replaying every coordinate through `legalMoves` and `applyCoordinateMove` and observing intended-color checkmate. An empty witness is accepted only if the root already is that checkmate. The negative format is `closed-successor-set`. The checker regenerates every legal successor, compares its move and complete target key, requires every state to be reachable from the root, and rejects a target checkmate. Global deadness checks both colors; timeout checks the opponent only. Missing evidence and configured traversal limits return `non-result`. Corrupt, stale, incomplete, wrong-color or illegal evidence is rejected.
 
 The module has no provider or prompt dependency. Its outputs are not model advice. A payload-separation integration assertion remains for the future provider/controller work.
@@ -30,6 +32,7 @@ The [focused test file](../../src/proofs/checker.test.ts) exercises these expect
 | Two knights | A 57-ply cooperative witness exists. The opposite-side negative claim is unsupported here. | Positive witness is accepted. Unsupported negative query remains `non-result`. |
 | Halfmove counter 99 | The approved hypothetical predicate still accepts a legal path to mate even when actual play would reach its draw threshold first. | The researched witness is accepted. A separate boundary fixture confirms checkmate at 100 halfmoves is still recognized. |
 | Castling, en-passant and promotion closure edges | Every legal successor must appear in a negative certificate. | Certificates omitting each tested special move are rejected. A promotion mating witness is replayed and accepted. |
+| Accessor-backed query and evidence data | Identity and replay must use the same validated values; getters cannot change queried positions, moves or certificate edges between reads. | Position-FEN, witness, nested move, node, successor and array-index accessors are rejected. Equivalent ordinary data controls are accepted. |
 | 21-origin hazard | The exact custom FEN may be parsed, but no unchecked Rust move generator may run. | The FEN is used only to create a query; missing evidence returns `non-result` before move generation. |
 
 Positive path sources and the independent controls are recorded in [exact adjudication research](../../research/exact-adjudication-coverage.md), [dependency research](../../research/chess-dependencies.md), and [their experiment artifacts](../../experiments/exact-adjudication-coverage/native-results.json). The locked-wall comparison is in [the chess dependency probe output](../../experiments/chess-dependencies/probe-output.txt). The copied positive paths are replayed again by this checker. Solver negative labels are not treated as proof.
@@ -40,13 +43,13 @@ Environment: Node v24.22.0 and npm 11.19.1. No credentials, live models, network
 
 | Command | Expected | Observed |
 | --- | --- | --- |
-| `npm test -- src/proofs/checker.test.ts` | Focused proof fixtures pass. | 20 tests passed. |
-| `npm run lint` | No lint errors. | Passed in the full check. |
-| `npm test` | Complete offline fixture suite passes. | 66 tests passed across 3 files. |
-| `npm run typecheck` | App and node TypeScript projects pass. | Passed in the build. |
-| `npm run build` | Typecheck, Vite production build and notices complete. | Exit code 0. Vite built 15 modules and wrote [the app](../../dist/index.html), [third-party notices](../../dist/THIRD_PARTY_NOTICES.txt) and [dependency inventory](../../dist/DEPENDENCY_INVENTORY.json). |
+| `npm test -- src/proofs/checker.test.ts` | Focused proof fixtures pass. | 23 tests passed in the final focused run. |
+| `npm run lint` | No lint errors. | Passed in the final full check. |
+| `npm test` | Complete offline fixture suite passes. | 69 tests passed across 3 files. |
+| `npm run typecheck` | App and node TypeScript projects pass. | Passed in the final full check. |
+| `npm run build` | Typecheck, Vite production build and notices complete. | Passed in the final full check. Vite built 15 modules and wrote [the app](../../dist/index.html), [third-party notices](../../dist/THIRD_PARTY_NOTICES.txt) and [dependency inventory](../../dist/DEPENDENCY_INVENTORY.json). |
 
-The repo's combined `npm run check` command ran lint, all 66 tests and typecheck. The production build was then run directly and exited 0.
+The final `npm run check` command ran lint, all 69 tests, typecheck, the Vite production build and notice generation. It exited 0.
 
 ## Unrun work and limits
 
