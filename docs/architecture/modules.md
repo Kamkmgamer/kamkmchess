@@ -35,7 +35,7 @@ The controller alone latches final results. While an exact ending is unresolved,
 
 Version storage, checkpoint, archive, proof-search and cloud operation formats in their implementation tickets. Reject incompatible writes and validate restored data before use. Keep guest, account UUID and local credential namespaces separate. Sign-out removes the departing account's AI keys and fences requests while cached games/outbox remain attached to that account.
 
-Provider text is untrusted text. Secrets, raw transcripts, endpoint configuration and auth tokens do not belong in routine telemetry or game sync/export. No administrative key is browser configuration. Static Cloudflare hosting serves public assets; optional Supabase operations never become a generation relay.
+Provider text is untrusted text. Routine telemetry excludes raw transcripts, secrets, private endpoint configuration and auth tokens. Game sync/export preserves the complete versioned archive through allowlisted DTOs that exclude AI keys, auth tokens, secret headers and secret-bearing endpoint data. A recognized credential echo stays local and blocks the affected sync/export until resolved; never redact the sole exact archive and call it lossless. No administrative key is browser configuration. Static Cloudflare hosting serves public assets; optional Supabase operations never become a generation relay.
 
 ## Verification seams
 
