@@ -1,13 +1,14 @@
-import { Chess } from 'chess.js';
-import type { Position } from './types.js';
+import { Chess, type Square as ChessSquare } from 'chess.js';
+import type { Color, Position, Square } from './types.js';
 
-export function createChessPosition(position: Position): Chess {
-  const fields = position.fen.split(' ');
+function createChessFromFen(fen: string): Chess {
+  const fields = fen.split(' ');
   const placement = fields[0];
   const sideToMove = fields[1];
   const castlingRights = fields[2];
   const enPassantSquare = fields[3];
   if (
+    fields.length !== 6 ||
     placement === undefined ||
     sideToMove === undefined ||
     castlingRights === undefined ||
@@ -17,4 +18,12 @@ export function createChessPosition(position: Position): Chess {
   }
 
   return new Chess(`${placement} ${sideToMove} ${castlingRights} ${enPassantSquare} 0 1`);
+}
+
+export function createChessPosition(position: Position): Chess {
+  return createChessFromFen(position.fen);
+}
+
+export function isSquareAttackedInFen(fen: string, square: Square, byColor: Color): boolean {
+  return createChessFromFen(fen).isAttacked(square as ChessSquare, byColor);
 }

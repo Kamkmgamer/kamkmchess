@@ -1,4 +1,4 @@
-import { Chess, type Square as ChessSquare } from 'chess.js';
+import { isSquareAttackedInFen } from './chess-adapter.js';
 import {
   POSITION_BRAND,
   type Color,
@@ -311,10 +311,11 @@ export function parsePosition(fen: string): Position {
     fullmoveValue,
   );
 
-  const libraryFen = `${placement} ${sideToMove} ${castlingRights} ${enPassantField} 0 1`;
-  let chess: Chess;
+  const nonMovingColor: Color = sideToMove === 'w' ? 'b' : 'w';
+  const nonMovingKing = nonMovingColor === 'w' ? parsed.whiteKing : parsed.blackKing;
+  let nonMovingKingInCheck: boolean;
   try {
-    chess = new Chess(libraryFen);
+    nonMovingKingInCheck = isSquareAttackedInFen(fen, nonMovingKing, sideToMove);
   } catch (error) {
     return reject(
       'placement',
@@ -323,9 +324,7 @@ export function parsePosition(fen: string): Position {
     );
   }
 
-  const nonMovingColor: Color = sideToMove === 'w' ? 'b' : 'w';
-  const nonMovingKing = nonMovingColor === 'w' ? parsed.whiteKing : parsed.blackKing;
-  if (chess.isAttacked(nonMovingKing as ChessSquare, sideToMove)) {
+  if (nonMovingKingInCheck) {
     reject(
       'consistency',
       'nonmoving-king-in-check',
