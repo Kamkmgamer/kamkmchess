@@ -2,7 +2,7 @@
 
 This is the foundation module map for [Establish the React/TypeScript application and build checks](https://linear.app/kamkm/issue/KHA-26/establish-the-reacttypescript-application-and-build-checks). The canonical architecture is the [architecture resolution](https://linear.app/kamkm/issue/KHA-13), comment `64e0511f-3e26-4b79-a3c8-4f834605736c`. The approved specification's [module handoff](../spec/mvp-handoff.md#implementation-sequence-and-module-handoff) identifies the test seams.
 
-Only `src/main.tsx` and the placeholder `src/ui/` exist today. Create each other directory when its ticket implements behavior. This map defines responsibilities, not callable stubs or implemented guarantees. Public types should arrive with the first real caller and fixtures rather than anticipate every later ticket.
+The composition entry point, placeholder `src/ui/`, and pure `src/clocks/` calculations exist today. The serialized controller and remaining modules are still planned. Create each other directory when its ticket implements behavior. This map defines responsibilities, not callable stubs or implemented guarantees. Public types should arrive with the first real caller and fixtures rather than anticipate every later ticket.
 
 | Module / planned location | Owns | Interface and authority limits |
 | --- | --- | --- |
