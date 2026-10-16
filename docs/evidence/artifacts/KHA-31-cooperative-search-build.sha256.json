@@ -1,0 +1,48 @@
+{
+    "sourceCommit":  "6ba414f38f2e2b77bcdee1530e2f9695dbce1f6d",
+    "publicBaseCommit":  "06576a017977a8ea398a2f96ea0f273559ddb02e",
+    "buildCommands":  [
+                          "npm ci",
+                          "npm run build"
+                      ],
+    "nodeVersion":  "v24.22.0",
+    "npmVersion":  "11.19.1",
+    "viteVersion":  "8.3.4",
+    "archive":  "KHA-31-cooperative-search-build.zip",
+    "archiveSha256":  "e5f9b66d62e6d1e6a82ebcc2644053179b689bfbb3f17cdf3edc2043657136dc",
+    "entryCount":  8,
+    "entries":  [
+                    {
+                        "path":  "_headers",
+                        "sha256":  "01d00fe3ab6cf75ef6214f11e5d294734e23961382b58115ec7c080e1885d65b"
+                    },
+                    {
+                        "path":  "_redirects",
+                        "sha256":  "6036983e5fc00f0169c9e939b1816ed771eee00e27f2fcc517b819041460b9ef"
+                    },
+                    {
+                        "path":  "assets/index-CE2xj8Mp.js",
+                        "sha256":  "729ec9148ca84b456d8bd35e4e8f4af91fdb06a32c2404587920055dbc0ffd86"
+                    },
+                    {
+                        "path":  "assets/index-Dn1Kj2XK.css",
+                        "sha256":  "84935c1fa75bb6ef1afb3f6862aadeb681ad506f1dca201490dacef620c5283f"
+                    },
+                    {
+                        "path":  "DEPENDENCY_INVENTORY.json",
+                        "sha256":  "527127737855cdf29b8d48614bcc28b820681bee38e2ca16b7d550875e7ebefe"
+                    },
+                    {
+                        "path":  "index.html",
+                        "sha256":  "4651fb5226b77250c542ce82ca8e098b2b035154d6dc660db0b3e175776bac51"
+                    },
+                    {
+                        "path":  "LICENSE.txt",
+                        "sha256":  "4ccc7c5ac9ebaa24233e3115dda4541b5d7d5d254f8e027a3fc442807d56e50c"
+                    },
+                    {
+                        "path":  "THIRD_PARTY_NOTICES.txt",
+                        "sha256":  "a833d6cb3a6f09d0482ec3dd94ce1e8767aab8eb9f14186f79ee408efa4115b9"
+                    }
+                ]
+}

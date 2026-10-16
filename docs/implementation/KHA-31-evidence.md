@@ -50,4 +50,8 @@ All 79 product acceptance cases remain `not_run`. The Worker entry passes TypeSc
 
 ## Source and build artifact
 
-The published source commit and build artifact hashes are recorded in the [KHA-31 artifact manifest](../evidence/artifacts/KHA-31-cooperative-search-build.sha256.json). The manifest lists every file in the committed [production build ZIP](../evidence/artifacts/KHA-31-cooperative-search-build.zip).
+Source commit: `6ba414f38f2e2b77bcdee1530e2f9695dbce1f6d`, based on public PR6-ready commit `06576a017977a8ea398a2f96ea0f273559ddb02e`.
+
+`npm ci` passed with Node `v24.22.0` and npm `11.19.1`. `npm run build` passed both TypeScript projects, Vite `8.3.4`, and dependency notice generation. Vite emitted a 219.19 kB JavaScript bundle, 68.45 kB gzip, and a 0.56 kB stylesheet. The archive contains the eight production distribution files; it contains no Worker artifact.
+
+The [KHA-31 artifact manifest](../evidence/artifacts/KHA-31-cooperative-search-build.sha256.json) records the source commit, archive digest, and SHA-256 for each file. The committed [production build ZIP](../evidence/artifacts/KHA-31-cooperative-search-build.zip) has SHA-256 `e5f9b66d62e6d1e6a82ebcc2644053179b689bfbb3f17cdf3edc2043657136dc`.
