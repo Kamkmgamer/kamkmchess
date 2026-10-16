@@ -18,7 +18,7 @@ corepack pnpm check
 corepack pnpm preview
 ```
 
-Publishable browser files are in `dist/`. The build includes the application license and production dependency notices. Vercel is the selected host. The current repo has no Go API implementation or hosted database configuration yet.
+Publishable browser files are in `dist/`. The build includes the application license and production dependency notices. Vercel is the selected host. The Go API provides Clerk-authenticated PostgreSQL storage operations; see [API setup and contracts](docs/architecture/go-api.md). Hosted database and Vercel API configuration remain deployment work.
 
 ## Checks
 
@@ -31,6 +31,8 @@ Publishable browser files are in `dist/`. The build includes the application lic
 | `corepack pnpm test:watch` | Rerun selected fixtures during development. |
 | `corepack pnpm build` | Typecheck, compile static assets and collect runtime license notices. |
 | `corepack pnpm check` | Lint, full fixture suite and production build. |
+| `go test ./backend/... ./cmd/...` | Compile the Go API and run its offline fixtures. PostgreSQL integration fixtures require a separate local database. |
+| `go vet ./backend/... ./cmd/...` | Check production Go source for common errors. |
 
 Vitest runs offline fixtures for strict rules, clock calculations, proof checking and search, archive validation, local storage, provider connections and protocols, and serialized controller decisions. A missing fixture suite fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md), [KHA-29 controller evidence](docs/implementation/KHA-29-controller-evidence.md), [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md), [KHA-34 connection API](docs/implementation/KHA-34-api.md) and [evidence](docs/implementation/KHA-34-evidence.md), and [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md).
 
@@ -41,6 +43,7 @@ Vitest runs offline fixtures for strict rules, clock calculations, proof checkin
 - [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md)
 - [KHA-34 connection API](docs/implementation/KHA-34-api.md) and [evidence](docs/implementation/KHA-34-evidence.md)
 - [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md)
+- [Go API and PostgreSQL storage](docs/architecture/go-api.md)
 - [Dependency and artwork inventory](docs/dependency-notices.md)
 - [Approved specification](docs/spec/mvp-handoff.md) and [acceptance cases](docs/spec/mvp-acceptance.json)
 - [Implementation roadmap](docs/spec/implementation-plan.md) and [canonical Linear tracker](docs/agents/issue-tracker.md)

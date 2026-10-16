@@ -17,6 +17,10 @@ const dependencyTree = JSON.parse(
 );
 const packages = new Map();
 
+/**
+ * @typedef {{ path: string, version: string, dependencies?: Record<string, Dependency>, optionalDependencies?: Record<string, Dependency> }} Dependency
+ * @param {Record<string, Dependency> | undefined} dependencies
+ */
 function collect(dependencies, optional = false) {
   for (const [name, dependency] of Object.entries(dependencies ?? {})) {
     if (!dependency.path || !dependency.version) {
