@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import lockedPawnWallCertificateRaw from './fixtures/locked-pawn-wall-certificate.json?raw';
 import researchedPositiveWitnessesRaw from './fixtures/researched-positive-witnesses.json?raw';
 import { applyCoordinateMove, legalMoves, parsePosition } from '../rules/index.js';
@@ -331,7 +331,7 @@ describe('[ADJ-01, ADJ-02, ADJ-03, ADJ-09] proof checker', () => {
       .toMatchObject({ status: 'accepted', conclusion: 'opponent-cannot-mate' });
   });
 
-  it('accepts the independently recorded 768-state dead pawn wall closure', () => {
+  it('[ADJ-03] checks the 768-state dead pawn wall closure under a controlled budget', () => {
     const query = createDeadnessQuery({
       ...scope,
       positionFen: '4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1',
@@ -342,10 +342,56 @@ describe('[ADJ-01, ADJ-02, ADJ-03, ADJ-09] proof checker', () => {
     };
 
     expect(certificate.nodes).toHaveLength(768);
-    expect(checkProofEvidence(query, makeClosedSet(query, certificate))).toMatchObject({
-      status: 'accepted',
-      conclusion: 'dead',
+    const checkerClock = vi.spyOn(performance, 'now').mockReturnValue(0);
+    const result = (() => {
+      try {
+        return checkProofEvidence(query, makeClosedSet(query, certificate));
+      } finally {
+        checkerClock.mockRestore();
+      }
+    })();
+    expect(result).toMatchObject({ status: 'accepted', conclusion: 'dead' });
+  });
+
+  it('[ADJ-03] returns non-result when the public checker clock exceeds its budget', () => {
+    const query = createMatingReachabilityQuery({
+      ...scope,
+      positionFen: '6rk/8/3N3K/8/8/8/8/8 w - - 0 1',
+      intendedColor: 'w',
     });
+    let clockReads = 0;
+    const checkerClock = vi.spyOn(performance, 'now').mockImplementation(() => {
+      clockReads += 1;
+      return clockReads === 1 ? 100 : 5_101;
+    });
+
+    const result = (() => {
+      try {
+        return checkProofEvidence(query, makeWitness(query, 'w', ['d6f7']));
+      } finally {
+        checkerClock.mockRestore();
+      }
+    })();
+    expect(result).toMatchObject({ status: 'non-result', reason: 'time-limit' });
+    expect(clockReads).toBeGreaterThan(1);
+  });
+
+  it('[ADJ-02, ADJ-03] accepts a valid witness under a stable public checker clock', () => {
+    const query = createMatingReachabilityQuery({
+      ...scope,
+      positionFen: '6rk/8/3N3K/8/8/8/8/8 w - - 0 1',
+      intendedColor: 'w',
+    });
+    const checkerClock = vi.spyOn(performance, 'now').mockReturnValue(0);
+
+    const result = (() => {
+      try {
+        return checkProofEvidence(query, makeWitness(query, 'w', ['d6f7']));
+      } finally {
+        checkerClock.mockRestore();
+      }
+    })();
+    expect(result).toMatchObject({ status: 'accepted', conclusion: 'mate-reachable' });
   });
 
   it('rejects closure entries that omit castling, en-passant, or a promotion successor', () => {
