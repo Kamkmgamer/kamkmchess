@@ -1,0 +1,52 @@
+{
+    "format":  "kamkmchess.local-build-evidence",
+    "schemaVersion":  1,
+    "sourceCommit":  "ac6573000109906abd13b2708e16ba941c257fe4",
+    "method":  "Clean npm ci followed by npm run check on the public storage candidate.",
+    "observed":  "Exit 0. ESLint passed with zero warnings; 105 offline fixtures passed across five files; both TypeScript projects passed; Vite 8.3.4 built the app and distribution notices.",
+    "scope":  "Local offline build only. Native-browser, private-session, eviction, crash-window, accessibility, cloud and live-provider acceptance remain not_run.",
+    "archive":  "KHA-28-storage-publication.zip",
+    "archiveSha256":  "100428b1ba4683d639b0586d70568956f8c862ff0d41a47d1396e306f5ae1d87",
+    "files":  [
+                  {
+                      "path":  "_headers",
+                      "bytes":  336,
+                      "sha256":  "01d00fe3ab6cf75ef6214f11e5d294734e23961382b58115ec7c080e1885d65b"
+                  },
+                  {
+                      "path":  "_redirects",
+                      "bytes":  19,
+                      "sha256":  "6036983e5fc00f0169c9e939b1816ed771eee00e27f2fcc517b819041460b9ef"
+                  },
+                  {
+                      "path":  "assets/index-CE2xj8Mp.js",
+                      "bytes":  219192,
+                      "sha256":  "729ec9148ca84b456d8bd35e4e8f4af91fdb06a32c2404587920055dbc0ffd86"
+                  },
+                  {
+                      "path":  "assets/index-Dn1Kj2XK.css",
+                      "bytes":  562,
+                      "sha256":  "84935c1fa75bb6ef1afb3f6862aadeb681ad506f1dca201490dacef620c5283f"
+                  },
+                  {
+                      "path":  "DEPENDENCY_INVENTORY.json",
+                      "bytes":  33061,
+                      "sha256":  "527127737855cdf29b8d48614bcc28b820681bee38e2ca16b7d550875e7ebefe"
+                  },
+                  {
+                      "path":  "index.html",
+                      "bytes":  496,
+                      "sha256":  "4651fb5226b77250c542ce82ca8e098b2b035154d6dc660db0b3e175776bac51"
+                  },
+                  {
+                      "path":  "LICENSE.txt",
+                      "bytes":  1080,
+                      "sha256":  "4ccc7c5ac9ebaa24233e3115dda4541b5d7d5d254f8e027a3fc442807d56e50c"
+                  },
+                  {
+                      "path":  "THIRD_PARTY_NOTICES.txt",
+                      "bytes":  5038,
+                      "sha256":  "a833d6cb3a6f09d0482ec3dd94ce1e8767aab8eb9f14186f79ee408efa4115b9"
+                  }
+              ]
+}
