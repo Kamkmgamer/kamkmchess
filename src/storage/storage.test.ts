@@ -960,6 +960,151 @@ describe('IndexedDB checkpoint commits', () => {
     reloaded.close();
   });
 
+  it('persists commit-time quarantine of existing rows and blocks pending and failed outbox work', async () => {
+    const name = databaseName();
+    const factory = new IDBFactory();
+    const store = await openGameStore({ databaseName: name, factory, now: () => 1800, syncConfigured: true });
+    const initial = makeCheckpoint();
+    const credential = 'credential-canary-alias-r2';
+    const event = makeEvent(['chunk-1', 'chunk-2']);
+    const chunks = [
+      makeChunk('chunk-1', 1, 'received: credential-canary-', false),
+      makeChunk('chunk-2', 2, 'alias-r2 and snow 雪'),
+    ];
+    expect(new TextDecoder().decode(chunks[0]!.bytes) + new TextDecoder().decode(chunks[1]!.bytes)).toBe(
+      'received: credential-canary-alias-r2 and snow 雪',
+    );
+
+    await store.commitCheckpoint({
+      gameId: initial.gameId,
+      expectedRevision: null,
+      expectedEpoch: 0,
+      events: [event],
+      chunks,
+      knownCredentials: [],
+      decide: () => ({
+        checkpoint: initial,
+        outboxOperationIds: ['old-pending', 'old-failed', 'old-synced'],
+      }),
+    });
+    await store.markOutboxFailed('old-failed', 'network');
+    await store.markOutboxSynced('old-synced', 1);
+    const beforeRecognition = await store.readGame(initial.gameId);
+
+    const result = await store.commitCheckpoint({
+      gameId: initial.gameId,
+      expectedRevision: 1,
+      expectedEpoch: 0,
+      events: [],
+      chunks: [],
+      knownCredentials: [credential],
+      decide: (decisionTimeMs) => ({
+        checkpoint: { ...initial, revision: 2, updatedAtMs: decisionTimeMs },
+        outboxOperationIds: ['new-blocked'],
+      }),
+    });
+    expect(result.kind).toBe('committed');
+
+    const afterRecognition = await store.readGame(initial.gameId);
+    expect(afterRecognition?.checkpoint.archive.egressStatus).toBe('credential-echo-quarantined');
+    expect(afterRecognition?.events).toEqual(
+      beforeRecognition?.events.map((savedEvent) => ({ ...savedEvent, egressStatus: 'credential-echo-quarantined' })),
+    );
+    expect(afterRecognition?.chunks).toEqual(
+      beforeRecognition?.chunks.map((savedChunk) => ({ ...savedChunk, egressStatus: 'credential-echo-quarantined' })),
+    );
+    expect((await store.readOutboxOperation('old-pending'))).toMatchObject({
+      state: 'blocked',
+      blockedReason: 'credential-echo',
+      failureCode: null,
+    });
+    expect((await store.readOutboxOperation('old-failed'))).toMatchObject({
+      state: 'blocked',
+      blockedReason: 'credential-echo',
+      failureCode: null,
+    });
+    expect(await store.readOutboxOperation('old-synced')).toMatchObject({
+      state: 'synced',
+      syncedRevision: 1,
+      blockedReason: null,
+    });
+    expect(await store.readOutboxOperation('new-blocked')).toMatchObject({
+      state: 'blocked',
+      blockedReason: 'credential-echo',
+    });
+    store.close();
+
+    const reloaded = await openGameStore({ databaseName: name, factory, syncConfigured: true });
+    const afterReload = await reloaded.readGame(initial.gameId);
+    expect(afterReload?.checkpoint.archive.egressStatus).toBe('credential-echo-quarantined');
+    expect(afterReload?.events).toEqual(afterRecognition?.events);
+    expect(afterReload?.chunks).toEqual(afterRecognition?.chunks);
+    expect(await reloaded.readOutboxOperation('old-pending')).toMatchObject({ state: 'blocked' });
+    expect(await reloaded.readOutboxOperation('old-failed')).toMatchObject({ state: 'blocked' });
+    expect(await reloaded.readOutboxOperation('old-synced')).toMatchObject({ state: 'synced', syncedRevision: 1 });
+    expect(await reloaded.readOutboxOperation('new-blocked')).toMatchObject({ state: 'blocked' });
+    await expect(reloaded.exportGameArchive(initial.gameId, [])).rejects.toMatchObject({ code: 'credential-echo' });
+    reloaded.close();
+  });
+
+  it('rolls back existing-row quarantine and outbox blocks when a later commit aborts', async () => {
+    const name = databaseName();
+    const factory = new IDBFactory();
+    const store = await openGameStore({ databaseName: name, factory, now: () => 1900, syncConfigured: true });
+    const initial = makeCheckpoint();
+    const credential = 'credential-canary-abort-r2';
+    const event = makeEvent(['chunk-1']);
+    const chunk = makeChunk('chunk-1', 1, `received ${credential}`);
+    await store.commitCheckpoint({
+      gameId: initial.gameId,
+      expectedRevision: null,
+      expectedEpoch: 0,
+      events: [event],
+      chunks: [chunk],
+      knownCredentials: [],
+      decide: () => ({ checkpoint: initial, outboxOperationIds: ['abort-pending', 'abort-failed'] }),
+    });
+    await store.markOutboxFailed('abort-failed', 'network');
+    const beforeAbort = await store.readGame(initial.gameId);
+
+    await expect(
+      store.commitCheckpoint({
+        gameId: initial.gameId,
+        expectedRevision: 1,
+        expectedEpoch: 0,
+        events: [],
+        chunks: [],
+        knownCredentials: [credential],
+        decide: (decisionTimeMs) => ({
+          checkpoint: { ...initial, revision: 2, updatedAtMs: decisionTimeMs },
+          outboxOperationIds: ['abort-pending'],
+        }),
+      }),
+    ).rejects.toMatchObject({ code: 'invalid-data' });
+
+    const afterAbort = await store.readGame(initial.gameId);
+    expect(afterAbort?.checkpoint.revision).toBe(1);
+    expect(afterAbort?.checkpoint.archive.egressStatus).toBe('eligible');
+    expect(afterAbort?.events).toEqual(beforeAbort?.events);
+    expect(afterAbort?.chunks).toEqual(beforeAbort?.chunks);
+    expect(await store.readOutboxOperation('abort-pending')).toMatchObject({ state: 'pending' });
+    expect(await store.readOutboxOperation('abort-failed')).toMatchObject({
+      state: 'failed',
+      failureCode: 'network',
+    });
+    store.close();
+
+    const reloaded = await openGameStore({ databaseName: name, factory, syncConfigured: true });
+    const afterAbortReload = await reloaded.readGame(initial.gameId);
+    expect(afterAbortReload?.checkpoint.revision).toBe(1);
+    expect(afterAbortReload?.checkpoint.archive.egressStatus).toBe('eligible');
+    expect(afterAbortReload?.events).toEqual(beforeAbort?.events);
+    expect(afterAbortReload?.chunks).toEqual(beforeAbort?.chunks);
+    expect(await reloaded.readOutboxOperation('abort-pending')).toMatchObject({ state: 'pending' });
+    expect(await reloaded.readOutboxOperation('abort-failed')).toMatchObject({ state: 'failed' });
+    reloaded.close();
+  });
+
   it('rejects stale revision or ownership epoch without calling the decision hook', async () => {
     const store = await openGameStore({ databaseName: databaseName(), factory: new IDBFactory(), now: () => 100 });
     const initial = makeCheckpoint();

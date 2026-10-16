@@ -382,6 +382,8 @@ class IndexedDbGameStore implements GameStore {
           }
           const allEvents = [...priorEvents, ...decisionEvents].sort((left, right) => left.sequence - right.sequence);
           const allChunks = [...existingChunks, ...prepared.chunks].sort((left, right) => left.sequence - right.sequence);
+          const existingEventStatuses = new Map(existingEvents.map((event) => [event.eventId, event.egressStatus]));
+          const existingChunkStatuses = new Map(existingChunks.map((chunk) => [chunk.chunkId, chunk.egressStatus]));
           const classified = quarantineArchiveEchoes(allEvents, allChunks, knownCredentials);
           const quarantined =
             classified.quarantined ||
@@ -397,15 +399,31 @@ class IndexedDbGameStore implements GameStore {
           for (const event of classified.events) {
             const existingEvent = existingEventsById.get(event.eventId);
             if (!existingEvent) eventStore.add(event);
-            else if (existingEvent.egressStatus !== event.egressStatus) eventStore.put(event);
+            else if (existingEventStatuses.get(event.eventId) !== event.egressStatus) eventStore.put(event);
           }
           const existingChunksById = new Map(existingChunks.map((chunk) => [chunk.chunkId, chunk]));
           for (const chunk of classified.chunks) {
             const existingChunk = existingChunksById.get(chunk.chunkId);
             if (!existingChunk) chunkStore.add(chunk);
-            else if (existingChunk.egressStatus !== chunk.egressStatus) chunkStore.put(chunk);
+            else if (existingChunkStatuses.get(chunk.chunkId) !== chunk.egressStatus) chunkStore.put(chunk);
           }
           checkpointStore.put(committedCheckpoint);
+          if (quarantined) {
+            for (const record of existingOutbox) {
+              if (
+                record.gameId !== input.gameId ||
+                (record.state !== 'pending' && record.state !== 'failed')
+              ) {
+                continue;
+              }
+              outboxStore.put({
+                ...record,
+                state: 'blocked',
+                blockedReason: 'credential-echo',
+                failureCode: null,
+              });
+            }
+          }
           for (const operationId of decision.outboxOperationIds) {
             const proposed: StoredOutboxRecordV1 = {
               operationId,
