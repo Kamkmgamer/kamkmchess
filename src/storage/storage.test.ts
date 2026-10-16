@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { exportGameArchive } from '../archive';
 import { openGameStore } from './index';
-import type { ArchiveChunkV1, ArchiveEventV1, GameCheckpointV1 } from './index';
+import type { ArchiveChunkV1, ArchiveEventV1, CommitDecisionV1, GameCheckpointV1 } from './index';
 
 function makeCheckpoint(revision = 1, updatedAtMs = 100): GameCheckpointV1 {
   return {
@@ -241,6 +241,379 @@ describe('IndexedDB checkpoint commits', () => {
     ).rejects.toMatchObject({ code: 'invalid-data' });
     expect(await store.readGame(initial.gameId)).toBeNull();
     store.close();
+  });
+
+  it('commits the move or expiry event selected at decision time with the sampled effective time', async () => {
+    const scenarios = [
+      { decisionTimeMs: 1250, expectedKind: 'move-accepted', eventId: 'decision-move' },
+      { decisionTimeMs: 2600, expectedKind: 'timeout', eventId: 'decision-timeout' },
+    ] as const;
+
+    for (const scenario of scenarios) {
+      const name = databaseName();
+      const factory = new IDBFactory();
+      const initial = makeCheckpoint();
+      const store = await openGameStore({ databaseName: name, factory, now: () => scenario.decisionTimeMs });
+      await store.commitCheckpoint({
+        gameId: initial.gameId,
+        expectedRevision: null,
+        expectedEpoch: 0,
+        events: [makeEvent(['chunk-1'])],
+        chunks: [makeChunk('chunk-1', 1, 'received before decision')],
+        knownCredentials: [],
+        decide: () => ({ checkpoint: initial, outboxOperationIds: [] }),
+      });
+
+      const committed = await store.commitCheckpoint({
+        gameId: initial.gameId,
+        expectedRevision: 1,
+        expectedEpoch: 0,
+        events: [{ ...makeEvent(['chunk-decision'], 2), eventId: 'provider-event-2' }],
+        chunks: [makeChunk('chunk-decision', 2, 'prepared decision-linked bytes')],
+        knownCredentials: [],
+        decide: (decisionTimeMs) => {
+          const isMove = decisionTimeMs < 2000;
+          const eventId = isMove ? 'decision-move' : 'decision-timeout';
+          const event: ArchiveEventV1 = {
+            eventId,
+            gameId: initial.gameId,
+            sequence: 3,
+            segmentId: 'segment-1',
+            kind: isMove ? 'move-accepted' : 'timeout',
+            occurredAtMs: decisionTimeMs,
+            receiveState: 'complete',
+            egressStatus: 'eligible',
+            payload: { sampledDecisionTimeMs: decisionTimeMs },
+            chunkIds: ['chunk-1', 'chunk-decision'],
+          };
+          const checkpoint: GameCheckpointV1 = {
+            ...initial,
+            revision: 2,
+            positionRevision: 2,
+            updatedAtMs: decisionTimeMs,
+            archive: {
+              ...initial.archive,
+              currentLine: { lineId: 'line-current', eventIds: ['event-1', 'provider-event-2', eventId] },
+            },
+            ...(isMove
+              ? {
+                  rules: {
+                    ...initial.rules,
+                    currentFen: 'decision-move-position',
+                    sideToMove: 'black' as const,
+                    moves: [
+                      ...initial.rules.moves,
+                      {
+                        moveId: 'move-decision',
+                        from: 'e7',
+                        to: 'e5',
+                        promotion: null,
+                        san: 'e5',
+                        fenBefore: initial.rules.currentFen,
+                        fenAfter: 'decision-move-position',
+                        eventId,
+                      },
+                    ],
+                  },
+                }
+              : {
+                  result: {
+                    kind: 'final' as const,
+                    winner: 'white' as const,
+                    reason: 'timeout' as const,
+                    eventId,
+                    decidedAtMs: decisionTimeMs,
+                  },
+                }),
+          };
+          const decision: CommitDecisionV1 = {
+            checkpoint,
+            events: [event],
+            outboxOperationIds: [`outbox-${eventId}`],
+          };
+          return decision;
+        },
+      });
+      expect(committed.kind).toBe('committed');
+      expect(committed.kind === 'committed' ? committed.decisionTimeMs : null).toBe(scenario.decisionTimeMs);
+      store.close();
+
+      const reloaded = await openGameStore({ databaseName: name, factory });
+      const saved = await reloaded.readGame(initial.gameId);
+      const savedEvent = saved?.events.find((event) => event.eventId === scenario.eventId);
+      expect(savedEvent?.kind).toBe(scenario.expectedKind);
+      expect(savedEvent?.occurredAtMs).toBe(scenario.decisionTimeMs);
+      expect(savedEvent?.payload).toEqual({ sampledDecisionTimeMs: scenario.decisionTimeMs });
+      expect(saved?.checkpoint.archive.currentLine.eventIds).toEqual([
+        'event-1',
+        'provider-event-2',
+        scenario.eventId,
+      ]);
+      expect(saved?.events.find((event) => event.eventId === scenario.eventId)?.chunkIds).toEqual([
+        'chunk-1',
+        'chunk-decision',
+      ]);
+      expect(saved?.chunks.find((chunk) => chunk.chunkId === 'chunk-decision')?.bytes).toEqual(
+        new TextEncoder().encode('prepared decision-linked bytes'),
+      );
+      if (scenario.expectedKind === 'move-accepted') {
+        expect(saved?.checkpoint.rules.moves.at(-1)?.eventId).toBe(scenario.eventId);
+      } else {
+        expect(saved?.checkpoint.result).toEqual({
+          kind: 'final',
+          winner: 'white',
+          reason: 'timeout',
+          eventId: scenario.eventId,
+          decidedAtMs: scenario.decisionTimeMs,
+        });
+      }
+      reloaded.close();
+    }
+  });
+
+  it('aborts prepared archive additions when the fenced decision throws', async () => {
+    const name = databaseName();
+    const factory = new IDBFactory();
+    const initial = makeCheckpoint();
+    const store = await openGameStore({ databaseName: name, factory, now: () => 1450 });
+    await store.commitCheckpoint({
+      gameId: initial.gameId,
+      expectedRevision: null,
+      expectedEpoch: 0,
+      events: [makeEvent(['chunk-1'])],
+      chunks: [makeChunk('chunk-1', 1, 'already committed')],
+      knownCredentials: [],
+      decide: () => ({ checkpoint: initial, outboxOperationIds: [] }),
+    });
+
+    await expect(
+      store.commitCheckpoint({
+        gameId: initial.gameId,
+        expectedRevision: 1,
+        expectedEpoch: 0,
+        events: [{ ...makeEvent(['chunk-2'], 2), eventId: 'event-prepared' }],
+        chunks: [makeChunk('chunk-2', 2, 'must roll back')],
+        knownCredentials: [],
+        decide: () => {
+          throw new Error('decision fixture failure');
+        },
+      }),
+    ).rejects.toMatchObject({ code: 'transaction-aborted' });
+
+    const saved = await store.readGame(initial.gameId);
+    expect(saved?.checkpoint.revision).toBe(1);
+    expect(saved?.events.map((event) => event.eventId)).toEqual(['event-1']);
+    expect(saved?.chunks.map((chunk) => chunk.chunkId)).toEqual(['chunk-1']);
+    expect((await store.status(initial.gameId)).local).toMatchObject({
+      kind: 'failed',
+      savedRevision: 1,
+      failure: { code: 'transaction-aborted' },
+    });
+    store.close();
+  });
+
+  it('rejects duplicate, out-of-order, wrong-game, and dangling decision events atomically', async () => {
+    const invalidDecisions: Array<{
+      eventId: string;
+      chunkIds: string[];
+      gameId?: string;
+      sequence?: number;
+    }> = [
+      {
+        eventId: 'event-1',
+        chunkIds: [],
+      },
+      {
+        eventId: 'event-dangling',
+        chunkIds: ['chunk-not-stored'],
+      },
+      {
+        eventId: 'event-out-of-order',
+        chunkIds: [],
+        sequence: 2,
+      },
+      {
+        eventId: 'event-wrong-game',
+        chunkIds: [],
+        gameId: 'another-game',
+      },
+    ];
+
+    for (const [index, invalidEvent] of invalidDecisions.entries()) {
+      const name = databaseName();
+      const factory = new IDBFactory();
+      const initial = makeCheckpoint();
+      const store = await openGameStore({ databaseName: name, factory, now: () => 1600 });
+      await store.commitCheckpoint({
+        gameId: initial.gameId,
+        expectedRevision: null,
+        expectedEpoch: 0,
+        events: [makeEvent(['chunk-1'])],
+        chunks: [makeChunk('chunk-1', 1, 'already committed')],
+        knownCredentials: [],
+        decide: () => ({ checkpoint: initial, outboxOperationIds: [] }),
+      });
+      const decisionEvent: ArchiveEventV1 = {
+        eventId: invalidEvent.eventId,
+        gameId: invalidEvent.gameId ?? initial.gameId,
+        sequence: invalidEvent.sequence ?? 3,
+        segmentId: 'segment-1',
+        kind: 'move-accepted',
+        occurredAtMs: 1600,
+        receiveState: 'complete',
+        egressStatus: 'eligible',
+        payload: {},
+        chunkIds: invalidEvent.chunkIds,
+      };
+      const next = {
+        ...initial,
+        revision: 2,
+        positionRevision: 2,
+        archive: {
+          ...initial.archive,
+          currentLine: { lineId: 'line-current', eventIds: ['event-1', invalidEvent.eventId] },
+        },
+      };
+      await expect(
+        store.commitCheckpoint({
+          gameId: initial.gameId,
+          expectedRevision: 1,
+          expectedEpoch: 0,
+          events: [{ ...makeEvent(['chunk-2'], 2), eventId: `prepared-${index}` }],
+          chunks: [makeChunk('chunk-2', 2, 'must roll back')],
+          knownCredentials: [],
+          decide: () => ({ checkpoint: next, events: [decisionEvent], outboxOperationIds: [`invalid-${index}`] }),
+        }),
+      ).rejects.toMatchObject({ code: 'invalid-data' });
+
+      const saved = await store.readGame(initial.gameId);
+      expect(saved?.checkpoint.revision).toBe(1);
+      expect(saved?.events.map((event) => event.eventId)).toEqual(['event-1']);
+      expect(saved?.chunks.map((chunk) => chunk.chunkId)).toEqual(['chunk-1']);
+      expect(await store.readOutboxOperation(`invalid-${index}`)).toBeNull();
+      store.close();
+    }
+  });
+
+  it('rejects unprepared raw chunks attached to a decision event', async () => {
+    const name = databaseName();
+    const factory = new IDBFactory();
+    const initial = makeCheckpoint();
+    const store = await openGameStore({ databaseName: name, factory, now: () => 1680 });
+    await store.commitCheckpoint({
+      gameId: initial.gameId,
+      expectedRevision: null,
+      expectedEpoch: 0,
+      events: [makeEvent(['chunk-1'])],
+      chunks: [makeChunk('chunk-1', 1, 'already committed')],
+      knownCredentials: [],
+      decide: () => ({ checkpoint: initial, outboxOperationIds: [] }),
+    });
+
+    const invalidEvent = {
+      ...makeEvent([], 2),
+      eventId: 'decision-with-raw-chunk',
+      bytes: new TextEncoder().encode('must stay outside the transaction'),
+    };
+    const next = {
+      ...initial,
+      revision: 2,
+      positionRevision: 2,
+      archive: {
+        ...initial.archive,
+        currentLine: { lineId: 'line-current', eventIds: ['event-1', invalidEvent.eventId] },
+      },
+    };
+
+    await expect(
+      store.commitCheckpoint({
+        gameId: initial.gameId,
+        expectedRevision: 1,
+        expectedEpoch: 0,
+        events: [{ ...makeEvent(['chunk-2'], 2), eventId: 'prepared-event' }],
+        chunks: [makeChunk('chunk-2', 2, 'prepared content')],
+        knownCredentials: [],
+        decide: () => ({ checkpoint: next, events: [invalidEvent], outboxOperationIds: ['raw-chunk-outbox'] }),
+      }),
+    ).rejects.toMatchObject({ code: 'invalid-data' });
+
+    const saved = await store.readGame(initial.gameId);
+    expect(saved?.checkpoint.revision).toBe(1);
+    expect(saved?.events.map((event) => event.eventId)).toEqual(['event-1']);
+    expect(saved?.chunks.map((chunk) => chunk.chunkId)).toEqual(['chunk-1']);
+    expect(await store.readOutboxOperation('raw-chunk-outbox')).toBeNull();
+    store.close();
+  });
+
+  it('quarantines a call-time credential echo in decided metadata and blocks export after reload', async () => {
+    const name = databaseName();
+    const factory = new IDBFactory();
+    const initial = makeCheckpoint();
+    const store = await openGameStore({ databaseName: name, factory, now: () => 1725, syncConfigured: true });
+    await store.commitCheckpoint({
+      gameId: initial.gameId,
+      expectedRevision: null,
+      expectedEpoch: 0,
+      events: [makeEvent(['chunk-1'])],
+      chunks: [makeChunk('chunk-1', 1, 'safe initial bytes')],
+      knownCredentials: [],
+      decide: () => ({ checkpoint: initial, outboxOperationIds: [] }),
+    });
+
+    const knownCredentials = ['api-key-decision-canary-1725'];
+    const commitPromise = store.commitCheckpoint({
+      gameId: initial.gameId,
+      expectedRevision: 1,
+      expectedEpoch: 0,
+      events: [],
+      chunks: [],
+      knownCredentials,
+      decide: (decisionTimeMs) => {
+        const eventId = 'decision-credential-echo';
+        return {
+          checkpoint: {
+            ...initial,
+            revision: 2,
+            positionRevision: 2,
+            updatedAtMs: decisionTimeMs,
+            archive: {
+              ...initial.archive,
+              currentLine: { lineId: 'line-current', eventIds: ['event-1', eventId] },
+            },
+          },
+          events: [
+            {
+              eventId,
+              gameId: initial.gameId,
+              sequence: 2,
+              segmentId: 'segment-api-key-decision-canary-1725',
+              kind: 'move-accepted',
+              occurredAtMs: decisionTimeMs,
+              receiveState: 'complete',
+              egressStatus: 'eligible',
+              payload: { rawMetadata: 'recognized reply' },
+              chunkIds: [],
+            },
+          ],
+          outboxOperationIds: ['quarantined-decision-outbox'],
+        };
+      },
+    });
+    knownCredentials.splice(0, knownCredentials.length);
+    expect((await commitPromise).kind).toBe('committed');
+    const saved = await store.readGame(initial.gameId);
+    expect(saved?.checkpoint.archive.egressStatus).toBe('credential-echo-quarantined');
+    expect(saved?.events[1]?.segmentId).toBe('segment-api-key-decision-canary-1725');
+    expect(saved?.events[1]?.payload).toEqual({ rawMetadata: 'recognized reply' });
+    expect(saved?.events[1]?.egressStatus).toBe('credential-echo-quarantined');
+    expect((await store.readOutboxOperation('quarantined-decision-outbox'))?.state).toBe('blocked');
+    store.close();
+
+    const reloaded = await openGameStore({ databaseName: name, factory, syncConfigured: true });
+    await expect(reloaded.exportGameArchive(initial.gameId, [])).rejects.toMatchObject({ code: 'credential-echo' });
+    expect((await reloaded.readOutboxOperation('quarantined-decision-outbox'))?.state).toBe('blocked');
+    expect((await reloaded.status(initial.gameId)).sync.kind).toBe('blocked');
+    reloaded.close();
   });
 
   it('round-trips versioned clock anchors, optional host offsets, and paused null state', async () => {

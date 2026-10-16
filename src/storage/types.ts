@@ -275,6 +275,8 @@ export interface StoredOutboxRecordV1 {
 
 export interface CommitDecisionV1 {
   checkpoint: GameCheckpointV1;
+  /** Metadata events created synchronously from the fenced decision-time sample. */
+  events?: ArchiveEventV1[];
   outboxOperationIds: string[];
 }
 

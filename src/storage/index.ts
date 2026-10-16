@@ -4,6 +4,7 @@ import {
   checkpointWithQuarantine,
   exportGameArchive as buildGameArchiveExport,
   prepareArchiveRecords,
+  quarantineArchiveEchoes,
   readArchiveChunk,
   readArchiveEvent,
   readGameCheckpoint,
@@ -19,6 +20,7 @@ import type {
   CheckpointCommitInputV1,
   CheckpointCommitResultV1,
   CommitDecisionV1,
+  ArchiveEventV1,
   GameCheckpointV1,
   GameNamespaceV1,
   GameStorageStatusV1,
@@ -184,8 +186,9 @@ function isThenable(value: unknown): boolean {
 function decisionObject(value: unknown): CommitDecisionV1 {
   if (!isPlainRecord(value)) throw storageFailure('invalid-data', 'The commit decision must be a plain object.');
   const expectedKeys = ['checkpoint', 'outboxOperationIds'];
+  const supportedKeys = [...expectedKeys, 'events'];
   if (
-    Object.keys(value).some((key) => !expectedKeys.includes(key)) ||
+    Object.keys(value).some((key) => !supportedKeys.includes(key)) ||
     expectedKeys.some((key) => !Object.hasOwn(value, key))
   ) {
     throw storageFailure('invalid-data', 'The commit decision has an unsupported shape.');
@@ -202,7 +205,16 @@ function decisionObject(value: unknown): CommitDecisionV1 {
   if (new Set(outboxOperationIds).size !== outboxOperationIds.length) {
     throw storageFailure('invalid-data', 'The commit decision repeats an outbox ID.');
   }
-  return { checkpoint: readGameCheckpoint(value.checkpoint), outboxOperationIds };
+  let events: ArchiveEventV1[] | undefined;
+  if (Object.hasOwn(value, 'events')) {
+    if (!Array.isArray(value.events)) throw storageFailure('invalid-data', 'The decided events must be an array.');
+    events = value.events.map((event) => readArchiveEvent(event));
+  }
+  return {
+    checkpoint: readGameCheckpoint(value.checkpoint),
+    ...(events ? { events } : {}),
+    outboxOperationIds,
+  };
 }
 
 function sameOutboxOperation(left: StoredOutboxRecordV1, right: StoredOutboxRecordV1): boolean {
@@ -359,20 +371,40 @@ class IndexedDbGameStore implements GameStore {
             throw storageFailure('invalid-data', 'The checkpoint does not match its commit fence.');
           }
 
-          const allEvents = [...existingEvents, ...prepared.events].sort((left, right) => left.sequence - right.sequence);
+          const priorEvents = [...existingEvents, ...prepared.events].sort((left, right) => left.sequence - right.sequence);
+          let lastSequence = priorEvents.reduce((maximum, event) => Math.max(maximum, event.sequence), -1);
+          const decisionEvents = decision.events ?? [];
+          for (const event of decisionEvents) {
+            if (event.gameId !== input.gameId || event.sequence <= lastSequence) {
+              throw storageFailure('invalid-data', 'The decided events must belong to this game and append in sequence order.');
+            }
+            lastSequence = event.sequence;
+          }
+          const allEvents = [...priorEvents, ...decisionEvents].sort((left, right) => left.sequence - right.sequence);
           const allChunks = [...existingChunks, ...prepared.chunks].sort((left, right) => left.sequence - right.sequence);
+          const classified = quarantineArchiveEchoes(allEvents, allChunks, knownCredentials);
           const quarantined =
-            prepared.quarantined ||
+            classified.quarantined ||
             checkpointHasCredentialEcho(decision.checkpoint, knownCredentials) ||
             currentCheckpoint?.archive.egressStatus === 'credential-echo-quarantined' ||
-            allEvents.some((event) => event.egressStatus === 'credential-echo-quarantined') ||
-            allChunks.some((chunk) => chunk.egressStatus === 'credential-echo-quarantined');
+            classified.events.some((event) => event.egressStatus === 'credential-echo-quarantined') ||
+            classified.chunks.some((chunk) => chunk.egressStatus === 'credential-echo-quarantined');
           const committedCheckpoint = checkpointWithQuarantine(decision.checkpoint, quarantined);
-          assertArchiveReferenceIntegrity(committedCheckpoint, allEvents, allChunks);
+          assertArchiveReferenceIntegrity(committedCheckpoint, classified.events, classified.chunks);
 
           const priorOutbox = new Map(existingOutbox.map((record) => [record.operationId, record]));
-          for (const event of prepared.events) eventStore.add(event);
-          for (const chunk of prepared.chunks) chunkStore.add(chunk);
+          const existingEventsById = new Map(existingEvents.map((event) => [event.eventId, event]));
+          for (const event of classified.events) {
+            const existingEvent = existingEventsById.get(event.eventId);
+            if (!existingEvent) eventStore.add(event);
+            else if (existingEvent.egressStatus !== event.egressStatus) eventStore.put(event);
+          }
+          const existingChunksById = new Map(existingChunks.map((chunk) => [chunk.chunkId, chunk]));
+          for (const chunk of classified.chunks) {
+            const existingChunk = existingChunksById.get(chunk.chunkId);
+            if (!existingChunk) chunkStore.add(chunk);
+            else if (existingChunk.egressStatus !== chunk.egressStatus) chunkStore.put(chunk);
+          }
           checkpointStore.put(committedCheckpoint);
           for (const operationId of decision.outboxOperationIds) {
             const proposed: StoredOutboxRecordV1 = {
@@ -924,6 +956,7 @@ export type {
   CheckpointExtensionsV1,
   CheckpointCommitInputV1,
   CheckpointCommitResultV1,
+  CommitDecisionV1,
   ChessSideV1,
   ClockCheckpointV1,
   ClockAnchorCheckpointV1,

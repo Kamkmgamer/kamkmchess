@@ -82,7 +82,7 @@ export function checkpointHasCredentialEcho(
   );
 }
 
-function quarantineCredentialEchoes(
+export function quarantineArchiveEchoes(
   events: ArchiveEventV1[],
   chunks: ArchiveChunkV1[],
   credentials: readonly string[],
@@ -96,7 +96,11 @@ function quarantineCredentialEchoes(
     }
     if (credential.length === 0) continue;
     const marker = encoder.encode(credential);
-    const matchedChunkIds = new Set<string>();
+    const matchedChunkIds = new Set<string>(
+      chunks
+        .filter((chunk) => chunk.egressStatus === 'credential-echo-quarantined')
+        .map((chunk) => chunk.chunkId),
+    );
     for (const chunk of chunks) {
       const { bytes, ...metadata } = chunk;
       if (containsBytes(bytes, marker) || jsonContainsText(metadata, credential)) matchedChunkIds.add(chunk.chunkId);
@@ -105,7 +109,7 @@ function quarantineCredentialEchoes(
       const eventChunks = event.chunkIds
         .map((chunkId) => chunksById.get(chunkId))
         .filter((chunk): chunk is ArchiveChunkV1 => chunk !== undefined);
-      if (event.chunkIds.some((chunkId) => matchedChunkIds.has(chunkId))) {
+      if (event.egressStatus === 'credential-echo-quarantined' || event.chunkIds.some((chunkId) => matchedChunkIds.has(chunkId))) {
         event.egressStatus = 'credential-echo-quarantined';
         for (const chunk of eventChunks) matchedChunkIds.add(chunk.chunkId);
       } else if (eventChunks.length > 1 && containsBytes(joinBytes(eventChunks), marker)) {
@@ -141,7 +145,7 @@ export async function prepareArchiveRecords(
       return normalized;
     }),
   );
-  const prepared = quarantineCredentialEchoes(events, chunks, credentials);
+  const prepared = quarantineArchiveEchoes(events, chunks, credentials);
   return {
     events: [...prepared.events].sort((left, right) => left.sequence - right.sequence),
     chunks: [...prepared.chunks].sort((left, right) => left.sequence - right.sequence),
