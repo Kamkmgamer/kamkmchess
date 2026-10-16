@@ -35,6 +35,7 @@ export function createChatCompletionsDecoder(
     consumeChatEvent,
     finalizeChat,
     metadata,
+    (event) => event.event === 'message',
   );
 }
 
