@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "artifact": "KHA-34-static-build.zip",
+  "sha256": "a44a71cabcee1e333d65b7b6888a708a1eefaeff6093cd810ac0404749c8bb62",
+  "builtFromCommit": "4980ad5cf048a155c553e9e1d82c4e6d70f8eeac",
+  "publicBaseCommit": "a886c7c787d38feba238010187a032bced8d2203",
+  "acceptedConnectionSourceCommit": "30ec162a4b3394065107c7f88076cb58ef5f0df8",
+  "build": {
+    "node": "24.22.0",
+    "npm": "11.19.1",
+    "commands": [
+      "npm ci",
+      "npm run build"
+    ]
+  },
+  "members": [
+    {
+      "path": "DEPENDENCY_INVENTORY.json",
+      "sizeBytes": 33061,
+      "sha256": "527127737855cdf29b8d48614bcc28b820681bee38e2ca16b7d550875e7ebefe"
+    },
+    {
+      "path": "LICENSE.txt",
+      "sizeBytes": 1080,
+      "sha256": "4ccc7c5ac9ebaa24233e3115dda4541b5d7d5d254f8e027a3fc442807d56e50c"
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.txt",
+      "sizeBytes": 5038,
+      "sha256": "a833d6cb3a6f09d0482ec3dd94ce1e8767aab8eb9f14186f79ee408efa4115b9"
+    },
+    {
+      "path": "_headers",
+      "sizeBytes": 336,
+      "sha256": "01d00fe3ab6cf75ef6214f11e5d294734e23961382b58115ec7c080e1885d65b"
+    },
+    {
+      "path": "_redirects",
+      "sizeBytes": 19,
+      "sha256": "6036983e5fc00f0169c9e939b1816ed771eee00e27f2fcc517b819041460b9ef"
+    },
+    {
+      "path": "assets/index-CE2xj8Mp.js",
+      "sizeBytes": 219192,
+      "sha256": "729ec9148ca84b456d8bd35e4e8f4af91fdb06a32c2404587920055dbc0ffd86"
+    },
+    {
+      "path": "assets/index-Dn1Kj2XK.css",
+      "sizeBytes": 562,
+      "sha256": "84935c1fa75bb6ef1afb3f6862aadeb681ad506f1dca201490dacef620c5283f"
+    },
+    {
+      "path": "index.html",
+      "sizeBytes": 496,
+      "sha256": "4651fb5226b77250c542ce82ca8e098b2b035154d6dc660db0b3e175776bac51"
+    }
+  ]
+}
