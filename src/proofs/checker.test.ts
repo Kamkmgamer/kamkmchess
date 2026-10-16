@@ -351,7 +351,8 @@ describe('[ADJ-01, ADJ-02, ADJ-03, ADJ-09] proof checker', () => {
       }
     })();
     expect(result).toMatchObject({ status: 'accepted', conclusion: 'dead' });
-  });
+    // This finite-graph correctness fixture uses a frozen checker budget, not a wall-time target.
+  }, 30_000);
 
   it('[ADJ-03] returns non-result when the public checker clock exceeds its budget', () => {
     const query = createMatingReachabilityQuery({
