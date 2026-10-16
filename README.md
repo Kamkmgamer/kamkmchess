@@ -32,7 +32,7 @@ Publishable files are in `dist/`. The build includes the application license, co
 | `npm run build` | Typecheck, compile static assets and collect runtime license notices. |
 | `npm run check` | Lint, full fixture suite and production build. |
 
-There are **zero product tests** in the foundation. Vitest reports that no test files exist and exits successfully so the fixture entry point is usable before the rules/storage tickets. Remove `passWithNoTests` when the first product fixtures land. This is not product acceptance evidence. See [the fixture guide](tests/README.md).
+Vitest runs the product fixtures, including the pure clock calculations. A missing fixture suite now fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md).
 
 ## Implementation references
 
