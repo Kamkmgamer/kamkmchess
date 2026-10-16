@@ -4,7 +4,10 @@
   "prepared_at": "2026-10-16",
   "issue": "KHA-14",
   "scope": "Specification handoff. No production or launch acceptance claimed.",
-  "owner_handoff_agreement": "pending",
+  "owner_handoff_agreement": "approved",
+  "owner_handoff_agreement_date": "2026-10-16",
+  "owner_handoff_resolution_comment": "3bcd24a7-2bd5-43fb-8a35-095bac2575f2",
+  "approved_review_commit": "35444e0",
   "canonical_sources": {
     "connections": {
       "issue": "KHA-8",
@@ -240,7 +243,7 @@
     ]
   },
   "prerequisites": [
-    "Owner agreement to concrete specification packet.",
+    "Owner agreement obtained on 2026-10-16 for the concrete specification packet at commit 35444e0.",
     "Separate implementation instruction, safe proof/checker implementation and review.",
     "Actual native devices and assistive technologies.",
     "Owner-controlled free hosting/auth and verified private encrypted backup destination/automation before public account storage.",

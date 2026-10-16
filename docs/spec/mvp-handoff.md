@@ -1,8 +1,8 @@
 # MVP specification handoff
 
-Revision 1, 2026-10-16. Prepared for the owner's agreement in [Agree on MVP acceptance criteria and the specification handoff](https://linear.app/kamkm/issue/KHA-14/agree-on-mvp-acceptance-criteria-and-the-specification-handoff).
+Revision 1, approved by the owner on 2026-10-16 in [Agree on MVP acceptance criteria and the specification handoff](https://linear.app/kamkm/issue/KHA-14/agree-on-mvp-acceptance-criteria-and-the-specification-handoff), resolution comment `3bcd24a7-2bd5-43fb-8a35-095bac2575f2`.
 
-This packet defines the implementation scope and the evidence needed before launch. Owner handoff agreement is pending. Every product acceptance case in [the machine-readable matrix](mvp-acceptance.json) is `not_run`. Research and prototype approval do not pass those cases.
+This packet defines the approved implementation scope and the evidence needed before launch. The owner approved the reviewed content at commit `35444e0`; the attached review snapshots retain their original pending wording. This copy records subsequent approval without changing the requirements. Every product acceptance case in [the machine-readable matrix](mvp-acceptance.json) is `not_run`. Research and specification approval do not pass those cases.
 
 The destination is a public, open-source website where a casual chess player brings an AI connection, chooses an exact model ID and plays against the model's independently chosen moves. Guest play is account-free. Optional accounts provide private game sync. Planning approval does not authorize production implementation, provisioning, credential access, live requests, spending or launch.
 
@@ -131,7 +131,7 @@ Suggested module interfaces own intents/committed state, strict legal transition
 
 ## Execution prerequisites and final agreement
 
-No unresolved product choice is currently known beyond the owner's review of this concrete packet. These execution prerequisites remain open and must not be reported as completed work:
+The owner approved this concrete packet. No unresolved product choice is currently known. These execution prerequisites remain open and must not be reported as completed work:
 
 - Actual implementation, dependency pins and proof/transition code review, including repair or bypass of unsafe solver paths.
 - Native Windows/macOS/iOS/Android devices and actual NVDA/VoiceOver/TalkBack access.
@@ -141,4 +141,4 @@ No unresolved product choice is currently known beyond the owner's review of thi
 
 Account retention is until owner deletion with no automatic age purge. Free services and browser storage have capacity/eviction/availability limits. Target encrypted daily logical exports with seven daily and four weekly copies, a restore rehearsal and deletion tombstones reapplied through backup rotation. Preserve unsynced local copies and disclose read-only/pause recovery. A failure to establish this at no cost is an operating constraint to resolve, not permission to reduce the promise silently.
 
-The final requested agreement is that this packet is ready to hand off for implementation. It does not mean the app exists, any case has passed or public launch is approved. Keep the acceptance decision and map open until the owner gives that agreement. Later constraints that require changing a settled promise belong in explicit tracker decisions.
+The owner agreed that this packet is ready to hand off for implementation. The acceptance decision and planning map are Done, with all 20 child decisions closed. This does not mean the app exists, any case has passed or public launch is approved. Later constraints that require changing a settled promise belong in explicit tracker decisions.
