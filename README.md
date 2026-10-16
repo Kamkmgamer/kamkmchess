@@ -27,12 +27,12 @@ Publishable files are in `dist/`. The build includes the application license, co
 | `npm run typecheck` | Strict TypeScript checks for browser code, tools and fixtures. |
 | `npm run lint` | ESLint, TypeScript and React Hooks/refresh checks; warnings fail. |
 | `npm test` | Run deterministic fixtures once. |
-| `npm test -- src/rules/position.test.ts` | Run one fixture file after it exists. |
+| `npm test -- src/rules/rules.test.ts` | Run the strict rules fixtures. |
 | `npm run test:watch` | Rerun selected fixtures during development. |
 | `npm run build` | Typecheck, compile static assets and collect runtime license notices. |
 | `npm run check` | Lint, full fixture suite and production build. |
 
-Vitest runs the product fixtures, including the pure clock calculations. A missing fixture suite now fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md).
+Vitest runs the product fixtures for strict rules and pure clock calculations. A missing fixture suite fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md).
 
 ## Implementation references
 
