@@ -1,0 +1,357 @@
+{
+  "files": {
+    "solver-lib": {
+      "cachePath": "chasolver/chasolver-3484c7e65247003fac8705a9290dc2b5d0978b94/src/lib.rs",
+      "sha256": "ed4b838f771fee612bbc25d737df6dbc505c2196d741edf718290566d10eabb7"
+    },
+    "full": {
+      "cachePath": "chasolver/chasolver-3484c7e65247003fac8705a9290dc2b5d0978b94/src/winnability/full.rs",
+      "sha256": "5712f725c6361c3f7e8d0e1f79cb762be2f0b80cb947000bf9c1994354844ddc"
+    },
+    "fast": {
+      "cachePath": "chasolver/chasolver-3484c7e65247003fac8705a9290dc2b5d0978b94/src/winnability/fast.rs",
+      "sha256": "1e6b6063eb4ff6ba823b9ccccb74f38918a74c82bcb4c764ea19454d15e25d85"
+    },
+    "search": {
+      "cachePath": "chasolver/chasolver-3484c7e65247003fac8705a9290dc2b5d0978b94/src/search/engine.rs",
+      "sha256": "b7aaa856783a2bb6ca9c6dbb6456fb5382ca383cd6fc4073a1a012c5b952ef81"
+    },
+    "forced": {
+      "cachePath": "chasolver/chasolver-3484c7e65247003fac8705a9290dc2b5d0978b94/src/search/mod.rs",
+      "sha256": "0961a814f4f1781123f2bc15936672a561fa04b1f445037ae121faa43162576d"
+    },
+    "check-chain": {
+      "cachePath": "chasolver/chasolver-3484c7e65247003fac8705a9290dc2b5d0978b94/src/search/probes.rs",
+      "sha256": "cafdcfcac1530322dd04cbf24ea9e596c6b665aaeba7f3a42738bb3364342d32"
+    },
+    "static": {
+      "cachePath": "chasolver/chasolver-3484c7e65247003fac8705a9290dc2b5d0978b94/src/deduction/mod.rs",
+      "sha256": "cc33f7ae281d4eb74dd14b9951c398e26fccd795de5011b86a477d9c793c5501"
+    },
+    "static-fields": {
+      "cachePath": "chasolver/chasolver-3484c7e65247003fac8705a9290dc2b5d0978b94/src/deduction/analysis.rs",
+      "sha256": "907c7d3a93726666b266d86902cc8f845957677ab1abfe90c91242b20f065cb1"
+    },
+    "tests": {
+      "cachePath": "chasolver/chasolver-3484c7e65247003fac8705a9290dc2b5d0978b94/tests/integration.rs",
+      "sha256": "a180c82244d21c344bc8df7583bb5e4406a7f93b84a18b7f9f95e324014e6aec"
+    },
+    "board": {
+      "cachePath": "chess/chess-3.2.0/src/board.rs",
+      "sha256": "e81fc31b732622d6be46776a4f7a7dc1c959015c7637d26a2c13c26c04027c0e"
+    },
+    "builder": {
+      "cachePath": "chess/chess-3.2.0/src/board_builder.rs",
+      "sha256": "9079482cc550a90ab9f254c38c986e8f3c3602eee0e04f48fdefa50dfaeef7ce"
+    },
+    "move-list": {
+      "cachePath": "chess/chess-3.2.0/src/movegen/movegen.rs",
+      "sha256": "8859db4f209f42abb2d731c2e6e1bfa08503811446545ada3fec17659c4c9144"
+    },
+    "unchecked-insert": {
+      "cachePath": "chess/chess-3.2.0/src/movegen/piece_type.rs",
+      "sha256": "247f2ec4af07c598d61954cb979758b2bced075097bfd3c813e35e6e648562ff"
+    },
+    "syzygy": {
+      "cachePath": "syzygy.txt",
+      "sha256": "e10e74b0b8174e85428945a975dfc2d67f521c6c5d941e998bdfca26f9ebf754"
+    },
+    "popeye-readme": {
+      "cachePath": "popeye-readme.txt",
+      "sha256": "bbf1ed748e70e844e862efd818a67c4240eec9c852633fa6e71e3b965de8c77f"
+    }
+  },
+  "excerpts": [
+    {
+      "file": "solver-lib",
+      "firstLine": 24,
+      "lastLine": 69,
+      "text": "use chess::{Board, ChessMove, Color};\nuse winnability::{fast, full};\n\n/// Result of a [`winnability`] analysis for the intended winner.\n#[derive(Debug, Clone, PartialEq, Eq)]\npub enum Winnability {\n    /// Helpmate is achievable for the intended winner; `helpmate` is a\n    /// possible sequence of moves leading to checkmate.\n    Winnable { helpmate: Vec<ChessMove> },\n\n    /// Helpmate is provably impossible for the intended winner.\n    Unwinnable,\n}\n\n/// Full helpmate search for `intended_winner`.\n///\n/// Returns `Some` result if the analysis is successful:\n/// - [`Winnability::Winnable`] if the position is winnable for the intended\n///   winner, together with a supporting helpmate sequence.\n///\n/// - [`Winnability::Unwinnable`] if no helpmate exists.\n///\n/// Returns `None` if winnability could not be decided on this position.\npub fn winnability(board: &Board, intended_winner: Color) -> Option<Winnability> {\n    match intended_winner {\n        Color::White => full::analysis(board),\n        Color::Black => {\n            let flipped_board = utils::mirror_board(board);\n            let result = full::analysis(&flipped_board);\n            result.map(utils::mirror_moves)\n        }\n    }\n}\n\n/// Fast but incomplete check for unwinnability; cheaper than [`winnability`]\n/// when a mating line isn't needed.\n///\n/// Returns `true` if the position is provably unwinnable for `intended_winner`,\n/// `false` if the analysis is inconclusive (the position may still be\n/// unwinnable).\npub fn is_unwinnable_fast(board: &Board, intended_winner: Color) -> bool {\n    match intended_winner {\n        Color::White => fast::is_unwinnable(board),\n        Color::Black => fast::is_unwinnable(&utils::mirror_board(board)),\n    }\n}"
+    },
+    {
+      "file": "full",
+      "firstLine": 20,
+      "lastLine": 97,
+      "text": "/// techniques until the position is resolved or all phases are exhausted.\n///\n/// Designed for White as the intended winner.\npub(crate) fn analysis(board: &Board) -> Option<Winnability> {\n    let mut search = Search::new();\n    let mut pos = *board;\n\n    // Phase 1: Play forced moves.\n    pos = play_forced_moves(&pos, &mut search);\n\n    if search.interrupted {\n        return Some(Winnability::Unwinnable);\n    }\n\n    // Phase 2: Depth-1 search with heuristics that selectively extend promising\n    // variations beyond depth 1, to catch trivial positions quickly.\n    search.depth_node_limit = 1000;\n    search.transposition_table = None;\n    search.reset_global_nodes();\n    let result = iterative_deepening(&pos, &mut search, 1..=1);\n    if let Some(result) = result {\n        return Some(result);\n    }\n\n    // Phase 3: Early static analysis. Skipped for positions with queens, rooks\n    // or knights, where it is less likely to be relevant; deferred to phase 5 in\n    // that case.\n    let has_queens_rooks_or_knights =\n        (pos.pieces(Piece::Queen) | pos.pieces(Piece::Rook) | pos.pieces(Piece::Knight)) != EMPTY;\n    if !has_queens_rooks_or_knights && is_statically_unwinnable(&pos) {\n        return Some(Winnability::Unwinnable);\n    }\n\n    // Phase 4: Iterative deepening with transposition table.\n    search.depth_node_limit = 7000;\n    search.transposition_table =\n        Some(FxHashMap::with_capacity_and_hasher(1_000, Default::default()));\n    search.reset_global_nodes();\n    let result = iterative_deepening(&pos, &mut search, 2..=128);\n    if let Some(result) = result {\n        return Some(result);\n    }\n\n    // Phase 5: Static analysis (only for positions that skipped phase 3).\n    if has_queens_rooks_or_knights && is_statically_unwinnable(&pos) {\n        return Some(Winnability::Unwinnable);\n    }\n\n    // Phase 6: Exhaustive unwinnability check for positions where at least\n    // one side can only move pawns (no non-pawn move observed within a\n    // 1000-node probe).\n    let mut non_pawn_seen = [false; 2];\n    probe_non_pawn_moves(&pos, &mut non_pawn_seen, &mut 0, 1_000);\n    if non_pawn_seen.iter().any(|&seen| !seen) && exhaustively_unwinnable(&pos) {\n        return Some(Winnability::Unwinnable);\n    }\n\n    // Phase 7: Follow all check chains; evaluate non-check leaves statically.\n    let mut visited: FxHashSet<Board> = FxHashSet::with_capacity_and_hasher(64, Default::default());\n    let result = check_chain_search(&pos, &mut visited, 0);\n    if let Some(result) = result {\n        return Some(result);\n    }\n\n    // Phase 8: Guided deep search using bishop distances and punishable moves.\n    let mut analysis = Analysis::new(pos);\n    analysis.saturate();\n\n    search.bishop_distances = Some(compute_bishop_distances(&pos, analysis.steady));\n    search.punishable = Some(compute_punishable(&pos));\n\n    search.depth_node_limit = u64::MAX;\n    search.global_node_limit = 1 << 24;\n    search.transposition_table =\n        Some(FxHashMap::with_capacity_and_hasher(1 << 16, Default::default()));\n    search.reset_global_nodes();\n    iterative_deepening(&pos, &mut search, 2..=128)\n}"
+    },
+    {
+      "file": "fast",
+      "firstLine": 122,
+      "lastLine": 180,
+      "text": "    /// Whether some line, anywhere in the explored tree, played a pawn move\n    /// twice (not necessarily on consecutive plies; other moves may fall\n    /// between them).\n    two_pawn_moves_in_a_line: bool,\n}\n\n/// Exhaustively prove a position is unwinnable for White by checking all\n/// branches.\n///\n/// Returns `true` only if EVERY branch up to `depth` is provably unwinnable.\n/// `moved` accumulates which piece types were seen moving anywhere in the\n/// explored tree. `pawn_move_seen` is whether a pawn move has already been\n/// played earlier on the line leading to `board` (not shared across\n/// branches, unlike `moved`), used to detect a second pawn move anywhere\n/// further down that same line.\nfn is_dynamically_unwinnable(\n    board: &Board,\n    depth: u8,\n    pawn_move_seen: bool,\n    moved: &mut MovedPieces,\n) -> bool {\n    if insufficient_white_material(board) {\n        return true;\n    }\n\n    let mut legal_moves = MoveGen::new_legal(board).peekable();\n\n    if legal_moves.peek().is_none() {\n        return !(board.side_to_move() == Color::Black && *board.checkers() != EMPTY);\n    }\n\n    if depth == 0 {\n        return false;\n    }\n\n    for m in legal_moves {\n        let moved_piece = board.piece_on(m.get_source()).unwrap();\n\n        match moved_piece {\n            Piece::King => moved.king[board.side_to_move().to_index()] = true,\n            Piece::Pawn => moved.two_pawn_moves_in_a_line |= pawn_move_seen,\n            Piece::Bishop => moved.bishop = true,\n            _ => moved.qrn = true,\n        };\n        let new_board = board.make_move_new(m);\n        let pawn_move_seen = pawn_move_seen || moved_piece == Piece::Pawn;\n        if !is_dynamically_unwinnable(&new_board, depth - 1, pawn_move_seen, moved) {\n            return false;\n        }\n    }\n\n    true\n}\n\n/// Exhaustively determines whether `board` is unwinnable for White by\n/// computing the full set of positions reachable from it.\n///\n/// Expands one ply at a time: each step plays every legal move from every\n/// position in the current table, keeping only the resulting positions never"
+    },
+    {
+      "file": "fast",
+      "firstLine": 182,
+      "lastLine": 224,
+      "text": "/// terminates once a step produces nothing new, no depth limit needed, and\n/// no position is ever explored twice.\n///\n/// Returns `true` (unwinnable) only if no reachable position is a checkmate of\n/// Black. Gives up (returns `false`) if the reachable set grows past 3,000\n/// positions before closing, rather than risk runaway memory/time.\npub(crate) fn exhaustively_unwinnable(board: &Board) -> bool {\n    let mut seen = FxHashSet::default();\n    seen.insert(*board);\n    let mut table = vec![*board];\n    let mut next_table = Vec::new();\n\n    while !table.is_empty() {\n        for board in &table {\n            if insufficient_white_material(board) {\n                continue;\n            }\n\n            let mut legal_moves = MoveGen::new_legal(board).peekable();\n            if legal_moves.peek().is_none() {\n                if board.side_to_move() == Color::Black && *board.checkers() != EMPTY {\n                    return false;\n                }\n                continue;\n            }\n\n            for m in legal_moves {\n                let new_board = board.make_move_new(m);\n                if seen.insert(new_board) {\n                    if seen.len() > 3000 {\n                        return false;\n                    }\n                    next_table.push(new_board);\n                }\n            }\n        }\n\n        table.clear();\n        std::mem::swap(&mut table, &mut next_table);\n    }\n\n    true\n}"
+    },
+    {
+      "file": "search",
+      "firstLine": 131,
+      "lastLine": 171,
+      "text": "/// search terminates a branch when `depth >= search.max_depth` or the budget\n/// on positions explored is exhausted.\n///\n/// The transposition table (when present) stores `num_moves_left` per position.\n/// A hit prunes the branch only if the stored value is >= the current\n/// `num_moves_left`, meaning the position was already searched at least as\n/// deeply.\npub(crate) fn helpmate(board: &Board, search: &mut Search, depth: u8) -> Option<Vec<ChessMove>> {\n    let num_moves_left = search.max_depth.saturating_sub(depth);\n\n    // TT probe.\n    if let Some(ref tt) = search.transposition_table {\n        if let Some(entry_depth) = tt.get(board) {\n            if entry_depth >= &num_moves_left {\n                return None;\n            }\n        }\n    }\n\n    let mut legal_moves = MoveGen::new_legal(board).peekable();\n\n    if legal_moves.peek().is_none() {\n        if board.side_to_move() == Color::Black && *board.checkers() != EMPTY {\n            return Some(search.moves.clone()); // Checkmate.\n        }\n        return None; // Stalemate or White mated.\n    }\n\n    if insufficient_white_material(board) {\n        return None;\n    }\n\n    if depth >= search.max_depth || search.moves.len() >= 128 {\n        search.interrupted = true;\n        return None;\n    }\n\n    // TT store.\n    if let Some(ref mut tt) = search.transposition_table {\n        tt.insert(*board, num_moves_left);\n    }"
+    },
+    {
+      "file": "search",
+      "firstLine": 176,
+      "lastLine": 203,
+      "text": "        if search.is_limit_reached() {\n            search.interrupted = true;\n            return None;\n        }\n\n        let variation = classify_move(board, m, &search.punishable, &search.bishop_distances);\n\n        let new_board = board.make_move_new(m);\n        let new_depth = match variation {\n            MoveVariation::Reward => depth,\n            MoveVariation::Punish => depth + 4,\n            MoveVariation::Normal => depth + (!search.past_progress as u8),\n        };\n\n        search.moves.push(m);\n        let saved_past_progress = search.past_progress;\n        search.past_progress = variation == MoveVariation::Reward;\n\n        if let Some(helpmate) = helpmate(&new_board, search, new_depth) {\n            return Some(helpmate);\n        }\n\n        search.past_progress = saved_past_progress;\n        search.moves.pop();\n    }\n\n    None\n}"
+    },
+    {
+      "file": "forced",
+      "firstLine": 34,
+      "lastLine": 115,
+      "text": "/// Advances the position by playing forced moves (positions with exactly one\n/// legal move).\n///\n/// Stops when a position has multiple choices or a repetition is detected.\n/// On repetition, sets `search.interrupted = true`; in that case, the caller\n/// should treat this as unwinnable.\n///\n/// Stops after 16 iterations. It's fine to stop there even if the actual forced\n/// sequence runs longer (that should never happen in practice though, since the\n/// world record for a forced sequence is 15 moves) because what matters is that\n/// this function preserves the position's winnability, not that it plays the\n/// sequence out to its end.\npub(crate) fn play_forced_moves(board: &Board, search: &mut Search) -> Board {\n    let mut board = *board;\n    let mut seen_positions: Option<FxHashSet<Board>> = None;\n\n    for _ in 0..16 {\n        let mut moves = MoveGen::new_legal(&board).peekable();\n        let Some(m) = moves.next() else { break };\n        if moves.peek().is_some() {\n            break;\n        }\n\n        let seen = seen_positions.get_or_insert_with(|| {\n            let mut set = FxHashSet::with_capacity_and_hasher(16, Default::default());\n            set.insert(board);\n            set\n        });\n\n        board = board.make_move_new(m);\n        search.moves.push(m);\n        search.iteration_nodes += 1;\n\n        if !seen.insert(board) {\n            search.reset_iteration();\n            search.interrupted = true;\n            return board;\n        }\n    }\n\n    if seen_positions.is_some() {\n        search.reset_iteration();\n    }\n    board\n}\n\n/// Searches for a helpmate by iterative deepening over the given depth range.\n///\n/// Returns `Some(Winnable)` (with the mating line) as soon as one is found,\n/// `Some(Unwinnable)` if a depth completes without interruption (proving no\n/// mate exists), or `None` if the global node limit is hit before the search\n/// concludes.\npub(crate) fn iterative_deepening(\n    board: &Board,\n    search: &mut Search,\n    depths_range: RangeInclusive<u8>,\n) -> Option<Winnability> {\n    for depth in depths_range {\n        search.max_depth = depth;\n        search.reset_iteration();\n\n        match engine::helpmate(board, search, 0) {\n            Some(helpmate) => return Some(Winnability::Winnable { helpmate }),\n            None if !search.interrupted => return Some(Winnability::Unwinnable),\n            None => (),\n        }\n    }\n\n    None\n}\n\n#[cfg(test)]\nmod tests {\n    use std::str::FromStr;\n\n    use chess::Board;\n\n    use super::*;\n\n    #[test]\n    fn test_play_forced_moves() {\n        let board = Board::from_str(\"7k/8/6K1/8/8/8/8/6Q1 b - -\").unwrap();"
+    },
+    {
+      "file": "check-chain",
+      "firstLine": 39,
+      "lastLine": 81,
+      "text": "///\n/// Recursively explores check-giving moves. Non-check leaves are evaluated with\n/// static analysis; the result is `Some(Unwinnable)` only if every such leaf is\n/// statically unwinnable. At depth 0 the first move is explored even without\n/// giving check.\npub(crate) fn check_chain_search(\n    board: &Board,\n    visited: &mut FxHashSet<Board>,\n    depth: u32,\n) -> Option<Winnability> {\n    if depth > 16 {\n        return None;\n    }\n    visited.insert(*board);\n\n    let mut legal_moves = MoveGen::new_legal(board).peekable();\n\n    if legal_moves.peek().is_none() {\n        if board.side_to_move() == Color::Black && *board.checkers() != EMPTY {\n            return Some(Winnability::Winnable { helpmate: vec![] });\n        }\n        return Some(Winnability::Unwinnable);\n    }\n\n    for m in legal_moves {\n        let new_board = board.make_move_new(m);\n        if visited.contains(&new_board) {\n            continue;\n        }\n        if *new_board.checkers() != EMPTY || depth == 0 {\n            match check_chain_search(&new_board, visited, depth + 1) {\n                w @ Some(Winnability::Winnable { .. }) => return w,\n                None => return None,\n                Some(Winnability::Unwinnable) => continue,\n            }\n        }\n        if !is_statically_unwinnable(&new_board) {\n            return None;\n        }\n    }\n\n    Some(Winnability::Unwinnable)\n}"
+    },
+    {
+      "file": "static",
+      "firstLine": 20,
+      "lastLine": 108,
+      "text": "\n/// Returns `true` if static analysis can prove the position is unwinnable for\n/// White.\n///\n/// Runs [`Analysis::saturate`] under different assumptions about which pieces\n/// can be captured, branching on the fate of pieces that are both steady and\n/// capturable (`first_steady_capturable`). Returns `true` only if every\n/// scenario rules out a checkmate.\npub(crate) fn is_statically_unwinnable(board: &Board) -> bool {\n    if board.en_passant().is_some() {\n        return false;\n    }\n\n    let mut analysis = Analysis::new(*board);\n\n    let white = board.color_combined(Color::White);\n    if white.popcnt() == 2 {\n        let last_white_piece = white & !board.pieces(Piece::King);\n        analysis.uncapturable_while_steady = Some(last_white_piece);\n    }\n\n    analysis.saturate();\n\n    if !analysis.black_could_get_mated() {\n        return true;\n    }\n\n    if let Some(squares) = analysis.first_steady_capturable {\n        for s in squares {\n            let mut analysis = Analysis::new(*board);\n            analysis.uncapturable_while_steady = Some(BitBoard::from_square(s));\n            analysis.saturate();\n\n            if analysis.black_could_get_mated() {\n                continue;\n            }\n\n            // Case B: the piece can only be captured while still on its starting square.\n            // If this also rules out mate, no valid scenario exists and the position is\n            // unwinnable.\n            let mut analysis = Analysis::new(*board);\n            analysis.capturable_only_while_steady = Some(BitBoard::from_square(s));\n            analysis.saturate();\n\n            if !analysis.black_could_get_mated() {\n                return true;\n            }\n        }\n    }\n\n    // TODO: Generalize this for more than 2 squares (mainly aesthetic; could also\n    // improve completeness).\n    if let Some(squares) = analysis.first_steady_capturable {\n        if squares.popcnt() == 2 {\n            let s1 = squares.to_square();\n            let s2 = (squares & !BitBoard::from_square(s1)).to_square();\n\n            let mut analysis = Analysis::new(*board);\n            analysis.uncapturable_while_steady = Some(squares);\n            analysis.saturate();\n\n            if analysis.black_could_get_mated() {\n                return false;\n            }\n\n            let mut analysis = Analysis::new(*board);\n            analysis.uncapturable_while_steady = Some(BitBoard::from_square(s1));\n            analysis.capturable_only_while_steady = Some(BitBoard::from_square(s2));\n            analysis.saturate();\n\n            if analysis.black_could_get_mated() {\n                return false;\n            }\n\n            let mut analysis = Analysis::new(*board);\n            analysis.capturable_only_while_steady = Some(BitBoard::from_square(s1));\n            analysis.uncapturable_while_steady = Some(BitBoard::from_square(s2));\n            analysis.saturate();\n\n            if analysis.black_could_get_mated() {\n                return false;\n            }\n\n            let mut analysis = Analysis::new(*board);\n            analysis.capturable_only_while_steady = Some(squares);\n            analysis.saturate();\n\n            return !analysis.black_could_get_mated();\n        }"
+    },
+    {
+      "file": "static-fields",
+      "firstLine": 9,
+      "lastLine": 24,
+      "text": "\n/// Most fields below are *approximations* of some true game-theoretic\n/// property of the position (e.g. \"this piece can reach that square\").\n///\n/// - An **over-approximation** may wrongly *include* an element (false\n///   positive) but never wrongly excludes one. The safe inference runs on\n///   absence: if `x` is not in the field, `x` definitely lacks the property.\n///\n/// - An **under-approximation** may wrongly *exclude* an element (false\n///   negative) but never wrongly includes one. The safe inference runs on\n///   presence: if `x` is in the field, `x` definitely has the property.\n///\n/// Both kinds only reach their stated guarantee *after saturation completes*\n/// ([`Analysis::saturate`]); mid-saturation, neither direction can be relied\n/// on.\npub(crate) struct Analysis {"
+    },
+    {
+      "file": "static-fields",
+      "firstLine": 154,
+      "lastLine": 201,
+      "text": "                get_king_moves(mating_square) & black_king_region & !visited_region;\n            let (blockers, blocking_region) = self.blockers(escaping_squares);\n            let n = blockers.popcnt().min(blocking_region.popcnt());\n\n            // Try all ways to assign n black pieces to n squares in blocking_region.\n            for covered_by_black in subsets_of_size(blocking_region, n) {\n                let remaining = escaping_squares & !covered_by_black;\n                // Check if the white king can cover all remaining squares from one position.\n                if remaining == EMPTY {\n                    return true;\n                }\n                let candidate_king_squares =\n                    remaining.into_iter().fold(EMPTY, |acc, r| acc | get_king_moves(r))\n                        & !(BitBoard::from_square(mating_square) | get_king_moves(mating_square));\n                if (candidate_king_squares & white_king_reachable)\n                    .into_iter()\n                    .any(|s| get_king_moves(s) & remaining == remaining)\n                {\n                    return true;\n                }\n            }\n        }\n\n        false\n    }\n\n    /// Returns the white non-king pieces that can attack `region` (visitors),\n    /// and the subset of `region` they can attack (visited_region). Only pieces\n    /// that can move away from their starting square are considered.\n    ///\n    /// Must be called after saturation.\n    fn visitors(&self, region: BitBoard) -> (BitBoard, BitBoard) {\n        let mut visitors = EMPTY;\n        let mut visited_region = EMPTY;\n        for s in *self.board.color_combined(Color::White) {\n            let piece = self.board.piece_on(s).unwrap();\n            if piece == Piece::King {\n                continue;\n            }\n            if self.reachable[s.to_index()] == BitBoard::from_square(s) {\n                continue;\n            }\n            for t in self.reachable[s.to_index()] {\n                let attacked_by_piece = get_piece_attacks(piece, Color::White, t, !self.clear);\n                if region & attacked_by_piece != EMPTY {\n                    visitors |= BitBoard::from_square(s);\n                    visited_region |= region & attacked_by_piece;\n                }"
+    },
+    {
+      "file": "tests",
+      "firstLine": 7,
+      "lastLine": 29,
+      "text": "/// Checks that `winnability(board, intended_winner)` agrees with\n/// `expected_winnable`, and that a `Winnable` result's `helpmate` actually\n/// leads to a checkmate by `intended_winner`.\n///\n/// Also checks that `is_unwinnable_fast` is sound: it is incomplete by\n/// design, so it can't be expected to match `expected_winnable` exactly, but\n/// it must never claim unwinnable for a position that's actually winnable.\nfn check_winnability(board: &Board, intended_winner: Color, expected_winnable: bool) {\n    match winnability(board, intended_winner) {\n        Some(Winnability::Winnable { helpmate }) => {\n            let mated_board = helpmate.iter().fold(*board, |b, &m| b.make_move_new(m));\n            assert_eq!(mated_board.status(), BoardStatus::Checkmate);\n            assert_eq!(mated_board.side_to_move(), !intended_winner);\n            assert!(expected_winnable);\n        }\n        Some(Winnability::Unwinnable) => assert!(!expected_winnable),\n        None => panic!(\"Undetermined: {board}\"),\n    }\n\n    if is_unwinnable_fast(board, intended_winner) {\n        assert!(!expected_winnable, \"is_unwinnable_fast wrongly claimed unwinnable: {board}\");\n    }\n}"
+    },
+    {
+      "file": "tests",
+      "firstLine": 31,
+      "lastLine": 64,
+      "text": "/// Checks every position in `data` against its expected classification.\n///\n/// Each line is supposed to be `<2-char classification> <FEN>`, where the first\n/// character is `W` if White can win, `-` if not, and likewise for Black/the\n/// second character.\nfn check_positions(data: &str) {\n    let entries: Vec<&str> =\n        data.lines().filter(|line| !line.trim().is_empty() && !line.starts_with('#')).collect();\n\n    entries.par_iter().for_each(|line| {\n        let parts: Vec<&str> = line.splitn(2, ' ').collect();\n        assert_eq!(parts.len(), 2, \"Invalid line format: {}\", line);\n\n        let expected = parts[0];\n        let fen = parts[1];\n\n        let board = Board::from_str(fen).unwrap_or_else(|_| panic!(\"Failed to parse FEN: {}\", fen));\n\n        check_winnability(&board, Color::White, expected.starts_with(\"W\"));\n        check_winnability(&board, Color::Black, expected.ends_with(\"B\"));\n    });\n}\n\n#[test]\nfn test_positions() {\n    const POSITIONS: &str = include_str!(\"positions.txt\");\n    check_positions(POSITIONS);\n}\n\n#[test]\nfn test_lichess() {\n    const LICHESS: &str = include_str!(\"lichess.txt\");\n    check_positions(LICHESS);\n}"
+    },
+    {
+      "file": "board",
+      "firstLine": 24,
+      "lastLine": 57,
+      "text": "#[derive(Copy, Clone, PartialEq, Eq, Debug)]\npub struct Board {\n    pieces: [BitBoard; NUM_PIECES],\n    color_combined: [BitBoard; NUM_COLORS],\n    combined: BitBoard,\n    side_to_move: Color,\n    castle_rights: [CastleRights; NUM_COLORS],\n    pinned: BitBoard,\n    checkers: BitBoard,\n    hash: u64,\n    en_passant: Option<Square>,\n}\n\n/// What is the status of this game?\n#[derive(Copy, Clone, PartialEq, PartialOrd, Debug)]\npub enum BoardStatus {\n    Ongoing,\n    Stalemate,\n    Checkmate,\n}\n\n/// Construct the initial position.\nimpl Default for Board {\n    #[inline]\n    fn default() -> Board {\n        Board::from_str(\"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1\")\n            .expect(\"Valid Position\")\n    }\n}\n\nimpl Hash for Board {\n    fn hash<H: Hasher>(&self, state: &mut H) {\n        self.hash.hash(state);\n    }"
+    },
+    {
+      "file": "board",
+      "firstLine": 613,
+      "lastLine": 681,
+      "text": "        }\n\n        // make sure there is exactly one white king\n        if (self.pieces(Piece::King) & self.color_combined(Color::White)).popcnt() != 1 {\n            return false;\n        }\n\n        // make sure there is exactly one black king\n        if (self.pieces(Piece::King) & self.color_combined(Color::Black)).popcnt() != 1 {\n            return false;\n        }\n\n        // make sure the en_passant square has a pawn on it of the right color\n        match self.en_passant {\n            None => {}\n            Some(x) => {\n                if self.pieces(Piece::Pawn)\n                    & self.color_combined(!self.side_to_move)\n                    & BitBoard::from_square(x)\n                    == EMPTY\n                {\n                    return false;\n                }\n            }\n        }\n\n        // make sure my opponent is not currently in check (because that would be illegal)\n        let mut board_copy = *self;\n        board_copy.side_to_move = !board_copy.side_to_move;\n        board_copy.update_pin_info();\n        if board_copy.checkers != EMPTY {\n            return false;\n        }\n\n        // for each color, verify that, if they have castle rights, that they haven't moved their\n        // rooks or king\n        for color in ALL_COLORS.iter() {\n            // get the castle rights\n            let castle_rights = self.castle_rights(*color);\n\n            // the castle rights object will tell us which rooks shouldn't have moved yet.\n            // verify there are rooks on all those squares\n            if castle_rights.unmoved_rooks(*color)\n                & self.pieces(Piece::Rook)\n                & self.color_combined(*color)\n                != castle_rights.unmoved_rooks(*color)\n            {\n                return false;\n            }\n            // if we have castle rights, make sure we have a king on the (E, {1,8}) square,\n            // depending on the color\n            if castle_rights != CastleRights::NoRights {\n                if self.pieces(Piece::King) & self.color_combined(*color)\n                    != get_file(File::E) & get_rank(color.to_my_backrank())\n                {\n                    return false;\n                }\n            }\n        }\n\n        // we must make sure the kings aren't touching\n        if get_king_moves(self.king_square(Color::White)) & self.pieces(Piece::King) != EMPTY {\n            return false;\n        }\n\n        // it checks out\n        return true;\n    }\n"
+    },
+    {
+      "file": "board",
+      "firstLine": 810,
+      "lastLine": 823,
+      "text": "    /// Set the en_passant square.  Note: This must only be called when self.en_passant is already\n    /// None.\n    fn set_ep(&mut self, sq: Square) {\n        // Only set self.en_passant if the pawn can actually be captured next move.\n        if get_adjacent_files(sq.get_file())\n            & get_rank(sq.get_rank())\n            & self.pieces(Piece::Pawn)\n            & self.color_combined(!self.side_to_move)\n            != EMPTY\n        {\n            self.en_passant = Some(sq);\n        }\n    }\n"
+    },
+    {
+      "file": "board",
+      "firstLine": 1052,
+      "lastLine": 1086,
+      "text": "\nimpl TryFrom<&BoardBuilder> for Board {\n    type Error = Error;\n\n    fn try_from(fen: &BoardBuilder) -> Result<Self, Self::Error> {\n        let mut board = Board::new();\n\n        for sq in ALL_SQUARES.iter() {\n            if let Some((piece, color)) = fen[*sq] {\n                board.xor(piece, BitBoard::from_square(*sq), color);\n            }\n        }\n\n        board.side_to_move = fen.get_side_to_move();\n\n        if let Some(ep) = fen.get_en_passant() {\n            board.side_to_move = !board.side_to_move;\n            board.set_ep(ep);\n            board.side_to_move = !board.side_to_move;\n        }\n\n        #[allow(deprecated)]\n        board.add_castle_rights(Color::White, fen.get_castle_rights(Color::White));\n        #[allow(deprecated)]\n        board.add_castle_rights(Color::Black, fen.get_castle_rights(Color::Black));\n\n        board.update_pin_info();\n\n        if board.is_sane() {\n            Ok(board)\n        } else {\n            Err(Error::InvalidBoard)\n        }\n    }\n}"
+    },
+    {
+      "file": "builder",
+      "firstLine": 337,
+      "lastLine": 350,
+      "text": "\n        write!(f, \" 0 1\")\n    }\n}\n\nimpl Default for BoardBuilder {\n    fn default() -> BoardBuilder {\n        BoardBuilder::from_str(\"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1\").unwrap()\n    }\n}\n\nimpl FromStr for BoardBuilder {\n    type Err = Error;\n"
+    },
+    {
+      "file": "builder",
+      "firstLine": 366,
+      "lastLine": 381,
+      "text": "        let ep = tokens[3];\n\n        for x in pieces.chars() {\n            match x {\n                '/' => {\n                    cur_rank = cur_rank.down();\n                    cur_file = File::A;\n                }\n                '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' => {\n                    cur_file =\n                        File::from_index(cur_file.to_index() + (x as usize) - ('0' as usize));\n                }\n                'r' => {\n                    fen[Square::make_square(cur_rank, cur_file)] =\n                        Some((Piece::Rook, Color::Black));\n                    cur_file = cur_file.right();"
+    },
+    {
+      "file": "builder",
+      "firstLine": 460,
+      "lastLine": 509,
+      "text": "            fen.castle_rights[Color::White.to_index()] = CastleRights::QueenSide;\n        } else {\n            fen.castle_rights[Color::White.to_index()] = CastleRights::NoRights;\n        }\n\n        if castles.contains(\"k\") && castles.contains(\"q\") {\n            fen.castle_rights[Color::Black.to_index()] = CastleRights::Both;\n        } else if castles.contains(\"k\") {\n            fen.castle_rights[Color::Black.to_index()] = CastleRights::KingSide;\n        } else if castles.contains(\"q\") {\n            fen.castle_rights[Color::Black.to_index()] = CastleRights::QueenSide;\n        } else {\n            fen.castle_rights[Color::Black.to_index()] = CastleRights::NoRights;\n        }\n\n        if let Ok(sq) = Square::from_str(&ep) {\n            fen = fen.en_passant(Some(sq.get_file()));\n        }\n\n        Ok(*fen)\n    }\n}\n\nimpl From<&Board> for BoardBuilder {\n    fn from(board: &Board) -> Self {\n        let mut pieces = vec![];\n        for sq in ALL_SQUARES.iter() {\n            if let Some(piece) = board.piece_on(*sq) {\n                let color = board.color_on(*sq).unwrap();\n                pieces.push((*sq, piece, color));\n            }\n        }\n\n        BoardBuilder::setup(\n            &pieces,\n            board.side_to_move(),\n            board.castle_rights(Color::White),\n            board.castle_rights(Color::Black),\n            board.en_passant().map(|sq| sq.get_file()),\n        )\n    }\n}\n\nimpl From<Board> for BoardBuilder {\n    fn from(board: Board) -> Self {\n        (&board).into()\n    }\n}\n\n#[cfg(test)]"
+    },
+    {
+      "file": "move-list",
+      "firstLine": 24,
+      "lastLine": 31,
+      "text": "            bitboard: bb,\n            promotion: promotion,\n        }\n    }\n}\n\npub type MoveList = NoDrop<ArrayVec<[SquareAndBitBoard; 18]>>;\n"
+    },
+    {
+      "file": "move-list",
+      "firstLine": 91,
+      "lastLine": 120,
+      "text": "}\n\nimpl MoveGen {\n    #[inline(always)]\n    fn enumerate_moves(board: &Board) -> MoveList {\n        let checkers = *board.checkers();\n        let mask = !board.color_combined(board.side_to_move());\n        let mut movelist = NoDrop::new(ArrayVec::<[SquareAndBitBoard; 18]>::new());\n\n        if checkers == EMPTY {\n            PawnType::legals::<NotInCheckType>(&mut movelist, &board, mask);\n            KnightType::legals::<NotInCheckType>(&mut movelist, &board, mask);\n            BishopType::legals::<NotInCheckType>(&mut movelist, &board, mask);\n            RookType::legals::<NotInCheckType>(&mut movelist, &board, mask);\n            QueenType::legals::<NotInCheckType>(&mut movelist, &board, mask);\n            KingType::legals::<NotInCheckType>(&mut movelist, &board, mask);\n        } else if checkers.popcnt() == 1 {\n            PawnType::legals::<InCheckType>(&mut movelist, &board, mask);\n            KnightType::legals::<InCheckType>(&mut movelist, &board, mask);\n            BishopType::legals::<InCheckType>(&mut movelist, &board, mask);\n            RookType::legals::<InCheckType>(&mut movelist, &board, mask);\n            QueenType::legals::<InCheckType>(&mut movelist, &board, mask);\n            KingType::legals::<InCheckType>(&mut movelist, &board, mask);\n        } else {\n            KingType::legals::<InCheckType>(&mut movelist, &board, mask);\n        }\n\n        movelist\n    }\n"
+    },
+    {
+      "file": "unchecked-insert",
+      "firstLine": 38,
+      "lastLine": 58,
+      "text": "\n        for src in pieces & !pinned {\n            let moves = Self::pseudo_legals(src, color, *combined, mask) & check_mask;\n            if moves != EMPTY {\n                unsafe {\n                    movelist.push_unchecked(SquareAndBitBoard::new(src, moves, false));\n                }\n            }\n        }\n\n        if !T::IN_CHECK {\n            for src in pieces & pinned {\n                let moves = Self::pseudo_legals(src, color, *combined, mask) & line(src, ksq);\n                if moves != EMPTY {\n                    unsafe {\n                        movelist.push_unchecked(SquareAndBitBoard::new(src, moves, false));\n                    }\n                }\n            }\n        }\n    }"
+    },
+    {
+      "file": "syzygy",
+      "firstLine": 1558,
+      "lastLine": 1573,
+      "text": "    def probe_ab(self, board: chess.Board, alpha: int, beta: int, threats: bool = False) -> Tuple[int, int]:\n        # Check preconditions.\n        if board.uci_variant != self.variant.uci_variant:\n            raise KeyError(f\"tablebase has been opened for {self.variant.uci_variant}, probed with: {board.uci_variant}\")\n        if board.castling_rights:\n            raise KeyError(f\"syzygy tables do not contain positions with castling rights: {board.fen()}\")\n\n        # Probing resolves captures, so sometimes we can obtain results for\n        # positions that have more pieces than the maximum number of supported\n        # pieces. We artificially limit this to one additional level, to\n        # make sure search remains somewhat bounded.\n        if chess.popcount(board.occupied) > TBPIECES + 1:\n            raise KeyError(f\"syzygy tables support up to {TBPIECES} pieces, not {chess.popcount(board.occupied)}: {board.fen()}\")\n\n        # Special case: Variant with compulsory captures.\n        if self.variant.captures_compulsory:"
+    },
+    {
+      "file": "syzygy",
+      "firstLine": 1656,
+      "lastLine": 1682,
+      "text": "    def probe_wdl(self, board: chess.Board) -> int:\n        \"\"\"\n        Probes WDL tables for win/draw/loss information under the 50-move rule,\n        assuming the position has been reached directly after a capture or\n        pawn move.\n\n        Probing is thread-safe when done with different *board* objects and\n        if *board* objects are not modified during probing.\n\n        Returns ``2`` if the side to move is winning, ``0`` if the position is\n        a draw and ``-2`` if the side to move is losing.\n\n        Returns ``1`` in case of a cursed win and ``-1`` in case of a blessed\n        loss. Mate can be forced but the position can be drawn due to the\n        fifty-move rule.\n\n        >>> import chess\n        >>> import chess.syzygy\n        >>>\n        >>> with chess.syzygy.open_tablebase(\"data/syzygy/regular\") as tablebase:\n        ...     board = chess.Board(\"8/2K5/4B3/3N4/8/8/4k3/8 b - - 0 1\")\n        ...     print(tablebase.probe_wdl(board))\n        ...\n        -2\n\n        :raises: :exc:`KeyError` (or specifically\n            :exc:`chess.syzygy.MissingTableError`) if the position could not"
+    },
+    {
+      "file": "popeye-readme",
+      "firstLine": 1,
+      "lastLine": 43,
+      "text": "## Popeye\n\nPopeye is a free open-source cross-platform program for testing chess problems.\n\nIt can be used for orthodox problems, but also supports a great deal of fairy\nchess elements (piece types, conditions and stipulations).\n\nThanks to its \"intelligent mode\", Popeye is very fast at testing (almost) orthodox\nhelp and series (stale)mate problems.\n\n\n## A bit of history\n\nPopeye was started in the 1980s by Philippe Schnoebelen in some Pascal dialect.\nIt was later converted into C by Norbert Geissler.\nDevelopment of most features has been done in C.\n\n\n## Portability\n\nPopeye can be easily compiled using make and e.g. gcc for Linux and other Unix-oid\noperating systems. Depending on the availability of cross-compilers, executables for\nWindows and MacOS are provided for released versions.\n\nPopeye is known to have been compiled for other platforms, e.g. Android or WebAssembly.\n\n\n## Companions\n\n- [Olive](https://github.com/dturevski/olive-gui) is a great cross-platform GUI for Popeye\n- [Teddy](https://problemskak.dk/download-Teddy.php) is a popular Windows GUI for Popeye\n- [FEN Tool](https://mutsuntsai.github.io/fen-tool/) allows using Popeye within the browser, both on mobile phones and regular computers\n- [Spinach] (experimental) speeds up Popeye by distributing its workload on different CPU cores\n- [Py2Web](https://www.yacpdb.org/#static/py2web) renders Popeye's output in web pages\n- [YACPDB](https://www.yacpdb.org/#static/home) Yet Another Chess Problem Database uses Py2Web to render solutions\n\n\n## Awards\n\nIn 2026, Popeye, as well as Dmitri Turevski (creator of Olive, Py2Web and YACPDB), is among the first recipients of a [WFCC](https://www.wfcc.ch/) Special Award.\n\n<img width=\"845\" height=\"1200\" alt=\"Popeye Team WFCC Special Award 2026\" src=\"https://github.com/user-attachments/assets/3793b4cf-9b44-4142-9be1-b6de6d800a2f\" />\n"
+    }
+  ],
+  "papers": {
+    "paper": {
+      "pages": 20,
+      "sha256": "07969ac6de92ad4b3ff9fa1c4d04eee789e5663be3d630c7946d7dfea68daf4d",
+      "passages": [
+        {
+          "page": 2,
+          "phrase": "A position is",
+          "text": "o as ahelpmate [22]. Deciding whether or not a position is unwinnable, i.e. whether a helpmate does not exist, is usually relatively simple for a human. For example, it is not very hard to realize that no player can deliver checkmate in Position 1 (it is a so-calleddead position), since the pawn wall is blocked and the bishops are not useful to make any progress. According to the FIDE Laws of Chess [7, Article 5.2.2] the game is finished as soon as the position becomes dead. No further moves are permitted and would be considered illegal.1 However, other such positions can be more involved"
+        },
+        {
+          "page": 7,
+          "phrase": "Lemma 5",
+          "text": "ngor the position is unwinnable according to Lemma 5 or Lemma 6or the position is stalemateor the intended winner is receiving checkmate in the positionthen return false 3: increase cnt and setd := maxDepth - depth 4: if cnt> nodesBound∨d< 0 then return false ▷The search limits are exceeded 5: if (pos,D )∈table with D≥d then return false ▷pos was already analyzed 6: store (pos,d ) in table 7: for every legal movem in pos do: 8: let inc = match Score(pos,m ) with Normal→0|Reward→1|Punish→−2 9: if Find-Helpmatec(pos.move(m), depth + 1, maxDepth + inc) then return true 10: return false ▷No m"
+        },
+        {
+          "page": 1,
+          "phrase": "Lemma 8",
+          "text": " a gap in an earlier version of the proof of Lemma 8, and for all his comments. I am also very thankful to the other anonymous reviewers of FUN 2022, for their valuable time and careful reading of this manuscript. 1 Introduction Chess clocks have been used since 1883 [14] and are an essential tool in (tournament) chess to enforce game termination. They introduce a reliable upper-bound on the duration of games, ensuring that players will not excessively delay the match. This is crucial for designing and respecting tournament schedules. A chess clock consists of two adjacent and entangled ("
+        },
+        {
+          "page": 5,
+          "phrase": "Theorem 12",
+          "text": "proximation to the actual mobility solution (Theorem 12). Consequently, the composition of our two routines leads to a (static) unwinnability algorithm which is sound (but not complete). Search of variations. We propose an algorithm for exploring variations, enhanced with a transposition table and selected heuristics for deciding what moves to explore further (Section 2.2, Figure 5). This building block is combined with our static analysis to build an algorithm for chess unwinnability (Section 4, Figure 9) that is sound and complete. Implementation. We implement our algorithm and evaluate"
+        },
+        {
+          "page": 6,
+          "phrase": "for every d",
+          "text": "P.side =c and P.sq =s. A position isvalid if for every distinctP,P′∈pos, it holds thatP.sq̸=P′.sq. A position is said to belegal if it can be reached from the initial position of a chess game by a sequence of legal moves. We define theking-distance between two squares as the number of moves that it takes for a king to go from one to the other over an empty board. We defineknight-distance analogously. We say that two squares areadjacent if they are at king-distance1. A rank is a row of8 squares, whereas a file is a column of8 squares. Unless specified otherwise, we measure the depth of a v"
+        },
+        {
+          "page": 16,
+          "phrase": "not efficiently",
+          "text": "at there exist artificial positions that are not efficiently captured by our logic and the tool could take a long time to analyze. Indeed, Position 12 with several additional black dark-squared bishops is an example. A very interesting direction for future work would be to equip our mobility algorithm with extra rules (see Figure 6), that increase its scope. That way, the quick algorithm could potentially identify all unfairly classified games from the Lichess Database. Out of the three positions that our quick version cannot currently handle, Position 13 could be solved by settingD = 14 "
+        },
+        {
+          "page": 16,
+          "phrase": "nodes per iteration",
+          "text": "s not necessary and a constant amount of 10K nodes per iteration seems empirically good."
+        },
+        {
+          "page": 14,
+          "phrase": "tree of variations is",
+          "text": " Imminently terminating positions, where the tree of variations is very small. This is usually due to the existence of forced lines, which never end on a checkmate by the intended winner (all variations end in either stalemate, checkmate by the intended loser, or insufficient mating material for the intended winner.) An example is Position 15. Blocked positions, where players can maneuver over limited and disjoint regions of the board, what prevents their interaction (and thus any possible checkmate). (See Position 1.) The quick version of our algorithm is described in Figure 10. It perfo"
+        }
+      ]
+    },
+    "paper-full": {
+      "pages": 25,
+      "sha256": "502eebe3bfd5892de47c6bb8debdd5e75a6387856bb0d74e8052b3bd9ddbdf8d",
+      "passages": [
+        {
+          "page": 2,
+          "phrase": "A position is",
+          "text": "considered illegal.1 Deciding whether or not a position is unwinnable, i.e. whether a helpmate does not exist, is usually relatively simple for a human. For example, it is not very hard to realize that Position 1 is dead, since the pawn wall is blocked and the bishops are not useful to make any progress. However, other such positions can be more involved. For example, it is not so easy to understand/prove why Position 2 is also dead. Interestingly, if in Position 2 the pawn ona4 were ona5, the position would be winnable for White. This position, devised by the prominent chess composer And"
+        },
+        {
+          "page": 7,
+          "phrase": "Lemma 5",
+          "text": "if it does not contain pawns of any color. ▶ Lemma 5. A pawn-free position is unwinnable for a player with just a knight if their opponent does not have knights, bishops or rooks. Proof. Without loss of generality, assume White is the player with just a knight. Assume there exists a checkmating position, winning for White, where the only available pieces are: the white kingK, a white knightN, the black kingk and any number of black queens. N must be attackingk.sq. Lets and s′ be the two squares in (k.sq) that are taxicab- distance closest toN.sq. Observe thatN is not attackings nor s′ and"
+        },
+        {
+          "page": 1,
+          "phrase": "Lemma 8",
+          "text": " a gap in an earlier version of the proof of Lemma 8, and for all his comments. I am also very thankful to the other anonymous reviewers of FUN 2022, for their valuable time and careful reading of this manuscript. 1 Introduction Chess clocks have been used since 1883 [14] and are an essential tool in (tournament) chess to enforce game termination. They introduce a reliable upper-bound on the duration of games, ensuring that players will not excessively delay the match. This is crucial for designing and respecting tournament schedules. A chess clock consists of two adjacent and entangled ("
+        },
+        {
+          "page": 5,
+          "phrase": "Theorem 12",
+          "text": "proximation to the actual mobility solution (Theorem 12). Consequently, the composition of our two routines leads to a (static) unwinnability algorithm which is sound (but not complete). Search of variations. We propose an algorithm for exploring variations, enhanced with a transposition table and selected heuristics for deciding what moves to explore further 3 Establishing that a game is drawn if 75 full moves are completed without captures or pawn movements. FUN 2022"
+        },
+        {
+          "page": 6,
+          "phrase": "for every d",
+          "text": ".color =c and P.sq =s. A position isvalid if for every distinctP,P ′ ∈ pos, it holds thatP.sq ̸=P ′.sq; and it islegal if it can be reached from the starting position of a game by a sequence of legal moves. Theking-distance between two squares is the number of moves that it takes for a king to go from one to the other over an empty board. We deﬁne knight-distance analogously. Two squares areadjacent if they are at king-distance1. A rank is a row of8 squares, whereas a ﬁle is a column of8 squares. The taxicab-distance between two squares is the sum of their rank and ﬁle diﬀerences in absol"
+        },
+        {
+          "page": 18,
+          "phrase": "nodes per iteration",
+          "text": "s not necessary and a constant amount of 10K nodes per iteration seems empirically good."
+        },
+        {
+          "page": 7,
+          "phrase": "tree of variations is",
+          "text": "heck or capture the checking bishop).◀ 4 The tree of variations is ﬁnite given the 75-moves rule and/or the ﬁvefold repetition rule (both introduced in 2014 [7]). Even ignoring such rules, the exhaustive search could potentially be ﬁnite by cutting the tree on positions that have already been explored. 5 Note that double-checks are impossible with just bishops, so there can only be one checking bishop. FUN 2022"
+        }
+      ]
+    }
+  },
+  "fide": [
+    {
+      "phrase": "dead position",
+      "text": "le 3 and Articles 4.2 – 4.7. 5.2.2 The game is drawn when a position has arisen in which neither player can checkmate the opponent’s king with any series of legal moves. The game is said to end in a ‘dead position’. This immediately ends the game, provided that the move producing the position was in accordance with Article 3 and Articles 4.2 – 4.7. 5.2.3 The game is drawn upon agreement between the two players during the game, provided both players have made at least one move. This immediately ends the game. COMPETITIVE RULES OF PLAY Article 6: The Chessclo"
+    },
+    {
+      "phrase": "dead position",
+      "text": "ctually part of the playing venue. For example, the area set aside for spectators. cumulative (Fischer) mode N/A Where a player receives an extra amount of time (often 30 seconds) prior to each move. dead position 5.2.2 Where neither player can mate the opponent’s king with any series of legal moves. default time 6.7 The specified time a player may be late without being forfeited. delay (Bronstein) mode 6.3.2 Both players receive an allotted ‘main thinking time’. Each player also receives a ‘fixed extra time’ with every move. The countdown of the main think"
+    },
+    {
+      "phrase": "any possible series of legal moves",
+      "text": "icles 4.2 – 4.7. 5.1.2 The game is lost by the player who declares he/she resigns (this immediately ends the game), unless the position is such that the opponent cannot checkmate the player’s king by any possible series of legal moves. In this case the result of the game is a draw. 5.2.1 The game is drawn when the player to move has no legal move and his/her king is not in check. The game is said to end in ‘stalemate’. This immediately ends the game, provided that the move producing the stalemate position was in accordance with Article 3 and Articles 4.2 – 4.7. 5.2.2 The game i"
+    },
+    {
+      "phrase": "any possible series of legal moves",
+      "text": "mplete the prescribed number of moves in the allotted time, the game is lost by that player. However, the game is drawn if the position is such that the opponent cannot checkmate the player’s king by any possible series of legal moves. 6.10 Chessclock setting: 6.10.1 Every indication given by the chessclock is considered to be conclusive in the absence of any evident defect. A chessclock with an evident defect shall be replaced by the arbiter, who shall use his/her best judgement when determining the times to be shown on the replacement chessclock. 6.10.2 If during a game it is"
+    },
+    {
+      "phrase": "any possible series of legal moves",
+      "text": "eted illegal move by the same player the arbiter shall declare the game lost by this player. However, the game is drawn if the position is such that the opponent cannot checkmate the player’s king by any possible series of legal moves. 7.6 If, during a game it is found that any piece has been displaced from its correct square, the position before the irregularity shall be reinstated. If the position immediately before the irregularity cannot be determined, the game shall continue from the last identifiable position prior to the irregularity. The game shall then continue from th"
+    },
+    {
+      "phrase": "same positions",
+      "text": "on, the rook then be moved from its starting position to its final position, and then the king be placed on his final square. After castling, the rook and king's final positions should be exactly the same positions as they would be in regular chess. II.3.2.6 Clarification Thus, after c-side castling (notated as 0-0-0 and known as queen-side castling in ortho-dox chess), the king is on the c-square (c1 for white and c8 for black) and the rook is on the d-square (d1 for white and d8 for black). After g-side castling (notated as 0-0 and known as king-side castl"
+    },
+    {
+      "phrase": "75 moves",
+      "text": "ordance with Articles 3 and 4. 9.6 If one or both of the following occur(s) then the game is drawn: 9.6.1 the same position has appeared, as in 9.2.2 at least five times. 9.6.2 any series of at least 75 moves have been made by each player without the movement of any pawn and without any capture. If the last move resulted in checkmate, that shall take precedence. Article 10: Points 10.1 Unless the regulations of an event specify otherwise, a player who wins his/her game, or wins by forfeit, scores one point (1), a player who loses his/her game, or forfe"
+    },
+    {
+      "phrase": "75 moves",
+      "text": "e rule 9.3 A player may claim a draw if the last 50 moves have been completed by each player without the movement of any pawn and without any capture. 75-move rule 9.6.2 The game is drawn if the last 75 moves have been completed by each player without the movement of any pawn and without any capture. FIDE CHARTER FIDE Charter effective from March 1, 2020 A. ADMINISTRATIVE SUBJECTS 01. Non-Elected Commissions Non-Elected Commissions (effective from 25 November 2022) Non-Elected Commissions (effective from 1 August till 24 November 2022) Non-Elected Comm"
+    },
+    {
+      "phrase": "last 50 moves",
+      "text": "ve, which cannot be changed, by writing it on the paper scoresheet or entering it on the electronic scoresheet and declares to the arbiter his/her intention to make this move which will result in the last 50 moves by each player having been made without the movement of any pawn and without any capture, or 9.3.2 the last 50 moves by each player have been completed without the movement of any pawn and without any capture. 9.4 If the player touches a piece as in Article 4.3, he/she loses the right to claim a draw under Article 9.2 or 9.3 on that move. 9.5 Draw"
+    },
+    {
+      "phrase": "last 50 moves",
+      "text": "clares to the arbiter his/her intention to make this move which will result in the last 50 moves by each player having been made without the movement of any pawn and without any capture, or 9.3.2 the last 50 moves by each player have been completed without the movement of any pawn and without any capture. 9.4 If the player touches a piece as in Article 4.3, he/she loses the right to claim a draw under Article 9.2 or 9.3 on that move. 9.5 Draw claims: 9.5.1 If a player claims a draw under Article 9.2 or 9.3, he/she or the arbiter shall pause the chessclock. "
+    },
+    {
+      "phrase": "last 50 moves",
+      "text": "his also refers to the player of the white pieces. zero tolerance 6.7.1 Where a player must arrive at the chessboard before the start of the session. 50-move rule 9.3 A player may claim a draw if the last 50 moves have been completed by each player without the movement of any pawn and without any capture. 75-move rule 9.6.2 The game is drawn if the last 75 moves have been completed by each player without the movement of any pawn and without any capture. FIDE CHARTER FIDE Charter effective from March 1, 2020 A. ADMINISTRATIVE SUBJECTS 01. Non-Elected Commiss"
+    }
+  ]
+}

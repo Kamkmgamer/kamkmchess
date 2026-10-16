@@ -1,0 +1,171 @@
+{
+  "certificateCheck": {
+    "verified": true,
+    "states": 4,
+    "edges": 4,
+    "negativeForBothColors": true
+  },
+  "resourceBoundControl": {
+    "status": "unresolved",
+    "reason": "state-bound",
+    "seen": 201,
+    "completedNodes": 30
+  },
+  "counter99": {
+    "fen": "7k/8/8/8/8/8/8/KQ6 w - - 99 1",
+    "successors": [
+      {
+        "move": "b1b8",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1h7",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1b7",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1g6",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1b6",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1f5",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1b5",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1e4",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1b4",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1d3",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1b3",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1c2",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1b2",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1a2",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1h1",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1g1",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1f1",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1e1",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1d1",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "b1c1",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "a1b2",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "a1a2",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      }
+    ],
+    "allEndWithoutMate": true
+  },
+  "counter99BlackToMove": {
+    "fen": "7k/8/8/8/8/8/8/KQ6 b - - 99 1",
+    "successors": [
+      {
+        "move": "h8g8",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      },
+      {
+        "move": "h8g7",
+        "mate": false,
+        "halfmove": 100,
+        "productTerminal": true
+      }
+    ],
+    "allEndWithoutMate": true
+  },
+  "rawBoardEncodingUpperBound": "407791230975983032527772301681017312082758822408560838186349204791877838880"
+}

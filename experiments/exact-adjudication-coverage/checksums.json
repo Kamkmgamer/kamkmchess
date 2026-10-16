@@ -1,0 +1,23 @@
+{
+  "research/exact-adjudication-coverage.md": "45973732f8f1961c1c03e5338cdd6fc2293adc8152015916c383edf3c85a8eaf",
+  "experiments/exact-adjudication-coverage/.gitignore": "2f7eabe9c8f98186b4534fa624edf1d0ad79550b8cc71384a73adc85a23463b2",
+  "experiments/exact-adjudication-coverage/acquire_sources.py": "3f8ce100a5a7817d69e4f6c0a12bb2167b5388e41d08ad3d4f46196d80983757",
+  "experiments/exact-adjudication-coverage/audit_sources.py": "673b4f3bb8bc47cecf27e5be58d7d8e03bb61bbd2d9c63ec19535a2f9b2c733c",
+  "experiments/exact-adjudication-coverage/build.log": "811dfedf9857e7443513fe25fd3f06e2b955531debfa4e5318c6675498b1deae",
+  "experiments/exact-adjudication-coverage/canonical-comments.json": "ad338bb2249a08dfc5a8ad21c0db02b3e950eaf9fb79d1b484ef94baa63cba29",
+  "experiments/exact-adjudication-coverage/closure-results.json": "57553188a8320c2b709e61381b4ed1db5b3c9eac29c9b7c9765c0843f4eb4014",
+  "experiments/exact-adjudication-coverage/exact_closure.py": "7467ee6173f29f45bcbf8d1aa7ad67ba01b040216c52fce3ede15fd3c879ee60",
+  "experiments/exact-adjudication-coverage/forced-cycle-certificate.json": "5fbcf74a89aed93da52301a5f3ca591dc625eb1eb77bfe23ad8e78689054e624",
+  "experiments/exact-adjudication-coverage/native-results.json": "3482fb23b55609e20c8a28b9040e52aa68dec220a5a8cfe7e5780317392f6035",
+  "experiments/exact-adjudication-coverage/probe/Cargo.lock": "ca7ded4b38222fba70d36bf6a9cd3dc6cadeb330a42d82c8c549531522892a07",
+  "experiments/exact-adjudication-coverage/probe/Cargo.toml": "4feecd561d16926c8d7d67d9adfe891c4dca186059856a0437f06605ebd87333",
+  "experiments/exact-adjudication-coverage/probe/src/main.rs": "05ce9854397c888e408e80bfbe6b5bd85868b81db970d0b07180d4f14b752c18",
+  "experiments/exact-adjudication-coverage/README.md": "71723fc44c8007adc28de84598df007712c530fd5c2c151fb15339ff91ed6990",
+  "experiments/exact-adjudication-coverage/run_evidence.py": "377985dcbb42c1f071db55d08caec30a24b8d8261a2e07728b3dd33f459738fe",
+  "experiments/exact-adjudication-coverage/run_upstream_units.py": "cb9501341dcedc243a6bae987b3d9c051cd8f6e252b0064b81be5aaee3e9c71d",
+  "experiments/exact-adjudication-coverage/source-manifest.json": "b6141903c4b8c3e7223fa79a50c1c670186553fe662f392989f9927c2fcb680a",
+  "experiments/exact-adjudication-coverage/source-review.json": "3fd459e7a1e5f6b2011077d372fbe983f2f24a91e98069f2a55e01af5700ca06",
+  "experiments/exact-adjudication-coverage/upstream-Cargo.lock": "ed30443bd77f804089d17156c31f4cb2e8bd915892919338cc781803f59b495d",
+  "experiments/exact-adjudication-coverage/upstream-unit-tests.log": "e44e67907eded8321b42bc3b11f23f5dbfb0a3f6a5d2a7db0353c53ca772e64a",
+  "experiments/exact-adjudication-coverage/verify_evidence.py": "010282087d60952c93badb7cfe38e03f69f3f2bdc31d79eb1e5d71f4eb10cbe2"
+}

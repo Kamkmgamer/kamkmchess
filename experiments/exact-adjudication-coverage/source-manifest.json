@@ -1,0 +1,62 @@
+{
+  "chasolver": {
+    "url": "https://codeload.github.com/miguel-ambrona/chasolver/tar.gz/3484c7e65247003fac8705a9290dc2b5d0978b94",
+    "sha256": "7a1695b1fade44908c9d2b6a244c68523963b042d6392c207d94ff7843b86181",
+    "bytes": 1347556,
+    "transport": "Python TLS verification"
+  },
+  "chess": {
+    "url": "https://static.crates.io/crates/chess/chess-3.2.0.crate",
+    "sha256": "2ed299b171ec34f372945ad6726f7bc1d2afd5f59fb8380f64f48e2bab2f0ec8",
+    "bytes": 46003,
+    "transport": "Python TLS verification"
+  },
+  "paper": {
+    "url": "https://drops.dagstuhl.de/storage/00lipics/lipics-vol226-fun2022/LIPIcs.FUN.2022.2/LIPIcs.FUN.2022.2.pdf",
+    "sha256": "07969ac6de92ad4b3ff9fa1c4d04eee789e5663be3d630c7946d7dfea68daf4d",
+    "bytes": 1047312,
+    "transport": "Python TLS verification"
+  },
+  "fide": {
+    "url": "https://handbook.fide.com/chapter/E012023",
+    "sha256": "c5b1692a0614d4bd93fe9238287b9ab7d1f47320934d5df3be113523906c476f",
+    "bytes": 186411,
+    "transport": "Python TLS verification"
+  },
+  "python-chess": {
+    "url": "https://raw.githubusercontent.com/niklasf/python-chess/v1.11.2/chess/__init__.py",
+    "sha256": "1fde6a8e932508d14b31f6a584497b49c2969fc3c7cdc675347f819f0d667a5b",
+    "bytes": 150843,
+    "transport": "Python TLS verification"
+  },
+  "syzygy": {
+    "url": "https://raw.githubusercontent.com/niklasf/python-chess/v1.11.2/chess/syzygy.py",
+    "sha256": "e10e74b0b8174e85428945a975dfc2d67f521c6c5d941e998bdfca26f9ebf754",
+    "bytes": 69418,
+    "transport": "Python TLS verification"
+  },
+  "paper-full": {
+    "url": "https://chasolver.org/FUN22-full.pdf",
+    "sha256": "502eebe3bfd5892de47c6bb8debdd5e75a6387856bb0d74e8052b3bd9ddbdf8d",
+    "bytes": 804676,
+    "transport": "Python TLS verification"
+  },
+  "d3-2022": {
+    "url": "https://codeload.github.com/miguel-ambrona/chasolver/tar.gz/e53a24147cda65bec1f93e5c7cd1f5b10d67a4ef",
+    "sha256": "834fec9e1eb2e305168cd57afa0cf1b496c45251966a7299cb8d75a08dff4371",
+    "bytes": 2679670,
+    "transport": "Python TLS verification"
+  },
+  "popeye-readme": {
+    "url": "https://raw.githubusercontent.com/thomas-maeder/popeye/006e480686bf167c2b79780984609aad746ce7a5/README.md",
+    "sha256": "bbf1ed748e70e844e862efd818a67c4240eec9c852633fa6e71e3b965de8c77f",
+    "bytes": 1854,
+    "transport": "Python TLS verification"
+  },
+  "popeye-manual": {
+    "url": "https://raw.githubusercontent.com/thomas-maeder/popeye/006e480686bf167c2b79780984609aad746ce7a5/py-engl.txt",
+    "sha256": "5e51fcc509068ccd2b02a6c9a8a3c5a26c28629713135276ae7f269d2a902923",
+    "bytes": 42535,
+    "transport": "Python TLS verification"
+  }
+}

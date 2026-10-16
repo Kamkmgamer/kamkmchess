@@ -1,0 +1,9 @@
+[package]
+name = "kha25-exact-probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+chasolver = { path = "../.cache/chasolver/chasolver-3484c7e65247003fac8705a9290dc2b5d0978b94" }
+chess = "=3.2.0"
