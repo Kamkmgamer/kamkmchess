@@ -2,3 +2,10 @@
 .scratch/cli-proxy-chess/mcp-*.json
 .scratch/cli-proxy-chess/live-*.json
 __pycache__/
+node_modules/
+/dist/
+/coverage/
+*.tsbuildinfo
+.env
+.env.*
+!.env.example
