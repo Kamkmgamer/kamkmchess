@@ -1,6 +1,6 @@
 # kamkm chess
 
-Chess against AI models that choose their own moves. The current page is a placeholder; playable chess is subsequent work. KHA-31 adds a reusable proof-search API, a Worker entry point, and a separate IndexedDB checkpoint store. The placeholder does not start the Worker or connect search to a match controller.
+Chess against AI models that choose their own moves. The current page is a placeholder; playable chess is subsequent work. The repository includes KHA-31's proof-search API, Worker entry point and separate IndexedDB checkpoint store, the KHA-35 provider protocol core, and a serialized controller core. The placeholder does not start the Worker or connect search or the controller to a match.
 
 ## Local development
 
@@ -32,11 +32,12 @@ Publishable files are in `dist/`. The build includes the application license, co
 | `npm run build` | Typecheck, compile static assets and collect runtime license notices. |
 | `npm run check` | Lint, full fixture suite and production build. |
 
-Vitest runs offline fixtures for strict rules, clock calculations, proof checking and search, archive validation, local storage and provider protocols. A missing fixture suite fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md), [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md), and [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md).
+Vitest runs offline fixtures for strict rules, clock calculations, proof checking and search, archive validation, local storage, provider protocols and serialized controller decisions. A missing fixture suite fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md), [KHA-29 controller evidence](docs/implementation/KHA-29-controller-evidence.md), [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md), and [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md).
 
 ## Implementation references
 
 - [Module responsibilities and authority](docs/architecture/modules.md)
+- [KHA-29 serialized controller evidence](docs/implementation/KHA-29-controller-evidence.md)
 - [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md)
 - [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md)
 - [Dependency and artwork inventory](docs/dependency-notices.md)

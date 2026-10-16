@@ -1,0 +1,73 @@
+{
+    "schemaVersion":  1,
+    "feature":  "KHA-29 serialized controller core",
+    "baseCommit":  "59ec885598cd45c223bc5656de5638ee3b8587f7",
+    "sourceCommit":  "e13030af1ff834366c5183d4b483eaa6c5328e3d",
+    "sourcePaths":  [
+                        {
+                            "path":  "src/controller/index.ts",
+                            "gitBlob":  "bbec235a5ddc09b162914a95f40f1026cc8ece28",
+                            "sha256":  "da64bf28404d2ed94d3a5aecd1eea29776b0408f9daf287dc09113cb6c01c6d4"
+                        },
+                        {
+                            "path":  "src/controller/index.test.ts",
+                            "gitBlob":  "cdf6b18fc66fd26a1743d72d653da3ce8458d8d9",
+                            "sha256":  "b2d196bab398b18f07fafd57e7aa67353998544dcac88bd24d135097e3550b4a"
+                        }
+                    ],
+    "buildCommands":  [
+                          "npm ci",
+                          "npm run build"
+                      ],
+    "runtime":  {
+                    "node":  "v24.22.0",
+                    "npm":  "11.19.1",
+                    "vite":  "8.3.4"
+                },
+    "artifactPath":  "docs/implementation/artifacts/KHA-29-controller-build-e13030a.zip",
+    "archiveSha256":  "47c6a416935055be4704d62558ccfb46eecb1113173c75974191c314741f20f3",
+    "archiveMemberCount":  8,
+    "archiveMembers":  [
+                           {
+                               "path":  "_headers",
+                               "bytes":  336,
+                               "sha256":  "01d00fe3ab6cf75ef6214f11e5d294734e23961382b58115ec7c080e1885d65b"
+                           },
+                           {
+                               "path":  "_redirects",
+                               "bytes":  19,
+                               "sha256":  "6036983e5fc00f0169c9e939b1816ed771eee00e27f2fcc517b819041460b9ef"
+                           },
+                           {
+                               "path":  "assets/index-CE2xj8Mp.js",
+                               "bytes":  219192,
+                               "sha256":  "729ec9148ca84b456d8bd35e4e8f4af91fdb06a32c2404587920055dbc0ffd86"
+                           },
+                           {
+                               "path":  "assets/index-Dn1Kj2XK.css",
+                               "bytes":  562,
+                               "sha256":  "84935c1fa75bb6ef1afb3f6862aadeb681ad506f1dca201490dacef620c5283f"
+                           },
+                           {
+                               "path":  "DEPENDENCY_INVENTORY.json",
+                               "bytes":  33061,
+                               "sha256":  "527127737855cdf29b8d48614bcc28b820681bee38e2ca16b7d550875e7ebefe"
+                           },
+                           {
+                               "path":  "index.html",
+                               "bytes":  496,
+                               "sha256":  "4651fb5226b77250c542ce82ca8e098b2b035154d6dc660db0b3e175776bac51"
+                           },
+                           {
+                               "path":  "LICENSE.txt",
+                               "bytes":  1080,
+                               "sha256":  "4ccc7c5ac9ebaa24233e3115dda4541b5d7d5d254f8e027a3fc442807d56e50c"
+                           },
+                           {
+                               "path":  "THIRD_PARTY_NOTICES.txt",
+                               "bytes":  5038,
+                               "sha256":  "a833d6cb3a6f09d0482ec3dd94ce1e8767aab8eb9f14186f79ee408efa4115b9"
+                           }
+                       ],
+    "memberHashMethod":  "SHA-256 of uncompressed member bytes read from the ZIP; each hash was compared with the corresponding dist file."
+}
