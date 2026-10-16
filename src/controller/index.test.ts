@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
-import type { CoordinateMove } from '../rules/index.js';
 import { openGameStore } from '../storage/index.js';
 import { getOrCreateGameController, modelConfigurationIdentity } from './index.js';
 import type {
@@ -9,6 +8,7 @@ import type {
   GameControllerSetupV1,
   ModelSelection,
 } from './index.js';
+import type { ProofAdjudicationRunnerV1 } from '../adjudication/index.js';
 import type { CheckpointCommitInputV1, GameStore } from '../storage/index.js';
 
 const model: ModelSelection = {
@@ -19,6 +19,10 @@ const model: ModelSelection = {
   modelRoutingId: 'My/Model:latest',
   protocol: 'chat-completions',
   diagnostic: 'passed-current-session',
+};
+
+const heldAdjudicationRunner: ProofAdjudicationRunnerV1 = {
+  runPass: () => new Promise(() => {}),
 };
 
 describe('model configuration identity', () => {
@@ -434,6 +438,7 @@ describe('game controller setup', () => {
       },
       clockPolicy: { maxReferenceDivergenceMs: 0 },
       idFactory: () => `${testId}-id-${++generatedId}`,
+      adjudicationRunner: heldAdjudicationRunner,
     });
 
     try {
@@ -485,8 +490,9 @@ describe('game controller setup', () => {
         'game-created',
         'model-turn-started',
         'model-move-accepted',
+        'adjudication-pending',
       ]);
-      expect(saved?.events.at(-1)).toMatchObject({
+      expect(saved?.events.find((event) => event.kind === 'model-move-accepted')).toMatchObject({
         sequence: 2,
         occurredAtMs: 1_010,
         payload: {
@@ -839,6 +845,7 @@ describe('game controller setup', () => {
         },
         clockPolicy: { maxReferenceDivergenceMs: 0 },
         idFactory: () => `${testId}-id-${++generatedId}`,
+        adjudicationRunner: heldAdjudicationRunner,
       });
 
       try {
@@ -977,8 +984,8 @@ describe('game controller setup', () => {
     }
   });
 
-  it('does not revive a stale reply after legal moves return to the same board state', async () => {
-    const testId = 'controller-repeated-fen-stale-reply';
+  it('fences further play while exact deadness is unresolved', async () => {
+    const testId = 'controller-pending-deadness-fence';
     let decisionTimeMs = 5_000;
     let monotonicMs = 8_000;
     const store = await openGameStore({
@@ -997,6 +1004,7 @@ describe('game controller setup', () => {
       },
       clockPolicy: { maxReferenceDivergenceMs: 0 },
       idFactory: () => `${testId}-id-${++generatedId}`,
+      adjudicationRunner: heldAdjudicationRunner,
     });
 
     try {
@@ -1007,7 +1015,6 @@ describe('game controller setup', () => {
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 60_000, incrementMs: 0 },
       });
-      const originalPositionIdentity = state.checkpoint.rules.currentFen.split(' ').slice(0, 4).join(' ');
       const firstRequest = await controller.dispatch({
         schemaVersion: 1,
         kind: 'begin-model-turn',
@@ -1015,48 +1022,28 @@ describe('game controller setup', () => {
       });
       if (firstRequest.kind !== 'model-turn-started') throw new Error('The first model turn did not start.');
       state = firstRequest.snapshot;
-
-      const acceptModelMove = async (move: CoordinateMove) => {
-        decisionTimeMs += 1_000;
-        monotonicMs += 1_000;
-        const accepted = await controller.dispatch({
-          schemaVersion: 1,
-          kind: 'model-move',
-          fence: state.fence,
-          move,
-        });
-        if (accepted.kind !== 'accepted') throw new Error(`The model move failed: ${accepted.kind}`);
-        state = accepted.snapshot;
-      };
-      const acceptHumanMove = async (move: CoordinateMove) => {
-        decisionTimeMs += 1_000;
-        monotonicMs += 1_000;
-        const accepted = await controller.dispatch({
-          schemaVersion: 1,
-          kind: 'human-move',
-          fence: state.fence,
-          move,
-        });
-        if (accepted.kind !== 'accepted') throw new Error(`The human move failed: ${accepted.kind}`);
-        state = accepted.snapshot;
-      };
-
-      await acceptModelMove({ from: 'g1', to: 'f3' });
-      await acceptHumanMove({ from: 'g8', to: 'f6' });
-      const secondRequest = await controller.dispatch({
+      decisionTimeMs += 1_000;
+      monotonicMs += 1_000;
+      const accepted = await controller.dispatch({
         schemaVersion: 1,
-        kind: 'begin-model-turn',
+        kind: 'model-move',
         fence: state.fence,
+        move: { from: 'g1', to: 'f3' },
       });
-      if (secondRequest.kind !== 'model-turn-started') throw new Error('The second model turn did not start.');
-      state = secondRequest.snapshot;
-      await acceptModelMove({ from: 'f3', to: 'g1' });
-      await acceptHumanMove({ from: 'f6', to: 'g8' });
+      expect(accepted.kind).toBe('accepted');
+      state = accepted.snapshot;
+      expect(state.readiness).toBe('adjudication-pending');
+      expect(state.adjudication?.candidates[0]).toMatchObject({ kind: 'deadness', status: 'running' });
+      expect(state.checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'dead-position' });
 
-      expect(state.checkpoint.rules.currentFen.split(' ').slice(0, 4).join(' ')).toBe(originalPositionIdentity);
-      expect(state.checkpoint.rules.moves).toHaveLength(4);
-      expect(state.fence.positionRevision).toBe(4);
-      expect(state.fence.revision).toBeGreaterThan(firstRequest.request.fence.revision);
+      const blockedMove = await controller.dispatch({
+        schemaVersion: 1,
+        kind: 'human-move',
+        fence: state.fence,
+        move: { from: 'g8', to: 'f6' },
+      });
+      expect(blockedMove.kind).toBe('rejected');
+      expect(blockedMove.snapshot.checkpoint.rules.moves).toHaveLength(1);
 
       const staleReply = await controller.dispatch({
         schemaVersion: 1,
@@ -1066,7 +1053,7 @@ describe('game controller setup', () => {
       });
       expect(staleReply).toMatchObject({ kind: 'rejected', reason: 'stale-fence' });
       expect(staleReply.snapshot.checkpoint.revision).toBe(state.checkpoint.revision);
-      expect(staleReply.snapshot.checkpoint.rules.moves).toHaveLength(4);
+      expect(staleReply.snapshot.checkpoint.rules.moves).toHaveLength(1);
     } finally {
       store.close();
     }
@@ -1118,6 +1105,7 @@ describe('game controller setup', () => {
       },
       clockPolicy: { maxReferenceDivergenceMs: 0 },
       idFactory: () => `${testId}-id-${++generatedId}`,
+      adjudicationRunner: heldAdjudicationRunner,
     });
 
     try {
@@ -1529,44 +1517,19 @@ describe('game controller setup', () => {
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
+        startingFen: 'rnbqkbnr/pppp1p1p/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq g3 0 2',
         timeControl: { startingTimeMs: 60_000, incrementMs: 0 },
       });
-
-      const playModel = async (move: CoordinateMove) => {
-        const started = await controller.dispatch({
-          schemaVersion: 1,
-          kind: 'begin-model-turn',
-          fence: state.fence,
-        });
-        if (started.kind !== 'model-turn-started') throw new Error('The model turn did not start.');
-        decisionTimeMs += 1_000;
-        monotonicMs += 1_000;
-        const accepted = await controller.dispatch({
-          schemaVersion: 1,
-          kind: 'model-move',
-          fence: started.request.fence,
-          move,
-        });
-        if (accepted.kind !== 'accepted') throw new Error(`The model move failed: ${accepted.kind}`);
-        state = accepted.snapshot;
-      };
-      const playHuman = async (move: CoordinateMove) => {
-        decisionTimeMs += 1_000;
-        monotonicMs += 1_000;
-        const accepted = await controller.dispatch({
-          schemaVersion: 1,
-          kind: 'human-move',
-          fence: state.fence,
-          move,
-        });
-        if (accepted.kind !== 'accepted') throw new Error(`The human move failed: ${accepted.kind}`);
-        state = accepted.snapshot;
-      };
-
-      await playModel({ from: 'f2', to: 'f3' });
-      await playHuman({ from: 'e7', to: 'e5' });
-      await playModel({ from: 'g2', to: 'g4' });
-      await playHuman({ from: 'd8', to: 'h4' });
+      decisionTimeMs += 1_000;
+      monotonicMs += 1_000;
+      const mate = await controller.dispatch({
+        schemaVersion: 1,
+        kind: 'human-move',
+        fence: state.fence,
+        move: { from: 'd8', to: 'h4' },
+      });
+      expect(mate.kind).toBe('accepted');
+      state = mate.snapshot;
 
       expect(state.checkpoint.result).toEqual({
         kind: 'final',
@@ -1575,7 +1538,7 @@ describe('game controller setup', () => {
         eventId: state.checkpoint.rules.moves.at(-1)?.eventId,
         decidedAtMs: decisionTimeMs,
       });
-      expect(state.checkpoint.rules.moves.map((move) => move.san)).toEqual(['f3', 'e5', 'g4', 'Qh4#']);
+      expect(state.checkpoint.rules.moves.map((move) => move.san)).toEqual(['Qh4#']);
 
       const lateMove = await controller.dispatch({
         schemaVersion: 1,
@@ -1740,6 +1703,7 @@ describe('game controller setup', () => {
         },
         clockPolicy: { maxReferenceDivergenceMs: 0 },
         idFactory: () => `${testId}-restored-${++generatedId}`,
+        adjudicationRunner: heldAdjudicationRunner,
       });
       const restored = await restoredController.initialize();
       expect(restored.readiness).toBe('expiry-persistence-pending');

@@ -25,6 +25,15 @@ import {
   legalMoves,
 } from '../rules/index.js';
 import type { CoordinateMove, Position } from '../rules/index.js';
+import { createProofAdjudicationRunner } from '../adjudication/index.js';
+import type { ProofAdjudicationRunnerV1 } from '../adjudication/index.js';
+import {
+  checkProofEvidence,
+  createDeadnessQuery,
+  createTimeoutMatingQuery,
+  proofQueryIdentity,
+} from '../proofs/index.js';
+import type { ProofConclusion, ProofEvidence, ProofQuery, ProofSearchPassResult } from '../proofs/index.js';
 import type {
   AppliedMoveV1,
   ArchiveEventV1,
@@ -32,20 +41,30 @@ import type {
   GameNamespaceV1,
   GameResultV1,
   GameStore,
+  JsonValue,
   PlayerSelectionV1,
 } from '../storage/index.js';
 
 export type ModelSelection = Extract<PlayerSelectionV1, { kind: 'model' }>;
 export type HumanSideChoice = ClockSide | 'random';
 type ClockDiscrepancyReading = Extract<ClockReading, { status: 'reconciliation-required' }>;
+type ExpiredClockReading = ClockReading & { readonly status: 'expired' };
+
+function isExpiredClockReading(reading: ClockReading): reading is ExpiredClockReading {
+  return reading.status === 'expired';
+}
 
 const INITIAL_POSITION = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const GAME_CONTROLLER_INTENT_KINDS: ReadonlySet<string> = new Set([
   'begin-model-turn',
   'stop-model-turn',
+  'continue-adjudication',
+  'stop-adjudication',
   'human-move',
   'model-move',
 ]);
+
+const ADJUDICATION_EXTENSION_KEY = 'kha32-exact-adjudication';
 
 function isGameControllerIntentKind(kind: unknown): kind is GameControllerIntentV1['kind'] {
   return typeof kind === 'string' && GAME_CONTROLLER_INTENT_KINDS.has(kind);
@@ -63,6 +82,7 @@ export interface GameControllerOptions {
   timeSource?: ControllerTimeSource;
   idFactory?: () => string;
   randomSide?: () => ClockSide;
+  adjudicationRunner?: ProofAdjudicationRunnerV1;
 }
 
 export interface GameControllerSetupV1 {
@@ -92,11 +112,43 @@ export interface ControllerSnapshotV1 {
   position: Position;
   clockReading: ClockReading | null;
   fence: ControllerFenceV1;
+  startAvailable: boolean;
+  adjudication: ControllerAdjudicationStateV1 | null;
   readiness:
     | 'ready'
     | 'restore-recovery-pending'
     | 'expiry-persistence-pending'
-    | 'clock-reconciliation-required';
+    | 'clock-reconciliation-required'
+    | 'adjudication-pending'
+    | 'setup-classified';
+}
+
+export type AdjudicationCandidateKindV1 = 'deadness' | 'timeout';
+export type AdjudicationCandidateStatusV1 = 'running' | 'awaiting-continuation';
+
+export interface PendingAdjudicationCandidateV1 {
+  kind: AdjudicationCandidateKindV1;
+  eventId: string;
+  eventAtMs: number;
+  activeClockDeadlineMs: number | null;
+  positionFen: string;
+  clockAtEvent: GameCheckpointV1['clocks'];
+  query: ProofQuery;
+  status: AdjudicationCandidateStatusV1;
+  attemptGeneration: number;
+}
+
+export interface ControllerAdjudicationStateV1 {
+  workflow: 'setup' | 'game';
+  status: 'pending' | 'setup-ready';
+  candidates: readonly PendingAdjudicationCandidateV1[];
+}
+
+interface AdjudicationExtensionV1 {
+  version: 1;
+  data: ControllerAdjudicationStateV1 & {
+    setupProof?: { query: ProofQuery; evidence: ProofEvidence };
+  };
 }
 
 export interface ControllerMoveEventV1 {
@@ -109,6 +161,8 @@ export interface ControllerMoveEventV1 {
 export type GameControllerIntentV1 =
   | { schemaVersion: 1; kind: 'begin-model-turn'; fence: ControllerFenceV1 }
   | { schemaVersion: 1; kind: 'stop-model-turn'; fence: ControllerFenceV1 }
+  | { schemaVersion: 1; kind: 'continue-adjudication'; fence: ControllerFenceV1 }
+  | { schemaVersion: 1; kind: 'stop-adjudication'; fence: ControllerFenceV1 }
   | ControllerMoveEventV1;
 
 export interface ModelTurnRequestV1 {
@@ -130,6 +184,8 @@ export type GameControllerIntentResultV1 =
 
 export interface GameController {
   initialize(setup?: GameControllerSetupV1): Promise<ControllerSnapshotV1>;
+  classifySetup(setup: GameControllerSetupV1): Promise<ControllerSnapshotV1>;
+  startClassifiedSetup(setup: GameControllerSetupV1): Promise<ControllerSnapshotV1>;
   dispatch(intent: GameControllerIntentV1): Promise<GameControllerIntentResultV1>;
   reconcile(): Promise<ControllerSnapshotV1>;
   snapshot(): ControllerSnapshotV1;
@@ -204,6 +260,7 @@ interface RegistryConfiguration {
   readonly store: GameStore;
   readonly timeSource: ControllerTimeSource;
   readonly clockPolicy: ClockComparisonPolicy;
+  readonly adjudicationRunner?: ProofAdjudicationRunnerV1;
 }
 
 interface RecoveryReading {
@@ -391,6 +448,8 @@ function copySnapshot(snapshot: ControllerSnapshotV1): ControllerSnapshotV1 {
     position: snapshot.position,
     clockReading: snapshot.clockReading === null ? null : structuredClone(snapshot.clockReading),
     fence: { ...snapshot.fence },
+    startAvailable: snapshot.startAvailable,
+    adjudication: snapshot.adjudication === null ? null : structuredClone(snapshot.adjudication),
     readiness: snapshot.readiness,
   };
 }
@@ -411,8 +470,9 @@ function prepareSetup(
   setup: GameControllerSetupV1,
   idFactory: () => string,
   randomSide: () => ClockSide,
+  requireDiagnostic = true,
 ): PreparedSetup {
-  if (setup.modelSelection.diagnostic !== 'passed-current-session') {
+  if (requireDiagnostic && setup.modelSelection.diagnostic !== 'passed-current-session') {
     throw new GameControllerError('invalid-setup', 'A current-session model diagnostic must pass before setup.');
   }
   modelConfigurationIdentity(setup.modelSelection);
@@ -465,6 +525,7 @@ function makeCheckpoint(
   decisionTimeMs: number,
   createdEventId: string,
   result: GameResultV1 = { kind: 'unresolved' },
+  extensions: GameCheckpointV1['extensions'] = {},
 ): GameCheckpointV1 {
   const ledger = createRepetitionLedger(prepared.position);
   const players: Record<ClockSide, PlayerSelectionV1> = {
@@ -540,7 +601,192 @@ function makeCheckpoint(
       sourcePositionFen: null,
       originalResult: null,
     },
-    extensions: {},
+    extensions,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function checkedClockSnapshot(value: unknown): value is GameCheckpointV1['clocks'] {
+  if (!isRecord(value) || value.schemaVersion !== 1 || !isRecord(value.timeControl) || !isRecord(value.banksAtAnchor)) {
+    return false;
+  }
+  if (
+    !Number.isFinite(value.timeControl.startingTimeMs) ||
+    (value.timeControl.startingTimeMs as number) <= 0 ||
+    !Number.isFinite(value.timeControl.incrementMs) ||
+    (value.timeControl.incrementMs as number) < 0 ||
+    !Number.isFinite(value.banksAtAnchor.whiteMs) ||
+    (value.banksAtAnchor.whiteMs as number) < 0 ||
+    !Number.isFinite(value.banksAtAnchor.blackMs) ||
+    (value.banksAtAnchor.blackMs as number) < 0 ||
+    !Number.isFinite(value.lastReconciledAtMs)
+  ) return false;
+  if (value.activeSide !== null && value.activeSide !== 'white' && value.activeSide !== 'black') return false;
+  if (value.anchor === null) return value.activeSide === null;
+  if (!isRecord(value.anchor) || value.activeSide === null) return false;
+  return Number.isFinite(value.anchor.monotonicMs) &&
+    Number.isFinite(value.anchor.wallTimeMs) &&
+    (value.anchor.hostOffsetMs === undefined || Number.isFinite(value.anchor.hostOffsetMs));
+}
+
+function adjudicationExtension(
+  checkpoint: GameCheckpointV1,
+): AdjudicationExtensionV1 | null {
+  const raw = checkpoint.extensions[ADJUDICATION_EXTENSION_KEY];
+  if (!raw || raw.version !== 1 || !isRecord(raw.data)) return null;
+  const data = raw.data;
+  if (
+    (data.workflow !== 'setup' && data.workflow !== 'game') ||
+    (data.status !== 'pending' && data.status !== 'setup-ready') ||
+    !Array.isArray(data.candidates)
+  ) return null;
+  const candidates: PendingAdjudicationCandidateV1[] = [];
+  let previousAt = Number.NEGATIVE_INFINITY;
+  for (const item of data.candidates) {
+    if (!isRecord(item) || !isRecord(item.query) || !checkedClockSnapshot(item.clockAtEvent)) return null;
+    const candidate = item as unknown as PendingAdjudicationCandidateV1;
+    const check = checkProofEvidence(candidate.query, undefined);
+    if (
+      (candidate.kind !== 'deadness' && candidate.kind !== 'timeout') ||
+      typeof candidate.eventId !== 'string' || candidate.eventId.length === 0 ||
+      !Number.isFinite(candidate.eventAtMs) || candidate.eventAtMs < previousAt ||
+      (candidate.activeClockDeadlineMs !== null && !Number.isFinite(candidate.activeClockDeadlineMs)) ||
+      typeof candidate.positionFen !== 'string' ||
+      (candidate.status !== 'running' && candidate.status !== 'awaiting-continuation') ||
+      !Number.isSafeInteger(candidate.attemptGeneration) || candidate.attemptGeneration < 0 ||
+      check.status !== 'non-result' ||
+      candidate.query.queryIdentity !== proofQueryIdentity(candidate.query) ||
+      candidate.query.gameId !== checkpoint.gameId ||
+      candidate.query.segmentId !== checkpoint.segmentId ||
+      candidate.query.positionRevision !== String(checkpoint.positionRevision) ||
+      candidate.query.ownershipEpoch !== String(checkpoint.ownershipEpoch) ||
+      candidate.query.positionFen !== checkpoint.rules.currentFen ||
+      candidate.positionFen !== checkpoint.rules.currentFen ||
+      (candidate.kind === 'deadness' && candidate.query.predicate !== 'global-deadness') ||
+      (candidate.kind === 'timeout' && candidate.query.predicate !== 'timeout-opponent-mating')
+    ) return null;
+    previousAt = candidate.eventAtMs;
+    candidates.push(structuredClone(candidate));
+  }
+  if (data.status === 'pending' && candidates.length === 0) return null;
+  if (data.status === 'setup-ready' && (data.workflow !== 'setup' || candidates.length !== 0)) return null;
+  if (checkpoint.result.kind === 'pending-adjudication' && data.status !== 'pending') return null;
+  if (checkpoint.result.kind === 'unresolved' && data.status === 'pending') return null;
+  const result = checkpoint.result;
+  if (result.kind === 'pending-adjudication' && candidates[0] !== undefined) {
+    const first = candidates[0];
+    if (
+      result.eventId !== first.eventId || result.eventAtMs !== first.eventAtMs ||
+      result.reason !== (first.kind === 'deadness' ? 'dead-position' : 'timeout') ||
+      result.activeClockDeadlineMs !== first.activeClockDeadlineMs
+    ) return null;
+  }
+  const state: ControllerAdjudicationStateV1 = {
+    workflow: data.workflow,
+    status: data.status,
+    candidates,
+  };
+  if (data.setupProof !== undefined) {
+    if (!isRecord(data.setupProof) || !isRecord(data.setupProof.query)) return null;
+    const query = data.setupProof.query as unknown as ProofQuery;
+    const evidence = data.setupProof.evidence as unknown as ProofEvidence;
+    const checked = checkProofEvidence(query, evidence);
+    if (
+      data.workflow !== 'setup' || data.status !== 'setup-ready' ||
+      checked.status !== 'accepted' || checked.conclusion !== 'not-dead' ||
+      query.positionFen !== checkpoint.rules.startingFen ||
+      query.positionRevision !== '0' || query.gameId !== checkpoint.gameId ||
+      query.segmentId !== checkpoint.segmentId || query.ownershipEpoch !== String(checkpoint.ownershipEpoch)
+    ) return null;
+  } else if (data.workflow === 'setup' && data.status === 'setup-ready') {
+    return null;
+  }
+  return {
+    version: 1,
+    data: data.setupProof === undefined
+      ? state
+      : { ...state, setupProof: structuredClone(data.setupProof) as unknown as { query: ProofQuery; evidence: ProofEvidence } },
+  };
+}
+
+function withAdjudicationExtension(
+  checkpoint: GameCheckpointV1,
+  data: ControllerAdjudicationStateV1,
+  setupProof?: { query: ProofQuery; evidence: ProofEvidence },
+): GameCheckpointV1 {
+  const extensionData = setupProof === undefined ? data : { ...data, setupProof };
+  return {
+    ...checkpoint,
+    extensions: {
+      ...checkpoint.extensions,
+      [ADJUDICATION_EXTENSION_KEY]: {
+        version: 1,
+        data: structuredClone(extensionData) as unknown as JsonValue,
+      },
+    },
+  };
+}
+
+function withoutAdjudicationExtension(checkpoint: GameCheckpointV1): GameCheckpointV1 {
+  const extensions = { ...checkpoint.extensions };
+  delete extensions[ADJUDICATION_EXTENSION_KEY];
+  return { ...checkpoint, extensions };
+}
+
+function queryForCandidate(
+  kind: AdjudicationCandidateKindV1,
+  checkpoint: GameCheckpointV1,
+  position: Position,
+  expiredColor?: ClockSide,
+): ProofQuery {
+  const identity = {
+    gameId: checkpoint.gameId,
+    segmentId: checkpoint.segmentId,
+    positionRevision: String(checkpoint.positionRevision),
+    analysisGeneration: String(checkpoint.analysisGeneration),
+    ownershipEpoch: String(checkpoint.ownershipEpoch),
+    positionFen: position.fen,
+  };
+  if (kind === 'deadness') return createDeadnessQuery(identity);
+  if (expiredColor === undefined) throw new GameControllerError('invalid-configuration', 'A timeout query needs its expired side.');
+  return createTimeoutMatingQuery({ ...identity, expiredColor: expiredColor === 'white' ? 'w' : 'b' });
+}
+
+function resultForPendingCandidate(candidate: PendingAdjudicationCandidateV1): Extract<GameResultV1, { kind: 'pending-adjudication' }> {
+  return {
+    kind: 'pending-adjudication',
+    reason: candidate.kind === 'deadness' ? 'dead-position' : 'timeout',
+    eventId: candidate.eventId,
+    eventAtMs: candidate.eventAtMs,
+    activeClockDeadlineMs: candidate.activeClockDeadlineMs,
+  };
+}
+
+function createPendingCandidate(input: {
+  kind: AdjudicationCandidateKindV1;
+  checkpoint: GameCheckpointV1;
+  position: Position;
+  eventId: string;
+  eventAtMs: number;
+  activeClockDeadlineMs: number | null;
+  clockAtEvent: GameCheckpointV1['clocks'];
+  status: AdjudicationCandidateStatusV1;
+  attemptGeneration: number;
+  expiredColor?: ClockSide;
+}): PendingAdjudicationCandidateV1 {
+  return {
+    kind: input.kind,
+    eventId: input.eventId,
+    eventAtMs: input.eventAtMs,
+    activeClockDeadlineMs: input.activeClockDeadlineMs,
+    positionFen: input.position.fen,
+    clockAtEvent: structuredClone(input.clockAtEvent),
+    query: queryForCandidate(input.kind, input.checkpoint, input.position, input.expiredColor),
+    status: input.status,
+    attemptGeneration: input.attemptGeneration,
   };
 }
 
@@ -713,6 +959,11 @@ class IndexedGameController implements GameController {
   private clockReconciliationRequired = false;
   private pendingClockDiscrepancy: ClockDiscrepancyReading | null = null;
   private activeRequest: ModelTurnRequestV1 | null = null;
+  private activeAdjudication: {
+    readonly queryIdentity: string;
+    readonly attemptGeneration: number;
+    readonly abortController: AbortController;
+  } | null = null;
   private initialization: Promise<ControllerSnapshotV1> | null = null;
   private operationQueue: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<(snapshot: ControllerSnapshotV1) => void>();
@@ -724,6 +975,7 @@ class IndexedGameController implements GameController {
     private readonly clockPolicy: ClockComparisonPolicy,
     private readonly idFactory: () => string,
     private readonly randomSide: () => ClockSide,
+    private readonly adjudicationRunner: ProofAdjudicationRunnerV1,
   ) {}
 
   initialize(setup?: GameControllerSetupV1): Promise<ControllerSnapshotV1> {
@@ -744,6 +996,36 @@ class IndexedGameController implements GameController {
     };
     void initialization.then(clearInitialization, clearInitialization);
     return initialization;
+  }
+
+  classifySetup(setup: GameControllerSetupV1): Promise<ControllerSnapshotV1> {
+    if (this.checkpoint !== null) return Promise.resolve(this.snapshot());
+    if (this.initialization !== null) return this.initialization;
+    let capturedSetup: GameControllerSetupV1;
+    try {
+      capturedSetup = structuredClone(setup);
+    } catch {
+      return Promise.reject(new GameControllerError('invalid-setup', 'The game setup must be cloneable.'));
+    }
+    const initialization = this.createClassifiedSetup(capturedSetup);
+    this.initialization = initialization;
+    const clearInitialization = () => {
+      if (this.initialization === initialization) this.initialization = null;
+    };
+    void initialization.then(clearInitialization, clearInitialization);
+    return initialization;
+  }
+
+  startClassifiedSetup(setup: GameControllerSetupV1): Promise<ControllerSnapshotV1> {
+    let capturedSetup: GameControllerSetupV1;
+    try {
+      capturedSetup = structuredClone(setup);
+    } catch {
+      return Promise.reject(new GameControllerError('invalid-setup', 'The game setup must be cloneable.'));
+    }
+    const operation = this.operationQueue.then(() => this.startClassifiedSetupReady(capturedSetup));
+    this.operationQueue = operation.then(() => undefined, () => undefined);
+    return operation;
   }
 
   dispatch(intent: GameControllerIntentV1): Promise<GameControllerIntentResultV1> {
@@ -772,6 +1054,7 @@ class IndexedGameController implements GameController {
     }
     let clockReading: ClockReading | null = null;
     let readiness: ControllerSnapshotV1['readiness'] = 'ready';
+    const adjudication = adjudicationExtension(checkpoint)?.data ?? null;
     const hasNoActiveDeadline =
       checkpoint.result.kind === 'pending-adjudication' && checkpoint.result.activeClockDeadlineMs === null;
     if (this.clockState !== null && checkpoint.result.kind !== 'final' && !hasNoActiveDeadline) {
@@ -793,11 +1076,28 @@ class IndexedGameController implements GameController {
       }
     }
     if (this.clockReconciliationRequired) readiness = 'clock-reconciliation-required';
+    if (checkpoint.result.kind === 'pending-adjudication') readiness = 'adjudication-pending';
+    else if (adjudication?.workflow === 'setup' && adjudication.status === 'setup-ready') {
+      readiness = 'setup-classified';
+    }
+    const diagnosticPassed = Object.values(checkpoint.selections.players).some(
+      (selection) => selection.kind === 'model' && selection.diagnostic === 'passed-current-session',
+    );
     return {
       checkpoint: structuredClone(checkpoint),
       position,
       clockReading,
       fence: createFence(checkpoint),
+      startAvailable: adjudication?.workflow === 'setup' && adjudication.status === 'setup-ready' && diagnosticPassed,
+      adjudication: adjudication === null
+        ? (checkpoint.result.kind === 'pending-adjudication'
+            ? { workflow: 'game', status: 'pending', candidates: [] }
+            : null)
+        : {
+            workflow: adjudication.workflow,
+            status: adjudication.status,
+            candidates: structuredClone(adjudication.candidates),
+          },
       readiness,
     };
   }
@@ -805,6 +1105,331 @@ class IndexedGameController implements GameController {
   subscribe(listener: (snapshot: ControllerSnapshotV1) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  private enqueueSerialized<Value>(operation: () => Promise<Value>): Promise<Value> {
+    const queued = this.operationQueue.then(operation);
+    this.operationQueue = queued.then(() => undefined, () => undefined);
+    return queued;
+  }
+
+  private scheduleAdjudicationPass(): void {
+    queueMicrotask(() => this.startPendingAdjudicationPass());
+  }
+
+  private startPendingAdjudicationPass(): void {
+    if (this.activeAdjudication !== null || this.checkpoint === null) return;
+    const state = adjudicationExtension(this.checkpoint)?.data;
+    const candidate = state?.status === 'pending' ? state.candidates[0] : undefined;
+    if (candidate === undefined || candidate.status !== 'running') return;
+
+    const abortController = new AbortController();
+    const running = {
+      queryIdentity: candidate.query.queryIdentity,
+      attemptGeneration: candidate.attemptGeneration,
+      abortController,
+    };
+    this.activeAdjudication = running;
+    void this.adjudicationRunner.runPass({
+      namespace: this.checkpoint.namespace,
+      query: structuredClone(candidate.query),
+      signal: abortController.signal,
+    }).then(
+      (result) => this.enqueueSerialized(() => this.acceptAdjudicationPass(
+        running.queryIdentity,
+        running.attemptGeneration,
+        result,
+      )),
+      () => this.enqueueSerialized(() => this.persistAdjudicationPassEnd(
+        running.queryIdentity,
+        running.attemptGeneration,
+        'search-error',
+      )),
+    ).catch(() => {
+      if (
+        this.activeAdjudication?.queryIdentity === running.queryIdentity &&
+        this.activeAdjudication.attemptGeneration === running.attemptGeneration
+      ) this.activeAdjudication = null;
+      const state = this.checkpoint === null ? null : adjudicationExtension(this.checkpoint)?.data;
+      const candidate = state?.status === 'pending' ? state.candidates[0] : undefined;
+      if (
+        candidate?.status === 'running' && candidate.query.queryIdentity === running.queryIdentity &&
+        candidate.attemptGeneration === running.attemptGeneration
+      ) {
+        void this.enqueueSerialized(() => this.persistAdjudicationPassEnd(
+          running.queryIdentity,
+          running.attemptGeneration,
+          'search-error',
+        )).catch(() => undefined);
+      }
+    });
+  }
+
+  private async acceptAdjudicationPass(
+    queryIdentity: string,
+    attemptGeneration: number,
+    pass: ProofSearchPassResult,
+  ): Promise<void> {
+    if (
+      this.activeAdjudication?.queryIdentity === queryIdentity &&
+      this.activeAdjudication.attemptGeneration === attemptGeneration
+    ) this.activeAdjudication = null;
+    const checkpoint = this.checkpoint;
+    if (checkpoint === null || checkpoint.result.kind !== 'pending-adjudication') return;
+    const state = adjudicationExtension(checkpoint)?.data;
+    const candidate = state?.status === 'pending' ? state.candidates[0] : undefined;
+    if (
+      candidate === undefined || candidate.status !== 'running' ||
+      candidate.attemptGeneration !== attemptGeneration ||
+      candidate.query.queryIdentity !== queryIdentity ||
+      candidate.query.positionFen !== checkpoint.rules.currentFen ||
+      candidate.query.ownershipEpoch !== String(checkpoint.ownershipEpoch)
+    ) return;
+    if (
+      pass.status !== 'accepted' ||
+      pass.queryIdentity !== candidate.query.queryIdentity
+    ) {
+      await this.persistAdjudicationPassEnd(
+        queryIdentity,
+        attemptGeneration,
+        pass.status === 'non-result' ? pass.reason : 'invalid-query',
+      );
+      return;
+    }
+
+    const checked = checkProofEvidence(candidate.query, pass.evidence);
+    if (
+      checked.status !== 'accepted' ||
+      checked.queryIdentity !== candidate.query.queryIdentity
+    ) {
+      await this.persistAdjudicationPassEnd(
+        queryIdentity,
+        attemptGeneration,
+        checked.status === 'rejected' ? 'checker-rejected' : 'checker-non-result',
+      );
+      return;
+    }
+    let evidence: ProofEvidence;
+    try {
+      evidence = structuredClone(pass.evidence);
+    } catch {
+      await this.persistAdjudicationPassEnd(queryIdentity, attemptGeneration, 'checker-rejected');
+      return;
+    }
+    await this.persistAcceptedAdjudication(queryIdentity, attemptGeneration, checked.conclusion, evidence);
+  }
+
+  private async persistAdjudicationPassEnd(
+    queryIdentity: string,
+    attemptGeneration: number,
+    reason: string,
+  ): Promise<void> {
+    const checkpoint = this.checkpoint;
+    if (checkpoint === null || checkpoint.result.kind !== 'pending-adjudication') return;
+    const currentState = adjudicationExtension(checkpoint)?.data;
+    const current = currentState?.status === 'pending' ? currentState.candidates[0] : undefined;
+    if (
+      current === undefined || current.query.queryIdentity !== queryIdentity ||
+      current.attemptGeneration !== attemptGeneration || current.status !== 'running'
+    ) return;
+
+    const committed = await this.commitMutation<IntentMutationValue>(null, (context) => {
+      const data = adjudicationExtension(context.checkpoint)?.data;
+      const first = data?.status === 'pending' ? data.candidates[0] : undefined;
+      if (
+        data === undefined || first === undefined || first.query.queryIdentity !== queryIdentity ||
+        first.attemptGeneration !== attemptGeneration || first.status !== 'running'
+      ) return { checkpoint: context.checkpoint, position: context.position, clockState: context.clockState, value: { kind: 'accepted' } };
+
+      const candidates = [...data.candidates];
+      candidates[0] = { ...first, status: 'awaiting-continuation' };
+      const nextState = { ...data, status: 'pending' as const, candidates };
+      const clockState = context.clockState;
+      if (clockState !== null) {
+        const reading = readClockAt(clockState, context.at, this.clockPolicy);
+        if (reading.status === 'expired') return this.expiryCandidate(context, createFence(context.checkpoint), reading);
+        if (reading.status === 'reconciliation-required') {
+          const discrepancy = this.clockDiscrepancyCandidate(context, createFence(context.checkpoint), reading);
+          return {
+            ...discrepancy,
+            checkpoint: withAdjudicationExtension(discrepancy.checkpoint, nextState),
+          };
+        }
+      }
+      const event = context.createEvent(
+        'adjudication-pass-ended',
+        context.decisionTimeMs,
+        createFence(context.checkpoint),
+        { candidateEventId: first.eventId, queryIdentity, reason },
+      );
+      const nextCheckpoint = withAdjudicationExtension({
+        ...context.checkpoint,
+        revision: context.checkpoint.revision + 1,
+        requestGeneration: context.checkpoint.requestGeneration + 1,
+        analysisGeneration: context.checkpoint.analysisGeneration + 1,
+        result: resultForPendingCandidate(candidates[0]!),
+        archive: {
+          ...context.checkpoint.archive,
+          currentLine: {
+            ...context.checkpoint.archive.currentLine,
+            eventIds: [...context.checkpoint.archive.currentLine.eventIds, event.eventId],
+          },
+        },
+      }, nextState);
+      return { checkpoint: nextCheckpoint, position: context.position, clockState, value: { kind: 'accepted' } };
+    });
+    if (committed.value.kind === 'clock-reconciliation-required') this.clockReconciliationRequired = true;
+  }
+
+  private async persistAcceptedAdjudication(
+    queryIdentity: string,
+    attemptGeneration: number,
+    conclusion: ProofConclusion,
+    evidence: ProofEvidence,
+  ): Promise<void> {
+    const checkpoint = this.checkpoint;
+    if (checkpoint === null || checkpoint.result.kind !== 'pending-adjudication') return;
+    const currentState = adjudicationExtension(checkpoint)?.data;
+    const current = currentState?.status === 'pending' ? currentState.candidates[0] : undefined;
+    if (
+      current === undefined || current.status !== 'running' ||
+      current.query.queryIdentity !== queryIdentity || current.attemptGeneration !== attemptGeneration
+    ) return;
+    await this.commitMutation<IntentMutationValue>(null, (context) => {
+      const data = adjudicationExtension(context.checkpoint)?.data;
+      const first = data?.status === 'pending' ? data.candidates[0] : undefined;
+      if (
+        data === undefined || first === undefined || first.status !== 'running' ||
+        first.query.queryIdentity !== queryIdentity || first.attemptGeneration !== attemptGeneration
+      ) return { checkpoint: context.checkpoint, position: context.position, clockState: context.clockState, value: { kind: 'accepted' } };
+
+      const currentFence = createFence(context.checkpoint);
+      let baseCheckpoint = context.checkpoint;
+      let candidates = [...data.candidates];
+      let clockState = context.clockState;
+      if (clockState !== null) {
+        const reading = readClockAt(clockState, context.at, this.clockPolicy);
+        if (reading.status === 'reconciliation-required') {
+          const discrepancy = this.clockDiscrepancyCandidate(context, currentFence, reading);
+          const heldCandidates = [...candidates];
+          heldCandidates[0] = { ...first, status: 'awaiting-continuation' };
+          return {
+            ...discrepancy,
+            checkpoint: withAdjudicationExtension(discrepancy.checkpoint, {
+              ...data,
+              candidates: heldCandidates,
+            }),
+          };
+        }
+        if (isExpiredClockReading(reading) && !candidates.some((candidate) => candidate.kind === 'timeout')) {
+          const timeout = this.createTimeoutCandidate(context, currentFence, reading, candidates);
+          baseCheckpoint = timeout.checkpoint;
+          candidates = timeout.candidates;
+          clockState = null;
+        }
+      }
+
+      const settlementEvent = context.createEvent(
+        'adjudication-evidence-accepted',
+        context.decisionTimeMs,
+        currentFence,
+        { candidateEventId: first.eventId, query: first.query, conclusion, evidence },
+      );
+      candidates = candidates.slice(1);
+      if (conclusion === 'dead' || conclusion === 'opponent-can-mate' || conclusion === 'opponent-cannot-mate') {
+        const finalResult: Extract<GameResultV1, { kind: 'final' }> = first.kind === 'deadness'
+          ? {
+              kind: 'final', winner: 'draw', reason: 'dead-position',
+              eventId: first.eventId, decidedAtMs: first.eventAtMs,
+            }
+          : {
+              kind: 'final',
+              winner: conclusion === 'opponent-can-mate'
+                ? (first.query.predicate === 'timeout-opponent-mating' && first.query.expiredColor === 'w' ? 'black' : 'white')
+                : 'draw',
+              reason: 'timeout',
+              eventId: first.eventId,
+              decidedAtMs: first.eventAtMs,
+            };
+        const paused = pausedClockCheckpoint(
+          first.clockAtEvent.timeControl,
+          first.clockAtEvent.banksAtAnchor,
+          first.eventAtMs,
+          first.clockAtEvent.schemaVersion,
+        );
+        const finalized = withoutAdjudicationExtension({
+          ...baseCheckpoint,
+          clocks: paused,
+          result: finalResult,
+          archive: {
+            ...baseCheckpoint.archive,
+            currentLine: {
+              ...baseCheckpoint.archive.currentLine,
+              eventIds: [...baseCheckpoint.archive.currentLine.eventIds, settlementEvent.eventId],
+            },
+          },
+        });
+        return { checkpoint: finalized, position: context.position, clockState: null, value: { kind: 'accepted' } };
+      }
+
+      let nextState: ControllerAdjudicationStateV1;
+      let setupProof: { query: ProofQuery; evidence: ProofEvidence } | undefined;
+      if (candidates.length > 0) {
+        candidates[0] = {
+          ...candidates[0]!,
+          status: 'running',
+          attemptGeneration: candidates[0]!.attemptGeneration + 1,
+        };
+        nextState = { ...data, status: 'pending', candidates };
+      } else if (data.workflow === 'setup') {
+        setupProof = { query: first.query, evidence };
+        nextState = { workflow: 'setup', status: 'setup-ready', candidates: [] };
+      } else {
+        const completed = withoutAdjudicationExtension({
+          ...baseCheckpoint,
+          result: { kind: 'unresolved' },
+          archive: {
+            ...baseCheckpoint.archive,
+            currentLine: {
+              ...baseCheckpoint.archive.currentLine,
+              eventIds: [...baseCheckpoint.archive.currentLine.eventIds, settlementEvent.eventId],
+            },
+          },
+        });
+        return { checkpoint: completed, position: context.position, clockState, value: { kind: 'accepted' } };
+      }
+      if (setupProof !== undefined) {
+        const ready = withAdjudicationExtension({
+          ...baseCheckpoint,
+          result: { kind: 'unresolved' },
+          archive: {
+            ...baseCheckpoint.archive,
+            currentLine: {
+              ...baseCheckpoint.archive.currentLine,
+              eventIds: [...baseCheckpoint.archive.currentLine.eventIds, settlementEvent.eventId],
+            },
+          },
+        }, nextState, setupProof);
+        return { checkpoint: ready, position: context.position, clockState, value: { kind: 'accepted' } };
+      }
+      const nextFirst = candidates[0];
+      if (nextFirst === undefined) throw new GameControllerError('invalid-configuration', 'A pending adjudication has no next candidate.');
+      const withEvent = {
+        ...baseCheckpoint,
+        result: resultForPendingCandidate(nextFirst),
+        archive: {
+          ...baseCheckpoint.archive,
+          currentLine: {
+            ...baseCheckpoint.archive.currentLine,
+            eventIds: [...baseCheckpoint.archive.currentLine.eventIds, settlementEvent.eventId],
+          },
+        },
+      };
+      const nextCheckpoint = withAdjudicationExtension(withEvent, nextState, setupProof);
+      return { checkpoint: nextCheckpoint, position: context.position, clockState, value: { kind: 'accepted' } };
+    });
+    this.activeRequest = null;
+    if (this.checkpoint?.result.kind === 'pending-adjudication') this.scheduleAdjudicationPass();
   }
 
   private rememberClockDiscrepancy(reading: ClockDiscrepancyReading): void {
@@ -846,11 +1471,23 @@ class IndexedGameController implements GameController {
     if (!sameFence(createFence(checkpoint), intent.fence)) {
       return { kind: 'rejected', reason: 'stale-fence', snapshot };
     }
-    if (this.restored || checkpoint.result.kind !== 'unresolved') {
+    if (this.restored || checkpoint.result.kind === 'final') {
+      return { kind: 'rejected', reason: 'not-actionable', snapshot };
+    }
+    if (checkpoint.result.kind === 'pending-adjudication') {
+      if (intent.kind === 'continue-adjudication') return this.continueAdjudication(intent.fence);
+      if (intent.kind === 'stop-adjudication') return this.stopAdjudication(intent.fence);
+      return { kind: 'rejected', reason: 'not-actionable', snapshot };
+    }
+    const setupState = adjudicationExtension(checkpoint)?.data;
+    if (setupState?.workflow === 'setup' && setupState.status === 'setup-ready') {
       return { kind: 'rejected', reason: 'not-actionable', snapshot };
     }
     if (intent.kind === 'begin-model-turn') return this.beginModelTurn(intent.fence);
     if (intent.kind === 'stop-model-turn') return this.stopModelTurn(intent.fence);
+    if (intent.kind === 'continue-adjudication' || intent.kind === 'stop-adjudication') {
+      return { kind: 'rejected', reason: 'not-actionable', snapshot };
+    }
     return this.acceptMove(intent);
   }
 
@@ -859,7 +1496,10 @@ class IndexedGameController implements GameController {
     if (checkpoint === null) {
       throw new GameControllerError('setup-required', 'Initialize the game before reconciling its clock.');
     }
-    if (this.clockState === null || checkpoint.result.kind !== 'unresolved') return this.snapshot();
+    if (
+      this.clockState === null ||
+      (checkpoint.result.kind !== 'unresolved' && checkpoint.result.kind !== 'pending-adjudication')
+    ) return this.snapshot();
 
     await this.commitMutation<IntentMutationValue>(null, (context) => {
       const clockState = context.clockState;
@@ -980,6 +1620,159 @@ class IndexedGameController implements GameController {
     });
     this.activeRequest = null;
     return this.snapshot();
+  }
+
+  private async continueAdjudication(fence: ControllerFenceV1): Promise<GameControllerIntentResultV1> {
+    const checkpoint = this.checkpoint;
+    if (checkpoint === null) throw new GameControllerError('setup-required', 'Initialize the game before continuing adjudication.');
+    const state = adjudicationExtension(checkpoint)?.data;
+    const candidate = state?.status === 'pending' ? state.candidates[0] : undefined;
+    if (checkpoint.result.kind !== 'pending-adjudication' || candidate === undefined) {
+      return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
+    }
+    if (
+      candidate.status === 'running' && this.activeAdjudication?.queryIdentity === candidate.query.queryIdentity &&
+      this.activeAdjudication.attemptGeneration === candidate.attemptGeneration
+    ) return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
+
+    const committed = await this.commitMutation<IntentMutationValue>(fence, (context) => {
+      const current = adjudicationExtension(context.checkpoint)?.data;
+      const first = current?.status === 'pending' ? current.candidates[0] : undefined;
+      if (
+        current === undefined || first === undefined || first.query.queryIdentity !== candidate.query.queryIdentity ||
+        first.status === 'running'
+      ) {
+        return { checkpoint: context.checkpoint, position: context.position, clockState: context.clockState, value: { kind: 'rejected', reason: 'not-actionable' } };
+      }
+      const clockState = context.clockState;
+      if (clockState !== null) {
+        const reading = readClockAt(clockState, context.at, this.clockPolicy);
+        if (reading.status === 'expired') return this.expiryCandidate(context, fence, reading);
+        if (reading.status === 'reconciliation-required') {
+          return this.clockDiscrepancyCandidate(context, fence, reading);
+        }
+      }
+      const nextCandidates = [...current.candidates];
+      nextCandidates[0] = {
+        ...first,
+        status: 'running',
+        attemptGeneration: first.attemptGeneration + 1,
+      };
+      const nextState = { ...current, status: 'pending' as const, candidates: nextCandidates };
+      const nextCheckpoint = {
+        ...context.checkpoint,
+        revision: context.checkpoint.revision + 1,
+        requestGeneration: context.checkpoint.requestGeneration + 1,
+        analysisGeneration: context.checkpoint.analysisGeneration + 1,
+      };
+      const event = context.createEvent(
+        'adjudication-continued',
+        context.decisionTimeMs,
+        fence,
+        { candidateEventId: first.eventId, queryIdentity: first.query.queryIdentity, attemptGeneration: nextCandidates[0]!.attemptGeneration },
+      );
+      const withEvent = {
+        ...nextCheckpoint,
+        result: resultForPendingCandidate(nextCandidates[0]!),
+        archive: {
+          ...nextCheckpoint.archive,
+          currentLine: {
+            ...nextCheckpoint.archive.currentLine,
+            eventIds: [...nextCheckpoint.archive.currentLine.eventIds, event.eventId],
+          },
+        },
+      };
+      return {
+        checkpoint: withAdjudicationExtension(withEvent, nextState),
+        position: context.position,
+        clockState,
+        value: { kind: 'accepted' },
+      };
+    });
+    if (committed.value.kind === 'clock-reconciliation-required') {
+      this.clockReconciliationRequired = true;
+      return { kind: 'clock-reconciliation-required', snapshot: committed.snapshot };
+    }
+    if (committed.value.kind === 'expired') return { kind: 'expired', snapshot: committed.snapshot };
+    if (committed.value.kind === 'rejected') {
+      return { kind: 'rejected', reason: committed.value.reason, snapshot: committed.snapshot };
+    }
+    return { kind: 'accepted', snapshot: committed.snapshot };
+  }
+
+  private async stopAdjudication(fence: ControllerFenceV1): Promise<GameControllerIntentResultV1> {
+    const checkpoint = this.checkpoint;
+    if (checkpoint === null) throw new GameControllerError('setup-required', 'Initialize the game before stopping adjudication.');
+    const state = adjudicationExtension(checkpoint)?.data;
+    const candidate = state?.status === 'pending' ? state.candidates[0] : undefined;
+    if (
+      checkpoint.result.kind !== 'pending-adjudication' || candidate === undefined ||
+      candidate.status !== 'running' || this.activeAdjudication?.queryIdentity !== candidate.query.queryIdentity ||
+      this.activeAdjudication.attemptGeneration !== candidate.attemptGeneration
+    ) return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
+
+    const committed = await this.commitMutation<IntentMutationValue>(fence, (context) => {
+      const current = adjudicationExtension(context.checkpoint)?.data;
+      const first = current?.status === 'pending' ? current.candidates[0] : undefined;
+      if (
+        current === undefined || first === undefined || first.query.queryIdentity !== candidate.query.queryIdentity ||
+        first.status !== 'running' || first.attemptGeneration !== candidate.attemptGeneration
+      ) {
+        return { checkpoint: context.checkpoint, position: context.position, clockState: context.clockState, value: { kind: 'rejected', reason: 'not-actionable' } };
+      }
+      const clockState = context.clockState;
+      if (clockState !== null) {
+        const reading = readClockAt(clockState, context.at, this.clockPolicy);
+        if (reading.status === 'expired') return this.expiryCandidate(context, fence, reading);
+        if (reading.status === 'reconciliation-required') {
+          return this.clockDiscrepancyCandidate(context, fence, reading);
+        }
+      }
+      const nextCandidates = [...current.candidates];
+      nextCandidates[0] = {
+        ...first,
+        status: 'awaiting-continuation',
+        attemptGeneration: first.attemptGeneration + 1,
+      };
+      const nextState = { ...current, candidates: nextCandidates };
+      const nextCheckpoint = {
+        ...context.checkpoint,
+        revision: context.checkpoint.revision + 1,
+        requestGeneration: context.checkpoint.requestGeneration + 1,
+        analysisGeneration: context.checkpoint.analysisGeneration + 1,
+      };
+      const event = context.createEvent(
+        'adjudication-stopped',
+        context.decisionTimeMs,
+        fence,
+        { candidateEventId: first.eventId, queryIdentity: first.query.queryIdentity, stoppedAttemptGeneration: first.attemptGeneration },
+      );
+      return {
+        checkpoint: withAdjudicationExtension({
+          ...nextCheckpoint,
+          result: resultForPendingCandidate(nextCandidates[0]!),
+          archive: {
+            ...nextCheckpoint.archive,
+            currentLine: {
+              ...nextCheckpoint.archive.currentLine,
+              eventIds: [...nextCheckpoint.archive.currentLine.eventIds, event.eventId],
+            },
+          },
+        }, nextState),
+        position: context.position,
+        clockState,
+        value: { kind: 'accepted' },
+      };
+    });
+    if (committed.value.kind === 'clock-reconciliation-required') {
+      this.clockReconciliationRequired = true;
+      return { kind: 'clock-reconciliation-required', snapshot: committed.snapshot };
+    }
+    if (committed.value.kind === 'expired') return { kind: 'expired', snapshot: committed.snapshot };
+    if (committed.value.kind === 'rejected') {
+      return { kind: 'rejected', reason: committed.value.reason, snapshot: committed.snapshot };
+    }
+    return { kind: 'accepted', snapshot: committed.snapshot };
   }
 
   private async beginModelTurn(fence: ControllerFenceV1): Promise<GameControllerIntentResultV1> {
@@ -1285,7 +2078,7 @@ class IndexedGameController implements GameController {
         },
         moves: [...context.checkpoint.rules.moves, appliedMove],
       };
-      const nextCheckpointWithMove = {
+      let nextCheckpointWithMove: GameCheckpointV1 = {
         ...nextCheckpoint,
         rules,
         clocks: finalResult === null
@@ -1300,6 +2093,49 @@ class IndexedGameController implements GameController {
         },
         result,
       };
+      if (finalResult === null) {
+        const clockAfterMove = clockCandidate.clock;
+        const nextClockReading = readClockAt(clockAfterMove, context.at, this.clockPolicy);
+        const activeClockDeadlineMs = nextClockReading.status === 'running'
+          ? nextClockReading.deadline.wallTimeMs
+          : null;
+        const query = queryForCandidate('deadness', nextCheckpointWithMove, transition.position);
+        const pendingEvent = context.createEvent(
+          'adjudication-pending',
+          context.decisionTimeMs,
+          createFence(nextCheckpointWithMove),
+          {
+            candidateKind: 'deadness',
+            positionFen: transition.position.fen,
+            eventAtMs: context.decisionTimeMs,
+            activeClockDeadlineMs,
+            query,
+            candidateOrder: [{ kind: 'deadness', eventAtMs: context.decisionTimeMs, queryIdentity: query.queryIdentity }],
+          },
+        );
+        const candidate = createPendingCandidate({
+          kind: 'deadness',
+          checkpoint: nextCheckpointWithMove,
+          position: transition.position,
+          eventId: pendingEvent.eventId,
+          eventAtMs: context.decisionTimeMs,
+          activeClockDeadlineMs,
+          clockAtEvent: checkpointClock(clockAfterMove, context.decisionTimeMs),
+          status: 'running',
+          attemptGeneration: 1,
+        });
+        nextCheckpointWithMove = withAdjudicationExtension({
+          ...nextCheckpointWithMove,
+          result: resultForPendingCandidate(candidate),
+          archive: {
+            ...nextCheckpointWithMove.archive,
+            currentLine: {
+              ...nextCheckpointWithMove.archive.currentLine,
+              eventIds: [...nextCheckpointWithMove.archive.currentLine.eventIds, pendingEvent.eventId],
+            },
+          },
+        }, { workflow: 'game', status: 'pending', candidates: [candidate] });
+      }
       return {
         checkpoint: nextCheckpointWithMove,
         position: transition.position,
@@ -1323,6 +2159,7 @@ class IndexedGameController implements GameController {
         snapshot: committed.snapshot,
       };
     }
+    if (committed.snapshot.checkpoint.result.kind === 'pending-adjudication') this.scheduleAdjudicationPass();
     return { kind: 'accepted', snapshot: committed.snapshot };
   }
 
@@ -1356,47 +2193,131 @@ class IndexedGameController implements GameController {
     };
   }
 
+  private createTimeoutCandidate(
+    context: ControllerDecisionContext,
+    fence: ControllerFenceV1,
+    reading: ExpiredClockReading,
+    earlierCandidates: readonly PendingAdjudicationCandidateV1[],
+  ): { checkpoint: GameCheckpointV1; candidates: PendingAdjudicationCandidateV1[] } {
+    const activeClock = context.clockState;
+    if (activeClock === null) {
+      throw new GameControllerError('invalid-configuration', 'A timeout candidate requires its expired clock state.');
+    }
+    const eventAtMs = reading.deadline.wallTimeMs;
+    const expiredColor = reading.activeSide;
+    const expiredBank = expiredColor === 'white' ? 'whiteMs' : 'blackMs';
+    const banksAtExpiry = { ...activeClock.banksAtAnchor, [expiredBank]: 0 };
+    const clockAtEvent = pausedClockCheckpoint(
+      activeClock.timeControl,
+      banksAtExpiry,
+      eventAtMs,
+      activeClock.schemaVersion,
+    );
+    const nextBase = {
+      ...context.checkpoint,
+      requestGeneration: context.checkpoint.requestGeneration + 1,
+      analysisGeneration: context.checkpoint.analysisGeneration + 1,
+    };
+    const query = queryForCandidate('timeout', nextBase, context.position, expiredColor);
+    const event = context.createEvent(
+      'timeout-candidate',
+      eventAtMs,
+      fence,
+      {
+        decisionTimeMs: context.decisionTimeMs,
+        originalExpiryAtMs: eventAtMs,
+        deadline: reading.deadline,
+        evidence: reading.evidence,
+        fenceGeneration: {
+          revision: fence.revision,
+          positionRevision: fence.positionRevision,
+          analysisGeneration: fence.analysisGeneration,
+          ownershipEpoch: fence.ownershipEpoch,
+        },
+        query,
+        candidateOrder: [
+          ...earlierCandidates.map((candidate) => ({
+            eventId: candidate.eventId,
+            kind: candidate.kind,
+            eventAtMs: candidate.eventAtMs,
+            queryIdentity: candidate.query.queryIdentity,
+          })),
+          {
+            eventRef: 'current-event',
+            kind: 'timeout',
+            eventAtMs,
+            queryIdentity: query.queryIdentity,
+          },
+        ],
+      },
+    );
+    const candidates: PendingAdjudicationCandidateV1[] = earlierCandidates.map((candidate) => ({
+      ...candidate,
+      status: 'awaiting-continuation' as const,
+      attemptGeneration: candidate.attemptGeneration + (candidate.status === 'running' ? 1 : 0),
+    }));
+    candidates.push({
+      kind: 'timeout',
+      eventId: event.eventId,
+      eventAtMs,
+      activeClockDeadlineMs: null,
+      positionFen: context.position.fen,
+      clockAtEvent,
+      query,
+      status: earlierCandidates.length === 0 ? 'running' : 'awaiting-continuation',
+      attemptGeneration: earlierCandidates.length === 0 ? 1 : 0,
+    });
+    candidates.sort((left, right) => left.eventAtMs - right.eventAtMs);
+    const nextState: ControllerAdjudicationStateV1 = {
+      workflow: adjudicationExtension(context.checkpoint)?.data.workflow ?? 'game',
+      status: 'pending',
+      candidates,
+    };
+    const nextCheckpoint = withAdjudicationExtension({
+      ...nextBase,
+      clocks: clockAtEvent,
+      result: resultForPendingCandidate(candidates[0]!),
+      archive: {
+        ...context.checkpoint.archive,
+        currentLine: {
+          ...context.checkpoint.archive.currentLine,
+          eventIds: [...context.checkpoint.archive.currentLine.eventIds, event.eventId],
+        },
+      },
+    }, nextState);
+    return { checkpoint: nextCheckpoint, candidates };
+  }
+
   private expiryCandidate(
     context: ControllerDecisionContext,
     fence: ControllerFenceV1,
     reading: ClockReading,
   ): ControllerDecisionCandidate<IntentMutationValue> {
-    if (reading.status !== 'expired') {
+    if (!isExpiredClockReading(reading)) {
       throw new GameControllerError('invalid-configuration', 'An expiry decision needs an expired clock reading.');
     }
-    const event = context.createEvent(
-      'timeout-candidate',
-      reading.deadline.wallTimeMs,
+    const existing = adjudicationExtension(context.checkpoint)?.data;
+    const savedTimeout = existing?.status === 'pending'
+      ? existing.candidates.find((candidate) => candidate.kind === 'timeout')
+      : undefined;
+    if (savedTimeout !== undefined) {
+      return {
+        checkpoint: { ...context.checkpoint, clocks: structuredClone(savedTimeout.clockAtEvent) },
+        position: context.position,
+        clockState: null,
+        value: { kind: 'expired' },
+      };
+    }
+    const pending = this.createTimeoutCandidate(
+      context,
       fence,
-      {
-        decisionTimeMs: context.decisionTimeMs,
-        deadline: reading.deadline,
-        evidence: reading.evidence,
-      },
+      reading,
+      existing?.status === 'pending' ? existing.candidates : [],
     );
     return {
-      checkpoint: {
-        ...context.checkpoint,
-        revision: context.checkpoint.revision + 1,
-        requestGeneration: context.checkpoint.requestGeneration + 1,
-        analysisGeneration: context.checkpoint.analysisGeneration + 1,
-        archive: {
-          ...context.checkpoint.archive,
-          currentLine: {
-            ...context.checkpoint.archive.currentLine,
-            eventIds: [...context.checkpoint.archive.currentLine.eventIds, event.eventId],
-          },
-        },
-        result: {
-          kind: 'pending-adjudication',
-          reason: 'timeout',
-          eventId: event.eventId,
-          eventAtMs: reading.deadline.wallTimeMs,
-          activeClockDeadlineMs: null,
-        },
-      },
+      checkpoint: pending.checkpoint,
       position: context.position,
-      clockState: context.clockState,
+      clockState: null,
       value: { kind: 'expired' },
     };
   }
@@ -1528,6 +2449,7 @@ class IndexedGameController implements GameController {
     this.checkpoint = result.checkpoint;
     this.position = acceptedCandidate.value.position;
     this.clockState = acceptedCandidate.value.clockState;
+    if (acceptedCandidate.value.value.kind === 'expired') this.activeRequest = null;
     if (acceptedCandidate.value.value.kind === 'reconciled') this.restored = false;
     if (acceptedCandidate.value.value.kind === 'clock-reconciliation-required') {
       this.clockReconciliationRequired = true;
@@ -1538,8 +2460,20 @@ class IndexedGameController implements GameController {
       this.pendingClockDiscrepancy = null;
       this.activeRequest = null;
     }
+    const pendingState = adjudicationExtension(this.checkpoint)?.data;
+    const activeCandidate = pendingState?.status === 'pending' ? pendingState.candidates[0] : undefined;
+    if (
+      this.activeAdjudication !== null &&
+      (activeCandidate === undefined || activeCandidate.status !== 'running' ||
+        activeCandidate.query.queryIdentity !== this.activeAdjudication.queryIdentity ||
+        activeCandidate.attemptGeneration !== this.activeAdjudication.attemptGeneration)
+    ) {
+      this.activeAdjudication.abortController.abort();
+      this.activeAdjudication = null;
+    }
     const snapshot = this.snapshot();
     this.publish(snapshot);
+    if (activeCandidate?.status === 'running' && this.activeAdjudication === null) this.scheduleAdjudicationPass();
     return { snapshot, value: acceptedCandidate.value.value };
   }
 
@@ -1594,6 +2528,247 @@ class IndexedGameController implements GameController {
     });
     if (committed.value.kind === 'clock-reconciliation-required') {
       this.clockReconciliationRequired = true;
+    }
+    return committed.snapshot;
+  }
+
+  private async createClassifiedSetup(setup: GameControllerSetupV1): Promise<ControllerSnapshotV1> {
+    const existing = await this.store.readGame(this.gameId);
+    if (existing !== null) {
+      this.restore(existing.checkpoint, existing.events);
+      const snapshot = this.snapshot();
+      this.publish(snapshot);
+      return snapshot;
+    }
+    const prepared = prepareSetup({
+      ...setup,
+      modelSelection: { ...setup.modelSelection, diagnostic: 'not-run' },
+    }, this.idFactory, this.randomSide, false);
+    let decisionCompleted = false;
+    const result = await this.store.commitCheckpoint({
+      gameId: this.gameId,
+      expectedRevision: null,
+      expectedEpoch: prepared.ownershipEpoch,
+      events: [],
+      chunks: [],
+      knownCredentials: [],
+      decide: (decisionTimeMs) => {
+        const usedIds = new Set([prepared.segmentId, prepared.lineId]);
+        const createdEventId = nextUniqueId(this.idFactory, usedIds);
+        const startingFacts = observeEndingFacts(prepared.position, createRepetitionLedger(prepared.position));
+        const terminalResult = finalResultForPosition(
+          prepared.position,
+          startingFacts,
+          createdEventId,
+          decisionTimeMs,
+        );
+        const eventFence = {
+          gameId: this.gameId,
+          segmentId: prepared.segmentId,
+          side: fromPositionColor(prepared.position.sideToMove),
+          revision: 1,
+          positionRevision: 0,
+          requestGeneration: 0,
+          analysisGeneration: terminalResult === null ? 1 : 0,
+          ownershipEpoch: prepared.ownershipEpoch,
+          modelConfigurationIdentity: modelConfigurationIdentity(prepared.modelSelection),
+          schemaVersion: 1 as const,
+        } satisfies ControllerFenceV1;
+        let checkpoint = makeCheckpoint(
+          this.gameId,
+          prepared,
+          null,
+          decisionTimeMs,
+          createdEventId,
+          terminalResult ?? { kind: 'unresolved' },
+        );
+        if (terminalResult === null) checkpoint = { ...checkpoint, analysisGeneration: 1 };
+        const createdEvent: ArchiveEventV1 = {
+          eventId: createdEventId,
+          gameId: this.gameId,
+          sequence: 0,
+          segmentId: prepared.segmentId,
+          kind: 'game-created',
+          occurredAtMs: decisionTimeMs,
+          receiveState: 'complete',
+          egressStatus: 'eligible',
+          payload: eventPayload(eventFence, {
+            humanSide: prepared.humanSide,
+            startingFen: prepared.startingFen,
+            timeControl: prepared.timeControl,
+            classifiedBeforeClock: true,
+            ...(terminalResult === null ? {} : { result: terminalResult }),
+          }),
+          chunkIds: [],
+        };
+        let events: ArchiveEventV1[] = [createdEvent];
+        if (terminalResult === null) {
+          const query = queryForCandidate('deadness', checkpoint, prepared.position);
+          const eventId = nextUniqueId(this.idFactory, usedIds);
+          const pendingEvent: ArchiveEventV1 = {
+            eventId,
+            gameId: this.gameId,
+            sequence: 1,
+            segmentId: prepared.segmentId,
+            kind: 'setup-classification-pending',
+            occurredAtMs: decisionTimeMs,
+            receiveState: 'complete',
+            egressStatus: 'eligible',
+            payload: eventPayload(eventFence, {
+              candidateKind: 'deadness',
+              positionFen: prepared.position.fen,
+              eventAtMs: decisionTimeMs,
+              activeClockDeadlineMs: null,
+              query,
+              candidateOrder: [{ kind: 'deadness', eventAtMs: decisionTimeMs, queryIdentity: query.queryIdentity }],
+            }),
+            chunkIds: [],
+          };
+          const candidate = createPendingCandidate({
+            kind: 'deadness',
+            checkpoint,
+            position: prepared.position,
+            eventId,
+            eventAtMs: decisionTimeMs,
+            activeClockDeadlineMs: null,
+            clockAtEvent: checkpoint.clocks,
+            status: 'running',
+            attemptGeneration: 1,
+          });
+          checkpoint = withAdjudicationExtension({
+            ...checkpoint,
+            result: resultForPendingCandidate(candidate),
+            archive: {
+              ...checkpoint.archive,
+              currentLine: {
+                ...checkpoint.archive.currentLine,
+                eventIds: [...checkpoint.archive.currentLine.eventIds, eventId],
+              },
+            },
+          }, { workflow: 'setup', status: 'pending', candidates: [candidate] });
+          events = [...events, pendingEvent];
+        }
+        decisionCompleted = true;
+        return { checkpoint, events, outboxOperationIds: [] };
+      },
+    });
+    if (result.kind === 'revision-conflict') {
+      throw new GameControllerError('revision-conflict', 'A game with this ID already has a saved checkpoint.');
+    }
+    if (!decisionCompleted) {
+      throw new GameControllerError('invalid-configuration', 'The setup classification decision produced no checkpoint.');
+    }
+    this.checkpoint = result.checkpoint;
+    this.position = prepared.position;
+    this.clockState = null;
+    this.restored = false;
+    const snapshot = this.snapshot();
+    this.publish(snapshot);
+    if (snapshot.checkpoint.result.kind === 'pending-adjudication') this.scheduleAdjudicationPass();
+    return snapshot;
+  }
+
+  private async startClassifiedSetupReady(setup: GameControllerSetupV1): Promise<ControllerSnapshotV1> {
+    const checkpoint = this.checkpoint;
+    const position = this.position;
+    if (checkpoint === null || position === null) {
+      throw new GameControllerError('setup-required', 'Classify the setup before starting its clock.');
+    }
+    if (setup.modelSelection.diagnostic !== 'passed-current-session') {
+      throw new GameControllerError('invalid-setup', 'A current-session model diagnostic must pass before the clock starts.');
+    }
+    const setupState = adjudicationExtension(checkpoint);
+    const setupProof = setupState?.data.setupProof;
+    if (
+      checkpoint.result.kind !== 'unresolved' ||
+      setupState?.data.workflow !== 'setup' || setupState.data.status !== 'setup-ready' ||
+      setupProof === undefined || setupState.data.candidates.length !== 0 ||
+      checkpoint.rules.moves.length !== 0 || this.clockState !== null
+    ) throw new GameControllerError('setup-required', 'The saved setup has no checked non-deadness result ready to start.');
+
+    const checked = checkProofEvidence(setupProof.query, setupProof.evidence);
+    if (checked.status !== 'accepted' || checked.conclusion !== 'not-dead') {
+      throw new GameControllerError('saved-game-invalid', 'The saved setup proof no longer passes the independent checker.');
+    }
+    const expectedFen = setup.startingFen ?? INITIAL_POSITION;
+    const expectedTimeControl = setup.timeControl ?? DEFAULT_TIME_CONTROL;
+    const namespace = copyNamespace(setup.namespace);
+    const modelSide = checkpoint.selections.players.white.kind === 'human' ? 'black' : 'white';
+    const savedModel = checkpoint.selections.players[modelSide];
+    if (
+      expectedFen !== checkpoint.rules.startingFen ||
+      setup.ownershipEpoch !== checkpoint.ownershipEpoch ||
+      namespace.kind !== checkpoint.namespace.kind ||
+      (namespace.kind === 'account' && checkpoint.namespace.kind === 'account' && namespace.accountId !== checkpoint.namespace.accountId) ||
+      expectedTimeControl.startingTimeMs !== checkpoint.clocks.timeControl.startingTimeMs ||
+      expectedTimeControl.incrementMs !== checkpoint.clocks.timeControl.incrementMs ||
+      savedModel.kind !== 'model' ||
+      modelConfigurationIdentity(setup.modelSelection) !== modelConfigurationIdentity(savedModel) ||
+      (setup.humanSide !== 'random' && setup.humanSide !== modelSide && setup.humanSide !== (modelSide === 'white' ? 'black' : 'white'))
+    ) throw new GameControllerError('invalid-setup', 'The started setup does not match the classified game.');
+    if (
+      setup.humanSide !== 'random' &&
+      checkpoint.selections.players[setup.humanSide].kind !== 'human'
+    ) throw new GameControllerError('invalid-setup', 'The selected human side does not match the classified game.');
+
+    const committed = await this.commitMutation<IntentMutationValue>(createFence(checkpoint), (context) => {
+      const currentState = adjudicationExtension(context.checkpoint);
+      const proof = currentState?.data.setupProof;
+      if (
+        context.checkpoint.result.kind !== 'unresolved' || currentState?.data.workflow !== 'setup' ||
+        currentState.data.status !== 'setup-ready' || proof === undefined ||
+        checkProofEvidence(proof.query, proof.evidence).status !== 'accepted'
+      ) return { checkpoint: context.checkpoint, position: context.position, clockState: null, value: { kind: 'rejected', reason: 'not-actionable' } };
+
+      const clock = startClock({
+        at: context.at,
+        activeSide: fromPositionColor(context.position.sideToMove),
+        timeControl: context.checkpoint.clocks.timeControl,
+      });
+      const nextCheckpoint = withoutAdjudicationExtension({
+        ...context.checkpoint,
+        revision: context.checkpoint.revision + 1,
+        requestGeneration: context.checkpoint.requestGeneration + 1,
+        analysisGeneration: context.checkpoint.analysisGeneration + 1,
+        clocks: checkpointClock(clock, context.decisionTimeMs),
+        history: {
+          ...context.checkpoint.history,
+          segments: context.checkpoint.history.segments.map((segment) => ({
+            ...segment,
+            startedAtMs: context.decisionTimeMs,
+          })),
+        },
+        selections: {
+          players: {
+            ...context.checkpoint.selections.players,
+            [modelSide]: structuredClone(setup.modelSelection),
+          },
+        },
+      });
+      const event = context.createEvent(
+        'game-started-after-setup-classification',
+        context.decisionTimeMs,
+        createFence(nextCheckpoint),
+        { setupQueryIdentity: proof.query.queryIdentity, checkedConclusion: 'not-dead' },
+      );
+      return {
+        checkpoint: {
+          ...nextCheckpoint,
+          archive: {
+            ...nextCheckpoint.archive,
+            currentLine: {
+              ...nextCheckpoint.archive.currentLine,
+              eventIds: [...nextCheckpoint.archive.currentLine.eventIds, event.eventId],
+            },
+          },
+        },
+        position: context.position,
+        clockState: clock,
+        value: { kind: 'accepted' },
+      };
+    });
+    if (committed.value.kind === 'rejected') {
+      throw new GameControllerError('setup-required', 'The setup changed before its clock could start.');
     }
     return committed.snapshot;
   }
@@ -1704,6 +2879,19 @@ class IndexedGameController implements GameController {
       entries: checkpoint.rules.repetitionLedger.positions.map((entry) => ({ ...entry })),
     });
     this.checkpoint = structuredClone(checkpoint);
+    const savedAdjudication = adjudicationExtension(this.checkpoint);
+    if (savedAdjudication?.data.status === 'pending' && savedAdjudication.data.candidates[0]?.status === 'running') {
+      const candidates = [...savedAdjudication.data.candidates];
+      candidates[0] = {
+        ...candidates[0]!,
+        status: 'awaiting-continuation',
+        attemptGeneration: candidates[0]!.attemptGeneration + 1,
+      };
+      this.checkpoint = withAdjudicationExtension(this.checkpoint, {
+        ...savedAdjudication.data,
+        candidates,
+      });
+    }
     this.position = position;
     this.clockState = createClockState(checkpoint);
     this.restored = this.clockState !== null;
@@ -1755,6 +2943,7 @@ export function getOrCreateGameController(options: GameControllerOptions): GameC
     if (
       configured.store !== options.store ||
       configured.timeSource !== timeSource ||
+      configured.adjudicationRunner !== options.adjudicationRunner ||
       !samePolicy(configured.clockPolicy, options.clockPolicy)
     ) {
       throw new GameControllerError(
@@ -1771,12 +2960,16 @@ export function getOrCreateGameController(options: GameControllerOptions): GameC
     { ...options.clockPolicy },
     options.idFactory ?? defaultIdFactory,
     options.randomSide ?? defaultRandomSide,
+    options.adjudicationRunner ?? createProofAdjudicationRunner(),
   );
   registry.set(options.gameId, {
     controller,
     configuration: {
       store: options.store,
       timeSource,
+      ...(options.adjudicationRunner === undefined
+        ? {}
+        : { adjudicationRunner: options.adjudicationRunner }),
       clockPolicy: { ...options.clockPolicy },
     },
   });
