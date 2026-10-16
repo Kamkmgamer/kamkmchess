@@ -1,6 +1,6 @@
 # kamkm chess
 
-Chess against AI models that choose their own moves. The current page is a placeholder; playable chess is subsequent work. The repository includes KHA-31's proof-search API, Worker entry point and separate IndexedDB checkpoint store, the KHA-35 provider protocol core, and a serialized controller core. The placeholder does not start the Worker or connect search or the controller to a match.
+Chess against AI models that choose their own moves. The current page is a placeholder; playable chess is subsequent work. The repository includes KHA-31's proof-search API and separate IndexedDB checkpoint store, KHA-34's provider connection profiles and local credential store, the KHA-35 provider protocol core, and a serialized controller core. The placeholder does not connect these modules to a playable match.
 
 ## Local development
 
@@ -32,13 +32,14 @@ Publishable files are in `dist/`. The build includes the application license, co
 | `npm run build` | Typecheck, compile static assets and collect runtime license notices. |
 | `npm run check` | Lint, full fixture suite and production build. |
 
-Vitest runs offline fixtures for strict rules, clock calculations, proof checking and search, archive validation, local storage, provider protocols and serialized controller decisions. A missing fixture suite fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md), [KHA-29 controller evidence](docs/implementation/KHA-29-controller-evidence.md), [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md), and [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md).
+Vitest runs offline fixtures for strict rules, clock calculations, proof checking and search, archive validation, local storage, provider connections and protocols, and serialized controller decisions. A missing fixture suite fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md), [KHA-29 controller evidence](docs/implementation/KHA-29-controller-evidence.md), [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md), [KHA-34 connection API](docs/implementation/KHA-34-api.md) and [evidence](docs/implementation/KHA-34-evidence.md), and [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md).
 
 ## Implementation references
 
 - [Module responsibilities and authority](docs/architecture/modules.md)
 - [KHA-29 serialized controller evidence](docs/implementation/KHA-29-controller-evidence.md)
 - [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md)
+- [KHA-34 connection API](docs/implementation/KHA-34-api.md) and [evidence](docs/implementation/KHA-34-evidence.md)
 - [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md)
 - [Dependency and artwork inventory](docs/dependency-notices.md)
 - [Approved specification](docs/spec/mvp-handoff.md) and [acceptance cases](docs/spec/mvp-acceptance.json)
@@ -48,8 +49,8 @@ The owner selected the Classic workspace in [the KHA-12 Linear issue](https://li
 
 ## Configuration and distribution
 
-No environment variables, account services, credentials, provider requests or backend are required for this foundation. Vite environment-prefix exposure is disabled. Do not put private values in browser source, `public/`, Vite `define` values or public configuration. `.env` files are ignored, but ignoring a file does not make values compiled into JavaScript private.
+The placeholder needs no environment variables, account services, credentials, provider requests or backend. The connection module offers local profile and credential storage plus an explicit catalog-check API, but the placeholder does not call it. Vite environment-prefix exposure is disabled. Do not put private values in browser source, `public/`, Vite `define` values or public configuration. `.env` files are ignored, but ignoring a file does not make values compiled into JavaScript private.
 
-The supplied CSP permits only same-origin connections and Workers for the current build. Future connection/account tickets must update it for explicit supported destinations. Never add a generation relay to work around provider browser restrictions. No service worker or private-traffic cache is installed. Cloudflare header handling, HTTPS and SPA/callback routes require deployed verification in the staging ticket; local Vite preview does not enforce `_headers` or `_redirects`.
+The supplied CSP permits only same-origin connections and Workers. Connection profiles can describe an explicitly configured foreign endpoint, but browser policy still determines whether a request can reach it. This candidate does not certify deployed CSP or hosted egress controls. Never add a generation relay to work around provider browser restrictions. No service worker or private-traffic cache is installed. Cloudflare header handling, HTTPS and SPA/callback routes require deployed verification in the staging ticket; local Vite preview does not enforce `_headers` or `_redirects`.
 
 Run `npm ci` after checkout. Use exact package versions and review changes to `package-lock.json`. Recheck notices and bundle contents when dependencies or assets change. Original code is [MIT licensed](LICENSE); third-party code and future artwork retain their own licenses. Research and experiment dependencies are separate from the production root package.
