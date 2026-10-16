@@ -1,0 +1,42 @@
+{
+  "checks": "passed",
+  "finalRunRows": 107,
+  "mainCounts": {
+    "unwinnable": 12,
+    "winnable": 11,
+    "parsed": 5,
+    "invalid": 3,
+    "unknown": 5,
+    "discarded-stale": 5
+  },
+  "stressCounts": {
+    "unwinnable": 26,
+    "winnable": 37,
+    "unknown": 1
+  },
+  "extendedCounts": {
+    "unknown": 1,
+    "winnable": 1
+  },
+  "acceptedConclusiveAnalyses": 87,
+  "positiveWitnessReplaysIncludingStaleControls": 54,
+  "acceptedPositiveWitnessReplays": 49,
+  "solveMs": {
+    "min": 0.19999999552965164,
+    "median": 3.8000000044703484,
+    "max": 533.3999999985099
+  },
+  "endToEndMs": {
+    "min": 33.20000000298023,
+    "median": 63.70000000298023,
+    "max": 735.2000000029802
+  },
+  "maximumObservedCompletedLinearMemoryBytes": 46727168,
+  "naturalUpstreamNoneObserved": false,
+  "limitations": [
+    "Recorded upstream unwinnable verdicts are not independently proven here.",
+    "Counters/repetition are outside the solver state; legality-only witness checks do not establish the application draw policy.",
+    "WASM memory measurements exclude JS, JIT, browser process memory and memory of terminated queries.",
+    "Native target matrix, suspension and closed-tab recovery are untested."
+  ]
+}

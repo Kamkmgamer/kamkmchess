@@ -1,0 +1,18 @@
+{
+  "headers": {
+    "cache-control": "no-store",
+    "content-length": "438",
+    "content-security-policy": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'",
+    "content-type": "text/html",
+    "date": "Fri, 16 Oct 2026 00:52:21 GMT",
+    "last-modified": "Fri, 16 Oct 2026 00:43:55 GMT",
+    "server": "SimpleHTTP/0.6 Python/3.13.5"
+  },
+  "environment": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+    "crossOriginIsolated": false,
+    "sharedArrayBuffer": "undefined"
+  },
+  "activeProbeWorkers": 0,
+  "finalStatus": "Stress complete, 64 queries"
+}

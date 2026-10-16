@@ -1,0 +1,1790 @@
+{
+  "recordedAt": "2026-10-16T00:45:33.321Z",
+  "environment": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+    "platform": "Win32",
+    "hardwareConcurrency": 8,
+    "deviceMemoryGiB": 16,
+    "crossOriginIsolated": false,
+    "secureContext": true,
+    "sharedArrayBuffer": "undefined",
+    "visibility": "visible",
+    "wasm": true
+  },
+  "observations": {
+    "maxBeatGapMs": 24.30000000447035,
+    "activeWorkers": 0,
+    "totalTicks": 6399,
+    "totalFrames": 3898
+  },
+  "rows": [
+    {
+      "id": "lockedWall",
+      "fen": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 1,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+        "solveMs": 23.200000002980232,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 1,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 1,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 134.10000000149012,
+      "startupMs": 109.10000000149012,
+      "observedSolveMs": 23.900000005960464,
+      "timerTicks": 13,
+      "frameCallbacks": 8,
+      "clockElapsedMs": 127,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "lockedWall",
+      "fen": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 2,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+        "solveMs": 26.100000001490116,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 2,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 2,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 105,
+      "startupMs": 78.10000000149012,
+      "observedSolveMs": 26.299999997019768,
+      "timerTicks": 11,
+      "frameCallbacks": 7,
+      "clockElapsedMs": 105,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "asymmetricWall",
+      "fen": "5b2/p7/Pp3k2/1Pp1pBp1/2P1P1P1/5K2/8/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 3,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "5b2/p7/Pp3k2/1Pp1pBp1/2P1P1P1/5K2/8/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 17,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 17
+        },
+        "solveMs": 11.399999998509884,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 3,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 3,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 131.70000000298023,
+      "startupMs": 81.40000000596046,
+      "observedSolveMs": 49.899999998509884,
+      "timerTicks": 13,
+      "frameCallbacks": 8,
+      "clockElapsedMs": 132,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "asymmetricWall",
+      "fen": "5b2/p7/Pp3k2/1Pp1pBp1/2P1P1P1/5K2/8/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 4,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "5b2/p7/Pp3k2/1Pp1pBp1/2P1P1P1/5K2/8/8 w - - 0 1",
+        "solveMs": 7.399999998509884,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 4,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 4,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 110.19999999552965,
+      "startupMs": 102.5,
+      "observedSolveMs": 7.5999999940395355,
+      "timerTicks": 11,
+      "frameCallbacks": 6,
+      "clockElapsedMs": 110,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "bareKingVsRook",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 5,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "witnessCheck": {
+          "plies": 20,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 20
+        },
+        "solveMs": 5.9000000059604645,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 5,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 5,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 159,
+      "startupMs": 135.20000000298023,
+      "observedSolveMs": 23.600000001490116,
+      "timerTicks": 16,
+      "frameCallbacks": 10,
+      "clockElapsedMs": 159,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "bareKingVsRook",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 6,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "solveMs": 5.100000001490116,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 6,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 6,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 75.29999999701977,
+      "startupMs": 69.79999999701977,
+      "observedSolveMs": 5.399999998509884,
+      "timerTicks": 7,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 76,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "knightVsRook",
+      "fen": "6rk/8/3N3K/8/8/8/8/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 7,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "6rk/8/3N3K/8/8/8/8/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 41,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 41
+        },
+        "solveMs": 34.70000000298023,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 3866624
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 7,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 7,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 138.20000000298023,
+      "startupMs": 67.70000000298023,
+      "observedSolveMs": 69.70000000298023,
+      "timerTicks": 14,
+      "frameCallbacks": 9,
+      "clockElapsedMs": 138,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "knightVsRook",
+      "fen": "6rk/8/3N3K/8/8/8/8/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 8,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "6rk/8/3N3K/8/8/8/8/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 44,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 24
+        },
+        "solveMs": 7,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 8,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 8,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 90.69999999552965,
+      "startupMs": 56.29999999701977,
+      "observedSolveMs": 34.29999999701977,
+      "timerTicks": 9,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 90,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-17",
+      "fen": "bqn1KN2/rrk1pB2/nb1pPp1p/p1pP1PpP/PpP3P1/1P2N1R1/4Q3/1R4B1 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 9,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "bqn1KN2/rrk1pB2/nb1pPp1p/p1pP1PpP/PpP3P1/1P2N1R1/4Q3/1R4B1 w - - 0 1",
+        "solveMs": 4.9000000059604645,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 9,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 9,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 83,
+      "startupMs": 77.70000000298023,
+      "observedSolveMs": 5.100000001490116,
+      "timerTicks": 9,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 83,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-17",
+      "fen": "bqn1KN2/rrk1pB2/nb1pPp1p/p1pP1PpP/PpP3P1/1P2N1R1/4Q3/1R4B1 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 10,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "bqn1KN2/rrk1pB2/nb1pPp1p/p1pP1PpP/PpP3P1/1P2N1R1/4Q3/1R4B1 w - - 0 1",
+        "solveMs": 6.700000002980232,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 10,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 10,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 50.5,
+      "startupMs": 42.899999998509884,
+      "observedSolveMs": 6.899999998509884,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 50,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-18",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 11,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "witnessCheck": {
+          "plies": 101,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 10
+        },
+        "solveMs": 6.700000002980232,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 11,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 11,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 121.39999999850988,
+      "startupMs": 54.80000000447035,
+      "observedSolveMs": 66.39999999850988,
+      "timerTicks": 12,
+      "frameCallbacks": 7,
+      "clockElapsedMs": 121,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-18",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 12,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "witnessCheck": {
+          "plies": 88,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 1
+        },
+        "solveMs": 6.600000001490116,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 12,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 12,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 112.5,
+      "startupMs": 53.5,
+      "observedSolveMs": 58.79999999701977,
+      "timerTicks": 11,
+      "frameCallbacks": 7,
+      "clockElapsedMs": 112,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-867",
+      "fen": "8/k7/1p6/bP6/Bp6/1P6/K7/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 13,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "8/k7/1p6/bP6/Bp6/1P6/K7/8 w - - 0 1",
+        "solveMs": 5.700000002980232,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 13,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 13,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 77.20000000298023,
+      "startupMs": 71.10000000149012,
+      "observedSolveMs": 5.9000000059604645,
+      "timerTicks": 8,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 77,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-867",
+      "fen": "8/k7/1p6/bP6/Bp6/1P6/K7/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 14,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "8/k7/1p6/bP6/Bp6/1P6/K7/8 w - - 0 1",
+        "solveMs": 6.899999998509884,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 14,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 14,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 149,
+      "startupMs": 141.79999999701977,
+      "observedSolveMs": 7.100000001490116,
+      "timerTicks": 15,
+      "frameCallbacks": 9,
+      "clockElapsedMs": 148,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-1721",
+      "fen": "1k6/1P3p2/BP5p/pP5p/5P2/8/P5KP/8 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 15,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "1k6/1P3p2/BP5p/pP5p/5P2/8/P5KP/8 b - - 0 1",
+        "witnessCheck": {
+          "plies": 16,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 1
+        },
+        "solveMs": 17.899999998509884,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 15,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 15,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 179.80000000447035,
+      "startupMs": 131.20000000298023,
+      "observedSolveMs": 48.399999998509884,
+      "timerTicks": 17,
+      "frameCallbacks": 11,
+      "clockElapsedMs": 179,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-1721",
+      "fen": "1k6/1P3p2/BP5p/pP5p/5P2/8/P5KP/8 b - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 16,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": false,
+        "normalized": "1k6/1P3p2/BP5p/pP5p/5P2/8/P5KP/8 b - - 0 1",
+        "solveMs": 113.29999999701977,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 5767168
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 16,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 16,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 206.29999999701977,
+      "startupMs": 92.79999999701977,
+      "observedSolveMs": 113.39999999850988,
+      "timerTicks": 20,
+      "frameCallbacks": 12,
+      "clockElapsedMs": 206,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-2574",
+      "fen": "7k/5B2/6BK/8/8/8/8/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 17,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "7k/5B2/6BK/8/8/8/8/8 w - - 0 1",
+        "solveMs": 5.699999995529652,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 17,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 17,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 78.60000000149012,
+      "startupMs": 72.5,
+      "observedSolveMs": 5.899999998509884,
+      "timerTicks": 8,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 78,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-2574",
+      "fen": "7k/5B2/6BK/8/8/8/8/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 18,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "7k/5B2/6BK/8/8/8/8/8 w - - 0 1",
+        "solveMs": 7.4000000059604645,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 18,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 18,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 56.099999994039536,
+      "startupMs": 48.19999999552965,
+      "observedSolveMs": 7.5,
+      "timerTicks": 6,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 56,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-3427",
+      "fen": "3b4/4p1p1/1p1pP1P1/1P1PpBp1/1pBpP1P1/1P1P4/4K1P1/2k5 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 19,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "3b4/4p1p1/1p1pP1P1/1P1PpBp1/1pBpP1P1/1P1P4/4K1P1/2k5 w - - 0 1",
+        "witnessCheck": {
+          "plies": 9,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 8
+        },
+        "solveMs": 11.100000001490116,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 19,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 19,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 84.10000000149012,
+      "startupMs": 58.30000000447035,
+      "observedSolveMs": 25.700000002980232,
+      "timerTicks": 8,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 84,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "upstream-line-3427",
+      "fen": "3b4/4p1p1/1p1pP1P1/1P1PpBp1/1pBpP1P1/1P1P4/4K1P1/2k5 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 3000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 20,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "3b4/4p1p1/1p1pP1P1/1P1PpBp1/1pBpP1P1/1P1P4/4K1P1/2k5 w - - 0 1",
+        "solveMs": 5.899999998509884,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 20,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 20,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 78.20000000298023,
+      "startupMs": 72,
+      "observedSolveMs": 6,
+      "timerTicks": 8,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 78,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "counter99",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 99 41",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 21,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "witnessCheck": {
+          "plies": 20,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": true,
+          "maxHalfmoves": 119
+        },
+        "solveMs": 5.800000004470348,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 21,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 21,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 82.19999999552965,
+      "startupMs": 56.099999994039536,
+      "observedSolveMs": 26,
+      "timerTicks": 8,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 82,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "garbage",
+      "fen": "garbage",
+      "color": "white",
+      "mode": "parse",
+      "budgetMs": 2000,
+      "kind": "invalid",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 22,
+          "ownershipEpoch": 1
+        },
+        "kind": "invalid",
+        "reason": "board-parser",
+        "solveMs": 2.1999999955296516,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 22,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 22,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 55.70000000298023,
+      "startupMs": 53,
+      "observedSolveMs": 2.5,
+      "timerTicks": 6,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 56,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "missingKing",
+      "fen": "8/8/8/8/8/8/8/4K3 w - - 0 1",
+      "color": "white",
+      "mode": "parse",
+      "budgetMs": 2000,
+      "kind": "invalid",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 23,
+          "ownershipEpoch": 1
+        },
+        "kind": "invalid",
+        "reason": "board-parser",
+        "solveMs": 2.3000000044703484,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 23,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 23,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 60,
+      "startupMs": 57.5,
+      "observedSolveMs": 2.4000000059604645,
+      "timerTicks": 6,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 60,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "adjacentKings",
+      "fen": "8/8/8/8/8/8/4k3/4K3 w - - 0 1",
+      "color": "white",
+      "mode": "parse",
+      "budgetMs": 2000,
+      "kind": "invalid",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 24,
+          "ownershipEpoch": 1
+        },
+        "kind": "invalid",
+        "reason": "board-parser",
+        "solveMs": 2.100000001490116,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 24,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 24,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 51.100000001490116,
+      "startupMs": 48.70000000298023,
+      "observedSolveMs": 2.2999999970197678,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 51,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "badCounter",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - -1 0",
+      "color": "white",
+      "mode": "parse",
+      "budgetMs": 2000,
+      "kind": "parsed",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 25,
+          "ownershipEpoch": 1
+        },
+        "kind": "parsed",
+        "normalized": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "solveMs": 2.8000000044703484,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 25,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 25,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 47.79999999701977,
+      "startupMs": 44.5,
+      "observedSolveMs": 3.1999999955296516,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 48,
+      "clockRemainingMs": 2,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "extraField",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1 extra",
+      "color": "white",
+      "mode": "parse",
+      "budgetMs": 2000,
+      "kind": "parsed",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 26,
+          "ownershipEpoch": 1
+        },
+        "kind": "parsed",
+        "normalized": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "solveMs": 3,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 26,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 26,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 56.600000001490116,
+      "startupMs": 53.20000000298023,
+      "observedSolveMs": 3.2000000029802322,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 57,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "missingCounters",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - -",
+      "color": "white",
+      "mode": "parse",
+      "budgetMs": 2000,
+      "kind": "parsed",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 27,
+          "ownershipEpoch": 1
+        },
+        "kind": "parsed",
+        "normalized": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "solveMs": 3.100000001490116,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 27,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 27,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 65.10000000149012,
+      "startupMs": 61.5,
+      "observedSolveMs": 3.3000000044703484,
+      "timerTicks": 7,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 65,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "unknown-injected-none",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "white",
+      "mode": "none-control",
+      "budgetMs": 2000,
+      "kind": "unknown",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 28,
+          "ownershipEpoch": 1
+        },
+        "kind": "unknown",
+        "reason": "injected-upstream-none"
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 28,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 28,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 46,
+      "startupMs": 45.69999999552965,
+      "observedSolveMs": 0.10000000149011612,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 46,
+      "clockRemainingMs": 4,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "unknown-budget-control",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "white",
+      "mode": "burn-control",
+      "budgetMs": 80,
+      "kind": "unknown",
+      "result": {
+        "kind": "unknown",
+        "reason": "budget-termination"
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 29,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 29,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 140.19999999552965,
+      "startupMs": 56.899999998509884,
+      "observedSolveMs": 82.89999999850988,
+      "timerTicks": 14,
+      "frameCallbacks": 8,
+      "clockElapsedMs": 140,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "unknown-cancel-control",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "white",
+      "mode": "burn-control",
+      "budgetMs": 2000,
+      "kind": "unknown",
+      "result": {
+        "kind": "unknown",
+        "reason": "explicit-cancellation"
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 30,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 30,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 160.10000000149012,
+      "startupMs": 77.70000000298023,
+      "observedSolveMs": 82.20000000298023,
+      "timerTicks": 16,
+      "frameCallbacks": 10,
+      "clockElapsedMs": 160,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "stale-game",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "discarded-stale",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 31,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "witnessCheck": {
+          "plies": 20,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 20
+        },
+        "solveMs": 5.600000001490116,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "invalidatedField": "game",
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 31,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "other-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 31,
+        "ownershipEpoch": 1
+      },
+      "accepted": false,
+      "elapsedMs": 293.29999999701977,
+      "startupMs": 84.39999999850988,
+      "observedSolveMs": 208.69999999552965,
+      "timerTicks": 29,
+      "frameCallbacks": 17,
+      "clockElapsedMs": 294,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "stale-segment",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "discarded-stale",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 32,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "witnessCheck": {
+          "plies": 20,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 20
+        },
+        "solveMs": 0.3999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "invalidatedField": "segment",
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 32,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 2,
+        "positionRevision": 1,
+        "requestGeneration": 32,
+        "ownershipEpoch": 1
+      },
+      "accepted": false,
+      "elapsedMs": 267.80000000447035,
+      "startupMs": 70.60000000149012,
+      "observedSolveMs": 197.10000000149012,
+      "timerTicks": 27,
+      "frameCallbacks": 16,
+      "clockElapsedMs": 267,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "stale-positionRevision",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "discarded-stale",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 33,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "witnessCheck": {
+          "plies": 20,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 20
+        },
+        "solveMs": 0.5,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "invalidatedField": "positionRevision",
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 33,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 2,
+        "requestGeneration": 33,
+        "ownershipEpoch": 1
+      },
+      "accepted": false,
+      "elapsedMs": 244.5,
+      "startupMs": 46.399999998509884,
+      "observedSolveMs": 197.90000000596046,
+      "timerTicks": 24,
+      "frameCallbacks": 15,
+      "clockElapsedMs": 244,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "stale-requestGeneration",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "discarded-stale",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 34,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "witnessCheck": {
+          "plies": 20,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 20
+        },
+        "solveMs": 0.3999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "invalidatedField": "requestGeneration",
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 34,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 35,
+        "ownershipEpoch": 1
+      },
+      "accepted": false,
+      "elapsedMs": 266,
+      "startupMs": 65.79999999701977,
+      "observedSolveMs": 200.10000000149012,
+      "timerTicks": 27,
+      "frameCallbacks": 16,
+      "clockElapsedMs": 266,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    },
+    {
+      "id": "stale-ownershipEpoch",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 2000,
+      "kind": "discarded-stale",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 35,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "witnessCheck": {
+          "plies": 20,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 20
+        },
+        "solveMs": 0.3999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "invalidatedField": "ownershipEpoch",
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 35,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 35,
+        "ownershipEpoch": 2
+      },
+      "accepted": false,
+      "elapsedMs": 247.09999999403954,
+      "startupMs": 45.899999998509884,
+      "observedSolveMs": 201.19999999552965,
+      "timerTicks": 24,
+      "frameCallbacks": 15,
+      "clockElapsedMs": 247,
+      "clockRemainingMs": 0,
+      "clockManufacturedMs": 0
+    }
+  ]
+}

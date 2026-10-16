@@ -1,0 +1,3460 @@
+{
+  "recordedAt": "2026-10-16T00:49:36.018Z",
+  "environment": {
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.0.0 Safari/537.36",
+    "platform": "Win32",
+    "hardwareConcurrency": 8,
+    "deviceMemoryGiB": 16,
+    "crossOriginIsolated": false,
+    "secureContext": true,
+    "sharedArrayBuffer": "undefined",
+    "visibility": "visible",
+    "wasm": true
+  },
+  "observations": {
+    "elapsedMs": 5247.79999999702,
+    "maxBeatGapMs": 22.30000000447035,
+    "activeWorkers": 0
+  },
+  "rows": [
+    {
+      "id": "stress-line-14",
+      "fen": "2b1k3/8/8/1p1p1p1p/1P1P1P1P/8/8/2B1K3 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 42,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "2b1k3/8/8/1p1p1p1p/1P1P1P1P/8/8/2B1K3 w - - 0 1",
+        "solveMs": 1.3000000044703484,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 42,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 42,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 48.599999994039536,
+      "startupMs": 47,
+      "observedSolveMs": 1.3999999985098839,
+      "timerTicks": 4,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 48,
+      "clockRemainingMs": 2
+    },
+    {
+      "id": "stress-line-67",
+      "fen": "2b5/BpPp3p/1P1P1p2/5PpP/6P1/1p4pB/pP4Pk/K7 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 43,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "2b5/BpPp3p/1P1P1p2/5PpP/6P1/1p4pB/pP4Pk/K7 w - - 0 1",
+        "witnessCheck": {
+          "plies": 40,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 10,
+          "promotions": 2,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 4.199999995529652,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 43,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 43,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 63.70000000298023,
+      "startupMs": 46,
+      "observedSolveMs": 17.600000001490116,
+      "timerTicks": 6,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 64,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-120",
+      "fen": "2k5/2p1p1p1/p1P1P1P1/P1p4K/8/8/2P5/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 44,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "2k5/2p1p1p1/p1P1P1P1/P1p4K/8/8/2P5/8 w - - 0 1",
+        "solveMs": 0.5,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 44,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 44,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 49.5,
+      "startupMs": 48.79999999701977,
+      "observedSolveMs": 0.6000000014901161,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 49,
+      "clockRemainingMs": 1
+    },
+    {
+      "id": "stress-line-173",
+      "fen": "r1b1kbnr/3n4/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/RNB1KBNR w KQkq - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 45,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "r1b1kbnr/3n4/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/RNB1KBNR w KQkq - 0 1",
+        "witnessCheck": {
+          "plies": 30,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 4,
+          "promotions": 2,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.6999999955296516,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 45,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 45,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 79.5,
+      "startupMs": 59.399999998509884,
+      "observedSolveMs": 19.899999998509884,
+      "timerTicks": 7,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 80,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-226",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/3Q4/PPPPPPPP/RNB1KBNR w KQkq - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 46,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "rnbqkbnr/pppppppp/8/8/8/3Q4/PPPPPPPP/RNB1KBNR w KQkq - 0 1",
+        "witnessCheck": {
+          "plies": 101,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 10,
+          "promotions": 6,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 1,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 46,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 46,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 101,
+      "startupMs": 48.79999999701977,
+      "observedSolveMs": 52.100000001490116,
+      "timerTicks": 11,
+      "frameCallbacks": 6,
+      "clockElapsedMs": 101,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-279",
+      "fen": "8/8/8/6p1/6P1/4p1PK/3pPp1p/4Rnkr b - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 47,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/8/8/6p1/6P1/4p1PK/3pPp1p/4Rnkr b - - 0 1",
+        "witnessCheck": {
+          "plies": 3,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 0,
+          "promotions": 1,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.3999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 47,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 47,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 63,
+      "startupMs": 53.30000000447035,
+      "observedSolveMs": 9.599999994039536,
+      "timerTicks": 6,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 63,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-332",
+      "fen": "3k4/8/8/1p1p3p/pPpPpPpP/P1P1P1P1/8/4K3 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 48,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "3k4/8/8/1p1p3p/pPpPpPpP/P1P1P1P1/8/4K3 w - - 0 1",
+        "witnessCheck": {
+          "plies": 29,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 5,
+          "promotions": 2,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.3999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 48,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 48,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 68.40000000596046,
+      "startupMs": 53.20000000298023,
+      "observedSolveMs": 15,
+      "timerTicks": 7,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 68,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-385",
+      "fen": "8/1p3k2/pPp3p1/P1Pp1pPp/2bP1P1P/4BK2/7B/8 b - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 49,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/1p3k2/pPp3p1/P1Pp1pPp/2bP1P1P/4BK2/7B/8 b - - 0 1",
+        "witnessCheck": {
+          "plies": 7,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 7,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.8000000044703484,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 49,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 49,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 67.80000000447035,
+      "startupMs": 52.900000005960464,
+      "observedSolveMs": 14.700000002980232,
+      "timerTicks": 6,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 67,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-438",
+      "fen": "rnb1b3/pk1p4/p1pPp1p1/P1P1P1Pp/R6P/8/8/7K b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 50,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "rnb1b3/pk1p4/p1pPp1p1/P1P1P1Pp/R6P/8/8/7K b - - 0 1",
+        "witnessCheck": {
+          "plies": 2,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 2,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.3999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 50,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 50,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 69.60000000149012,
+      "startupMs": 59.79999999701977,
+      "observedSolveMs": 9.700000002980232,
+      "timerTicks": 8,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 70,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-491",
+      "fen": "b7/k7/Q6r/1p1pBp1p/1P1P1P1P/KP6/1P6/8 b - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 51,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "b7/k7/Q6r/1p1pBp1p/1P1P1P1P/KP6/1P6/8 b - - 0 1",
+        "witnessCheck": {
+          "plies": 1,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 0,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.3999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 51,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 51,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 80.60000000149012,
+      "startupMs": 71.10000000149012,
+      "observedSolveMs": 9.299999997019768,
+      "timerTicks": 6,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 81,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-544",
+      "fen": "8/1pK5/kPp5/2P5/Pp6/1P6/8/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 52,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/1pK5/kPp5/2P5/Pp6/1P6/8/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 61,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 25,
+          "promotions": 4,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 1.3000000044703484,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 52,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 52,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 103.79999999701977,
+      "startupMs": 71.60000000149012,
+      "observedSolveMs": 32,
+      "timerTicks": 10,
+      "frameCallbacks": 6,
+      "clockElapsedMs": 103,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-597",
+      "fen": "7k/8/8/8/4p1p1/p2pP1Pp/P2P3P/2K2NB1 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 53,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "7k/8/8/8/4p1p1/p2pP1Pp/P2P3P/2K2NB1 w - - 0 1",
+        "solveMs": 4.600000001490116,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 53,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 53,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 46.20000000298023,
+      "startupMs": 41.30000000447035,
+      "observedSolveMs": 4.800000004470348,
+      "timerTicks": 6,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 46,
+      "clockRemainingMs": 4
+    },
+    {
+      "id": "stress-line-650",
+      "fen": "3b1b1k/2b1b1b1/1b1b1b2/2b5/4KB2/4B1B1/3B1B1B/2B1B1B1 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 54,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "3b1b1k/2b1b1b1/1b1b1b2/2b5/4KB2/4B1B1/3B1B1B/2B1B1B1 w - - 0 1",
+        "solveMs": 0.29999999701976776,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 54,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 54,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 46.19999999552965,
+      "startupMs": 45.599999994039536,
+      "observedSolveMs": 0.3999999985098839,
+      "timerTicks": 4,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 46,
+      "clockRemainingMs": 4
+    },
+    {
+      "id": "stress-line-703",
+      "fen": "k7/p1p1p3/8/8/P7/6p1/2P1P1Pp/7K w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 55,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "k7/p1p1p3/8/8/P7/6p1/2P1P1Pp/7K w - - 0 1",
+        "witnessCheck": {
+          "plies": 18,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 1,
+          "promotions": 1,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 28,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 5767168
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 55,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 55,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 100.5,
+      "startupMs": 58.5,
+      "observedSolveMs": 41.899999998509884,
+      "timerTicks": 9,
+      "frameCallbacks": 6,
+      "clockElapsedMs": 101,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-756",
+      "fen": "kb6/b1p2p1p/1pP5/1P6/8/8/5P1P/5K2 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unknown",
+      "result": {
+        "kind": "unknown",
+        "reason": "budget-termination"
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 56,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 56,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 1079.0999999940395,
+      "startupMs": 71.39999999850988,
+      "observedSolveMs": 1007.5999999940395,
+      "timerTicks": 97,
+      "frameCallbacks": 65,
+      "clockElapsedMs": 1079,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-809",
+      "fen": "2k5/p1p2p1p/P1P2P1P/8/8/p1p2p1p/P1P2P1P/2K5 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 57,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "2k5/p1p2p1p/P1P2P1P/8/8/p1p2p1p/P1P2P1P/2K5 w - - 0 1",
+        "solveMs": 0.20000000298023224,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 57,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 57,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 61,
+      "startupMs": 60.400000005960464,
+      "observedSolveMs": 0.3999999985098839,
+      "timerTicks": 6,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 61,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-862",
+      "fen": "3kBbB1/b1pBbBpB/1pPpPpP1/1P1P1P2/8/8/6K1/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 58,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "3kBbB1/b1pBbBpB/1pPpPpP1/1P1P1P2/8/8/6K1/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 41,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 8,
+          "promotions": 3,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 1.3999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 58,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 58,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 99.39999999850988,
+      "startupMs": 74.60000000149012,
+      "observedSolveMs": 23.899999998509884,
+      "timerTicks": 9,
+      "frameCallbacks": 6,
+      "clockElapsedMs": 99,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-915",
+      "fen": "1nb1k3/1p1p4/bPbPp3/BpPpBp1p/1P1P1P1P/8/8/7K w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 59,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "1nb1k3/1p1p4/bPbPp3/BpPpBp1p/1P1P1P1P/8/8/7K w - - 0 1",
+        "witnessCheck": {
+          "plies": 28,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 9,
+          "promotions": 1,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.5,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 59,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 59,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 76.20000000298023,
+      "startupMs": 51.80000000447035,
+      "observedSolveMs": 24.30000000447035,
+      "timerTicks": 8,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 76,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-968",
+      "fen": "QN1k4/PPpPp1p1/PpP1P1P1/1Pb2K2/8/8/8/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 60,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": false,
+        "normalized": "QN1k4/PPpPp1p1/PpP1P1P1/1Pb2K2/8/8/8/8 w - - 0 1",
+        "solveMs": 9.300000004470348,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 60,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 60,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 64,
+      "startupMs": 54.399999998509884,
+      "observedSolveMs": 9.400000005960464,
+      "timerTicks": 5,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 64,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-1021",
+      "fen": "8/1p6/kPp5/2P5/p1P5/P7/P2K4/8 b - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 61,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "8/1p6/kPp5/2P5/p1P5/P7/P2K4/8 b - - 0 1",
+        "solveMs": 0.4000000059604645,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 61,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 61,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 55.099999994039536,
+      "startupMs": 54.5,
+      "observedSolveMs": 0.5,
+      "timerTicks": 6,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 55,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-1074",
+      "fen": "4k3/8/8/8/1p1p1p2/1P1P1Pp1/B1B1B1P1/1B1B1BK1 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 62,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "4k3/8/8/8/1p1p1p2/1P1P1Pp1/B1B1B1P1/1B1B1BK1 w - - 0 1",
+        "solveMs": 0.30000000447034836,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 62,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 62,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 42.900000005960464,
+      "startupMs": 42.20000000298023,
+      "observedSolveMs": 0.4000000059604645,
+      "timerTicks": 4,
+      "frameCallbacks": 2,
+      "clockElapsedMs": 43,
+      "clockRemainingMs": 7
+    },
+    {
+      "id": "stress-line-1127",
+      "fen": "k1K5/p1p5/PbP5/pBp5/P1P5/8/8/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 63,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "k1K5/p1p5/PbP5/pBp5/P1P5/8/8/8 w - - 0 1",
+        "solveMs": 0.19999999552965164,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 63,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 63,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 61.100000001490116,
+      "startupMs": 60.600000001490116,
+      "observedSolveMs": 0.3999999985098839,
+      "timerTicks": 5,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 61,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-1180",
+      "fen": "8/7k/6p1/6P1/6PB/6PK/6PP/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 64,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "8/7k/6p1/6P1/6PB/6PK/6PP/8 w - - 0 1",
+        "solveMs": 0.3999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 64,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 64,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 41.70000000298023,
+      "startupMs": 40.899999998509884,
+      "observedSolveMs": 0.6000000014901161,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 42,
+      "clockRemainingMs": 8
+    },
+    {
+      "id": "stress-line-1233",
+      "fen": "K1k5/P1PpB3/2pP4/1pP5/bP6/8/8/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 65,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "K1k5/P1PpB3/2pP4/1pP5/bP6/8/8/8 w - - 0 1",
+        "solveMs": 0.29999999701976776,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 65,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 65,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 54,
+      "startupMs": 53.5,
+      "observedSolveMs": 0.3999999985098839,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 54,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-1286",
+      "fen": "3k4/p2p2p1/8/p2p2p1/P2P2P1/8/P2P2P1/3K4 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 66,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": false,
+        "normalized": "3k4/p2p2p1/8/p2p2p1/P2P2P1/8/P2P2P1/3K4 w - - 0 1",
+        "solveMs": 0.5,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 66,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 66,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 48.100000001490116,
+      "startupMs": 47.30000000447035,
+      "observedSolveMs": 0.7000000029802322,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 48,
+      "clockRemainingMs": 2
+    },
+    {
+      "id": "stress-line-1339",
+      "fen": "N3k3/1p1pPp2/1P1P1P2/8/8/6p1/6Pp/7K w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 67,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "N3k3/1p1pPp2/1P1P1P2/8/8/6p1/6Pp/7K w - - 0 1",
+        "solveMs": 0.29999999701976776,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 67,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 67,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 36.399999998509884,
+      "startupMs": 35.899999998509884,
+      "observedSolveMs": 0.3999999985098839,
+      "timerTicks": 3,
+      "frameCallbacks": 2,
+      "clockElapsedMs": 37,
+      "clockRemainingMs": 13
+    },
+    {
+      "id": "stress-line-1392",
+      "fen": "8/2b5/1b5p/b4p1P/5p1K/5Pp1/6P1/5kb1 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 68,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "8/2b5/1b5p/b4p1P/5p1K/5Pp1/6P1/5kb1 b - - 0 1",
+        "solveMs": 0.5,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 68,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 68,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 56.79999999701977,
+      "startupMs": 56.100000001490116,
+      "observedSolveMs": 0.5999999940395355,
+      "timerTicks": 6,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 56,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-1445",
+      "fen": "8/2k5/5b2/p1p1pBp1/P1P1P1P1/5K2/4B3/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 69,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "8/2k5/5b2/p1p1pBp1/P1P1P1P1/5K2/4B3/8 w - - 0 1",
+        "solveMs": 0.5999999940395355,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 69,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 69,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 35.600000001490116,
+      "startupMs": 34.80000000447035,
+      "observedSolveMs": 0.6999999955296516,
+      "timerTicks": 4,
+      "frameCallbacks": 2,
+      "clockElapsedMs": 35,
+      "clockRemainingMs": 15
+    },
+    {
+      "id": "stress-line-1498",
+      "fen": "8/5p2/5P2/5P2/1p2p3/kP2p3/2KpP3/1r1B4 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 70,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "8/5p2/5P2/5P2/1p2p3/kP2p3/2KpP3/1r1B4 w - - 0 1",
+        "solveMs": 0.29999999701976776,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 70,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 70,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 38.399999998509884,
+      "startupMs": 37.899999998509884,
+      "observedSolveMs": 0.3999999985098839,
+      "timerTicks": 4,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 39,
+      "clockRemainingMs": 11
+    },
+    {
+      "id": "stress-line-1551",
+      "fen": "1k6/1p6/1P6/BP6/PP6/8/2K5/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 71,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "1k6/1p6/1P6/BP6/PP6/8/2K5/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 78,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 33,
+          "promotions": 1,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 1.8999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 71,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 71,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 65.10000000149012,
+      "startupMs": 35.399999998509884,
+      "observedSolveMs": 29.600000001490116,
+      "timerTicks": 6,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 65,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-1604",
+      "fen": "4k3/4p3/8/8/8/8/8/4K3 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 72,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "4k3/4p3/8/8/8/8/8/4K3 w - - 0 1",
+        "solveMs": 0.29999999701976776,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 72,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 72,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 44.899999998509884,
+      "startupMs": 44.399999998509884,
+      "observedSolveMs": 0.29999999701976776,
+      "timerTicks": 5,
+      "frameCallbacks": 2,
+      "clockElapsedMs": 45,
+      "clockRemainingMs": 5
+    },
+    {
+      "id": "stress-line-1657",
+      "fen": "6k1/p3p1P1/6PB/p5P1/2p5/P3P3/2PK4/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 73,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": false,
+        "normalized": "6k1/p3p1P1/6PB/p5P1/2p5/P3P3/2PK4/8 w - - 0 1",
+        "solveMs": 107.70000000298023,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 5767168
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 73,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 73,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 154.79999999701977,
+      "startupMs": 46.899999998509884,
+      "observedSolveMs": 107.79999999701977,
+      "timerTicks": 13,
+      "frameCallbacks": 10,
+      "clockElapsedMs": 155,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-1710",
+      "fen": "6qB/5r2/5b2/8/8/5R1p/2R1pKNk/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 74,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "6qB/5r2/5b2/8/8/5R1p/2R1pKNk/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 83,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 37,
+          "promotions": 1,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 3.600000001490116,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 74,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 74,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 98.20000000298023,
+      "startupMs": 60.5,
+      "observedSolveMs": 37.600000001490116,
+      "timerTicks": 9,
+      "frameCallbacks": 6,
+      "clockElapsedMs": 98,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-1763",
+      "fen": "1k6/1p6/1Pp3p1/2P1p1Pb/N1p1P1pP/1pP3P1/1P6/1K6 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 75,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": false,
+        "normalized": "1k6/1p6/1Pp3p1/2P1p1Pb/N1p1P1pP/1pP3P1/1P6/1K6 w - - 0 1",
+        "solveMs": 2.5999999940395355,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 75,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 75,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 42.79999999701977,
+      "startupMs": 39.899999998509884,
+      "observedSolveMs": 2.7999999970197678,
+      "timerTicks": 4,
+      "frameCallbacks": 2,
+      "clockElapsedMs": 43,
+      "clockRemainingMs": 7
+    },
+    {
+      "id": "stress-line-1816",
+      "fen": "8/1p6/1Pp5/k1P5/p1P5/P7/5K2/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 76,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "8/1p6/1Pp5/k1P5/p1P5/P7/5K2/8 w - - 0 1",
+        "solveMs": 0.29999999701976776,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 76,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 76,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 43,
+      "startupMs": 42.5,
+      "observedSolveMs": 0.5,
+      "timerTicks": 4,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 43,
+      "clockRemainingMs": 7
+    },
+    {
+      "id": "stress-line-1869",
+      "fen": "NRRQRBRB/1PPPP1P1/1P6/4k3/8/8/4K3/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 77,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "NRRQRBRB/1PPPP1P1/1P6/4k3/8/8/4K3/8 w - - 0 1",
+        "solveMs": 0.20000000298023224,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 77,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 77,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 46.600000001490116,
+      "startupMs": 46,
+      "observedSolveMs": 0.4000000059604645,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 46,
+      "clockRemainingMs": 4
+    },
+    {
+      "id": "stress-line-1922",
+      "fen": "8/8/8/2qpp3/K1pkp3/2pbp3/8/N7 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 78,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "8/8/8/2qpp3/K1pkp3/2pbp3/8/N7 w - - 0 1",
+        "solveMs": 0.20000000298023224,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 78,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 78,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 34.19999999552965,
+      "startupMs": 33.599999994039536,
+      "observedSolveMs": 0.5,
+      "timerTicks": 4,
+      "frameCallbacks": 2,
+      "clockElapsedMs": 34,
+      "clockRemainingMs": 16
+    },
+    {
+      "id": "stress-line-1975",
+      "fen": "b7/8/8/8/8/8/p5K1/kBQ5 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 79,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "b7/8/8/8/8/8/p5K1/kBQ5 w - - 0 1",
+        "witnessCheck": {
+          "plies": 30,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 26,
+          "promotions": 1,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.5,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 79,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 79,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 49.899999998509884,
+      "startupMs": 32.5,
+      "observedSolveMs": 17.299999997019768,
+      "timerTicks": 4,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 49,
+      "clockRemainingMs": 1
+    },
+    {
+      "id": "stress-line-2028",
+      "fen": "nb2kBN1/2p1PRRN/1pP2PPQ/1P2p1PP/8/8/4P3/6K1 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 80,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": false,
+        "normalized": "nb2kBN1/2p1PRRN/1pP2PPQ/1P2p1PP/8/8/4P3/6K1 w - - 0 1",
+        "solveMs": 6.799999997019768,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 80,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 80,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 51.400000005960464,
+      "startupMs": 44.30000000447035,
+      "observedSolveMs": 7,
+      "timerTicks": 6,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 51,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2081",
+      "fen": "8/2kb4/8/8/8/2K5/3B4/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 81,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/2kb4/8/8/8/2K5/3B4/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 24,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 24,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 1.5999999940395355,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 81,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 81,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 58.899999998509884,
+      "startupMs": 39.79999999701977,
+      "observedSolveMs": 18.899999998509884,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 59,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2134",
+      "fen": "6k1/1p2bppp/5n2/pP2n3/2b1P3/4RPP1/6BP/2Br2K1 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 82,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "6k1/1p2bppp/5n2/pP2n3/2b1P3/4RPP1/6BP/2Br2K1 w - - 0 1",
+        "witnessCheck": {
+          "plies": 59,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 7,
+          "promotions": 4,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.7000000029802322,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 82,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 82,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 86.5,
+      "startupMs": 59.100000001490116,
+      "observedSolveMs": 27.30000000447035,
+      "timerTicks": 8,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 86,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2187",
+      "fen": "6b1/8/4p1p1/1pp1P1P1/1pkpKP1B/1p3P2/1P1P1P2/8 b - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 83,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "6b1/8/4p1p1/1pp1P1P1/1pkpKP1B/1p3P2/1P1P1P2/8 b - - 0 1",
+        "witnessCheck": {
+          "plies": 49,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 3,
+          "promotions": 6,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.29999999701976776,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 83,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 83,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 58.69999999552965,
+      "startupMs": 41.69999999552965,
+      "observedSolveMs": 16.799999997019768,
+      "timerTicks": 6,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 59,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2240",
+      "fen": "8/1p3b2/pPp1p1p1/BkP1P1P1/1P2p3/KPp1P3/2P5/8 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 84,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/1p3b2/pPp1p1p1/BkP1P1P1/1P2p3/KPp1P3/2P5/8 b - - 0 1",
+        "witnessCheck": {
+          "plies": 32,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 19,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 1.2000000029802322,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 84,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 84,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 52.80000000447035,
+      "startupMs": 39,
+      "observedSolveMs": 13.600000001490116,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 53,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2293",
+      "fen": "5k2/8/4b3/8/n7/1q6/8/1NK5 b - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 85,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "5k2/8/4b3/8/n7/1q6/8/1NK5 b - - 0 1",
+        "witnessCheck": {
+          "plies": 53,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 34,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.6000000014901161,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 85,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 85,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 63.19999999552965,
+      "startupMs": 34.69999999552965,
+      "observedSolveMs": 28.399999998509884,
+      "timerTicks": 6,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 63,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2346",
+      "fen": "rnb1k1nr/ppp2p1p/3b4/3pp1p1/7q/PPPPP3/4KPPP/RNBQ1BNR w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 86,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "rnb1k1nr/ppp2p1p/3b4/3pp1p1/7q/PPPPP3/4KPPP/RNBQ1BNR w - - 0 1",
+        "witnessCheck": {
+          "plies": 69,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 7,
+          "promotions": 3,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.6000000014901161,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 86,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 86,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 76,
+      "startupMs": 48.5,
+      "observedSolveMs": 27.399999998509884,
+      "timerTicks": 8,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 76,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2399",
+      "fen": "8/6p1/6k1/8/7p/7P/r5P1/4BK2 b - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 87,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/6p1/6k1/8/7p/7P/r5P1/4BK2 b - - 0 1",
+        "witnessCheck": {
+          "plies": 23,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 5,
+          "promotions": 1,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.3999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 87,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 87,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 47.30000000447035,
+      "startupMs": 31.5,
+      "observedSolveMs": 15.700000002980232,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 47,
+      "clockRemainingMs": 3
+    },
+    {
+      "id": "stress-line-2452",
+      "fen": "KRB5/1P1P1P2/Bp1pBp2/2kPbP2/1pPp1p2/2p5/8/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 88,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "KRB5/1P1P1P2/Bp1pBp2/2kPbP2/1pPp1p2/2p5/8/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 33,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 2,
+          "promotions": 7,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.4000000059604645,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 88,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 88,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 51,
+      "startupMs": 34,
+      "observedSolveMs": 16.900000005960464,
+      "timerTicks": 4,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 50,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2505",
+      "fen": "3R4/8/8/1K3B2/3br3/3k4/8/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 89,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "3R4/8/8/1K3B2/3br3/3k4/8/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 10,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 6,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 0.3999999985098839,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 89,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 89,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 59.19999999552965,
+      "startupMs": 45.599999994039536,
+      "observedSolveMs": 13.399999998509884,
+      "timerTicks": 7,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 59,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2558",
+      "fen": "Bb1k1b2/b1p1p1p1/KpP1P1P1/pP4P1/8/P7/8/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 90,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": false,
+        "normalized": "Bb1k1b2/b1p1p1p1/KpP1P1P1/pP4P1/8/P7/8/8 w - - 0 1",
+        "solveMs": 1.2999999970197678,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 90,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 90,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 33.20000000298023,
+      "startupMs": 31.5,
+      "observedSolveMs": 1.5,
+      "timerTicks": 3,
+      "frameCallbacks": 2,
+      "clockElapsedMs": 33,
+      "clockRemainingMs": 17
+    },
+    {
+      "id": "stress-line-2611",
+      "fen": "8/8/4b3/5p1k/7P/1p3PPK/1B6/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 91,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/8/4b3/5p1k/7P/1p3PPK/1B6/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 12,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 2,
+          "promotions": 1,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 3.8000000044703484,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 91,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 91,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 47.70000000298023,
+      "startupMs": 31.900000005960464,
+      "observedSolveMs": 15.600000001490116,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 48,
+      "clockRemainingMs": 2
+    },
+    {
+      "id": "stress-line-2664",
+      "fen": "8/8/3P1k1P/p2P4/Pp5p/1p2p1pP/N1p1P1P1/K7 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 92,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/8/3P1k1P/p2P4/Pp5p/1p2p1pP/N1p1P1P1/K7 b - - 0 1",
+        "witnessCheck": {
+          "plies": 46,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 7,
+          "promotions": 6,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 5.200000002980232,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 92,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 92,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 56.29999999701977,
+      "startupMs": 30.700000002980232,
+      "observedSolveMs": 25.399999998509884,
+      "timerTicks": 6,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 56,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2717",
+      "fen": "r1bqkbnr/1pp3pp/2np4/p3p3/8/PPPP1p2/4PPPP/R1BQKB1R w KQkq - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 93,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "r1bqkbnr/1pp3pp/2np4/p3p3/8/PPPP1p2/4PPPP/R1BQKB1R w KQkq - 0 1",
+        "witnessCheck": {
+          "plies": 68,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 2,
+          "promotions": 3,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 5.299999997019768,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 93,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 93,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 72,
+      "startupMs": 38,
+      "observedSolveMs": 33.69999999552965,
+      "timerTicks": 6,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 72,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2770",
+      "fen": "8/4k3/8/8/8/8/3KNN2/8 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 94,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/4k3/8/8/8/8/3KNN2/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 47,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 47,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 7.4000000059604645,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 94,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 94,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 68.70000000298023,
+      "startupMs": 42.100000001490116,
+      "observedSolveMs": 26.399999998509884,
+      "timerTicks": 7,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 69,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2823",
+      "fen": "8/8/8/3nk3/8/8/8/K1B2B2 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 95,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/8/8/3nk3/8/8/8/K1B2B2 w - - 0 1",
+        "witnessCheck": {
+          "plies": 26,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 16,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 6.5,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 95,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 95,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 63.19999999552965,
+      "startupMs": 40.5,
+      "observedSolveMs": 22.399999998509884,
+      "timerTicks": 6,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 63,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2876",
+      "fen": "8/k7/8/3b4/4b3/8/8/2KQN3 w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 96,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/k7/8/3b4/4b3/8/8/2KQN3 w - - 0 1",
+        "witnessCheck": {
+          "plies": 31,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 20,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 4.899999998509884,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 96,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 96,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 60.70000000298023,
+      "startupMs": 38.5,
+      "observedSolveMs": 22.100000001490116,
+      "timerTicks": 5,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 61,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2929",
+      "fen": "r2k1bnr/1p1n2p1/p3bp1p/1B1Np1B1/PP6/2p2N1P/2P2PP1/3RR1K1 b - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 97,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "r2k1bnr/1p1n2p1/p3bp1p/1B1Np1B1/PP6/2p2N1P/2P2PP1/3RR1K1 b - - 0 1",
+        "witnessCheck": {
+          "plies": 63,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 4,
+          "promotions": 2,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 5.5,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 97,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 97,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 70.60000000149012,
+      "startupMs": 39.69999999552965,
+      "observedSolveMs": 30.700000002980232,
+      "timerTicks": 8,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 70,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-2982",
+      "fen": "8/5k2/1p3p2/1P5p/7P/1b4K1/4B3/8 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 98,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/5k2/1p3p2/1P5p/7P/1b4K1/4B3/8 b - - 0 1",
+        "witnessCheck": {
+          "plies": 54,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 10,
+          "promotions": 3,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 5.5,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 98,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 98,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 66.5,
+      "startupMs": 34.5,
+      "observedSolveMs": 31.900000005960464,
+      "timerTicks": 5,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 66,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-3035",
+      "fen": "8/8/3K4/8/1k6/4b2b/8/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 99,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/8/3K4/8/1k6/4b2b/8/8 w - - 0 1",
+        "witnessCheck": {
+          "plies": 30,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 30,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 13,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2883584
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 99,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 99,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 74.80000000447035,
+      "startupMs": 46.900000005960464,
+      "observedSolveMs": 27.80000000447035,
+      "timerTicks": 8,
+      "frameCallbacks": 5,
+      "clockElapsedMs": 75,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-3088",
+      "fen": "8/8/1r6/1k6/1p6/NBN5/NBN5/1K6 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 100,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "8/8/1r6/1k6/1p6/NBN5/NBN5/1K6 b - - 0 1",
+        "witnessCheck": {
+          "plies": 46,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 16,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 5.9000000059604645,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2359296
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 100,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 100,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 53.5,
+      "startupMs": 29.599999994039536,
+      "observedSolveMs": 23.900000005960464,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 53,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-3141",
+      "fen": "2r4Q/5P2/8/p2k2N1/P2B4/2P5/5PK1/8 b - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 101,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "2r4Q/5P2/8/p2k2N1/P2B4/2P5/5PK1/8 b - - 0 1",
+        "witnessCheck": {
+          "plies": 29,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 16,
+          "promotions": 1,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 5.4000000059604645,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 101,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 101,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 61.69999999552965,
+      "startupMs": 39,
+      "observedSolveMs": 22.600000001490116,
+      "timerTicks": 7,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 61,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-3194",
+      "fen": "k7/2K5/R1B5/1P6/8/8/8/8 b - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 102,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "k7/2K5/R1B5/1P6/8/8/8/8 b - - 0 1",
+        "witnessCheck": {
+          "plies": 0,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 0,
+          "promotions": 0,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 4.100000001490116,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 102,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 102,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 49.399999998509884,
+      "startupMs": 40.399999998509884,
+      "observedSolveMs": 8.799999997019768,
+      "timerTicks": 5,
+      "frameCallbacks": 3,
+      "clockElapsedMs": 49,
+      "clockRemainingMs": 1
+    },
+    {
+      "id": "stress-line-3247",
+      "fen": "3k1b2/8/8/8/8/8/3K4/8 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 103,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "3k1b2/8/8/8/8/8/3K4/8 w - - 0 1",
+        "solveMs": 4.299999997019768,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 103,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 103,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 41.600000001490116,
+      "startupMs": 36.899999998509884,
+      "observedSolveMs": 4.5,
+      "timerTicks": 4,
+      "frameCallbacks": 2,
+      "clockElapsedMs": 41,
+      "clockRemainingMs": 9
+    },
+    {
+      "id": "stress-line-3300",
+      "fen": "8/8/8/8/1p1p4/bPbPp1p1/PpBpPpPp/kB1B1B1K w - - 0 1",
+      "color": "white",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "unwinnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 104,
+          "ownershipEpoch": 1
+        },
+        "kind": "unwinnable",
+        "fastUnwinnable": true,
+        "rustWitnessVerified": false,
+        "normalized": "8/8/8/8/1p1p4/bPbPp1p1/PpBpPpPp/kB1B1B1K w - - 0 1",
+        "solveMs": 3.100000001490116,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 2097152
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 104,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 104,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 59.600000001490116,
+      "startupMs": 56.20000000298023,
+      "observedSolveMs": 3.2000000029802322,
+      "timerTicks": 6,
+      "frameCallbacks": 4,
+      "clockElapsedMs": 60,
+      "clockRemainingMs": 0
+    },
+    {
+      "id": "stress-line-3353",
+      "fen": "k1b5/8/8/1pBpBpBp/bPbP1PpP/Pp4P1/1P4P1/K1B1B3 w - - 0 1",
+      "color": "black",
+      "mode": "analyze",
+      "budgetMs": 1000,
+      "kind": "winnable",
+      "result": {
+        "type": "result",
+        "token": {
+          "game": "synthetic-game",
+          "segment": 1,
+          "positionRevision": 1,
+          "requestGeneration": 105,
+          "ownershipEpoch": 1
+        },
+        "kind": "winnable",
+        "fastUnwinnable": false,
+        "rustWitnessVerified": true,
+        "normalized": "k1b5/8/8/1pBpBpBp/bPbP1PpP/Pp4P1/1P4P1/K1B1B3 w - - 0 1",
+        "witnessCheck": {
+          "plies": 94,
+          "rust": true,
+          "chessJs": true,
+          "chessops": true,
+          "expectedMatedColor": true,
+          "earlierPolicyDraw": false,
+          "maxHalfmoves": 21,
+          "promotions": 2,
+          "castles": 0,
+          "enPassantCaptures": 0
+        },
+        "solveMs": 276.19999999552965,
+        "memoryBeforeBytes": 2031616,
+        "memoryAfterBytes": 46727168
+      },
+      "token": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 105,
+        "ownershipEpoch": 1
+      },
+      "currentToken": {
+        "game": "synthetic-game",
+        "segment": 1,
+        "positionRevision": 1,
+        "requestGeneration": 105,
+        "ownershipEpoch": 1
+      },
+      "accepted": true,
+      "elapsedMs": 342.09999999403954,
+      "startupMs": 41.899999998509884,
+      "observedSolveMs": 300.09999999403954,
+      "timerTicks": 29,
+      "frameCallbacks": 20,
+      "clockElapsedMs": 342,
+      "clockRemainingMs": 0
+    }
+  ]
+}

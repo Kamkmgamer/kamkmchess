@@ -1,0 +1,86 @@
+[
+  {
+    "name": "html-worker-spec",
+    "url": "https://raw.githubusercontent.com/whatwg/html/790ce89a0b95f3f6caed7fc2d1e3f352364e2791/source",
+    "bytes": 8010092,
+    "sha256": "de0860c7ecc6137c1940501e0b0c70cb0f1709f96eec2164a5cf4731d1a8ddcd",
+    "status": "downloaded"
+  },
+  {
+    "name": "csp-spec",
+    "url": "https://raw.githubusercontent.com/w3c/webappsec-csp/b1bad631b091cdca904138d6947a16b89edfd2b4/index.bs",
+    "bytes": 226347,
+    "sha256": "df41b1ed36c348b2d2dca07b068da0f833313e26e6943c2efb92901609f41e98",
+    "status": "downloaded"
+  },
+  {
+    "name": "rust-wasm-target",
+    "url": "https://raw.githubusercontent.com/rust-lang/rust/48a229ceaefd4985c50990b14116b6d856af0985/src/doc/rustc/src/platform-support/wasm32-unknown-unknown.md",
+    "bytes": 12160,
+    "sha256": "e2fe744b2cdc24bb5a0fcd2dbfe90f054b04d09a51ffa0394c5f6b119131aa8b",
+    "status": "downloaded"
+  },
+  {
+    "name": "CHA-Solver Cargo.toml",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/Cargo.toml",
+    "bytes": 504,
+    "sha256": "721a489edf547ba496c92fb126cc7386e303284bf87c23fd198f8d94b0a82989",
+    "status": "inspected"
+  },
+  {
+    "name": "CHA-Solver LICENSE",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/LICENSE",
+    "bytes": 1076,
+    "sha256": "8a3738ae39a6870fe3d9e01593a694aa75fd5a80e1d2d6a13d92d1df80384933",
+    "status": "inspected"
+  },
+  {
+    "name": "CHA-Solver README.md",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/README.md",
+    "bytes": 6578,
+    "sha256": "a99b5eec700e3a9be2956b04b26a7817fedd041da254fa173698c57f3cca653e",
+    "status": "inspected"
+  },
+  {
+    "name": "CHA-Solver src/lib.rs",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/src/lib.rs",
+    "bytes": 2545,
+    "sha256": "ed4b838f771fee612bbc25d737df6dbc505c2196d741edf718290566d10eabb7",
+    "status": "inspected"
+  },
+  {
+    "name": "CHA-Solver src/utils.rs",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/src/utils.rs",
+    "bytes": 3126,
+    "sha256": "ebae2d31de5b30e087e1e4a170a4fba7f7da21a4f5ad6d82af5f47ad77263b06",
+    "status": "inspected"
+  },
+  {
+    "name": "CHA-Solver src/winnability/full.rs",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/src/winnability/full.rs",
+    "bytes": 3814,
+    "sha256": "5712f725c6361c3f7e8d0e1f79cb762be2f0b80cb947000bf9c1994354844ddc",
+    "status": "inspected"
+  },
+  {
+    "name": "CHA-Solver src/search/engine.rs",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/src/search/engine.rs",
+    "bytes": 7516,
+    "sha256": "b7aaa856783a2bb6ca9c6dbb6456fb5382ca383cd6fc4073a1a012c5b952ef81",
+    "status": "inspected"
+  },
+  {
+    "name": "CHA-Solver tests/positions.txt",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/tests/positions.txt",
+    "bytes": 155208,
+    "sha256": "749ec49800028f2ddc1a62de8640154261bf802bed738c07fcb791a25fc21174",
+    "status": "inspected"
+  },
+  {
+    "name": "CHA-Solver .github/workflows/ci.yml",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/.github/workflows/ci.yml",
+    "bytes": 962,
+    "sha256": "ae41e81048e33d67350c17ba1862cb0df3d2a448ae3051dd4a1768b63a097551",
+    "status": "inspected"
+  }
+]

@@ -1,0 +1,59 @@
+{
+  "memory": [
+    {
+      "flags": 1,
+      "minimumPages": 31,
+      "maximumPages": 2048,
+      "minimumBytes": 2031616,
+      "maximumBytes": 134217728,
+      "shared": false
+    }
+  ],
+  "module": {
+    "imports": [],
+    "exports": [
+      {
+        "name": "memory",
+        "kind": "memory"
+      },
+      {
+        "name": "input_ptr",
+        "kind": "function"
+      },
+      {
+        "name": "output_len",
+        "kind": "function"
+      },
+      {
+        "name": "output_ptr",
+        "kind": "function"
+      },
+      {
+        "name": "solve",
+        "kind": "function"
+      }
+    ]
+  },
+  "sizes": [
+    {
+      "artifact": "solver.wasm",
+      "bytes": 1076857,
+      "gzipBytes": 114054,
+      "brotliBytes": 78376,
+      "sha256": "2bce4c5d69b2ff75ab79696f3a4e9f62ee3e91fdb7b7359eca755bbe738de2a2"
+    },
+    {
+      "artifact": "worker.mjs",
+      "bytes": 131626,
+      "gzipBytes": 28446,
+      "brotliBytes": 24610,
+      "sha256": "09155d7ca79c93db9509f766cea3371632eb22a3e7596b29706984811cf73df7"
+    }
+  ],
+  "compressionTools": {
+    "python": "3.13.5",
+    "gzip": "stdlib default level 9, mtime 0",
+    "brotli": "1.2.0 default quality 11"
+  },
+  "note": "Memory limit covers WASM linear memory only. File compression is offline size measurement; server sends uncompressed responses."
+}

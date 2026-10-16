@@ -1,0 +1,193 @@
+{
+  "selection": "Four reused synthetic fixtures, six deterministic upstream positions selected by file offset, a counter control, and parser-only invalid inputs. Upstream labels are claims, not an independent oracle.",
+  "upstreamPositionCount": 3414,
+  "queries": [
+    {
+      "id": "lockedWall",
+      "fen": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+      "color": "white"
+    },
+    {
+      "id": "lockedWall",
+      "fen": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+      "color": "black"
+    },
+    {
+      "id": "asymmetricWall",
+      "fen": "5b2/p7/Pp3k2/1Pp1pBp1/2P1P1P1/5K2/8/8 w - - 0 1",
+      "color": "white"
+    },
+    {
+      "id": "asymmetricWall",
+      "fen": "5b2/p7/Pp3k2/1Pp1pBp1/2P1P1P1/5K2/8/8 w - - 0 1",
+      "color": "black"
+    },
+    {
+      "id": "bareKingVsRook",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "white"
+    },
+    {
+      "id": "bareKingVsRook",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "color": "black"
+    },
+    {
+      "id": "knightVsRook",
+      "fen": "6rk/8/3N3K/8/8/8/8/8 w - - 0 1",
+      "color": "white"
+    },
+    {
+      "id": "knightVsRook",
+      "fen": "6rk/8/3N3K/8/8/8/8/8 w - - 0 1",
+      "color": "black"
+    },
+    {
+      "id": "upstream-line-17",
+      "fen": "bqn1KN2/rrk1pB2/nb1pPp1p/p1pP1PpP/PpP3P1/1P2N1R1/4Q3/1R4B1 w - - 0 1",
+      "color": "white",
+      "upstreamExpected": "--",
+      "budgetMs": 3000
+    },
+    {
+      "id": "upstream-line-17",
+      "fen": "bqn1KN2/rrk1pB2/nb1pPp1p/p1pP1PpP/PpP3P1/1P2N1R1/4Q3/1R4B1 w - - 0 1",
+      "color": "black",
+      "upstreamExpected": "--",
+      "budgetMs": 3000
+    },
+    {
+      "id": "upstream-line-18",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "color": "white",
+      "upstreamExpected": "WB",
+      "budgetMs": 3000
+    },
+    {
+      "id": "upstream-line-18",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "color": "black",
+      "upstreamExpected": "WB",
+      "budgetMs": 3000
+    },
+    {
+      "id": "upstream-line-867",
+      "fen": "8/k7/1p6/bP6/Bp6/1P6/K7/8 w - - 0 1",
+      "color": "white",
+      "upstreamExpected": "--",
+      "budgetMs": 3000
+    },
+    {
+      "id": "upstream-line-867",
+      "fen": "8/k7/1p6/bP6/Bp6/1P6/K7/8 w - - 0 1",
+      "color": "black",
+      "upstreamExpected": "--",
+      "budgetMs": 3000
+    },
+    {
+      "id": "upstream-line-1721",
+      "fen": "1k6/1P3p2/BP5p/pP5p/5P2/8/P5KP/8 b - - 0 1",
+      "color": "white",
+      "upstreamExpected": "W-",
+      "budgetMs": 3000
+    },
+    {
+      "id": "upstream-line-1721",
+      "fen": "1k6/1P3p2/BP5p/pP5p/5P2/8/P5KP/8 b - - 0 1",
+      "color": "black",
+      "upstreamExpected": "W-",
+      "budgetMs": 3000
+    },
+    {
+      "id": "upstream-line-2574",
+      "fen": "7k/5B2/6BK/8/8/8/8/8 w - - 0 1",
+      "color": "white",
+      "upstreamExpected": "--",
+      "budgetMs": 3000
+    },
+    {
+      "id": "upstream-line-2574",
+      "fen": "7k/5B2/6BK/8/8/8/8/8 w - - 0 1",
+      "color": "black",
+      "upstreamExpected": "--",
+      "budgetMs": 3000
+    },
+    {
+      "id": "upstream-line-3427",
+      "fen": "3b4/4p1p1/1p1pP1P1/1P1PpBp1/1pBpP1P1/1P1P4/4K1P1/2k5 w - - 0 1",
+      "color": "white",
+      "upstreamExpected": "W-",
+      "budgetMs": 3000
+    },
+    {
+      "id": "upstream-line-3427",
+      "fen": "3b4/4p1p1/1p1pP1P1/1P1PpBp1/1pBpP1P1/1P1P4/4K1P1/2k5 w - - 0 1",
+      "color": "black",
+      "upstreamExpected": "W-",
+      "budgetMs": 3000
+    },
+    {
+      "id": "counter99",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 99 41",
+      "color": "white"
+    },
+    {
+      "id": "whitePromotion",
+      "fen": "7k/5P2/5K2/8/8/8/8/8 w - - 0 1",
+      "color": "white"
+    },
+    {
+      "id": "blackPromotionMirror",
+      "fen": "8/8/8/8/8/5k2/5p2/7K b - - 0 1",
+      "color": "black"
+    },
+    {
+      "id": "castlingMetadata",
+      "fen": "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+      "color": "white",
+      "parseOnly": true
+    },
+    {
+      "id": "enPassantMetadata",
+      "fen": "4k3/8/8/3pP3/8/8/8/R3K3 w - d6 0 1",
+      "color": "white",
+      "parseOnly": true
+    },
+    {
+      "id": "garbage",
+      "fen": "garbage",
+      "color": "white",
+      "parseOnly": true
+    },
+    {
+      "id": "missingKing",
+      "fen": "8/8/8/8/8/8/8/4K3 w - - 0 1",
+      "color": "white",
+      "parseOnly": true
+    },
+    {
+      "id": "adjacentKings",
+      "fen": "8/8/8/8/8/8/4k3/4K3 w - - 0 1",
+      "color": "white",
+      "parseOnly": true
+    },
+    {
+      "id": "badCounter",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - -1 0",
+      "color": "white",
+      "parseOnly": true
+    },
+    {
+      "id": "extraField",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1 extra",
+      "color": "white",
+      "parseOnly": true
+    },
+    {
+      "id": "missingCounters",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - -",
+      "color": "white",
+      "parseOnly": true
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "command": [
+    "cargo",
+    "build",
+    "--locked",
+    "--release",
+    "--target",
+    "wasm32-unknown-unknown",
+    "--manifest-path",
+    "wasm-probe/Cargo.toml"
+  ],
+  "seconds": 7.769903400003386,
+  "exit": 0,
+  "sourceCommit": "3484c7e65247003fac8705a9290dc2b5d0978b94",
+  "sourceArchiveSha256": "7a1695b1fade44908c9d2b6a244c68523963b042d6392c207d94ff7843b86181",
+  "wasmBytes": 1076857,
+  "gzipBytes": 114054,
+  "brotliBytes": 78376,
+  "wasmSha256": "2bce4c5d69b2ff75ab79696f3a4e9f62ee3e91fdb7b7359eca755bbe738de2a2",
+  "rustflags": "-C link-arg=--max-memory=134217728"
+}

@@ -1,0 +1,50 @@
+[
+  {
+    "name": "chess.js",
+    "version": "1.4.0",
+    "license": "BSD-2-Clause",
+    "purpose": "verification-only bundled worker",
+    "licenseFiles": [
+      {
+        "file": "LICENSE",
+        "sha256": "0b3a3c2b4432a26bb18f9d06f5bba4de015bcc980306b7db28b06025495e2186"
+      }
+    ]
+  },
+  {
+    "name": "chessops",
+    "version": "0.15.1",
+    "license": "GPL-3.0-or-later",
+    "purpose": "verification-only bundled worker",
+    "licenseFiles": [
+      {
+        "file": "LICENSE.txt",
+        "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+      }
+    ]
+  },
+  {
+    "name": "@badrap/result",
+    "version": "0.3.1",
+    "license": "MIT",
+    "purpose": "verification-only bundled worker",
+    "licenseFiles": [
+      {
+        "file": "LICENSE",
+        "sha256": "277b8788944a31c695bd302ffe7da6ff4b96ba3bc14f829e3a4b8fbd8f1992e0"
+      }
+    ]
+  },
+  {
+    "name": "esbuild",
+    "version": "0.25.11",
+    "license": "MIT",
+    "purpose": "build tool",
+    "licenseFiles": [
+      {
+        "file": "LICENSE.md",
+        "sha256": "b40ec5baec7bb34fa5b1c09521fa3cd52d5fad7adafed74932a2010d3612a681"
+      }
+    ]
+  }
+]

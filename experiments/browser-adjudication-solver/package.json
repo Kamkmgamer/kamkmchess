@@ -1,0 +1,8 @@
+{
+  "name": "kha24-browser-adjudication-research",
+  "private": true,
+  "type": "module",
+  "scripts": {"bundle": "esbuild worker-source.mjs --bundle --format=esm --platform=browser --outfile=.cache/worker.mjs"},
+  "dependencies": {"chess.js": "1.4.0", "chessops": "0.15.1"},
+  "devDependencies": {"esbuild": "0.25.11"}
+}
