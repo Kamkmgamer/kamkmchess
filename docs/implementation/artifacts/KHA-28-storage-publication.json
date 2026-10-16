@@ -1,12 +1,12 @@
 {
     "format":  "kamkmchess.local-build-evidence",
     "schemaVersion":  1,
-    "sourceCommit":  "ac6573000109906abd13b2708e16ba941c257fe4",
+    "sourceCommit":  "d1b02422a3e121631d60d548debe7bfa058fcabd",
     "method":  "Clean npm ci followed by npm run check on the public storage candidate.",
-    "observed":  "Exit 0. ESLint passed with zero warnings; 105 offline fixtures passed across five files; both TypeScript projects passed; Vite 8.3.4 built the app and distribution notices.",
+    "observed":  "Exit 0. ESLint passed with zero warnings; 106 offline fixtures passed across five files; both TypeScript projects passed; Vite 8.3.4 built the app and distribution notices.",
     "scope":  "Local offline build only. Native-browser, private-session, eviction, crash-window, accessibility, cloud and live-provider acceptance remain not_run.",
     "archive":  "KHA-28-storage-publication.zip",
-    "archiveSha256":  "100428b1ba4683d639b0586d70568956f8c862ff0d41a47d1396e306f5ae1d87",
+    "archiveSha256":  "0dd236be9c6bcb2c30311b100e9efe66f89aa296e0def5fe61fde8ef49d32e14",
     "files":  [
                   {
                       "path":  "_headers",
