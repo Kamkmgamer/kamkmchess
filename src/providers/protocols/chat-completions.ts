@@ -35,6 +35,7 @@ export function createChatCompletionsDecoder(
     consumeChatEvent,
     finalizeChat,
     metadata,
+    (event) => event.event === 'message',
   );
 }
 
@@ -81,15 +82,19 @@ function consumeChatEvent(
     state.malformed = true;
     return;
   }
+  if (state.doneSeen && event.data.length > 0) {
+    state.malformed = true;
+    return;
+  }
+  if (event.event !== 'message') {
+    state.unknownEvents.push(event);
+    return;
+  }
   if (event.data === '[DONE]') {
     state.doneSeen = true;
     return;
   }
   if (event.data.length === 0) {
-    return;
-  }
-  if (state.doneSeen) {
-    state.malformed = true;
     return;
   }
 

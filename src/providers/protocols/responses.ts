@@ -197,6 +197,9 @@ function consumeResponsesEvent(
     case 'error':
       state.errors.push(payload);
       state.failed = true;
+      if (state.schema === 'openrouter-r12' && !isValidOpenRouterErrorEvent(payload)) {
+        state.malformed = true;
+      }
       state.terminalEvent = type;
       state.terminalData = event.data;
       return;
@@ -651,6 +654,14 @@ function isResponseMessageContent(value: unknown): boolean {
 
 function isValidSequenceNumber(value: unknown): value is number {
   return Number.isSafeInteger(value) && (value as number) >= 0;
+}
+
+function isValidOpenRouterErrorEvent(payload: Record<string, unknown>): boolean {
+  return payload.type === 'error'
+    && isValidSequenceNumber(payload.sequence_number)
+    && (payload.code === null || typeof payload.code === 'string')
+    && typeof payload.message === 'string'
+    && (payload.param === null || typeof payload.param === 'string');
 }
 
 function isTextPartEvent(type: string): boolean {

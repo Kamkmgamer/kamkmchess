@@ -49,6 +49,7 @@ export function createSseProtocolDecoder(
   consume: (event: ProtocolRawEvent, state: ProtocolDecoderState) => void,
   finalize: (state: ProtocolDecoderState) => void,
   metadata: ProtocolStreamMetadata = {},
+  shouldParsePayload: (event: ProtocolRawEvent) => boolean = () => true,
 ): ProtocolStreamDecoder {
   const parser = new SseParser();
   const chunks: Uint8Array[] = [];
@@ -58,7 +59,7 @@ export function createSseProtocolDecoder(
 
   const acceptEvents = (incoming: readonly ProtocolRawEvent[]): void => {
     for (const event of incoming) {
-      const parsed = parsePayload(event);
+      const parsed = shouldParsePayload(event) ? parsePayload(event) : event;
       events.push(parsed);
       if (!aborted && parsed.frameTerminated) {
         consume(parsed, state);

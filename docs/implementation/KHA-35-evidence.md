@@ -20,11 +20,17 @@ The native OpenAI Responses schema is the default. The OpenRouter R12 schema req
 
 The R12 decoder requires `completed_at`, `frequency_penalty` and `presence_penalty` in the response envelope, including when their values are null. Text `delta` and `done` events require a non-negative safe-integer `sequence_number` and a `logprobs` array. Each log probability entry requires a string `token` and numeric `logprob`; optional `bytes` values must be integer arrays, and optional `top_logprobs` entries must use the documented field types. These R12-only checks do not apply to native OpenAI Responses.
 
+Historical candidate note: The behavior described in the following paragraph records source commit `12c5503fa9212d7fe6ae91482cccf9b5581121b6`, cited in Verification. It is superseded by the follow-up state below and remains here to preserve the original candidate record.
+
 The pinned R12 schema also requires `code`, `message`, `param`, `sequence_number` and `type` on a flat `error` event. A known diagnostic limitation remains: an `error` event with missing required fields can be classified as `failed` instead of `malformed`. `failed` is never a complete answer, so this does not authorize a move or affect MOV-03. This candidate keeps that non-blocking behavior unchanged.
 
 ## Verification
 
 Source commit: `12c5503fa9212d7fe6ae91482cccf9b5581121b6`. Candidate base: `f354261c5dcfc136c04cded6e5a953fbf1545304`.
+
+### PR follow-up state
+
+The `kha35/streaming-adapters-followup` branch tightens the R12 error shape checks so missing or wrongly typed required fields are malformed, retains named Chat events without attempting to parse their payloads as JSON, and treats data-bearing frames after `[DONE]` as malformed. Invalid UTF-8 in a terminated frame remains malformed under the shared SSE decoder; an invalid-UTF-8 unterminated final frame remains raw and leaves the stream `truncated`. No regression fixtures were added or run for these follow-up changes, so the related acceptance evidence remains outstanding; all 79 product acceptance cases remain `not_run`.
 
 | Command | Expected result | Observed result |
 | --- | --- | --- |
