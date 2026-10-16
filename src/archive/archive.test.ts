@@ -269,6 +269,34 @@ describe('versioned game archive export', () => {
     expect(decoded.checkpoint.history.messages[1]?.eventIds).toEqual(['event-discarded', 'event-shared-prefix']);
   });
 
+  it('round-trips a stalemate draw and rejects unsupported final result reasons', async () => {
+    const snapshot = archiveSnapshot(new TextEncoder().encode('stalemate result'));
+    snapshot.checkpoint.result = {
+      kind: 'final',
+      winner: 'draw',
+      reason: 'stalemate',
+      eventId: 'event-1',
+      decidedAtMs: 1300,
+    };
+    const archive = await exportGameArchive(snapshot, []);
+    const decoded = await validateGameArchive(JSON.parse(JSON.stringify(archive)));
+    expect(decoded.checkpoint.result).toEqual(snapshot.checkpoint.result);
+
+    const unsupported = JSON.parse(JSON.stringify(archive));
+    unsupported.checkpoint.result.reason = 'unsupported-draw-reason';
+    await expect(validateGameArchive(unsupported)).rejects.toMatchObject({ code: 'invalid-archive' });
+
+    const invalidPending = JSON.parse(JSON.stringify(archive));
+    invalidPending.checkpoint.result = {
+      kind: 'pending-adjudication',
+      reason: 'stalemate',
+      eventId: 'event-1',
+      eventAtMs: 1300,
+      activeClockDeadlineMs: null,
+    };
+    await expect(validateGameArchive(invalidPending)).rejects.toMatchObject({ code: 'invalid-archive' });
+  });
+
   it('rejects dangling lines, cross-line events, mismatched disposition, and duplicate line IDs', async () => {
     const create = () => archiveSnapshot(new TextEncoder().encode('line reference fixture'));
     const cases = [
