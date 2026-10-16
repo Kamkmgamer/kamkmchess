@@ -1,0 +1,39 @@
+{
+  "verdictsChecked": 8,
+  "winnableWitnessesChecked": 4,
+  "results": [
+    {
+      "id": "asymmetricWall",
+      "intendedWinner": "White",
+      "plies": 17,
+      "legalInChessJs": true,
+      "legalInChessops": true,
+      "checkmateInBoth": true
+    },
+    {
+      "id": "bareKingVsRook",
+      "intendedWinner": "White",
+      "plies": 20,
+      "legalInChessJs": true,
+      "legalInChessops": true,
+      "checkmateInBoth": true
+    },
+    {
+      "id": "knightVsRook",
+      "intendedWinner": "White",
+      "plies": 41,
+      "legalInChessJs": true,
+      "legalInChessops": true,
+      "checkmateInBoth": true
+    },
+    {
+      "id": "knightVsRook",
+      "intendedWinner": "Black",
+      "plies": 44,
+      "legalInChessJs": true,
+      "legalInChessops": true,
+      "checkmateInBoth": true
+    }
+  ],
+  "note": "Unwinnable proof internals are not independently verified here. Locked-wall closure is independently enumerated in results.json."
+}

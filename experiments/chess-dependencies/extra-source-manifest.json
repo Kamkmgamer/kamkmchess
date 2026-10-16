@@ -1,0 +1,34 @@
+{
+  "chasolver": {
+    "repository": "miguel-ambrona/chasolver",
+    "commit": "3484c7e65247003fac8705a9290dc2b5d0978b94",
+    "url": "https://codeload.github.com/miguel-ambrona/chasolver/tar.gz/3484c7e65247003fac8705a9290dc2b5d0978b94",
+    "sha256": "7a1695b1fade44908c9d2b6a244c68523963b042d6392c207d94ff7843b86181"
+  },
+  "scalachess": {
+    "repository": "lichess-org/scalachess",
+    "commit": "e3f7eb8f73a268f668d70e594e8f2426d8614881",
+    "url": "https://codeload.github.com/lichess-org/scalachess/tar.gz/e3f7eb8f73a268f668d70e594e8f2426d8614881",
+    "sha256": "63e29e47f27cbcdda5bed8ae3d9281fe89a7bec811c34c0e0559fdac5dd0ef04"
+  },
+  "ui/round/src/round.nvui.ts": {
+    "url": "https://raw.githubusercontent.com/lichess-org/lila/e4de08fdf77453ff7ab2d039113b931730826af5/ui/round/src/round.nvui.ts",
+    "sha256": "c6de58c5f57e5234e90c6ef54421996282836d5c1e4c67e3ddca1240ef528326"
+  },
+  "ui/round/src/view/nvuiView.ts": {
+    "url": "https://raw.githubusercontent.com/lichess-org/lila/e4de08fdf77453ff7ab2d039113b931730826af5/ui/round/src/view/nvuiView.ts",
+    "sha256": "a5280187c828173eedc0690209c44e2002b6de7154b0fda107aaf0061ff22404"
+  },
+  "ui/lib/src/nvui/chess.ts": {
+    "url": "https://raw.githubusercontent.com/lichess-org/lila/e4de08fdf77453ff7ab2d039113b931730826af5/ui/lib/src/nvui/chess.ts",
+    "sha256": "c222e7b42a3ad83b21f0e8bccc80c9958f81c85911a23f850f540cdc96533a08"
+  },
+  "ui/lib/src/nvui/command.ts": {
+    "url": "https://raw.githubusercontent.com/lichess-org/lila/e4de08fdf77453ff7ab2d039113b931730826af5/ui/lib/src/nvui/command.ts",
+    "sha256": "0d29361dd56f0d8555861c75f80267e24775d7979f376a4080f4d925a2ab3630"
+  },
+  "COPYING.md": {
+    "url": "https://raw.githubusercontent.com/lichess-org/lila/e4de08fdf77453ff7ab2d039113b931730826af5/COPYING.md",
+    "sha256": "ad0355db9ccd9ec049120945b356ff40c7c868d719a961732868bd5f5306cbba"
+  }
+}

@@ -1,0 +1,464 @@
+[
+  {
+    "name": "chess.js",
+    "path": "src/chess.ts",
+    "url": "https://github.com/jhlywa/chess.js/blob/ce1ff9e9fc342984ff75ca475ab39f37888cb28a/src/chess.ts",
+    "sha256": "a513a52ef8321615c5a52806ee6f276b909e55fa5abc2dae3d5da323943ac2fa",
+    "excerpts": [
+      {
+        "first": 472,
+        "last": 603,
+        "text": "export function validateFen(fen: string): { ok: boolean; error?: string } {\n  // 1st criterion: 6 space-seperated fields?\n  const tokens = fen.split(/\\s+/)\n  if (tokens.length !== 6) {\n    return {\n      ok: false,\n      error: 'Invalid FEN: must contain six space-delimited fields',\n    }\n  }\n\n  // 2nd criterion: move number field is a integer value > 0?\n  const moveNumber = parseInt(tokens[5], 10)\n  if (isNaN(moveNumber) || moveNumber <= 0) {\n    return {\n      ok: false,\n      error: 'Invalid FEN: move number must be a positive integer',\n    }\n  }\n\n  // 3rd criterion: half move counter is an integer >= 0?\n  const halfMoves = parseInt(tokens[4], 10)\n  if (isNaN(halfMoves) || halfMoves < 0) {\n    return {\n      ok: false,\n      error:\n        'Invalid FEN: half move counter number must be a non-negative integer',\n    }\n  }\n\n  // 4th criterion: 4th field is a valid e.p.-string?\n  if (!/^(-|[abcdefgh][36])$/.test(tokens[3])) {\n    return { ok: false, error: 'Invalid FEN: en-passant square is invalid' }\n  }\n\n  // 5th criterion: 3th field is a valid castle-string?\n  if (/[^kKqQ-]/.test(tokens[2])) {\n    return { ok: false, error: 'Invalid FEN: castling availability is invalid' }\n  }\n\n  // 6th criterion: 2nd field is \"w\" (white) or \"b\" (black)?\n  if (!/^(w|b)$/.test(tokens[1])) {\n    return { ok: false, error: 'Invalid FEN: side-to-move is invalid' }\n  }\n\n  // 7th criterion: 1st field contains 8 rows?\n  const rows = tokens[0].split('/')\n  if (rows.length !== 8) {\n    return {\n      ok: false,\n      error: \"Invalid FEN: piece data does not contain 8 '/'-delimited rows\",\n    }\n  }\n\n  // 8th criterion: every row is valid?\n  for (let i = 0; i < rows.length; i++) {\n    // check for right sum of fields AND not two numbers in succession\n    let sumFields = 0\n    let previousWasNumber = false\n\n    for (let k = 0; k < rows[i].length; k++) {\n      if (isDigit(rows[i][k])) {\n        if (previousWasNumber) {\n          return {\n            ok: false,\n            error: 'Invalid FEN: piece data is invalid (consecutive number)',\n          }\n        }\n        sumFields += parseInt(rows[i][k], 10)\n        previousWasNumber = true\n      } else {\n        if (!/^[prnbqkPRNBQK]$/.test(rows[i][k])) {\n          return {\n            ok: false,\n            error: 'Invalid FEN: piece data is invalid (invalid piece)',\n          }\n        }\n        sumFields += 1\n        previousWasNumber = false\n      }\n    }\n    if (sumFields !== 8) {\n      return {\n        ok: false,\n        error: 'Invalid FEN: piece data is invalid (too many squares in rank)',\n      }\n    }\n  }\n\n  // 9th criterion: is en-passant square legal?\n  if (\n    (tokens[3][1] == '3' && tokens[1] == 'w') ||\n    (tokens[3][1] == '6' && tokens[1] == 'b')\n  ) {\n    return { ok: false, error: 'Invalid FEN: illegal en-passant square' }\n  }\n\n  // 10th criterion: does chess position contain exact two kings?\n  const kings = [\n    { color: 'white', regex: /K/g },\n    { color: 'black', regex: /k/g },\n  ]\n\n  for (const { color, regex } of kings) {\n    if (!regex.test(tokens[0])) {\n      return { ok: false, error: `Invalid FEN: missing ${color} king` }\n    }\n\n    if ((tokens[0].match(regex) || []).length > 1) {\n      return { ok: false, error: `Invalid FEN: too many ${color} kings` }\n    }\n  }\n\n  // 11th criterion: are any pawns on the first or eighth rows?\n  if (\n    Array.from(rows[0] + rows[7]).some((char) => char.toUpperCase() === 'P')\n  ) {\n    return {\n      ok: false,\n      error: 'Invalid FEN: some pawns are on the edge rows',\n    }\n  }\n\n  return { ok: true }\n}\n\n// this function is used to uniquely identify ambiguous moves\nfunction getDisambiguator(move: InternalMove, moves: InternalMove[]): string {\n  const from = move.from\n  const to = move.to\n  const piece = move.piece\n\n  let ambiguities = 0"
+      },
+      {
+        "first": 817,
+        "last": 917,
+        "text": "    forceEnpassantSquare = false,\n  }: { forceEnpassantSquare?: boolean } = {}) {\n    let empty = 0\n    let fen = ''\n\n    for (let i = Ox88.a8; i <= Ox88.h1; i++) {\n      if (this._board[i]) {\n        if (empty > 0) {\n          fen += empty\n          empty = 0\n        }\n        const { color, type: piece } = this._board[i]\n\n        fen += color === WHITE ? piece.toUpperCase() : piece.toLowerCase()\n      } else {\n        empty++\n      }\n\n      if ((i + 1) & 0x88) {\n        if (empty > 0) {\n          fen += empty\n        }\n\n        if (i !== Ox88.h1) {\n          fen += '/'\n        }\n\n        empty = 0\n        i += 8\n      }\n    }\n\n    let castling = ''\n    if (this._castling[WHITE] & BITS.KSIDE_CASTLE) {\n      castling += 'K'\n    }\n    if (this._castling[WHITE] & BITS.QSIDE_CASTLE) {\n      castling += 'Q'\n    }\n    if (this._castling[BLACK] & BITS.KSIDE_CASTLE) {\n      castling += 'k'\n    }\n    if (this._castling[BLACK] & BITS.QSIDE_CASTLE) {\n      castling += 'q'\n    }\n\n    // do we have an empty castling flag?\n    castling = castling || '-'\n\n    let epSquare = '-'\n    /*\n     * only print the ep square if en passant is a valid move (pawn is present\n     * and ep capture is not pinned)\n     */\n    if (this._epSquare !== EMPTY) {\n      if (forceEnpassantSquare) {\n        epSquare = algebraic(this._epSquare)\n      } else {\n        const bigPawnSquare = this._epSquare + (this._turn === WHITE ? 16 : -16)\n        const squares = [bigPawnSquare + 1, bigPawnSquare - 1]\n\n        for (const square of squares) {\n          // is the square off the board?\n          if (square & 0x88) {\n            continue\n          }\n\n          const color = this._turn\n\n          // is there a pawn that can capture the epSquare?\n          if (\n            this._board[square]?.color === color &&\n            this._board[square]?.type === PAWN\n          ) {\n            // if the pawn makes an ep capture, does it leave its king in check?\n            this._makeMove({\n              color,\n              from: square,\n              to: this._epSquare,\n              piece: PAWN,\n              captured: PAWN,\n              flags: BITS.EP_CAPTURE,\n            })\n            const isLegal = !this._isKingAttacked(color)\n            this._undoMove()\n\n            // if ep is legal, break and set the ep square in the FEN output\n            if (isLegal) {\n              epSquare = algebraic(this._epSquare)\n              break\n            }\n          }\n        }\n      }\n    }\n\n    return [\n      fen,\n      this._turn,\n      castling,\n      epSquare,"
+      },
+      {
+        "first": 947,
+        "last": 955,
+        "text": "  private _epKey() {\n    return this._epSquare === EMPTY ? 0n : EP_KEYS[this._epSquare & 7]\n  }\n\n  private _castlingKey() {\n    const index = (this._castling.w >> 5) | (this._castling.b >> 3)\n    return CASTLING_KEYS[index]\n  }\n"
+      },
+      {
+        "first": 1306,
+        "last": 1387,
+        "text": "  isInsufficientMaterial(): boolean {\n    /*\n     * k.b. vs k.b. (of opposite colors) with mate in 1:\n     * 8/8/8/8/1b6/8/B1k5/K7 b - - 0 1\n     *\n     * k.b. vs k.n. with mate in 1:\n     * 8/8/8/8/1n6/8/B7/K1k5 b - - 2 1\n     */\n    const pieces: Record<PieceSymbol, number> = {\n      b: 0,\n      n: 0,\n      r: 0,\n      q: 0,\n      k: 0,\n      p: 0,\n    }\n    const bishops = []\n    let numPieces = 0\n    let squareColor = 0\n\n    for (let i = Ox88.a8; i <= Ox88.h1; i++) {\n      squareColor = (squareColor + 1) % 2\n      if (i & 0x88) {\n        i += 7\n        continue\n      }\n\n      const piece = this._board[i]\n      if (piece) {\n        pieces[piece.type] = piece.type in pieces ? pieces[piece.type] + 1 : 1\n        if (piece.type === BISHOP) {\n          bishops.push(squareColor)\n        }\n        numPieces++\n      }\n    }\n\n    // k vs. k\n    if (numPieces === 2) {\n      return true\n    } else if (\n      // k vs. kn .... or .... k vs. kb\n      numPieces === 3 &&\n      (pieces[BISHOP] === 1 || pieces[KNIGHT] === 1)\n    ) {\n      return true\n    } else if (numPieces === pieces[BISHOP] + 2) {\n      // kb vs. kb where any number of bishops are all on the same color\n      let sum = 0\n      const len = bishops.length\n      for (let i = 0; i < len; i++) {\n        sum += bishops[i]\n      }\n      if (sum === 0 || sum === len) {\n        return true\n      }\n    }\n\n    return false\n  }\n\n  isThreefoldRepetition(): boolean {\n    return this._getPositionCount(this._hash) >= 3\n  }\n\n  isDrawByFiftyMoves(): boolean {\n    return this._halfMoves >= 100 // 50 moves per side = 100 half moves\n  }\n\n  isDraw(): boolean {\n    return (\n      this.isDrawByFiftyMoves() ||\n      this.isStalemate() ||\n      this.isInsufficientMaterial() ||\n      this.isThreefoldRepetition()\n    )\n  }\n\n  isGameOver(): boolean {\n    return this.isCheckmate() || this.isDraw()\n  }\n"
+      },
+      {
+        "first": 1635,
+        "last": 1703,
+        "text": "     */\n    if (!legal || this._kings[us] === -1) {\n      return moves\n    }\n\n    // filter out illegal moves\n    const legalMoves = []\n\n    for (let i = 0, len = moves.length; i < len; i++) {\n      this._makeMove(moves[i])\n      if (!this._isKingAttacked(us)) {\n        legalMoves.push(moves[i])\n      }\n      this._undoMove()\n    }\n\n    return legalMoves\n  }\n\n  move(\n    move: string | { from: string; to: string; promotion?: string } | null,\n    { strict = false }: { strict?: boolean } = {},\n  ): Move {\n    /*\n     * The move function can be called with in the following parameters:\n     *\n     * .move('Nxb7')       <- argument is a case-sensitive SAN string\n     *\n     * .move({ from: 'h7', <- argument is a move object\n     *         to :'h8',\n     *         promotion: 'q' })\n     *\n     *\n     * An optional strict argument may be supplied to tell chess.js to\n     * strictly follow the SAN specification.\n     */\n\n    let moveObj = null\n\n    if (typeof move === 'string') {\n      moveObj = this._moveFromSan(move, strict)\n    } else if (move === null) {\n      moveObj = this._moveFromSan(SAN_NULLMOVE, strict)\n    } else if (typeof move === 'object') {\n      const moves = this._moves()\n\n      // convert the pretty move object to an ugly move object\n      for (let i = 0, len = moves.length; i < len; i++) {\n        if (\n          move.from === algebraic(moves[i].from) &&\n          move.to === algebraic(moves[i].to) &&\n          (!('promotion' in moves[i]) || move.promotion === moves[i].promotion)\n        ) {\n          moveObj = moves[i]\n          break\n        }\n      }\n    }\n\n    // failed to find move\n    if (!moveObj) {\n      if (typeof move === 'string') {\n        throw new Error(`Invalid move: ${move}`)\n      } else {\n        throw new Error(`Invalid move: ${JSON.stringify(move)}`)\n      }\n    }\n\n    //disallow null moves when in check"
+      }
+    ]
+  },
+  {
+    "name": "chess.js",
+    "path": "LICENSE",
+    "url": "https://github.com/jhlywa/chess.js/blob/ce1ff9e9fc342984ff75ca475ab39f37888cb28a/LICENSE",
+    "sha256": "0b3a3c2b4432a26bb18f9d06f5bba4de015bcc980306b7db28b06025495e2186",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 26,
+        "text": "Copyright (c) 2025, Jeff Hlywa (jhlywa@gmail.com)\nAll rights reserved.\n\nRedistribution and use in source and binary forms, with or without\nmodification, are permitted provided that the following conditions are met:\n\n1. Redistributions of source code must retain the above copyright notice,\n   this list of conditions and the following disclaimer.\n2. Redistributions in binary form must reproduce the above copyright notice,\n   this list of conditions and the following disclaimer in the documentation\n   and/or other materials provided with the distribution.\n\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\"\nAND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE\nIMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE\nARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE\nLIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR\nCONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF\nSUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS\nINTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN\nCONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)\nARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE\nPOSSIBILITY OF SUCH DAMAGE."
+      }
+    ]
+  },
+  {
+    "name": "chessops",
+    "path": "src/chess.ts",
+    "url": "https://github.com/niklasf/chessops/blob/4a4cbd5ac6159adfb236a2616701253ae4c58b2d/src/chess.ts",
+    "sha256": "5ec05793db2d4f5a6e6ceebe48c1bf2bd01b2b7aa8fef9381bc73db09cc0810d",
+    "excerpts": [
+      {
+        "first": 98,
+        "last": 123,
+        "text": "    };\n    return castles;\n  }\n\n  private add(color: Color, side: CastlingSide, king: Square, rook: Square): void {\n    const kingTo = kingCastlesTo(color, side);\n    const rookTo = rookCastlesTo(color, side);\n    this.castlingRights = this.castlingRights.with(rook);\n    this.rook[color][side] = rook;\n    this.path[color][side] = between(rook, rookTo)\n      .with(rookTo)\n      .union(between(king, kingTo).with(kingTo))\n      .without(king)\n      .without(rook);\n  }\n\n  static fromSetup(setup: Setup): Castles {\n    const castles = Castles.empty();\n    const rooks = setup.castlingRights.intersect(setup.board.rook);\n    for (const color of COLORS) {\n      const backrank = SquareSet.backrank(color);\n      const king = setup.board.kingOf(color);\n      if (!defined(king) || !backrank.has(king)) continue;\n      const side = rooks.intersect(setup.board[color]).intersect(backrank);\n      const aSide = side.first();\n      if (defined(aSide) && aSide < king) castles.add(color, 'a', king, aSide);"
+      },
+      {
+        "first": 178,
+        "last": 190,
+        "text": "\n  protected setupUnchecked(setup: Setup) {\n    this.board = setup.board.clone();\n    this.board.promoted = SquareSet.empty();\n    this.pockets = undefined;\n    this.turn = setup.turn;\n    this.castles = Castles.fromSetup(setup);\n    this.epSquare = validEpSquare(this, setup.epSquare);\n    this.remainingChecks = undefined;\n    this.halfmoves = setup.halfmoves;\n    this.fullmoves = setup.fullmoves;\n  }\n"
+      },
+      {
+        "first": 251,
+        "last": 271,
+        "text": "  protected validate(): Result<undefined, PositionError> {\n    if (this.board.occupied.isEmpty()) return Result.err(new PositionError(IllegalSetup.Empty));\n    if (this.board.king.size() !== 2) return Result.err(new PositionError(IllegalSetup.Kings));\n\n    if (!defined(this.board.kingOf(this.turn))) return Result.err(new PositionError(IllegalSetup.Kings));\n\n    const otherKing = this.board.kingOf(opposite(this.turn));\n    if (!defined(otherKing)) return Result.err(new PositionError(IllegalSetup.Kings));\n    if (this.kingAttackers(otherKing, this.turn, this.board.occupied).nonEmpty()) {\n      return Result.err(new PositionError(IllegalSetup.OppositeCheck));\n    }\n\n    if (SquareSet.backranks().intersects(this.board.pawn)) {\n      return Result.err(new PositionError(IllegalSetup.PawnsOnBackrank));\n    }\n\n    return Result.ok(undefined);\n  }\n\n  dropDests(_ctx?: Context): SquareSet {\n    return SquareSet.empty();"
+      },
+      {
+        "first": 334,
+        "last": 419,
+        "text": "  hasInsufficientMaterial(color: Color): boolean {\n    if (this.board[color].intersect(this.board.pawn.union(this.board.rooksAndQueens())).nonEmpty()) return false;\n    if (this.board[color].intersects(this.board.knight)) {\n      return (\n        this.board[color].size() <= 2\n        && this.board[opposite(color)].diff(this.board.king).diff(this.board.queen).isEmpty()\n      );\n    }\n    if (this.board[color].intersects(this.board.bishop)) {\n      const sameColor = !this.board.bishop.intersects(SquareSet.darkSquares())\n        || !this.board.bishop.intersects(SquareSet.lightSquares());\n      return sameColor && this.board.pawn.isEmpty() && this.board.knight.isEmpty();\n    }\n    return true;\n  }\n\n  // The following should be identical in all subclasses\n\n  toSetup(): Setup {\n    return {\n      board: this.board.clone(),\n      pockets: this.pockets?.clone(),\n      turn: this.turn,\n      castlingRights: this.castles.castlingRights,\n      epSquare: legalEpSquare(this),\n      remainingChecks: this.remainingChecks?.clone(),\n      halfmoves: Math.min(this.halfmoves, 150),\n      fullmoves: Math.min(Math.max(this.fullmoves, 1), 9999),\n    };\n  }\n\n  isInsufficientMaterial(): boolean {\n    return COLORS.every(color => this.hasInsufficientMaterial(color));\n  }\n\n  hasDests(ctx?: Context): boolean {\n    ctx = ctx || this.ctx();\n    for (const square of this.board[this.turn]) {\n      if (this.dests(square, ctx).nonEmpty()) return true;\n    }\n    return this.dropDests(ctx).nonEmpty();\n  }\n\n  isLegal(move: Move, ctx?: Context): boolean {\n    if (isDrop(move)) {\n      if (!this.pockets || this.pockets[this.turn][move.role] <= 0) return false;\n      if (move.role === 'pawn' && SquareSet.backranks().has(move.to)) return false;\n      return this.dropDests(ctx).has(move.to);\n    } else {\n      if (move.promotion === 'pawn') return false;\n      if (move.promotion === 'king' && this.rules !== 'antichess') return false;\n      if (!!move.promotion !== (this.board.pawn.has(move.from) && SquareSet.backranks().has(move.to))) return false;\n      const dests = this.dests(move.from, ctx);\n      return dests.has(move.to) || dests.has(normalizeMove(this, move).to);\n    }\n  }\n\n  isCheck(): boolean {\n    const king = this.board.kingOf(this.turn);\n    return defined(king) && this.kingAttackers(king, opposite(this.turn), this.board.occupied).nonEmpty();\n  }\n\n  isEnd(ctx?: Context): boolean {\n    if (ctx ? ctx.variantEnd : this.isVariantEnd()) return true;\n    return this.isInsufficientMaterial() || !this.hasDests(ctx);\n  }\n\n  isCheckmate(ctx?: Context): boolean {\n    ctx = ctx || this.ctx();\n    return !ctx.variantEnd && ctx.checkers.nonEmpty() && !this.hasDests(ctx);\n  }\n\n  isStalemate(ctx?: Context): boolean {\n    ctx = ctx || this.ctx();\n    return !ctx.variantEnd && ctx.checkers.isEmpty() && !this.hasDests(ctx);\n  }\n\n  outcome(ctx?: Context): Outcome | undefined {\n    const variantOutcome = this.variantOutcome(ctx);\n    if (variantOutcome) return variantOutcome;\n    ctx = ctx || this.ctx();\n    if (this.isCheckmate(ctx)) return { winner: opposite(this.turn) };\n    else if (this.isInsufficientMaterial() || this.isStalemate(ctx)) return { winner: undefined };\n    else return;\n  }\n"
+      },
+      {
+        "first": 510,
+        "last": 534,
+        "text": "const validEpSquare = (pos: Position, square: Square | undefined): Square | undefined => {\n  if (!defined(square)) return;\n  const epRank = pos.turn === 'white' ? 5 : 2;\n  const forward = pos.turn === 'white' ? 8 : -8;\n  if (squareRank(square) !== epRank) return;\n  if (pos.board.occupied.has(square + forward)) return;\n  const pawn = square - forward;\n  if (!pos.board.pawn.has(pawn) || !pos.board[opposite(pos.turn)].has(pawn)) return;\n  return square;\n};\n\nconst legalEpSquare = (pos: Position): Square | undefined => {\n  if (!defined(pos.epSquare)) return;\n  const ctx = pos.ctx();\n  const ourPawns = pos.board.pieces(pos.turn, 'pawn');\n  const candidates = ourPawns.intersect(pawnAttacks(opposite(pos.turn), pos.epSquare));\n  for (const candidate of candidates) {\n    if (pos.dests(candidate, ctx).has(pos.epSquare)) return pos.epSquare;\n  }\n  return;\n};\n\nconst canCaptureEp = (pos: Position, pawnFrom: Square, ctx: Context): boolean => {\n  if (!defined(pos.epSquare)) return false;\n  if (!pawnAttacks(pos.turn, pawnFrom).has(pos.epSquare)) return false;"
+      },
+      {
+        "first": 596,
+        "last": 622,
+        "text": "export const equalsIgnoreMoves = (left: Position, right: Position): boolean =>\n  left.rules === right.rules\n  && boardEquals(left.board, right.board)\n  && ((right.pockets && left.pockets?.equals(right.pockets)) || (!left.pockets && !right.pockets))\n  && left.turn === right.turn\n  && left.castles.castlingRights.equals(right.castles.castlingRights)\n  && legalEpSquare(left) === legalEpSquare(right)\n  && ((right.remainingChecks && left.remainingChecks?.equals(right.remainingChecks))\n    || (!left.remainingChecks && !right.remainingChecks));\n\nexport const castlingSide = (pos: Position, move: Move): CastlingSide | undefined => {\n  if (isDrop(move)) return;\n  const delta = move.to - move.from;\n  if (Math.abs(delta) !== 2 && !pos.board[pos.turn].has(move.to)) return;\n  if (!pos.board.king.has(move.from)) return;\n  return delta > 0 ? 'h' : 'a';\n};\n\nexport const normalizeMove = (pos: Position, move: Move): Move => {\n  const side = castlingSide(pos, move);\n  if (!side) return move;\n  const rookFrom = pos.castles.rook[pos.turn][side];\n  return {\n    from: (move as NormalMove).from,\n    to: defined(rookFrom) ? rookFrom : move.to,\n  };\n};"
+      }
+    ]
+  },
+  {
+    "name": "chessops",
+    "path": "src/fen.ts",
+    "url": "https://github.com/niklasf/chessops/blob/4a4cbd5ac6159adfb236a2616701253ae4c58b2d/src/fen.ts",
+    "sha256": "3fce1603f4c2302b86d27328d90af504e706f9b53bfb349821a547517934176e",
+    "excerpts": [
+      {
+        "first": 30,
+        "last": 33,
+        "text": "  let index = haystack.indexOf(needle);\n  while (n-- > 0) {\n    if (index === -1) break;\n    index = haystack.indexOf(needle, index + needle.length);"
+      },
+      {
+        "first": 171,
+        "last": 210,
+        "text": "\n    // Halfmoves or remaining checks\n    let halfmovePart = parts.shift();\n    let earlyRemainingChecks: Result<RemainingChecks, FenError> | undefined;\n    if (defined(halfmovePart) && halfmovePart.includes('+')) {\n      earlyRemainingChecks = parseRemainingChecks(halfmovePart);\n      halfmovePart = parts.shift();\n    }\n    const halfmoves = defined(halfmovePart) ? parseSmallUint(halfmovePart) : 0;\n    if (!defined(halfmoves)) return Result.err(new FenError(InvalidFen.Halfmoves));\n\n    const fullmovesPart = parts.shift();\n    const fullmoves = defined(fullmovesPart) ? parseSmallUint(fullmovesPart) : 1;\n    if (!defined(fullmoves)) return Result.err(new FenError(InvalidFen.Fullmoves));\n\n    const remainingChecksPart = parts.shift();\n    let remainingChecks: Result<RemainingChecks | undefined, FenError> = Result.ok(undefined);\n    if (defined(remainingChecksPart)) {\n      if (defined(earlyRemainingChecks)) return Result.err(new FenError(InvalidFen.RemainingChecks));\n      remainingChecks = parseRemainingChecks(remainingChecksPart);\n    } else if (defined(earlyRemainingChecks)) {\n      remainingChecks = earlyRemainingChecks;\n    }\n\n    if (parts.length > 0) return Result.err(new FenError(InvalidFen.Fen));\n\n    return pockets.chain(pockets =>\n      castlingRights.chain(castlingRights =>\n        remainingChecks.map(remainingChecks => {\n          return {\n            board,\n            pockets,\n            turn,\n            castlingRights,\n            remainingChecks,\n            epSquare,\n            halfmoves,\n            fullmoves: Math.max(1, fullmoves),\n          };\n        })"
+      },
+      {
+        "first": 290,
+        "last": 306,
+        "text": "\nexport const makeRemainingChecks = (checks: RemainingChecks): string => `${checks.white}+${checks.black}`;\n\nexport const makeFen = (setup: Setup, opts?: FenOpts): string =>\n  [\n    makeBoardFen(setup.board) + (setup.pockets ? `[${makePockets(setup.pockets)}]` : ''),\n    setup.turn[0],\n    makeCastlingFen(setup.board, setup.castlingRights),\n    defined(setup.epSquare) ? makeSquare(setup.epSquare) : '-',\n    ...(setup.remainingChecks ? [makeRemainingChecks(setup.remainingChecks)] : []),\n    ...(opts?.epd ? [] : [Math.max(0, Math.min(setup.halfmoves, 9999)), Math.max(1, Math.min(setup.fullmoves, 9999))]),\n  ].join(' ');"
+      }
+    ]
+  },
+  {
+    "name": "chessops",
+    "path": "LICENSE.txt",
+    "url": "https://github.com/niklasf/chessops/blob/4a4cbd5ac6159adfb236a2616701253ae4c58b2d/LICENSE.txt",
+    "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 22,
+        "text": "                    GNU GENERAL PUBLIC LICENSE\n                       Version 3, 29 June 2007\n\n Copyright (C) 2007 Free Software Foundation, Inc. <http://fsf.org/>\n Everyone is permitted to copy and distribute verbatim copies\n of this license document, but changing it is not allowed.\n\n                            Preamble\n\n  The GNU General Public License is a free, copyleft license for\nsoftware and other kinds of works.\n\n  The licenses for most software and other practical works are designed\nto take away your freedom to share and change the works.  By contrast,\nthe GNU General Public License is intended to guarantee your freedom to\nshare and change all versions of a program--to make sure it remains free\nsoftware for all its users.  We, the Free Software Foundation, use the\nGNU General Public License for most of our software; it applies also to\nany other work released this way by its authors.  You can apply it to\nyour programs, too.\n\n  When we speak of free software, we are referring to freedom, not"
+      }
+    ]
+  },
+  {
+    "name": "cm-chessboard",
+    "path": "src/extensions/accessibility/Accessibility.js",
+    "url": "https://github.com/shaack/cm-chessboard/blob/be441fa1acc322c02cd6afae6ed99a51c8b93faa/src/extensions/accessibility/Accessibility.js",
+    "sha256": "772653aa025ffa9b613253f8ad79d5bb5bab7fb2b8535ba2a41112ab6c9fdfee",
+    "excerpts": [
+      {
+        "first": 60,
+        "last": 72,
+        "text": "            visuallyHidden: true // hide all those extra outputs visually but keep them accessible for screen readers and braille displays\n        }\n        Object.assign(this.props, props)\n        if (this.props.language !== \"de\" && this.props.language !== \"en\") {\n            this.props.language = \"en\"\n        }\n        this.lang = this.props.language\n        this.tPieces = piecesTranslations[this.lang]\n        this.t = translations[this.lang]\n        this.components = []\n        if(this.props.movePieceForm || this.props.boardAsTable || this.props.piecesAsList) {\n            const container = document.createElement(\"div\")\n            container.classList.add(\"cm-chessboard-accessibility\")"
+      },
+      {
+        "first": 327,
+        "last": 377,
+        "text": "        this.handleKeyDown = this.handleKeyDown.bind(this)\n        this.handleFocus = this.handleFocus.bind(this)\n        this.handleBlur = this.handleBlur.bind(this)\n\n        this.chessboard.view.svg.addEventListener(\"keydown\", this.handleKeyDown)\n        this.chessboard.view.svg.addEventListener(\"focus\", this.handleFocus)\n        this.chessboard.view.svg.addEventListener(\"blur\", this.handleBlur)\n\n        // Register extension points\n        extension.registerExtensionPoint(EXTENSION_POINT.afterRedrawBoard, () => {\n            this.redrawFocusIndicator()\n        })\n        extension.registerExtensionPoint(EXTENSION_POINT.destroy, () => {\n            this.destroy()\n        })\n        extension.registerExtensionPoint(EXTENSION_POINT.moveInputToggled, () => {\n            // Reset move selection when input is toggled\n            this.fromSquare = null\n            this.redrawFocusIndicator()\n        })\n    }\n\n    handleFocus() {\n        this.redrawFocusIndicator()\n        this.announceCurrentSquare()\n    }\n\n    handleBlur() {\n        this.clearFocusIndicator()\n    }\n\n    handleKeyDown(event) {\n        const orientation = this.chessboard.state.orientation\n\n        switch (event.key) {\n            case \"ArrowRight\":\n                event.preventDefault()\n                if (orientation === COLOR.white) {\n                    this.focusedFile = Math.min(7, this.focusedFile + 1)\n                } else {\n                    this.focusedFile = Math.max(0, this.focusedFile - 1)\n                }\n                this.redrawFocusIndicator()\n                this.announceCurrentSquare()\n                break\n\n            case \"ArrowLeft\":\n                event.preventDefault()\n                if (orientation === COLOR.white) {\n                    this.focusedFile = Math.max(0, this.focusedFile - 1)\n                } else {"
+      }
+    ]
+  },
+  {
+    "name": "cm-chessboard",
+    "path": "src/extensions/promotion-dialog/PromotionDialog.js",
+    "url": "https://github.com/shaack/cm-chessboard/blob/be441fa1acc322c02cd6afae6ed99a51c8b93faa/src/extensions/promotion-dialog/PromotionDialog.js",
+    "sha256": "60b1959dd8bc44fd26eb339c3859c0746a16aa78b75e1f67aa792bb98afeb411",
+    "excerpts": [
+      {
+        "first": 39,
+        "last": 73,
+        "text": "\nexport class PromotionDialog extends Extension {\n\n    /** @constructor */\n    constructor(chessboard, props = {}) {\n        super(chessboard)\n        this.props = {\n            language: navigator.language.substring(0, 2).toLowerCase()\n        }\n        Object.assign(this.props, props)\n        if (this.props.language !== \"de\" && this.props.language !== \"en\") {\n            this.props.language = \"en\"\n        }\n        this.t = translations[this.props.language]\n        this.pieceOrder = [\"q\", \"r\", \"b\", \"n\"]\n        this.focusedIndex = 0\n        this.previouslyFocusedElement = null\n\n        this.registerExtensionPoint(EXTENSION_POINT.afterRedrawBoard, this.extensionPointRedrawBoard.bind(this))\n        this.registerExtensionPoint(EXTENSION_POINT.destroy, this.destroy.bind(this))\n        chessboard.showPromotionDialog = this.showPromotionDialog.bind(this)\n        chessboard.isPromotionDialogShown = this.isPromotionDialogShown.bind(this)\n        this.promotionDialogGroup = Svg.addElement(chessboard.view.interactiveTopLayer, \"g\", {\n            class: \"promotion-dialog-group\",\n            role: \"dialog\",\n            \"aria-modal\": \"true\",\n            \"aria-label\": this.t.choosePromotion\n        })\n\n        // Create live region for announcements\n        this.liveRegion = document.createElement(\"div\")\n        this.liveRegion.setAttribute(\"aria-live\", \"polite\")\n        this.liveRegion.setAttribute(\"aria-atomic\", \"true\")\n        this.liveRegion.className = \"cm-chessboard-promotion-live-region visually-hidden\"\n        this.liveRegion.style.cssText = \"position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0;\""
+      },
+      {
+        "first": 211,
+        "last": 250,
+        "text": "    promotionDialogOnCancel(event) {\n        if (this.state.displayState === DISPLAY_STATE.shown) {\n            event.preventDefault()\n            this.setDisplayState(DISPLAY_STATE.hidden)\n            if(this.state.callback) {\n                this.state.callback({type: PROMOTION_DIALOG_RESULT_TYPE.canceled})\n            }\n        }\n    }\n\n    contextMenu(event) {\n        event.preventDefault()\n        this.setDisplayState(DISPLAY_STATE.hidden)\n        if(this.state.callback) {\n            this.state.callback({type: PROMOTION_DIALOG_RESULT_TYPE.canceled})\n        }\n    }\n\n    setDisplayState(displayState) {\n        const prevState = this.state.displayState\n        this.state.displayState = displayState\n        if (displayState === DISPLAY_STATE.shown) {\n            this.clickDelegate = Utils.delegate(this.chessboard.view.svg,\n                \"pointerdown\",\n                \"*\",\n                this.promotionDialogOnClickPiece.bind(this))\n            this.contextMenuListener = this.contextMenu.bind(this)\n            this.chessboard.view.svg.addEventListener(\"contextmenu\", this.contextMenuListener)\n            // Keyboard listener in the capture phase: while the dialog is open its keys\n            // must not reach anything else. Applications commonly bind the arrow keys on\n            // document for history navigation (chess-console does), and those listeners\n            // are registered before the dialog opens, so in the bubble phase they would\n            // run first and change the position under the open dialog.\n            document.addEventListener(\"keydown\", this.handleKeyDown, true)\n        } else if (displayState === DISPLAY_STATE.hidden) {\n            if (this.clickDelegate) {\n                this.clickDelegate.remove()\n                this.clickDelegate = null\n            }\n            if (this.contextMenuListener && this.chessboard.view) {"
+      },
+      {
+        "first": 325,
+        "last": 365,
+        "text": "                }\n                break\n            case \"Tab\":\n                // Trap focus within dialog\n                event.preventDefault()\n                if (event.shiftKey) {\n                    this.focusedIndex = (this.focusedIndex - 1 + 4) % 4\n                } else {\n                    this.focusedIndex = (this.focusedIndex + 1) % 4\n                }\n                this.focusButton(this.focusedIndex)\n                break\n        }\n    }\n\n    focusButton(index) {\n        const buttons = this.promotionDialogGroup.querySelectorAll(\".promotion-dialog-button-group\")\n        buttons.forEach((btn, i) => {\n            btn.setAttribute(\"tabindex\", i === index ? \"0\" : \"-1\")\n        })\n        if (buttons[index]) {\n            buttons[index].focus()\n            const pieceType = this.pieceOrder[index]\n            this.announce(this.t.pieces[pieceType])\n        }\n    }\n\n    announce(message) {\n        if (!this.liveRegion) return\n        this.liveRegion.textContent = \"\"\n        if (this.announceTimeoutId) {\n            clearTimeout(this.announceTimeoutId)\n        }\n        // Small delay to ensure screen readers pick up the change\n        this.announceTimeoutId = setTimeout(() => {\n            this.announceTimeoutId = null\n            if (this.liveRegion) {\n                this.liveRegion.textContent = message\n            }\n        }, 50)\n    }"
+      }
+    ]
+  },
+  {
+    "name": "cm-chessboard",
+    "path": "assets/pieces/standard.svg",
+    "url": "https://github.com/shaack/cm-chessboard/blob/be441fa1acc322c02cd6afae6ed99a51c8b93faa/assets/pieces/standard.svg",
+    "sha256": "b85bba95342a9483420999cedeb1c503e6db16cdd7a0da1f3a228549a13134c5",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 21,
+        "text": "<?xml version=\"1.0\" encoding=\"UTF-8\"?><!--\n\nLICENSE\n=======\n\nChess pieces\n~~~~~~~~~~~~\n\nThe chess pieces in this sprite are copies from Wikimedia Commons\nhttps://commons.wikimedia.org/wiki/Category:SVG_chess_pieces/Standard\n\nLicense: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)\nhttps://creativecommons.org/licenses/by-sa/3.0/\n\nAuthors:\n- https://en.wikipedia.org/wiki/User:Cburnett\n- https://en.wikipedia.org/wiki/User:Rfc1394\n\nmodified by shaack (https://shaack.com) for the usage in cm-chessboard.\nhttps://github.com/shaack/cm-chessboard\n"
+      }
+    ]
+  },
+  {
+    "name": "cm-chessboard",
+    "path": "assets/pieces/staunty.svg",
+    "url": "https://github.com/shaack/cm-chessboard/blob/be441fa1acc322c02cd6afae6ed99a51c8b93faa/assets/pieces/staunty.svg",
+    "sha256": "4f3943492cf99fdb1cc07434f1ec3963d55f8909cf5222032396c162f5541be4",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 11,
+        "text": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n<!--\nThe lila Staunty pieces set from\nhttps://github.com/ornicar/lila/tree/master/public/piece/staunty\nmodified by shaack (https://shaack.com) for the usage in cm-chessboard.\nhttps://github.com/shaack/cm-chessboard\n\nLicense: Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)\nhttps://creativecommons.org/licenses/by-nc-sa/4.0/\n\nSee also: https://github.com/ornicar/lila/blob/master/COPYING.md"
+      }
+    ]
+  },
+  {
+    "name": "cm-chessboard",
+    "path": "assets/extensions/markers/markers.svg",
+    "url": "https://github.com/shaack/cm-chessboard/blob/be441fa1acc322c02cd6afae6ed99a51c8b93faa/assets/extensions/markers/markers.svg",
+    "sha256": "3b01fbeecc578d61da3d4904ac35fb80a45f29113615fe655fbad86556d4dd46",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 8,
+        "text": "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n<!--\nLicense: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)\nhttps://creativecommons.org/licenses/by-sa/3.0/\n\nAuthor: shaack (https://shaack.com)\n-->\n"
+      }
+    ]
+  },
+  {
+    "name": "cm-chessboard",
+    "path": "LICENSE",
+    "url": "https://github.com/shaack/cm-chessboard/blob/be441fa1acc322c02cd6afae6ed99a51c8b93faa/LICENSE",
+    "sha256": "ccf51777fa25224a3548f958a35e4e8ad06db976bd7e56d39bc4baf91fc2fa8e",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 22,
+        "text": "MIT License\n\nCopyright (c) 2017 Stefan Haack <shaack@gmail.com> (http://shaack.com)\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
+      }
+    ]
+  },
+  {
+    "name": "@lichess-org/chessground",
+    "path": "README.md",
+    "url": "https://github.com/lichess-org/chessground/blob/ddb6deff5546c76c82b7a61c4581b4122f01551d/README.md",
+    "sha256": "d0fe38c9e3130b93f34372335588c29b2fc33553fdf3a55de38a7463eab5b865",
+    "excerpts": [
+      {
+        "first": 12,
+        "last": 20,
+        "text": "## License\n\nChessground is distributed under the **GPL-3.0 license** (or any later version,\nat your option).\nWhen you use Chessground for your website, your combined work may be\ndistributed only under the GPL. **You must release your source code** to the\nusers of your website.\n\nPlease read more about GPL for JavaScript on [greendrake.info](https://greendrake.info/publications/js-gpl)."
+      },
+      {
+        "first": 33,
+        "last": 58,
+        "text": "Chessground is designed to fulfill all lichess.org web and mobile apps needs, so it is pretty featureful.\n\n- Well typed with TypeScript\n- Fast. Uses a custom DOM diff algorithm to reduce DOM writes to the absolute minimum.\n- Small footprint: 10K gzipped (31K unzipped). No dependencies.\n- SVG drawing of circles, arrows, and custom user shapes on the board\n- Arrows snap to valid moves. Freehand arrows can be drawn by dragging the mouse off the board and back while drawing an arrow.\n- Entirely configurable and reconfigurable at any time\n- Styling with CSS only: board and pieces can be changed by simply switching a class\n- Fluid layout: board can be resized at any time\n- Support for 3D pieces and boards\n- Full mobile support (touchstart, touchmove, touchend)\n- Move pieces by click\n- Move pieces by drag & drop\n  - Minimum distance before drag\n  - Centralisation of the piece under the cursor\n  - Piece ghost element\n  - Drop off revert or trash\n- Premove by click or drag\n- Drag new pieces onto the board (editor, Crazyhouse)\n- Animation of pieces: moving and fading away\n- Display last move, check, move destinations, and premove destinations (hover effects possible)\n- Import and export positions in FEN notation\n- User callbacks\n- No chess logic inside: can be used for [chess variants](https://lichess.org/variant)\n"
+      }
+    ]
+  },
+  {
+    "name": "@lichess-org/chessground",
+    "path": "src/events.ts",
+    "url": "https://github.com/lichess-org/chessground/blob/ddb6deff5546c76c82b7a61c4581b4122f01551d/src/events.ts",
+    "sha256": "987f5c5371694ce3c9a304cecfc88aa3146c666936a042eabd24ffef6e8b1f78",
+    "excerpts": [
+      {
+        "first": 14,
+        "last": 35,
+        "text": "export function bindBoard(s: State): void {\n  const boardEl = s.dom.elements.board;\n\n  if (s.disableContextMenu || s.drawable.enabled) {\n    boardEl.addEventListener('contextmenu', e => e.preventDefault());\n  }\n\n  if (s.viewOnly) return;\n\n  // Cannot be passive, because we prevent touch scrolling and dragging of\n  // selected elements.\n  const onStart = startDragOrDraw(s);\n  boardEl.addEventListener('touchstart', onStart as EventListener, {\n    passive: false,\n  });\n  boardEl.addEventListener('mousedown', onStart as EventListener, {\n    passive: false,\n  });\n}\n\n// binds events to unmanaged nodes, i.e. the document around chessground,\n// and the wrap element on which chessground was applied."
+      }
+    ]
+  },
+  {
+    "name": "@lichess-org/chessground",
+    "path": "LICENSE",
+    "url": "https://github.com/lichess-org/chessground/blob/ddb6deff5546c76c82b7a61c4581b4122f01551d/LICENSE",
+    "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 20,
+        "text": "                    GNU GENERAL PUBLIC LICENSE\n                       Version 3, 29 June 2007\n\n Copyright (C) 2007 Free Software Foundation, Inc. <http://fsf.org/>\n Everyone is permitted to copy and distribute verbatim copies\n of this license document, but changing it is not allowed.\n\n                            Preamble\n\n  The GNU General Public License is a free, copyleft license for\nsoftware and other kinds of works.\n\n  The licenses for most software and other practical works are designed\nto take away your freedom to share and change the works.  By contrast,\nthe GNU General Public License is intended to guarantee your freedom to\nshare and change all versions of a program--to make sure it remains free\nsoftware for all its users.  We, the Free Software Foundation, use the\nGNU General Public License for most of our software; it applies also to\nany other work released this way by its authors.  You can apply it to\nyour programs, too."
+      }
+    ]
+  },
+  {
+    "name": "react-chessboard",
+    "path": "src/ChessboardProvider.tsx",
+    "url": "https://github.com/Clariity/react-chessboard/blob/5f99614dabadfcad6f78eaa5d7822e42b28179e6/src/ChessboardProvider.tsx",
+    "sha256": "09b47e13780114cc67b5d3655685c906ff61129c01c2979d14f3a3749834b348",
+    "excerpts": [
+      {
+        "first": 689,
+        "last": 699,
+        "text": "  const sensors = useSensors(\n    useSensor(RightClickCancelSensor, {\n      activationConstraint: pointerActivationConstraint,\n    }),\n    useSensor(KeyboardSensor),\n    useSensor(TouchSensor, {\n      activationConstraint: pointerActivationConstraint,\n    }),\n    useSensor(MouseSensor),\n  );\n"
+      }
+    ]
+  },
+  {
+    "name": "react-chessboard",
+    "path": "src/Draggable.tsx",
+    "url": "https://github.com/Clariity/react-chessboard/blob/5f99614dabadfcad6f78eaa5d7822e42b28179e6/src/Draggable.tsx",
+    "sha256": "40d1f91b3b2086a1f036358a8f23fd1f61a994b2fcd55c4a771480a10e527e82",
+    "excerpts": [
+      {
+        "first": 20,
+        "last": 50,
+        "text": "\n  const { setNodeRef, attributes, listeners } = useDraggable({\n    id: position,\n    data: {\n      isSparePiece,\n      pieceType,\n    },\n    disabled:\n      !allowDragging ||\n      (canDragPiece &&\n        !canDragPiece({\n          piece: { pieceType },\n          isSparePiece,\n          square: position,\n        })),\n  });\n\n  return (\n    <div ref={setNodeRef} {...attributes} {...listeners}>\n      {children}\n    </div>\n  );\n}"
+      }
+    ]
+  },
+  {
+    "name": "react-chessboard",
+    "path": "src/pieces.tsx",
+    "url": "https://github.com/Clariity/react-chessboard/blob/5f99614dabadfcad6f78eaa5d7822e42b28179e6/src/pieces.tsx",
+    "sha256": "6e72bf71cfcc472a0c3684410645bd564b8b8fcc2ce6e4fb51c2372d349a8668",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 5,
+        "text": "// https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces\n// By en:User:Cburnett - Own work\n// This W3C - unspecified vector image was created with Inkscape., CC BY - SA 3.0, https://commons.wikimedia.org/w/index.php?curid=1499810\n\nimport { PieceRenderObject } from './types.js';"
+      }
+    ]
+  },
+  {
+    "name": "react-chessboard",
+    "path": "LICENSE",
+    "url": "https://github.com/Clariity/react-chessboard/blob/5f99614dabadfcad6f78eaa5d7822e42b28179e6/LICENSE",
+    "sha256": "3081fe03f1fc49022e944ab7854004c8027e92b06f8cdaf177cb0781dcf06ba0",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 22,
+        "text": "MIT License\n\nCopyright (c) 2022 Ryan Gregory\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
+      }
+    ]
+  },
+  {
+    "name": "gchessboard",
+    "path": "README.md",
+    "url": "https://github.com/mganjoo/gchessboard/blob/1b7c7dd9e3eca6c30c797b6b314777e8de273d5b/README.md",
+    "sha256": "a7e8f8ae8ab503da16f6cc3ab54a0e1f848cf10ec2aae244399c76966d19e008",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 11,
+        "text": "# [gchessboard](https://mganjoo.github.io/gchessboard/)\n\n`gchessboard` is an accessible, customizable and dependency-free chess board web component that can be easily embedded into both vanilla JS and framework-based web applications.\n\nFeatures:\n\n- **Accessible**: Supports multiple input modes: **click**, **drag**, and **keyboard** interaction, as well as rudimentary screenreader support.\n\n- **Customizable**: Almost all styles can be styled using CSS custom properties. This includes piece sets, which can be changed via CSS from the included SVG set. Squares can also show custom content (such as SVGs) using web component [slots](https://developer.mozilla.org/en-US/docs/Web/HTML/Element/slot).\n\nRead more documentation on [the website](https://mganjoo.github.io/gchessboard/)."
+      },
+      {
+        "first": 85,
+        "last": 94,
+        "text": "\n## Attribution\n\nChess piece SVG images included in this library were adapted from\n[Category:SVG chess pieces](https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces)\non Wikmedia, with slight optimizations using [SVGO](https://www.npmjs.com/package/svgo).\n\nOriginal images created by [User:Cburnett](https://commons.wikimedia.org/wiki/User:Cburnett) -\nOwn work, licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/deed.en).\n"
+      }
+    ]
+  },
+  {
+    "name": "gchessboard",
+    "path": "src/utils/munkres.ts",
+    "url": "https://github.com/mganjoo/gchessboard/blob/1b7c7dd9e3eca6c30c797b6b314777e8de273d5b/src/utils/munkres.ts",
+    "sha256": "e01fde1ceaa1bb2554cdfbfdce9cb86dd005ade0c08432f441e4b564b93fd841",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 28,
+        "text": "/**\n * This code is a TypeScript port of code in https://github.com/addaleax/munkres-js.\n *\n * Some changes include porting to TypeScript, simplifying some loop logic, and\n * other formatting and name changes.\n *\n * Original copyright details:\n *\n * Copyright 2014 Anna Henningsen (Conversion to JS)\n * Copyright 2008 Brian M. Clapper\n *\n * Original Copyright and License\n * ==============================\n *\n * Copyright 2008-2016 Brian M. Clapper\n *\n * Licensed under the Apache License, Version 2.0 (the \"License\");\n * you may not use this file except in compliance with the License.\n * You may obtain a copy of the License at\n *\n *   http://www.apache.org/licenses/LICENSE-2.0\n *\n * Unless required by applicable law or agreed to in writing, software\n * distributed under the License is distributed on an \"AS IS\" BASIS,\n * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.\n * See the License for the specific language governing permissions and\n * limitations under the License.\n */"
+      }
+    ]
+  },
+  {
+    "name": "gchessboard",
+    "path": "src/components/BoardSquare.ts",
+    "url": "https://github.com/mganjoo/gchessboard/blob/1b7c7dd9e3eca6c30c797b6b314777e8de273d5b/src/components/BoardSquare.ts",
+    "sha256": "b5ff3ff21741b34da7d082a908658da82c0faf43615793f8085bb13d6bf6d7fe",
+    "excerpts": [
+      {
+        "first": 80,
+        "last": 99,
+        "text": "    return this._interactive;\n  }\n\n  set interactive(value: boolean) {\n    this._interactive = value;\n    this._moveState = undefined;\n\n    // Aria roles\n    this._tdElement.setAttribute(\"role\", value ? \"gridcell\" : \"cell\");\n    if (value) {\n      this._contentElement.setAttribute(\"role\", \"button\");\n    } else {\n      this._contentElement.removeAttribute(\"role\");\n    }\n\n    this._updateTabIndex();\n    this._updateMoveStateVisuals();\n    this._updateLabelVisuals();\n  }\n"
+      },
+      {
+        "first": 324,
+        "last": 342,
+        "text": "    this._updateLabelVisuals();\n    this.resetPiecePosition(animateDurationMs);\n  }\n\n  private _updateLabelVisuals() {\n    this._contentElement.dataset.square = this.label;\n    this._contentElement.dataset.squareColor = getSquareColor(this.label);\n    const labelParts = [\n      this._boardPiece\n        ? `${this.label}, ${this._boardPiece.piece.color} ${this._boardPiece.piece.pieceType}`\n        : `${this.label}`,\n    ];\n    if (this._moveState === \"move-start\") {\n      labelParts.push(\"start of move\");\n    }\n    if (this._moveState === \"move-target\") {\n      labelParts.push(\"target square\");\n    }\n    this._contentElement.setAttribute(\"aria-label\", labelParts.join(\", \"));"
+      }
+    ]
+  },
+  {
+    "name": "gchessboard",
+    "path": "playwright.config.ts",
+    "url": "https://github.com/mganjoo/gchessboard/blob/1b7c7dd9e3eca6c30c797b6b314777e8de273d5b/playwright.config.ts",
+    "sha256": "fb382d42c2559a03401c0750eb437f09b4fcb6573c8495c4d8ca4b0269bd0385",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 24,
+        "text": "import { defineConfig, devices } from \"@playwright/test\";\n\nexport default defineConfig({\n  projects: [\n    {\n      name: \"chromium\",\n      use: { ...devices[\"Desktop Chrome\"] },\n    },\n    {\n      name: \"firefox\",\n      use: { ...devices[\"Desktop Firefox\"] },\n    },\n    {\n      name: \"webkit\",\n      use: { ...devices[\"Desktop Safari\"] },\n    },\n  ],\n  reporter: process.env.CI ? \"github\" : \"list\",\n  testDir: \"tests\",\n  forbidOnly: !!process.env.CI,\n  retries: 1,\n  workers: process.env.CI ? 3 : undefined,\n  use: {\n    baseURL: \"http://localhost:8000\","
+      }
+    ]
+  },
+  {
+    "name": "gchessboard",
+    "path": "LICENSE",
+    "url": "https://github.com/mganjoo/gchessboard/blob/1b7c7dd9e3eca6c30c797b6b314777e8de273d5b/LICENSE",
+    "sha256": "3cd23d2e5efbbee720b020a38c99c3d5443b4e7ca06122bb1b5491a470cf649f",
+    "excerpts": [
+      {
+        "first": 1,
+        "last": 22,
+        "text": "MIT License\n\nCopyright (c) 2022 Milind Ganjoo\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE."
+      }
+    ]
+  },
+  {
+    "name": "chasolver",
+    "path": "Cargo.toml",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/Cargo.toml",
+    "sha256": "721a489edf547ba496c92fb126cc7386e303284bf87c23fd198f8d94b0a82989",
+    "text": "[package]\nname = \"chasolver\"\nversion = \"3.0.0\"\nedition = \"2021\"\nrust-version = \"1.82\"\ndescription = \"Chess helpmate solver and unwinnability detector\"\nlicense = \"MIT\"\nrepository = \"https://github.com/miguel-ambrona/chasolver\"\nhomepage = \"https://chasolver.org\"\nreadme = \"README.md\"\nkeywords = [\"chess\", \"helpmate\", \"FIDE\", \"solver\"]\ncategories = [\"games\", \"algorithms\"]\n\n[dependencies]\nchess = \"3.2\"\nrustc-hash = \"2.1\"\n\n[dev-dependencies]\nrayon = \"1.12.0\"\n\n[profile.release]\nlto = true\ncodegen-units = 1\n"
+  },
+  {
+    "name": "chasolver",
+    "path": "LICENSE",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/LICENSE",
+    "sha256": "8a3738ae39a6870fe3d9e01593a694aa75fd5a80e1d2d6a13d92d1df80384933",
+    "text": "MIT License\n\nCopyright (c) 2021-2026 Miguel Ambrona\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+  },
+  {
+    "name": "chasolver",
+    "path": "src/lib.rs",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/src/lib.rs",
+    "sha256": "ed4b838f771fee612bbc25d737df6dbc505c2196d741edf718290566d10eabb7",
+    "text": "//! A chess helpmate solver and unwinnability detector.\n//!\n//! Given a position and an intended winner, determines whether a helpmate is\n//! achievable (a sequence of legal moves ending in checkmate by the intended\n//! winner) or proves that none exists.\n//!\n//! Note that in a helpmate both players cooperate toward that goal: the\n//! intended winner delivers checkmate, but not necessarily by force.\n//!\n//! See the [README](https://github.com/miguel-ambrona/chasolver#readme) for\n//! the background motivating this crate, and for usage examples.\n\n// Not part of the public API; keeps the README's usage example under test\n// without rendering the whole README as a docs.rs page.\n#[cfg(doctest)]\n#[doc = include_str!(\"../README.md\")]\nstruct ReadmeDoctests;\n\nmod deduction;\nmod search;\nmod utils;\nmod winnability;\n\nuse chess::{Board, ChessMove, Color};\nuse winnability::{fast, full};\n\n/// Result of a [`winnability`] analysis for the intended winner.\n#[derive(Debug, Clone, PartialEq, Eq)]\npub enum Winnability {\n    /// Helpmate is achievable for the intended winner; `helpmate` is a\n    /// possible sequence of moves leading to checkmate.\n    Winnable { helpmate: Vec<ChessMove> },\n\n    /// Helpmate is provably impossible for the intended winner.\n    Unwinnable,\n}\n\n/// Full helpmate search for `intended_winner`.\n///\n/// Returns `Some` result if the analysis is successful:\n/// - [`Winnability::Winnable`] if the position is winnable for the intended\n///   winner, together with a supporting helpmate sequence.\n///\n/// - [`Winnability::Unwinnable`] if no helpmate exists.\n///\n/// Returns `None` if winnability could not be decided on this position.\npub fn winnability(board: &Board, intended_winner: Color) -> Option<Winnability> {\n    match intended_winner {\n        Color::White => full::analysis(board),\n        Color::Black => {\n            let flipped_board = utils::mirror_board(board);\n            let result = full::analysis(&flipped_board);\n            result.map(utils::mirror_moves)\n        }\n    }\n}\n\n/// Fast but incomplete check for unwinnability; cheaper than [`winnability`]\n/// when a mating line isn't needed.\n///\n/// Returns `true` if the position is provably unwinnable for `intended_winner`,\n/// `false` if the analysis is inconclusive (the position may still be\n/// unwinnable).\npub fn is_unwinnable_fast(board: &Board, intended_winner: Color) -> bool {\n    match intended_winner {\n        Color::White => fast::is_unwinnable(board),\n        Color::Black => fast::is_unwinnable(&utils::mirror_board(board)),\n    }\n}\n"
+  },
+  {
+    "name": "chasolver",
+    "path": "src/winnability/full.rs",
+    "url": "https://github.com/miguel-ambrona/chasolver/blob/3484c7e65247003fac8705a9290dc2b5d0978b94/src/winnability/full.rs",
+    "sha256": "5712f725c6361c3f7e8d0e1f79cb762be2f0b80cb947000bf9c1994354844ddc",
+    "text": "//! Multi-phase winnability analysis, coordinating search and static analysis.\n//!\n//! Designed for White as the intended winner; see [`super`] for how a\n//! Black-intended-winner query is mirrored before reaching this module.\n\nuse chess::{Board, Piece, EMPTY};\nuse rustc_hash::{FxHashMap, FxHashSet};\n\nuse crate::{\n    deduction::{is_statically_unwinnable, Analysis},\n    search::{\n        check_chain_search, compute_bishop_distances, compute_punishable, iterative_deepening,\n        play_forced_moves, probe_non_pawn_moves, Search,\n    },\n    winnability::fast::exhaustively_unwinnable,\n    Winnability,\n};\n\n/// Runs a multi-phase helpmate search, escalating from cheap to expensive\n/// techniques until the position is resolved or all phases are exhausted.\n///\n/// Designed for White as the intended winner.\npub(crate) fn analysis(board: &Board) -> Option<Winnability> {\n    let mut search = Search::new();\n    let mut pos = *board;\n\n    // Phase 1: Play forced moves.\n    pos = play_forced_moves(&pos, &mut search);\n\n    if search.interrupted {\n        return Some(Winnability::Unwinnable);\n    }\n\n    // Phase 2: Depth-1 search with heuristics that selectively extend promising\n    // variations beyond depth 1, to catch trivial positions quickly.\n    search.depth_node_limit = 1000;\n    search.transposition_table = None;\n    search.reset_global_nodes();\n    let result = iterative_deepening(&pos, &mut search, 1..=1);\n    if let Some(result) = result {\n        return Some(result);\n    }\n\n    // Phase 3: Early static analysis. Skipped for positions with queens, rooks\n    // or knights, where it is less likely to be relevant; deferred to phase 5 in\n    // that case.\n    let has_queens_rooks_or_knights =\n        (pos.pieces(Piece::Queen) | pos.pieces(Piece::Rook) | pos.pieces(Piece::Knight)) != EMPTY;\n    if !has_queens_rooks_or_knights && is_statically_unwinnable(&pos) {\n        return Some(Winnability::Unwinnable);\n    }\n\n    // Phase 4: Iterative deepening with transposition table.\n    search.depth_node_limit = 7000;\n    search.transposition_table =\n        Some(FxHashMap::with_capacity_and_hasher(1_000, Default::default()));\n    search.reset_global_nodes();\n    let result = iterative_deepening(&pos, &mut search, 2..=128);\n    if let Some(result) = result {\n        return Some(result);\n    }\n\n    // Phase 5: Static analysis (only for positions that skipped phase 3).\n    if has_queens_rooks_or_knights && is_statically_unwinnable(&pos) {\n        return Some(Winnability::Unwinnable);\n    }\n\n    // Phase 6: Exhaustive unwinnability check for positions where at least\n    // one side can only move pawns (no non-pawn move observed within a\n    // 1000-node probe).\n    let mut non_pawn_seen = [false; 2];\n    probe_non_pawn_moves(&pos, &mut non_pawn_seen, &mut 0, 1_000);\n    if non_pawn_seen.iter().any(|&seen| !seen) && exhaustively_unwinnable(&pos) {\n        return Some(Winnability::Unwinnable);\n    }\n\n    // Phase 7: Follow all check chains; evaluate non-check leaves statically.\n    let mut visited: FxHashSet<Board> = FxHashSet::with_capacity_and_hasher(64, Default::default());\n    let result = check_chain_search(&pos, &mut visited, 0);\n    if let Some(result) = result {\n        return Some(result);\n    }\n\n    // Phase 8: Guided deep search using bishop distances and punishable moves.\n    let mut analysis = Analysis::new(pos);\n    analysis.saturate();\n\n    search.bishop_distances = Some(compute_bishop_distances(&pos, analysis.steady));\n    search.punishable = Some(compute_punishable(&pos));\n\n    search.depth_node_limit = u64::MAX;\n    search.global_node_limit = 1 << 24;\n    search.transposition_table =\n        Some(FxHashMap::with_capacity_and_hasher(1 << 16, Default::default()));\n    search.reset_global_nodes();\n    iterative_deepening(&pos, &mut search, 2..=128)\n}\n"
+  },
+  {
+    "name": "scalachess",
+    "path": "LICENSE",
+    "url": "https://github.com/lichess-org/scalachess/blob/e3f7eb8f73a268f668d70e594e8f2426d8614881/LICENSE",
+    "sha256": "8e015da4220dce88e2ffd6a164897284dae1881bb31c18af6652be35721723ec",
+    "text": "Copyright (c) 2012-2014 Thibault Duplessis\n\nThe MIT license\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is furnished\nto do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN\nTHE SOFTWARE.\n"
+  },
+  {
+    "name": "scalachess",
+    "path": "core/src/main/scala/InsufficientMatingMaterial.scala",
+    "url": "https://github.com/lichess-org/scalachess/blob/e3f7eb8f73a268f668d70e594e8f2426d8614881/core/src/main/scala/InsufficientMatingMaterial.scala",
+    "sha256": "9aa21a5a83bb7e9c380b38efc417073addbc3713f69f62dcceb5166494694779",
+    "text": "package chess\n\n/** Utility methods for helping to determine whether a board is a draw or a draw\n  * on a player flagging.\n  *\n  * See http://www.e4ec.org/immr.html\n  */\nobject InsufficientMatingMaterial:\n\n  // verify if there are at least two bishops of opposite color\n  // no matter which sides they are on\n  def bishopsOnOppositeColors(board: Board): Boolean =\n    board.bishops.intersects(Bitboard.lightSquares) &&\n      board.bishops.intersects(Bitboard.darkSquares)\n\n  /*\n   * Returns true if a pawn cannot progress forward because it is blocked by a pawn\n   * and it doesn't have any capture\n   */\n  def pawnBlockedByPawn(pawn: Square, position: Position): Boolean =\n    position\n      .pieceAt(pawn)\n      .exists(p =>\n        p.is(Pawn) &&\n          position.withColor(p.color).generateMovesAt(pawn).isEmpty && {\n            val blockingPosition = pawn.nextRank(p.color)\n            blockingPosition.flatMap(position.pieceAt).exists(_.is(Pawn))\n          }\n      )\n\n  /*\n   * Determines whether a board position is an automatic draw due to neither player\n   * being able to mate the other as informed by the traditional chess rules.\n   */\n  def apply(board: Board): Boolean =\n    board.kingsAndMinorsOnly &&\n      (board.nbPieces <= 3 || (board.kingsAndBishopsOnly && !bishopsOnOppositeColors(board)))\n\n  /*\n   * Determines whether a color does not have mating material. In general:\n   * King by itself is not mating material\n   * King + knight mates against king + any(rook, bishop, knight, pawn)\n   * King + bishop mates against king + any(bishop, knight, pawn)\n   * King + bishop(s) versus king + bishop(s) depends upon bishop square colors\n   * So this function returns true in three cases:\n   * - if color has only king\n   * - if color has king + knight and opponent has king + queen(s)\n   * - if color has king + bishop and opponent doesn't have:\n   *   - opposite color bishop(s)\n   *   - or knight(s) or pawn(s)\n   */\n  def apply(board: Board, color: Color): Boolean =\n    import board.*\n    inline def onlyKing = kingsOnlyOf(color)\n    inline def KN =\n      onlyOf(color, King, Knight) && count(color, Knight) == 1 && onlyOf(!color, King, Queen)\n    inline def KB =\n      onlyOf(color, King, Bishop) &&\n        !(bishopsOnOppositeColors(board) || byPiece(!color, Knight, Pawn).nonEmpty)\n\n    onlyKing || KN || KB\n"
+  },
+  {
+    "name": "lila",
+    "path": "ui/round/src/round.nvui.ts",
+    "url": "https://raw.githubusercontent.com/lichess-org/lila/e4de08fdf77453ff7ab2d039113b931730826af5/ui/round/src/round.nvui.ts",
+    "sha256": "c6de58c5f57e5234e90c6ef54421996282836d5c1e4c67e3ddca1240ef528326"
+  },
+  {
+    "name": "lila",
+    "path": "ui/round/src/view/nvuiView.ts",
+    "url": "https://raw.githubusercontent.com/lichess-org/lila/e4de08fdf77453ff7ab2d039113b931730826af5/ui/round/src/view/nvuiView.ts",
+    "sha256": "a5280187c828173eedc0690209c44e2002b6de7154b0fda107aaf0061ff22404"
+  },
+  {
+    "name": "lila",
+    "path": "ui/lib/src/nvui/chess.ts",
+    "url": "https://raw.githubusercontent.com/lichess-org/lila/e4de08fdf77453ff7ab2d039113b931730826af5/ui/lib/src/nvui/chess.ts",
+    "sha256": "c222e7b42a3ad83b21f0e8bccc80c9958f81c85911a23f850f540cdc96533a08"
+  },
+  {
+    "name": "lila",
+    "path": "ui/lib/src/nvui/command.ts",
+    "url": "https://raw.githubusercontent.com/lichess-org/lila/e4de08fdf77453ff7ab2d039113b931730826af5/ui/lib/src/nvui/command.ts",
+    "sha256": "0d29361dd56f0d8555861c75f80267e24775d7979f376a4080f4d925a2ab3630"
+  },
+  {
+    "name": "lila",
+    "path": "COPYING.md",
+    "url": "https://raw.githubusercontent.com/lichess-org/lila/e4de08fdf77453ff7ab2d039113b931730826af5/COPYING.md",
+    "sha256": "ad0355db9ccd9ec049120945b356ff40c7c868d719a961732868bd5f5306cbba"
+  },
+  {
+    "name": "@badrap/result",
+    "version": "0.3.1",
+    "path": "LICENSE",
+    "text": "MIT License\n\nCopyright (c) 2018 Badrap Oy\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+  }
+]

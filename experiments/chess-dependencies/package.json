@@ -1,0 +1,9 @@
+{
+  "name": "wayfinder-chess-dependency-probes",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Isolated synthetic evidence for KHA-22, not application code",
+  "scripts": { "probe": "node probe.mjs" },
+  "dependencies": { "chess.js": "1.4.0", "chessops": "0.15.1" }
+}

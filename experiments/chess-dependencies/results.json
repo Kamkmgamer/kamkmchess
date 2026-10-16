@@ -1,0 +1,1296 @@
+{
+  "environment": {
+    "node": "v24.22.0",
+    "platform": "win32",
+    "arch": "x64",
+    "osRelease": "10.0.26300"
+  },
+  "versions": {
+    "chess.js": "1.4.0",
+    "chessops": "0.15.1"
+  },
+  "validation": [
+    {
+      "id": "standard",
+      "input": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+          "forcedEpFen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": false,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": false,
+          "gameOver": false
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      },
+      "chessopsPosition": {
+        "ok": true,
+        "value": {
+          "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+          "rawEpSquare": null,
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      }
+    },
+    {
+      "id": "missingKing",
+      "input": "4k3/8/8/8/8/8/8/8 w - - 0 1",
+      "chessJsValidateFen": {
+        "ok": false,
+        "error": "Invalid FEN: missing white king"
+      },
+      "chessJsLoad": {
+        "ok": false,
+        "error": "Invalid FEN: missing white king"
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/8 w - - 0 1",
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      },
+      "chessopsPosition": {
+        "ok": false,
+        "error": "ERR_KINGS"
+      }
+    },
+    {
+      "id": "adjacentKings",
+      "input": "8/8/8/8/8/8/4k3/4K3 w - - 0 1",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "8/8/8/8/8/8/4k3/4K3 w - - 0 1",
+          "forcedEpFen": "8/8/8/8/8/8/4k3/4K3 w - - 0 1",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": true,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": true,
+          "gameOver": true
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "8/8/8/8/8/8/4k3/4K3 w - - 0 1",
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      },
+      "chessopsPosition": {
+        "ok": false,
+        "error": "ERR_OPPOSITE_CHECK"
+      }
+    },
+    {
+      "id": "nonmovingKingInCheck",
+      "input": "4k3/8/8/8/8/8/4R3/4K3 w - - 0 1",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/4R3/4K3 w - - 0 1",
+          "forcedEpFen": "4k3/8/8/8/8/8/4R3/4K3 w - - 0 1",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": false,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": false,
+          "gameOver": false
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/4R3/4K3 w - - 0 1",
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      },
+      "chessopsPosition": {
+        "ok": false,
+        "error": "ERR_OPPOSITE_CHECK"
+      }
+    },
+    {
+      "id": "pawnOnBackrank",
+      "input": "4k3/8/8/8/8/8/8/P3K3 w - - 0 1",
+      "chessJsValidateFen": {
+        "ok": false,
+        "error": "Invalid FEN: some pawns are on the edge rows"
+      },
+      "chessJsLoad": {
+        "ok": false,
+        "error": "Invalid FEN: some pawns are on the edge rows"
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/P3K3 w - - 0 1",
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      },
+      "chessopsPosition": {
+        "ok": false,
+        "error": "ERR_PAWNS_ON_BACKRANK"
+      }
+    },
+    {
+      "id": "missingCastlingRook",
+      "input": "4k3/8/8/8/8/8/8/4K3 w K - 7 12",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/4K3 w K - 7 12",
+          "forcedEpFen": "4k3/8/8/8/8/8/8/4K3 w K - 7 12",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": true,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": true,
+          "gameOver": true
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/4K3 w H - 7 12",
+          "halfmoves": 7,
+          "fullmoves": 12
+        }
+      },
+      "chessopsPosition": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/4K3 w - - 7 12",
+          "rawEpSquare": null,
+          "halfmoves": 7,
+          "fullmoves": 12
+        }
+      }
+    },
+    {
+      "id": "offHomeCastlingKing",
+      "input": "4k3/8/8/8/8/8/8/3K3R w K - 7 12",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/3K3R w K - 7 12",
+          "forcedEpFen": "4k3/8/8/8/8/8/8/3K3R w K - 7 12",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": false,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": false,
+          "gameOver": false
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/3K3R w K - 7 12",
+          "halfmoves": 7,
+          "fullmoves": 12
+        }
+      },
+      "chessopsPosition": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/3K3R w K - 7 12",
+          "rawEpSquare": null,
+          "halfmoves": 7,
+          "fullmoves": 12
+        }
+      }
+    },
+    {
+      "id": "duplicateCastling",
+      "input": "4k3/8/8/8/8/8/8/4K2R w KK - 7 12",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/4K2R w K - 7 12",
+          "forcedEpFen": "4k3/8/8/8/8/8/8/4K2R w K - 7 12",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": false,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": false,
+          "gameOver": false
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/4K2R w K - 7 12",
+          "halfmoves": 7,
+          "fullmoves": 12
+        }
+      },
+      "chessopsPosition": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/4K2R w K - 7 12",
+          "rawEpSquare": null,
+          "halfmoves": 7,
+          "fullmoves": 12
+        }
+      }
+    },
+    {
+      "id": "epMissingPawn",
+      "input": "4k3/8/8/8/8/8/8/4K3 w - e6 7 12",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/4K3 w - - 7 12",
+          "forcedEpFen": "4k3/8/8/8/8/8/8/4K3 w - e6 7 12",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": true,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": true,
+          "gameOver": true
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/4K3 w - e6 7 12",
+          "halfmoves": 7,
+          "fullmoves": 12
+        }
+      },
+      "chessopsPosition": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/4K3 w - - 7 12",
+          "rawEpSquare": null,
+          "halfmoves": 7,
+          "fullmoves": 12
+        }
+      }
+    },
+    {
+      "id": "epNoCapturer",
+      "input": "4k3/8/8/4p3/8/8/8/R3K1N1 w - e6 0 9",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - - 0 9",
+          "forcedEpFen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - e6 0 9",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": false,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": false,
+          "gameOver": false
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - e6 0 9",
+          "halfmoves": 0,
+          "fullmoves": 9
+        }
+      },
+      "chessopsPosition": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - - 0 9",
+          "rawEpSquare": "e6",
+          "halfmoves": 0,
+          "fullmoves": 9
+        }
+      }
+    },
+    {
+      "id": "epPinnedCapturer",
+      "input": "k3r3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - - 0 1",
+          "forcedEpFen": "k3r3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": false,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": false,
+          "gameOver": false
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      },
+      "chessopsPosition": {
+        "ok": true,
+        "value": {
+          "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - - 0 1",
+          "rawEpSquare": "d6",
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      }
+    },
+    {
+      "id": "epOccupiedTarget",
+      "input": "7k/8/3N4/3pP3/8/8/8/4K3 w - d6 0 9",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "7k/8/3N4/3pP3/8/8/8/4K3 w - d6 0 9",
+          "forcedEpFen": "7k/8/8/3pP3/8/8/8/4K3 w - d6 0 9",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": false,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": false,
+          "gameOver": false
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "7k/8/3N4/3pP3/8/8/8/4K3 w - d6 0 9",
+          "halfmoves": 0,
+          "fullmoves": 9
+        }
+      },
+      "chessopsPosition": {
+        "ok": true,
+        "value": {
+          "fen": "7k/8/3N4/3pP3/8/8/8/4K3 w - d6 0 9",
+          "rawEpSquare": "d6",
+          "halfmoves": 0,
+          "fullmoves": 9
+        }
+      }
+    },
+    {
+      "id": "zeroFullmove",
+      "input": "4k3/8/8/8/8/8/8/R3K3 w - - 7 0",
+      "chessJsValidateFen": {
+        "ok": false,
+        "error": "Invalid FEN: move number must be a positive integer"
+      },
+      "chessJsLoad": {
+        "ok": false,
+        "error": "Invalid FEN: move number must be a positive integer"
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 7 1",
+          "halfmoves": 7,
+          "fullmoves": 1
+        }
+      },
+      "chessopsPosition": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 7 1",
+          "rawEpSquare": null,
+          "halfmoves": 7,
+          "fullmoves": 1
+        }
+      }
+    },
+    {
+      "id": "countersWithJunk",
+      "input": "4k3/8/8/8/8/8/8/R3K3 w - - 12x 7.5",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 12 7",
+          "forcedEpFen": "4k3/8/8/8/8/8/8/R3K3 w - - 12 7",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": false,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": false,
+          "gameOver": false
+        }
+      },
+      "chessopsParse": {
+        "ok": false,
+        "error": "ERR_HALFMOVES"
+      },
+      "chessopsPosition": {
+        "ok": false,
+        "error": "ERR_HALFMOVES"
+      }
+    },
+    {
+      "id": "largeHalfmove",
+      "input": "4k3/8/8/8/8/8/8/R3K3 w - - 9999 12",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 9999 12",
+          "forcedEpFen": "4k3/8/8/8/8/8/8/R3K3 w - - 9999 12",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": false,
+          "fiftyMoves": true,
+          "threefold": false,
+          "draw": true,
+          "gameOver": true
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 9999 12",
+          "halfmoves": 9999,
+          "fullmoves": 12
+        }
+      },
+      "chessopsPosition": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 150 12",
+          "rawEpSquare": null,
+          "halfmoves": 9999,
+          "fullmoves": 12
+        }
+      }
+    },
+    {
+      "id": "largeFullmove",
+      "input": "4k3/8/8/8/8/8/8/R3K3 w - - 7 10000",
+      "chessJsValidateFen": {
+        "ok": true
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 7 10000",
+          "forcedEpFen": "4k3/8/8/8/8/8/8/R3K3 w - - 7 10000",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": false,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": false,
+          "gameOver": false
+        }
+      },
+      "chessopsParse": {
+        "ok": false,
+        "error": "ERR_FULLMOVES"
+      },
+      "chessopsPosition": {
+        "ok": false,
+        "error": "ERR_FULLMOVES"
+      }
+    },
+    {
+      "id": "missingCounters",
+      "input": "4k3/8/8/8/8/8/8/R3K3 w - -",
+      "chessJsValidateFen": {
+        "ok": false,
+        "error": "Invalid FEN: must contain six space-delimited fields"
+      },
+      "chessJsLoad": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 0 1",
+          "forcedEpFen": "4k3/8/8/8/8/8/8/R3K3 w - - 0 1",
+          "checkmate": false,
+          "stalemate": false,
+          "insufficientMaterial": false,
+          "fiftyMoves": false,
+          "threefold": false,
+          "draw": false,
+          "gameOver": false
+        }
+      },
+      "chessopsParse": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 0 1",
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      },
+      "chessopsPosition": {
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 0 1",
+          "rawEpSquare": null,
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      }
+    }
+  ],
+  "moves": [
+    {
+      "id": "ordinary",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "uci": "e2e4",
+      "chessJs": {
+        "ok": true,
+        "value": {
+          "move": "e2e4",
+          "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1"
+        }
+      },
+      "chessops": {
+        "legal": true,
+        "ok": true,
+        "value": {
+          "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+          "rawEpSquare": "e3",
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      }
+    },
+    {
+      "id": "badPawnGeometry",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "uci": "e2e5",
+      "chessJs": {
+        "ok": false,
+        "error": "Invalid move: {\"from\":\"e2\",\"to\":\"e5\"}"
+      },
+      "chessops": {
+        "legal": false
+      }
+    },
+    {
+      "id": "blockedBishop",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "uci": "c1h6",
+      "chessJs": {
+        "ok": false,
+        "error": "Invalid move: {\"from\":\"c1\",\"to\":\"h6\"}"
+      },
+      "chessops": {
+        "legal": false
+      }
+    },
+    {
+      "id": "emptyOrigin",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "uci": "e3e4",
+      "chessJs": {
+        "ok": false,
+        "error": "Invalid move: {\"from\":\"e3\",\"to\":\"e4\"}"
+      },
+      "chessops": {
+        "legal": false
+      }
+    },
+    {
+      "id": "wrongColor",
+      "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+      "uci": "e7e5",
+      "chessJs": {
+        "ok": false,
+        "error": "Invalid move: {\"from\":\"e7\",\"to\":\"e5\"}"
+      },
+      "chessops": {
+        "legal": false
+      }
+    },
+    {
+      "id": "kingExposure",
+      "fen": "k3r3/8/8/8/8/8/4R3/4K3 w - - 0 1",
+      "uci": "e2f2",
+      "chessJs": {
+        "ok": false,
+        "error": "Invalid move: {\"from\":\"e2\",\"to\":\"f2\"}"
+      },
+      "chessops": {
+        "legal": false
+      }
+    },
+    {
+      "id": "castling",
+      "fen": "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1",
+      "uci": "e1g1",
+      "chessJs": {
+        "ok": true,
+        "value": {
+          "move": "e1g1",
+          "fen": "r3k2r/8/8/8/8/8/8/R4RK1 b kq - 1 1"
+        }
+      },
+      "chessops": {
+        "legal": true,
+        "ok": true,
+        "value": {
+          "fen": "r3k2r/8/8/8/8/8/8/R4RK1 b kq - 1 1",
+          "rawEpSquare": null,
+          "halfmoves": 1,
+          "fullmoves": 1
+        }
+      }
+    },
+    {
+      "id": "castlingThroughCheck",
+      "fen": "k4r2/8/8/8/8/8/8/4K2R w K - 0 1",
+      "uci": "e1g1",
+      "chessJs": {
+        "ok": false,
+        "error": "Invalid move: {\"from\":\"e1\",\"to\":\"g1\"}"
+      },
+      "chessops": {
+        "legal": false
+      }
+    },
+    {
+      "id": "ghostCastling",
+      "fen": "4k3/8/8/8/8/8/8/4K3 w K - 7 12",
+      "uci": "e1g1",
+      "chessJs": {
+        "ok": true,
+        "value": {
+          "move": "e1g1",
+          "fen": "4k3/8/8/8/8/8/8/6K1 b - - 8 12"
+        }
+      },
+      "chessops": {
+        "legal": false
+      }
+    },
+    {
+      "id": "enPassant",
+      "fen": "4k3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+      "uci": "e5d6",
+      "chessJs": {
+        "ok": true,
+        "value": {
+          "move": "e5d6",
+          "fen": "4k3/8/3P4/8/8/8/8/4K3 b - - 0 1"
+        }
+      },
+      "chessops": {
+        "legal": true,
+        "ok": true,
+        "value": {
+          "fen": "4k3/8/3P4/8/8/8/8/4K3 b - - 0 1",
+          "rawEpSquare": null,
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      }
+    },
+    {
+      "id": "pinnedEnPassant",
+      "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+      "uci": "e5d6",
+      "chessJs": {
+        "ok": false,
+        "error": "Invalid move: {\"from\":\"e5\",\"to\":\"d6\"}"
+      },
+      "chessops": {
+        "legal": false
+      }
+    },
+    {
+      "id": "promotionMissing",
+      "fen": "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+      "uci": "a7a8",
+      "chessJs": {
+        "ok": false,
+        "error": "Invalid move: {\"from\":\"a7\",\"to\":\"a8\"}"
+      },
+      "chessops": {
+        "legal": false
+      }
+    },
+    {
+      "id": "promotionq",
+      "fen": "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+      "uci": "a7a8q",
+      "chessJs": {
+        "ok": true,
+        "value": {
+          "move": "a7a8q",
+          "fen": "Q3k3/8/8/8/8/8/8/4K3 b - - 0 1"
+        }
+      },
+      "chessops": {
+        "legal": true,
+        "ok": true,
+        "value": {
+          "fen": "Q3k3/8/8/8/8/8/8/4K3 b - - 0 1",
+          "rawEpSquare": null,
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      }
+    },
+    {
+      "id": "promotionr",
+      "fen": "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+      "uci": "a7a8r",
+      "chessJs": {
+        "ok": true,
+        "value": {
+          "move": "a7a8r",
+          "fen": "R3k3/8/8/8/8/8/8/4K3 b - - 0 1"
+        }
+      },
+      "chessops": {
+        "legal": true,
+        "ok": true,
+        "value": {
+          "fen": "R3k3/8/8/8/8/8/8/4K3 b - - 0 1",
+          "rawEpSquare": null,
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      }
+    },
+    {
+      "id": "promotionb",
+      "fen": "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+      "uci": "a7a8b",
+      "chessJs": {
+        "ok": true,
+        "value": {
+          "move": "a7a8b",
+          "fen": "B3k3/8/8/8/8/8/8/4K3 b - - 0 1"
+        }
+      },
+      "chessops": {
+        "legal": true,
+        "ok": true,
+        "value": {
+          "fen": "B3k3/8/8/8/8/8/8/4K3 b - - 0 1",
+          "rawEpSquare": null,
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      }
+    },
+    {
+      "id": "promotionn",
+      "fen": "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+      "uci": "a7a8n",
+      "chessJs": {
+        "ok": true,
+        "value": {
+          "move": "a7a8n",
+          "fen": "N3k3/8/8/8/8/8/8/4K3 b - - 0 1"
+        }
+      },
+      "chessops": {
+        "legal": true,
+        "ok": true,
+        "value": {
+          "fen": "N3k3/8/8/8/8/8/8/4K3 b - - 0 1",
+          "rawEpSquare": null,
+          "halfmoves": 0,
+          "fullmoves": 1
+        }
+      }
+    }
+  ],
+  "endings": [
+    {
+      "id": "checkmate",
+      "fen": "7k/6Q1/5K2/8/8/8/8/8 b - - 100 42",
+      "chessJs": {
+        "fen": "7k/6Q1/5K2/8/8/8/8/8 b - - 100 42",
+        "forcedEpFen": "7k/6Q1/5K2/8/8/8/8/8 b - - 100 42",
+        "checkmate": true,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "fiftyMoves": true,
+        "threefold": false,
+        "draw": true,
+        "gameOver": true
+      },
+      "chessops": {
+        "fen": "7k/6Q1/5K2/8/8/8/8/8 b - - 100 42",
+        "rawEpSquare": null,
+        "halfmoves": 100,
+        "fullmoves": 42,
+        "checkmate": true,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "whiteInsufficient": false,
+        "blackInsufficient": true,
+        "isEnd": true,
+        "outcome": {
+          "winner": "white"
+        }
+      }
+    },
+    {
+      "id": "stalemate",
+      "fen": "7k/5K2/6Q1/8/8/8/8/8 b - - 0 1",
+      "chessJs": {
+        "fen": "7k/5K2/6Q1/8/8/8/8/8 b - - 0 1",
+        "forcedEpFen": "7k/5K2/6Q1/8/8/8/8/8 b - - 0 1",
+        "checkmate": false,
+        "stalemate": true,
+        "insufficientMaterial": false,
+        "fiftyMoves": false,
+        "threefold": false,
+        "draw": true,
+        "gameOver": true
+      },
+      "chessops": {
+        "fen": "7k/5K2/6Q1/8/8/8/8/8 b - - 0 1",
+        "rawEpSquare": null,
+        "halfmoves": 0,
+        "fullmoves": 1,
+        "checkmate": false,
+        "stalemate": true,
+        "insufficientMaterial": false,
+        "whiteInsufficient": false,
+        "blackInsufficient": true,
+        "isEnd": true,
+        "outcome": {}
+      }
+    },
+    {
+      "id": "hundredHalfmoves",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 100 42",
+      "chessJs": {
+        "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 100 42",
+        "forcedEpFen": "4k3/8/8/8/8/8/8/R3K3 w - - 100 42",
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "fiftyMoves": true,
+        "threefold": false,
+        "draw": true,
+        "gameOver": true
+      },
+      "chessops": {
+        "fen": "4k3/8/8/8/8/8/8/R3K3 w - - 100 42",
+        "rawEpSquare": null,
+        "halfmoves": 100,
+        "fullmoves": 42,
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "whiteInsufficient": false,
+        "blackInsufficient": true,
+        "isEnd": false,
+        "outcome": null
+      }
+    },
+    {
+      "id": "bareKingVsRook",
+      "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+      "chessJs": {
+        "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "forcedEpFen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "fiftyMoves": false,
+        "threefold": false,
+        "draw": false,
+        "gameOver": false
+      },
+      "chessops": {
+        "fen": "4k3/8/8/8/8/8/8/R3K3 b - - 0 1",
+        "rawEpSquare": null,
+        "halfmoves": 0,
+        "fullmoves": 1,
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "whiteInsufficient": false,
+        "blackInsufficient": true,
+        "isEnd": false,
+        "outcome": null
+      }
+    },
+    {
+      "id": "twoKnights",
+      "fen": "4k3/8/8/8/8/8/8/1NN1K3 w - - 0 1",
+      "chessJs": {
+        "fen": "4k3/8/8/8/8/8/8/1NN1K3 w - - 0 1",
+        "forcedEpFen": "4k3/8/8/8/8/8/8/1NN1K3 w - - 0 1",
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "fiftyMoves": false,
+        "threefold": false,
+        "draw": false,
+        "gameOver": false
+      },
+      "chessops": {
+        "fen": "4k3/8/8/8/8/8/8/1NN1K3 w - - 0 1",
+        "rawEpSquare": null,
+        "halfmoves": 0,
+        "fullmoves": 1,
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "whiteInsufficient": false,
+        "blackInsufficient": true,
+        "isEnd": false,
+        "outcome": null
+      }
+    },
+    {
+      "id": "knightVsRookBeforeMate",
+      "fen": "6rk/8/3N3K/8/8/8/8/8 w - - 0 1",
+      "chessJs": {
+        "fen": "6rk/8/3N3K/8/8/8/8/8 w - - 0 1",
+        "forcedEpFen": "6rk/8/3N3K/8/8/8/8/8 w - - 0 1",
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "fiftyMoves": false,
+        "threefold": false,
+        "draw": false,
+        "gameOver": false
+      },
+      "chessops": {
+        "fen": "6rk/8/3N3K/8/8/8/8/8 w - - 0 1",
+        "rawEpSquare": null,
+        "halfmoves": 0,
+        "fullmoves": 1,
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "whiteInsufficient": false,
+        "blackInsufficient": false,
+        "isEnd": false,
+        "outcome": null
+      }
+    },
+    {
+      "id": "lockedPawnWall",
+      "fen": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+      "chessJs": {
+        "fen": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+        "forcedEpFen": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "fiftyMoves": false,
+        "threefold": false,
+        "draw": false,
+        "gameOver": false
+      },
+      "chessops": {
+        "fen": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+        "rawEpSquare": null,
+        "halfmoves": 0,
+        "fullmoves": 1,
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "whiteInsufficient": false,
+        "blackInsufficient": false,
+        "isEnd": false,
+        "outcome": null
+      }
+    },
+    {
+      "id": "asymmetricWallFromChasolver",
+      "fen": "5b2/p7/Pp3k2/1Pp1pBp1/2P1P1P1/5K2/8/8 w - - 0 1",
+      "chessJs": {
+        "fen": "5b2/p7/Pp3k2/1Pp1pBp1/2P1P1P1/5K2/8/8 w - - 0 1",
+        "forcedEpFen": "5b2/p7/Pp3k2/1Pp1pBp1/2P1P1P1/5K2/8/8 w - - 0 1",
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "fiftyMoves": false,
+        "threefold": false,
+        "draw": false,
+        "gameOver": false
+      },
+      "chessops": {
+        "fen": "5b2/p7/Pp3k2/1Pp1pBp1/2P1P1P1/5K2/8/8 w - - 0 1",
+        "rawEpSquare": null,
+        "halfmoves": 0,
+        "fullmoves": 1,
+        "checkmate": false,
+        "stalemate": false,
+        "insufficientMaterial": false,
+        "whiteInsufficient": false,
+        "blackInsufficient": false,
+        "isEnd": false,
+        "outcome": null
+      }
+    }
+  ],
+  "repetition": [
+    {
+      "id": "customStart",
+      "initialFen": "4k1n1/8/8/8/8/8/8/R3K1N1 w - - 7 23",
+      "cycle": [
+        "g1f3",
+        "g8f6",
+        "f3g1",
+        "f6g8"
+      ],
+      "rows": [
+        {
+          "ply": 0,
+          "jsThreefold": false,
+          "equalPositions": 1,
+          "fen": "4k1n1/8/8/8/8/8/8/R3K1N1 w - - 7 23",
+          "hash": "239a6eff343a4019"
+        },
+        {
+          "ply": 4,
+          "jsThreefold": false,
+          "equalPositions": 2,
+          "fen": "4k1n1/8/8/8/8/8/8/R3K1N1 w - - 11 25",
+          "hash": "239a6eff343a4019"
+        },
+        {
+          "ply": 8,
+          "jsThreefold": true,
+          "equalPositions": 3,
+          "fen": "4k1n1/8/8/8/8/8/8/R3K1N1 w - - 15 27",
+          "hash": "239a6eff343a4019"
+        },
+        {
+          "ply": 12,
+          "jsThreefold": true,
+          "equalPositions": 4,
+          "fen": "4k1n1/8/8/8/8/8/8/R3K1N1 w - - 19 29",
+          "hash": "239a6eff343a4019"
+        }
+      ]
+    },
+    {
+      "id": "customStartNonCapturableEp",
+      "initialFen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - e6 0 9",
+      "cycle": [
+        "g1f3",
+        "e8f8",
+        "f3g1",
+        "f8e8"
+      ],
+      "rows": [
+        {
+          "ply": 0,
+          "jsThreefold": false,
+          "equalPositions": 1,
+          "fen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - - 0 9",
+          "hash": "6d8e340c503f226f"
+        },
+        {
+          "ply": 4,
+          "jsThreefold": false,
+          "equalPositions": 2,
+          "fen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - - 4 11",
+          "hash": "91286d5be957a1b1"
+        },
+        {
+          "ply": 8,
+          "jsThreefold": false,
+          "equalPositions": 3,
+          "fen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - - 8 13",
+          "hash": "91286d5be957a1b1"
+        },
+        {
+          "ply": 12,
+          "jsThreefold": true,
+          "equalPositions": 4,
+          "fen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - - 12 15",
+          "hash": "91286d5be957a1b1"
+        }
+      ]
+    },
+    {
+      "id": "customStartPinnedEp",
+      "initialFen": "k3r3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+      "cycle": [
+        "e1f1",
+        "a8b8",
+        "f1e1",
+        "b8a8"
+      ],
+      "rows": [
+        {
+          "ply": 0,
+          "jsThreefold": false,
+          "equalPositions": 1,
+          "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - - 0 1",
+          "hash": "f2742a3ce60fda8e"
+        },
+        {
+          "ply": 4,
+          "jsThreefold": false,
+          "equalPositions": 2,
+          "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - - 4 3",
+          "hash": "e823052bc8d0a1b7"
+        },
+        {
+          "ply": 8,
+          "jsThreefold": false,
+          "equalPositions": 3,
+          "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - - 8 5",
+          "hash": "e823052bc8d0a1b7"
+        },
+        {
+          "ply": 12,
+          "jsThreefold": true,
+          "equalPositions": 4,
+          "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - - 12 7",
+          "hash": "e823052bc8d0a1b7"
+        }
+      ]
+    }
+  ],
+  "mateAt100": {
+    "fen": "7k/6Q1/5K2/8/8/8/8/8 b - - 100 42",
+    "forcedEpFen": "7k/6Q1/5K2/8/8/8/8/8 b - - 100 42",
+    "checkmate": true,
+    "stalemate": false,
+    "insufficientMaterial": false,
+    "fiftyMoves": true,
+    "threefold": false,
+    "draw": true,
+    "gameOver": true
+  },
+  "moveAfterDrawThreshold": {
+    "ok": true,
+    "value": {
+      "fen": "4k3/8/8/8/8/8/R7/4K3 b - - 101 42",
+      "forcedEpFen": "4k3/8/8/8/8/8/R7/4K3 b - - 101 42",
+      "checkmate": false,
+      "stalemate": false,
+      "insufficientMaterial": false,
+      "fiftyMoves": true,
+      "threefold": false,
+      "draw": true,
+      "gameOver": true
+    }
+  },
+  "knightVsRookMate": {
+    "fen": "6rk/5N2/7K/8/8/8/8/8 b - - 1 1",
+    "forcedEpFen": "6rk/5N2/7K/8/8/8/8/8 b - - 1 1",
+    "checkmate": true,
+    "stalemate": false,
+    "insufficientMaterial": false,
+    "fiftyMoves": false,
+    "threefold": false,
+    "draw": false,
+    "gameOver": true
+  },
+  "undo": {
+    "threefoldAfterUndo": true,
+    "current": "4k3/8/5n2/8/8/8/8/R3K1N1 b - - 18 28",
+    "reloadThreefold": false
+  },
+  "chessopsUncheckedPlay": {
+    "fen": "rnbqkbnr/pppppppp/8/4P3/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+    "rawEpSquare": null,
+    "halfmoves": 0,
+    "fullmoves": 1
+  },
+  "occupiedEpSerialization": {
+    "before": {
+      "type": "n",
+      "color": "w"
+    },
+    "fen": "7k/8/3N4/3pP3/8/8/8/4K3 w - d6 0 9",
+    "after": null
+  },
+  "lockedWallClosure": {
+    "initialFen": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+    "states": 768,
+    "edges": 3808,
+    "nonKingMoves": 0,
+    "checks": 0,
+    "mates": 0,
+    "crosscheckDisagreements": 0,
+    "fullyExhausted": true,
+    "identity": "piece placement + turn + castling + effective ep, counters ignored; no material helper used as stopping condition"
+  },
+  "checks": {
+    "passed": 12,
+    "names": [
+      "ordinary move and all four promotions accepted",
+      "specific illegal moves rejected",
+      "checkmate and halfmove threshold simultaneously true in chess.js",
+      "knight can mate with an opposing rook self-blocker",
+      "custom-start initial position participates in repetition",
+      "ineffective imported ep delays chess.js third repetition",
+      "locked wall closure contains no check or pawn move",
+      "material helpers miss the proved dead wall",
+      "setup validators differ on adjacent kings and nonmoving king in check",
+      "inconsistent castling is accepted by chess.js and silently removed by chessops",
+      "counter normalization must not be mistaken for preservation",
+      "invalid occupied ep target causes chess.js serialization mutation"
+    ]
+  }
+}

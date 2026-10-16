@@ -1,0 +1,110 @@
+{
+  "@dnd-kit/core": {
+    "version": "6.3.1",
+    "gitHead": null,
+    "license": "MIT",
+    "dependencies": {
+      "tslib": "^2.0.0",
+      "@dnd-kit/utilities": "^3.2.2",
+      "@dnd-kit/accessibility": "^3.1.1"
+    },
+    "peerDependencies": {
+      "react": ">=16.8.0",
+      "react-dom": ">=16.8.0"
+    },
+    "repository": {
+      "url": "git+https://github.com/clauderic/dnd-kit.git",
+      "type": "git",
+      "directory": "packages/core"
+    },
+    "metadataUrl": "https://registry.npmjs.org/@dnd-kit/core/6.3.1",
+    "dist": {
+      "shasum": "4c36406a62c7baac499726f899935f93f0e6d003",
+      "tarball": "https://registry.npmjs.org/@dnd-kit/core/-/core-6.3.1.tgz",
+      "fileCount": 141,
+      "integrity": "sha512-xkGBRQQab4RLwgXxoqETICr6S5JlogafbhNsidmrkVv2YRs5MLwpjoF2qpiGjQt8S9AoxtIV603s0GIUpY5eYQ==",
+      "signatures": [
+        {
+          "sig": "MEQCIHInWuAiKReku3q3esS8/63sNYN1zqdRD3n3MHBQU+miAiAm27rAaKj3b11ElT2ZQcfIVMiOYGXOO8TLE3FjHAPJNA==",
+          "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+        }
+      ],
+      "unpackedSize": 1066148
+    },
+    "sha256": "f68d69af50234872c2e3345bc8bf98d8bcb0a9481eab6d370605c99e76a98c33",
+    "licenseTexts": {
+      "package/LICENSE": "MIT License\n\nCopyright (c) 2021, Claud\u00e9ric Demers\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+    }
+  },
+  "@dnd-kit/modifiers": {
+    "version": "9.0.0",
+    "gitHead": null,
+    "license": "MIT",
+    "dependencies": {
+      "tslib": "^2.0.0",
+      "@dnd-kit/utilities": "^3.2.2"
+    },
+    "peerDependencies": {
+      "react": ">=16.8.0",
+      "@dnd-kit/core": "^6.3.0"
+    },
+    "repository": {
+      "url": "git+https://github.com/clauderic/dnd-kit.git",
+      "type": "git",
+      "directory": "packages/modifiers"
+    },
+    "metadataUrl": "https://registry.npmjs.org/@dnd-kit/modifiers/9.0.0",
+    "dist": {
+      "shasum": "96a0280c77b10c716ef79d9792ce7ad04370771d",
+      "tarball": "https://registry.npmjs.org/@dnd-kit/modifiers/-/modifiers-9.0.0.tgz",
+      "fileCount": 21,
+      "integrity": "sha512-ybiLc66qRGuZoC20wdSSG6pDXFikui/dCNGthxv4Ndy8ylErY0N3KVxY2bgo7AWwIbxDmXDg3ylAFmnrjcbVvw==",
+      "signatures": [
+        {
+          "sig": "MEYCIQDxMset9tTWFvv6WC1gYrZd5r3oz+TvRad1iqqd7EKdWAIhAMlD9SYNpzeR9gEnyNyoIRqvFswckUJ9LThxDEk8lcC3",
+          "keyid": "SHA256:jl3bwswu80PjjokCgh0o2w5c2U4LhQAE57gj9cz1kzA"
+        }
+      ],
+      "unpackedSize": 49001
+    },
+    "sha256": "1ad2f9ecf7b65bd58de367c7b9226b62951916ca2694ad66440a3c8978ebdc29",
+    "licenseTexts": {
+      "package/LICENSE": "MIT License\n\nCopyright (c) 2021, Claud\u00e9ric Demers\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\nof this software and associated documentation files (the \"Software\"), to deal\nin the Software without restriction, including without limitation the rights\nto use, copy, modify, merge, publish, distribute, sublicense, and/or sell\ncopies of the Software, and to permit persons to whom the Software is\nfurnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\ncopies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\nIMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\nFITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\nAUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\nLIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\nOUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\nSOFTWARE.\n"
+    }
+  },
+  "vite-plugin-bundlesize": {
+    "version": "0.2.0",
+    "gitHead": null,
+    "license": "MIT",
+    "dependencies": {
+      "vlq": "^2.0.4",
+      "picomatch": "^4.0.2",
+      "strip-ansi": "^7.1.0"
+    },
+    "peerDependencies": {
+      "vite": ">= 5.0.0"
+    },
+    "repository": {
+      "url": "git+https://github.com/drwpow/vite-plugin-bundlesize.git",
+      "type": "git"
+    },
+    "metadataUrl": "https://registry.npmjs.org/vite-plugin-bundlesize/0.2.0",
+    "dist": {
+      "shasum": "b6af67cfa5da2c6a35cc71410dd943f4706fdc90",
+      "tarball": "https://registry.npmjs.org/vite-plugin-bundlesize/-/vite-plugin-bundlesize-0.2.0.tgz",
+      "fileCount": 13,
+      "integrity": "sha512-2z4Z7vEL6JlSfRooy8YmIo0FDFt95+WLlkaYFWNFoRJZEe/WTQljtS0bRlkFH/q1Vw623gt584RDDHKtdMZumw==",
+      "signatures": [
+        {
+          "sig": "MEUCIBs3mXXBQWankR4GYEdaBAjNsB+G+tOdE+FXj00svXFBAiEAlEHyUbbSHMu6jHG0B1HN2KM43eFbL9jXjf1V1y24sMM=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 43265
+    },
+    "sha256": "cacc0980a56ab4c6f5adf82445cddd352d64a3d6474fadc9764f12ca74344151",
+    "licenseTexts": {
+      "package/LICENSE": "MIT License\n\nCopyright (c) 2022 Drew Powers\n\nPermission is hereby granted, free of charge, to any person obtaining a copy\u00a0of this software and associated documentation files (the \"Software\"), to deal\u00a0in the Software without restriction, including without limitation the rights\u00a0to use, copy, modify, merge, publish, distribute, sublicense, and/or sell\u00a0copies of the Software, and to permit persons to whom the Software is\u00a0furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all\u00a0copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\u00a0IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\u00a0FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\u00a0AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\u00a0LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,\u00a0OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE\u00a0SOFTWARE.\n"
+    }
+  }
+}

@@ -1,0 +1,167 @@
+﻿
+> wayfinder-chess-dependency-probes@1.0.0 probe
+> node probe.mjs
+
+{
+  "checks": {
+    "passed": 12,
+    "names": [
+      "ordinary move and all four promotions accepted",
+      "specific illegal moves rejected",
+      "checkmate and halfmove threshold simultaneously true in chess.js",
+      "knight can mate with an opposing rook self-blocker",
+      "custom-start initial position participates in repetition",
+      "ineffective imported ep delays chess.js third repetition",
+      "locked wall closure contains no check or pawn move",
+      "material helpers miss the proved dead wall",
+      "setup validators differ on adjacent kings and nonmoving king in check",
+      "inconsistent castling is accepted by chess.js and silently removed by chessops",
+      "counter normalization must not be mistaken for preservation",
+      "invalid occupied ep target causes chess.js serialization mutation"
+    ]
+  },
+  "closure": {
+    "initialFen": "4k3/8/8/p1p1p1p1/PpPpPpPp/1P1P1P1P/8/4K3 w - - 0 1",
+    "states": 768,
+    "edges": 3808,
+    "nonKingMoves": 0,
+    "checks": 0,
+    "mates": 0,
+    "crosscheckDisagreements": 0,
+    "fullyExhausted": true,
+    "identity": "piece placement + turn + castling + effective ep, counters ignored; no material helper used as stopping condition"
+  },
+  "repetition": [
+    {
+      "id": "customStart",
+      "initialFen": "4k1n1/8/8/8/8/8/8/R3K1N1 w - - 7 23",
+      "cycle": [
+        "g1f3",
+        "g8f6",
+        "f3g1",
+        "f6g8"
+      ],
+      "rows": [
+        {
+          "ply": 0,
+          "jsThreefold": false,
+          "equalPositions": 1,
+          "fen": "4k1n1/8/8/8/8/8/8/R3K1N1 w - - 7 23",
+          "hash": "239a6eff343a4019"
+        },
+        {
+          "ply": 4,
+          "jsThreefold": false,
+          "equalPositions": 2,
+          "fen": "4k1n1/8/8/8/8/8/8/R3K1N1 w - - 11 25",
+          "hash": "239a6eff343a4019"
+        },
+        {
+          "ply": 8,
+          "jsThreefold": true,
+          "equalPositions": 3,
+          "fen": "4k1n1/8/8/8/8/8/8/R3K1N1 w - - 15 27",
+          "hash": "239a6eff343a4019"
+        },
+        {
+          "ply": 12,
+          "jsThreefold": true,
+          "equalPositions": 4,
+          "fen": "4k1n1/8/8/8/8/8/8/R3K1N1 w - - 19 29",
+          "hash": "239a6eff343a4019"
+        }
+      ]
+    },
+    {
+      "id": "customStartNonCapturableEp",
+      "initialFen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - e6 0 9",
+      "cycle": [
+        "g1f3",
+        "e8f8",
+        "f3g1",
+        "f8e8"
+      ],
+      "rows": [
+        {
+          "ply": 0,
+          "jsThreefold": false,
+          "equalPositions": 1,
+          "fen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - - 0 9",
+          "hash": "6d8e340c503f226f"
+        },
+        {
+          "ply": 4,
+          "jsThreefold": false,
+          "equalPositions": 2,
+          "fen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - - 4 11",
+          "hash": "91286d5be957a1b1"
+        },
+        {
+          "ply": 8,
+          "jsThreefold": false,
+          "equalPositions": 3,
+          "fen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - - 8 13",
+          "hash": "91286d5be957a1b1"
+        },
+        {
+          "ply": 12,
+          "jsThreefold": true,
+          "equalPositions": 4,
+          "fen": "4k3/8/8/4p3/8/8/8/R3K1N1 w - - 12 15",
+          "hash": "91286d5be957a1b1"
+        }
+      ]
+    },
+    {
+      "id": "customStartPinnedEp",
+      "initialFen": "k3r3/8/8/3pP3/8/8/8/4K3 w - d6 0 1",
+      "cycle": [
+        "e1f1",
+        "a8b8",
+        "f1e1",
+        "b8a8"
+      ],
+      "rows": [
+        {
+          "ply": 0,
+          "jsThreefold": false,
+          "equalPositions": 1,
+          "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - - 0 1",
+          "hash": "f2742a3ce60fda8e"
+        },
+        {
+          "ply": 4,
+          "jsThreefold": false,
+          "equalPositions": 2,
+          "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - - 4 3",
+          "hash": "e823052bc8d0a1b7"
+        },
+        {
+          "ply": 8,
+          "jsThreefold": false,
+          "equalPositions": 3,
+          "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - - 8 5",
+          "hash": "e823052bc8d0a1b7"
+        },
+        {
+          "ply": 12,
+          "jsThreefold": true,
+          "equalPositions": 4,
+          "fen": "k3r3/8/8/3pP3/8/8/8/4K3 w - - 12 7",
+          "hash": "e823052bc8d0a1b7"
+        }
+      ]
+    }
+  ],
+  "mateAt100": {
+    "fen": "7k/6Q1/5K2/8/8/8/8/8 b - - 100 42",
+    "forcedEpFen": "7k/6Q1/5K2/8/8/8/8/8 b - - 100 42",
+    "checkmate": true,
+    "stalemate": false,
+    "insufficientMaterial": false,
+    "fiftyMoves": true,
+    "threefold": false,
+    "draw": true,
+    "gameOver": true
+  }
+}

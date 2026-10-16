@@ -1,0 +1,201 @@
+{
+  "chess.js": {
+    "version": "1.4.0",
+    "gitHead": "ce1ff9e9fc342984ff75ca475ab39f37888cb28a",
+    "license": "BSD-2-Clause",
+    "repository": {
+      "url": "git+https://github.com/jhlywa/chess.js.git",
+      "type": "git"
+    },
+    "dependencies": null,
+    "peerDependencies": null,
+    "metadataUrl": "https://registry.npmjs.org/chess.js/1.4.0",
+    "dist": {
+      "shasum": "edc1439492d1a0d7f530ba72b2b5398baece28a1",
+      "tarball": "https://registry.npmjs.org/chess.js/-/chess.js-1.4.0.tgz",
+      "fileCount": 26,
+      "integrity": "sha512-BBJgrrtKQOzFLonR0l+k64A98NLemPwNsCskwb+29bRwobUa4iTm51E1kwGPbWXAcfdDa18nad6vpPPKPWarqw==",
+      "signatures": [
+        {
+          "sig": "MEQCIEM1VJuh7MXWQ0iXr473KMDqcg/szmCp1/LhbxF8b+cuAiBIN8LwkcN/BLktOKuZQ6IpHOWc8PqLtqHKVDn1JlKd0A==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 723850
+    },
+    "sha256": "dce92e280439d7a16f645be94f22e6da50e579a1f3011d0a2381755bfe2c2ef7",
+    "sourceUrl": "https://codeload.github.com/jhlywa/chess.js/tar.gz/ce1ff9e9fc342984ff75ca475ab39f37888cb28a",
+    "sourceSha256": "2da9c7adc380a29868de3394a30fef7ac4865a7b3e8e6ce232d9343fa911806a"
+  },
+  "chessops": {
+    "version": "0.15.1",
+    "gitHead": "4a4cbd5ac6159adfb236a2616701253ae4c58b2d",
+    "license": "GPL-3.0-or-later",
+    "repository": {
+      "url": "git+https://github.com/niklasf/chessops.git",
+      "type": "git"
+    },
+    "dependencies": {
+      "@badrap/result": "^0.3"
+    },
+    "peerDependencies": null,
+    "metadataUrl": "https://registry.npmjs.org/chessops/0.15.1",
+    "dist": {
+      "shasum": "417b64239585959bb4fea35d46aea96b79b25edf",
+      "tarball": "https://registry.npmjs.org/chessops/-/chessops-0.15.1.tgz",
+      "fileCount": 93,
+      "integrity": "sha512-hQDwv90AFkrPEsRJBebh3ZE+xDga25TCCv4lavNT2plZmd33UKNFYaZsE+7rafMbnBRrDEWUVsSYFqY3qCIGZw==",
+      "signatures": [
+        {
+          "sig": "MEUCIFse5ZtSiKj+ikuHEosVJ3bgNQQqqLXxt+PNII/ERU62AiEAkQtNJrumkWXBEQs3G6wnfTzCqBGkfcsds6lo2NkSLHA=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 795990
+    },
+    "sha256": "20ed913d71f75df3ab6de3bbfb677639db39e6e2becf52effd9f67f6dfc6c79b",
+    "sourceUrl": "https://codeload.github.com/niklasf/chessops/tar.gz/4a4cbd5ac6159adfb236a2616701253ae4c58b2d",
+    "sourceSha256": "8fd65767f8b21c9ff538420a01c158afdd2ef1ca03be0a4f6e8dcd4af2cc9478"
+  },
+  "cm-chessboard": {
+    "version": "8.15.3",
+    "gitHead": "be441fa1acc322c02cd6afae6ed99a51c8b93faa",
+    "license": "MIT",
+    "repository": {
+      "url": "git+https://github.com/shaack/cm-chessboard.git",
+      "type": "git"
+    },
+    "dependencies": null,
+    "peerDependencies": null,
+    "metadataUrl": "https://registry.npmjs.org/cm-chessboard/8.15.3",
+    "dist": {
+      "shasum": "6cfd8cff2c005225f5f42782b1896a91796727b9",
+      "tarball": "https://registry.npmjs.org/cm-chessboard/-/cm-chessboard-8.15.3.tgz",
+      "fileCount": 41,
+      "integrity": "sha512-PNoRvdpaN3kRW+ulpywglGYf/B9kp3bwUVQTE33Eujw6kcEa0XT4F+xpvHT7qTcsjaTh/u2I1fmOiHtRrdAadg==",
+      "signatures": [
+        {
+          "sig": "MEYCIQColKtwfLK0V/bDfWxG3dq15gHmWESwAWefI16eD78T3AIhAO89UxwVB17Vi0QQwOhkZh6JIcTIwuksXBBAX92loDdr",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "sig": "MEUCIGFBAChQOA5CUL0uqDl8nanZlPqydgaRA3jeFQYdAGJeAiEAzeEqCjFrPBw1vKHq/DuFdcTGHw7+rRq4uEOIVV+PFjs=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 264242
+    },
+    "sha256": "e6730b333cca01ce7c92a7793aa034a073ccbd5e533413037b5d39a6ba3c9208",
+    "sourceUrl": "https://codeload.github.com/shaack/cm-chessboard/tar.gz/be441fa1acc322c02cd6afae6ed99a51c8b93faa",
+    "sourceSha256": "9c58c8dd73386a17227d89d422dff3b81446fc1072bbc512c61d91102f03cdc6"
+  },
+  "@lichess-org/chessground": {
+    "version": "10.4.2",
+    "gitHead": null,
+    "license": "GPL-3.0-or-later",
+    "repository": {
+      "url": "https://github.com/lichess-org/chessground",
+      "type": "git"
+    },
+    "dependencies": null,
+    "peerDependencies": null,
+    "metadataUrl": "https://registry.npmjs.org/@lichess-org/chessground/10.4.2",
+    "dist": {
+      "shasum": "f0f07bbf46a9db6378ada0b368176ee67e7cd212",
+      "tarball": "https://registry.npmjs.org/@lichess-org/chessground/-/chessground-10.4.2.tgz",
+      "fileCount": 91,
+      "integrity": "sha512-T7j43oF2OIxwUlP42eHtX79drYkzCaSvuW4ENdrooW9pxAvbrse4g8OL3EH2HeA4Rn0tuOGQvAUC71NfK5lsVw==",
+      "signatures": [
+        {
+          "sig": "MEUCIBbsT5NGo306ZsBuApU2QOdf7V/qCbsxN8T8mbaWW34QAiEAmehFmAOihmv8zR6fHn0Kw6RG4umuWHJYNAqNTPrkoMk=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        },
+        {
+          "sig": "MEUCIQDHWjrNqok+vFbA8wNYqLDEMDbY+r1PmX7PeDXpPy+lrQIgM4+wzaw7fyKJpquoQVfjJhoKzEQ6m3nt+4PyN5jVOMs=",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/@lichess-org%2fchessground@10.4.2",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 457892
+    },
+    "sha256": "6a87fbded3bf23ddc95564ca22c623338e109341a72431606dc3b258c65c2e7a",
+    "sourceCommit": "ddb6deff5546c76c82b7a61c4581b4122f01551d",
+    "sourceUrl": "https://codeload.github.com/lichess-org/chessground/tar.gz/ddb6deff5546c76c82b7a61c4581b4122f01551d",
+    "sourceSha256": "4af5d013e19be3c58abd1be73e27d5111e0c1399868aa0f82f5ae6fd9ed4e4a4"
+  },
+  "react-chessboard": {
+    "version": "5.12.1",
+    "gitHead": "5f99614dabadfcad6f78eaa5d7822e42b28179e6",
+    "license": "MIT",
+    "repository": {
+      "url": "git+https://github.com/Clariity/react-chessboard.git",
+      "type": "git"
+    },
+    "dependencies": {
+      "@dnd-kit/core": "^6.3.1",
+      "@dnd-kit/modifiers": "^9.0.0"
+    },
+    "peerDependencies": {
+      "react": "^19.0.0",
+      "react-dom": "^19.0.0"
+    },
+    "metadataUrl": "https://registry.npmjs.org/react-chessboard/5.12.1",
+    "dist": {
+      "shasum": "b97745b6d3e4dca71e4ce638ef01889cbab025da",
+      "tarball": "https://registry.npmjs.org/react-chessboard/-/react-chessboard-5.12.1.tgz",
+      "fileCount": 21,
+      "integrity": "sha512-ZrIdtazeHobAhRpoqvePM8K+kiEehqixlVVY1+y83KkutIkZuest3bVzBPlPRWVra71QuNgHgvgrfIMbz1DpQA==",
+      "signatures": [
+        {
+          "sig": "MEQCIBSX/d6odZrjLxEQYMfF4Knm8e7wc9sJzd89Ah+4CBgCAiA15N2joQn2fIAF3STq1QuHBATAmiubMqs2+jAVV9USYg==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "attestations": {
+        "url": "https://registry.npmjs.org/-/npm/v1/attestations/react-chessboard@5.12.1",
+        "provenance": {
+          "predicateType": "https://slsa.dev/provenance/v1"
+        }
+      },
+      "unpackedSize": 394147
+    },
+    "sha256": "ec37de133a1729db3bb6df960ca8853d20164d48a41bcc2eb9e97467003d20e0",
+    "sourceUrl": "https://codeload.github.com/Clariity/react-chessboard/tar.gz/5f99614dabadfcad6f78eaa5d7822e42b28179e6",
+    "sourceSha256": "cae3338eb1494b7782f18a0777e7e745da6f5ac179d3cea332778be494475e1b"
+  },
+  "gchessboard": {
+    "version": "1.4.0",
+    "gitHead": "1b7c7dd9e3eca6c30c797b6b314777e8de273d5b",
+    "license": "MIT",
+    "repository": {
+      "url": "git+https://github.com/mganjoo/gchessboard.git",
+      "type": "git"
+    },
+    "dependencies": {
+      "vite-plugin-bundlesize": "^0.2.0"
+    },
+    "peerDependencies": null,
+    "metadataUrl": "https://registry.npmjs.org/gchessboard/1.4.0",
+    "dist": {
+      "shasum": "9f5978fe6f12c4cad4f070746b4c2cf6fe295abe",
+      "tarball": "https://registry.npmjs.org/gchessboard/-/gchessboard-1.4.0.tgz",
+      "fileCount": 20,
+      "integrity": "sha512-uYuN3XQfGbpnK6rltJNJJ6mBPYhQqsd6Ltgs7Kjjy/WbeDWmYli6z/eS+gfWDOdbaDXwYdQHFkhTEm8oD5nL2Q==",
+      "signatures": [
+        {
+          "sig": "MEQCICZWQm6VrYRbSGf7ufktaWFAYiBCjntKGYJ4GNRzC74aAiAYDsoI1K2KNePkaKhRnoXhLEGzbYOD7tm8KIhTOmJUzw==",
+          "keyid": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U"
+        }
+      ],
+      "unpackedSize": 403012
+    },
+    "sha256": "b0ba1e4d9f6ea0b07675bbcb7b71a938cd4ca1a56a311023bf50b0b9e3b0f7f5",
+    "sourceUrl": "https://codeload.github.com/mganjoo/gchessboard/tar.gz/1b7c7dd9e3eca6c30c797b6b314777e8de273d5b",
+    "sourceSha256": "d00c22687eb9be93ef4aa4136417f6a4a2ae5782a2ee6a957873f26c931b5a0a"
+  }
+}
