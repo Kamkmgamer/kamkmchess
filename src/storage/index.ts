@@ -999,3 +999,13 @@ export type {
   SyncStatusV1,
   VersionedExtensionSectionV1,
 } from './types';
+
+export { openProofSearchStore, ProofSearchStorageError } from './proof-search';
+export type {
+  OpenProofSearchStoreOptionsV1,
+  ProofSearchCheckpointLoadV1,
+  ProofSearchCheckpointLookupV1,
+  ProofSearchCheckpointSaveV1,
+  ProofSearchCheckpointSaveResultV1,
+  ProofSearchStoreV1,
+} from './proof-search';
