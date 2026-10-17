@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import type { CoordinateMove } from '../rules/index.js';
 import { createTurnBudgets, decideModelTurn } from '../moves/index.js';
+import type { ModelTurnDecision } from '../moves/index.js';
 import { openGameStore } from '../storage/index.js';
 import { getOrCreateGameController, modelConfigurationIdentity } from './index.js';
 import { checkProofEvidence, PROOF_CHECKER_VERSION, RULES_ADAPTER_VERSION, runProofSearchPass } from '../proofs/index.js';
@@ -880,6 +881,64 @@ describe('game controller setup', () => {
       const saved = await store.readGame(testId);
       expect(saved?.events.filter((event) => event.kind === 'illegal-move-rejected')).toHaveLength(4);
       expect(saved?.checkpoint.extensions['move-attempts']?.data).toMatchObject({ white: [{ attempt: 1 }, { attempt: 2 }, { attempt: 3 }, { attempt: 4 }] });
+    } finally {
+      store.close();
+    }
+  });
+
+  it('rejects forged attempt counters, records, losses, and accepted moves through public dispatch', async () => {
+    const testId = 'controller-rejects-forged-effects';
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
+    const controller = getOrCreateGameController({
+      gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
+      clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
+    });
+    try {
+      const snapshot = await initializePlayable(controller, {
+        humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+      });
+      const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: snapshot.fence });
+      if (started.kind !== 'model-turn-started') throw new Error('Expected a model request.');
+      const decision = decideModelTurn({
+        budgets: createTurnBudgets(), position: started.request.position,
+        classification: { kind: 'move', move: { from: 'e2', to: 'e5' }, text: 'e2e5', origin: 'json-move', retainedFields: [] },
+        modelConfigurationIdentity: started.request.fence.modelConfigurationIdentity,
+      });
+      if (decision.kind !== 'illegal-attempt') throw new Error('Expected an illegal-attempt effect.');
+      const send = (effect: ModelTurnDecision, fence = started.request.fence) => controller.dispatch({
+        schemaVersion: 1, kind: 'model-turn-effect', fence, effect,
+      });
+      await expect(send({ ...decision, attempt: 1, loss: { winner: 'human', reason: 'illegal-move' } }))
+        .rejects.toMatchObject({ code: 'invalid-intent' });
+      await expect(send({ ...decision, attempt: 4, record: { ...decision.record, attempt: 4 }, loss: null }))
+        .rejects.toMatchObject({ code: 'invalid-intent' });
+      await expect(send({ ...decision, attempt: 2, record: { ...decision.record, attempt: 2 } }))
+        .rejects.toMatchObject({ code: 'invalid-intent' });
+      await expect(send({ ...decision, record: { ...decision.record, move: { from: 'e2', to: 'e4' } } }))
+        .rejects.toMatchObject({ code: 'invalid-intent' });
+      await expect(send({ ...decision, budgets: { ...decision.budgets, formatCorrections: 1 } }))
+        .rejects.toMatchObject({ code: 'invalid-intent' });
+      const accepted = decideModelTurn({
+        budgets: createTurnBudgets(), position: started.request.position,
+        classification: { kind: 'move', move: { from: 'e2', to: 'e4' }, text: 'e2e4', origin: 'json-move', retainedFields: [] },
+        modelConfigurationIdentity: started.request.fence.modelConfigurationIdentity,
+      });
+      if (accepted.kind !== 'accepted-move') throw new Error('Expected an accepted-move effect.');
+      const forgedAccepted = await controller.dispatch({
+        schemaVersion: 1, kind: 'model-turn-effect', fence: started.request.fence,
+        effect: { ...accepted, move: { from: 'e2', to: 'e5' } },
+      });
+      expect(forgedAccepted).toMatchObject({ kind: 'rejected', reason: 'illegal-move' });
+      const retry = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: forgedAccepted.snapshot.fence });
+      if (retry.kind !== 'model-turn-started') throw new Error('Expected a replacement model request.');
+      const committed = await send(decision, retry.request.fence);
+      expect(committed.kind).toBe('accepted');
+      if (committed.kind !== 'accepted') throw new Error('Expected the valid attempt to commit.');
+      const stale = await send(decision, retry.request.fence);
+      expect(stale).toMatchObject({ kind: 'rejected', reason: 'stale-fence' });
+      expect(stale.snapshot.checkpoint.budgets.illegalMoveAttemptsRemaining.white).toBe(3);
+      expect(controller.snapshot().checkpoint.budgets.illegalMoveAttemptsRemaining.white).toBe(3);
+      expect(controller.snapshot().checkpoint.result.kind).toBe('unresolved');
     } finally {
       store.close();
     }

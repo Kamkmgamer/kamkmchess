@@ -28,6 +28,7 @@ import {
 import type { CoordinateMove, Position } from '../rules/index.js';
 import { MAX_FORMAT_CORRECTIONS, MAX_ILLEGAL_MOVE_ATTEMPTS } from '../moves/index.js';
 import type { ModelTurnDecision } from '../moves/index.js';
+import { explainIllegalMove } from '../moves/violations.js';
 import { checkProofEvidence, createDeadnessQuery, createTimeoutMatingQuery, proofQueryIdentity } from '../proofs/index.js';
 import type { ProofQuery, ProofSearchPassResult } from '../proofs/index.js';
 import type {
@@ -48,6 +49,7 @@ export type HumanSideChoice = ClockSide | 'random';
 type ClockDiscrepancyReading = Extract<ClockReading, { status: 'reconciliation-required' }>;
 
 const INITIAL_POSITION = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+const MOVE_ATTEMPTS_EXTENSION = 'move-attempts';
 const GAME_CONTROLLER_INTENT_KINDS: ReadonlySet<string> = new Set([
   'begin-model-turn',
   'stop-model-turn',
@@ -598,6 +600,47 @@ function jsonSafe(value: unknown): GameCheckpointV1['extensions'][string]['data'
   } catch {
     return null;
   }
+}
+
+function validateMoveAttemptsExtension(section: VersionedExtensionSectionV1 | undefined): void {
+  if (section === undefined) return;
+  const data = section.data;
+  if (section.version !== 1 || data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw new GameControllerError('saved-game-invalid', 'The saved move-attempt extension is invalid.');
+  }
+  const values = data as Record<string, unknown>;
+  if (Object.keys(values).some((key) => key !== 'white' && key !== 'black')) {
+    throw new GameControllerError('saved-game-invalid', 'The saved move-attempt extension is invalid.');
+  }
+  for (const side of ['white', 'black'] as const) {
+    const records = values[side] ?? [];
+    if (!Array.isArray(records) || records.some((item) => {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) return true;
+      const record = item as Record<string, unknown>;
+      const move = record.move;
+      const violation = record.violation;
+      return !Number.isSafeInteger(record.attempt) || (record.attempt as number) < 1 || (record.attempt as number) > MAX_ILLEGAL_MOVE_ATTEMPTS ||
+        record.modelConfigurationIdentity !== null && typeof record.modelConfigurationIdentity !== 'string' ||
+        move === null || typeof move !== 'object' || typeof (move as Record<string, unknown>).from !== 'string' || typeof (move as Record<string, unknown>).to !== 'string' ||
+        violation === null || typeof violation !== 'object' || typeof (violation as Record<string, unknown>).code !== 'string' ||
+        typeof (violation as Record<string, unknown>).message !== 'string';
+    })) throw new GameControllerError('saved-game-invalid', 'The saved move-attempt extension is invalid.');
+  }
+}
+
+function appendMoveAttempt(
+  extensions: GameCheckpointV1['extensions'], side: ClockSide, record: JsonValue,
+): GameCheckpointV1['extensions'] {
+  const section = extensions[MOVE_ATTEMPTS_EXTENSION];
+  validateMoveAttemptsExtension(section);
+  const data = section?.data as { white?: readonly JsonValue[]; black?: readonly JsonValue[] } | undefined;
+  return {
+    ...extensions,
+    [MOVE_ATTEMPTS_EXTENSION]: { version: 1, data: {
+      white: [...(data?.white ?? []), ...(side === 'white' ? [record] : [])],
+      black: [...(data?.black ?? []), ...(side === 'black' ? [record] : [])],
+    } },
+  };
 }
 
 function rebindPendingCandidates(
@@ -1645,26 +1688,71 @@ class IndexedGameController implements GameController {
     intent: Extract<GameControllerIntentV1, { kind: 'model-turn-effect' }>,
   ): Promise<GameControllerIntentResultV1> {
     const { effect, fence } = intent;
+    if (effect === null || typeof effect !== 'object' || !['accepted-move', 'illegal-attempt', 'format-correction', 'model-resignation'].includes(effect.kind)) {
+      throw new GameControllerError('invalid-intent', 'The model turn effect shape is invalid.');
+    }
     if (effect.kind === 'accepted-move') {
       return this.acceptMove({ schemaVersion: 1, kind: 'model-move', fence, move: effect.move });
     }
+    if (effect.budgets === null || typeof effect.budgets !== 'object' || effect.budgets.schemaVersion !== 1 ||
+      !Number.isSafeInteger(effect.budgets.illegalMoveAttempts) || !Number.isSafeInteger(effect.budgets.formatCorrections) ||
+      !Number.isSafeInteger(effect.budgets.manualRetries) ||
+      effect.kind === 'illegal-attempt' && (effect.record === null || typeof effect.record !== 'object' || !validCoordinateMove(effect.record.move) ||
+        effect.record.violation === null || typeof effect.record.violation !== 'object' || typeof effect.record.violation.code !== 'string' ||
+        typeof effect.record.violation.message !== 'string') ||
+      effect.kind === 'format-correction' && (typeof effect.reason !== 'string' || typeof effect.correction !== 'string' ||
+        typeof effect.automatic !== 'boolean' || !Number.isSafeInteger(effect.formatCorrectionsRemaining)) ||
+      effect.kind === 'model-resignation' && typeof effect.statement !== 'string') {
+      throw new GameControllerError('invalid-intent', 'The model turn effect shape is invalid.');
+    }
     const checkpoint = this.checkpoint;
     if (checkpoint === null) throw new GameControllerError('setup-required', 'Initialize the game before applying a model turn effect.');
+    const activePosition = this.position;
+    if (activePosition === null) throw new GameControllerError('saved-game-invalid', 'The active position is unavailable.');
     const side = sideForCheckpoint(checkpoint);
     if (checkpoint.selections.players[side].kind !== 'model' || this.activeRequest === null ||
       !sameFence(this.activeRequest.fence, fence)) {
       return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
     }
+    validateMoveAttemptsExtension(checkpoint.extensions['move-attempts']);
     const expectedAttempts = MAX_ILLEGAL_MOVE_ATTEMPTS - checkpoint.budgets.illegalMoveAttemptsRemaining[side];
     const expectedFormatting = MAX_FORMAT_CORRECTIONS - checkpoint.budgets.formattingCorrectionsRemaining;
     const expectedRetries = checkpoint.budgets.manualRetriesBySide[side];
-    const nextAttempts = effect.kind === 'illegal-attempt' ? effect.attempt : expectedAttempts;
+    if (expectedAttempts < 0 || expectedAttempts > MAX_ILLEGAL_MOVE_ATTEMPTS ||
+      expectedFormatting < 0 || expectedFormatting > MAX_FORMAT_CORRECTIONS || !Number.isSafeInteger(expectedRetries)) {
+      throw new GameControllerError('saved-game-invalid', 'The saved model turn recovery counters are invalid.');
+    }
+    const nextAttempts = effect.kind === 'illegal-attempt' ? expectedAttempts + 1 : expectedAttempts;
     const nextFormatting = effect.kind === 'format-correction' && effect.automatic ? expectedFormatting + 1 : expectedFormatting;
     if (effect.budgets.illegalMoveAttempts !== nextAttempts || effect.budgets.formatCorrections !== nextFormatting ||
       effect.budgets.manualRetries !== expectedRetries || effect.budgets.schemaVersion !== 1 ||
       !Number.isSafeInteger(nextAttempts) || nextAttempts > MAX_ILLEGAL_MOVE_ATTEMPTS ||
       !Number.isSafeInteger(nextFormatting) || nextFormatting > MAX_FORMAT_CORRECTIONS) {
       throw new GameControllerError('invalid-intent', 'The classified model turn effect has inconsistent recovery budgets.');
+    }
+    if (effect.kind === 'illegal-attempt') {
+      let isIllegal = false;
+      try {
+        applyCoordinateMove(activePosition, effect.record.move);
+      } catch (error) {
+        if (!(error instanceof IllegalMoveError)) throw error;
+        isIllegal = true;
+      }
+      const violation = isIllegal ? explainIllegalMove(activePosition, effect.record.move) : null;
+      const terminalAttempt = nextAttempts === MAX_ILLEGAL_MOVE_ATTEMPTS;
+      if (!isIllegal || effect.attempt !== nextAttempts || effect.record.attempt !== nextAttempts ||
+        effect.record.modelConfigurationIdentity !== fence.modelConfigurationIdentity ||
+        violation === null || effect.record.violation.code !== violation.code || effect.record.violation.message !== violation.message ||
+        effect.illegalMoveAttemptsRemaining !== MAX_ILLEGAL_MOVE_ATTEMPTS - nextAttempts ||
+        (terminalAttempt ? effect.loss?.winner !== 'human' || effect.loss.reason !== 'illegal-move' : effect.loss !== null)) {
+        throw new GameControllerError('invalid-intent', 'The classified illegal-attempt effect does not match the active turn.');
+      }
+    }
+    if (effect.kind === 'format-correction' &&
+      (effect.formatCorrectionsRemaining !== MAX_FORMAT_CORRECTIONS - nextFormatting ||
+        effect.automatic !== (expectedFormatting < MAX_FORMAT_CORRECTIONS) ||
+        (effect.pause !== (effect.automatic ? null : 'retry-or-switch')))) {
+      throw new GameControllerError('invalid-intent', 'The classified format-correction effect has inconsistent counters.');
     }
     const committed = await this.commitMutation<IntentMutationValue>(fence, (context) => {
       const clockState = context.clockState;
@@ -1689,15 +1777,11 @@ class IndexedGameController implements GameController {
           },
         },
         extensions: effect.kind === 'illegal-attempt'
-          ? { ...context.checkpoint.extensions, 'move-attempts': { version: 1, data: {
-            [side]: [
-              ...((context.checkpoint.extensions['move-attempts']?.data as { [key: string]: JsonValue } | undefined)?.[side] as unknown as readonly JsonValue[] | undefined ?? []),
-              effect.record as unknown as JsonValue,
-            ],
-          } } }
+          ? appendMoveAttempt(context.checkpoint.extensions, side, jsonSafe(effect.record))
           : context.checkpoint.extensions,
       };
-      const terminal = effect.kind === 'model-resignation' || (effect.kind === 'illegal-attempt' && effect.loss !== null);
+      const terminal = effect.kind === 'model-resignation' ||
+        (effect.kind === 'illegal-attempt' && nextAttempts === MAX_ILLEGAL_MOVE_ATTEMPTS);
       const eventKind = effect.kind === 'illegal-attempt' ? 'illegal-move-rejected' :
         effect.kind === 'format-correction' ? 'model-format-correction' : 'model-resigned';
       const details = effect.kind === 'illegal-attempt'
