@@ -13,26 +13,25 @@ export interface PreparedProviderRequest {
 export function prepareGenerationRequest(
   profile: ConnectionProfile,
   credentials: BoundConnectionCredentials,
-  body: BodyInit,
+  body: string,
   config?: ProtocolGenerationConfig,
 ): PreparedProviderRequest {
-  validateCacheRoute(profile, config, body);
+  validateCacheRoute(profile, body, config);
   return prepareRequest(profile, credentials, 'POST', body);
 }
 
 function validateCacheRoute(
   profile: ConnectionProfile,
+  body: string,
   config: ProtocolGenerationConfig | undefined,
-  body: BodyInit,
 ): void {
-  const cache = config?.cache;
   const bodyCache = readBodyCacheControls(body);
+  const cache = config?.cache;
 
   const hasOpenAiCache = cache?.promptCacheKey !== undefined || cache?.promptCacheRetention !== undefined
     || bodyCache.promptCacheKey || bodyCache.promptCacheRetention;
   const hasOpenRouterSession = cache?.openRouterSessionId !== undefined || bodyCache.openRouterSession;
-  const hasAnthropicCache = cache?.anthropicEphemeral !== undefined || cache?.anthropicCacheMinimumTokens !== undefined
-    || bodyCache.anthropicCache;
+  const hasAnthropicCache = cache?.anthropicEphemeral === true || bodyCache.anthropicCache;
   if (!hasOpenAiCache && !hasOpenRouterSession && !hasAnthropicCache) return;
   const supported = (!hasOpenAiCache || (profile.provider === 'openai' && ['chat-completions', 'responses'].includes(profile.protocol)))
     && (!hasOpenRouterSession || (profile.provider === 'openrouter' && profile.protocol === 'chat-completions'))
@@ -46,36 +45,37 @@ function validateCacheRoute(
   }
 }
 
-function readBodyCacheControls(body: BodyInit): {
+function readBodyCacheControls(body: string): {
   promptCacheKey: boolean;
   promptCacheRetention: boolean;
   openRouterSession: boolean;
   anthropicCache: boolean;
 } {
-  if (typeof body !== 'string') {
-    return { promptCacheKey: false, promptCacheRetention: false, openRouterSession: false, anthropicCache: false };
-  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
   } catch {
-    return { promptCacheKey: false, promptCacheRetention: false, openRouterSession: false, anthropicCache: false };
+    throw new ConnectionError('invalid-request-body', 'The generation request body must be valid JSON.');
   }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new ConnectionError('invalid-request-body', 'The generation request body must be a JSON object.');
+  }
+  const root = parsed as Record<string, unknown>;
   const found = { promptCacheKey: false, promptCacheRetention: false, openRouterSession: false, anthropicCache: false };
-  const visit = (value: unknown): void => {
-    if (Array.isArray(value)) {
-      value.forEach(visit);
-    } else if (typeof value === 'object' && value !== null) {
-      for (const [key, nested] of Object.entries(value)) {
-        if (key === 'prompt_cache_key') found.promptCacheKey = true;
-        if (key === 'prompt_cache_retention') found.promptCacheRetention = true;
-        if (key === 'session_id') found.openRouterSession = true;
-        if (key === 'cache_control') found.anthropicCache = true;
-        visit(nested);
-      }
-    }
-  };
-  visit(parsed);
+  found.promptCacheKey = Object.hasOwn(root, 'prompt_cache_key');
+  found.promptCacheRetention = Object.hasOwn(root, 'prompt_cache_retention');
+  found.openRouterSession = Object.hasOwn(root, 'session_id');
+  if (Array.isArray(root.messages)) {
+    found.anthropicCache = root.messages.some((message) => {
+      if (typeof message !== 'object' || message === null || !Array.isArray((message as { content?: unknown }).content)) return false;
+      return ((message as { content: unknown[] }).content).some((block) => {
+        if (typeof block !== 'object' || block === null) return false;
+        const candidate = block as { type?: unknown; cache_control?: unknown };
+        if (candidate.type !== 'text' || typeof candidate.cache_control !== 'object' || candidate.cache_control === null) return false;
+        return (candidate.cache_control as { type?: unknown }).type === 'ephemeral';
+      });
+    });
+  }
   return found;
 }
 
