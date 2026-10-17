@@ -49,11 +49,10 @@ export function editorSideToMove(fen: string): 'w' | 'b' {
 
 export function setPositionSideToMove(fen: string, side: 'w' | 'b'): string {
   const fields = editorFields(fen);
+  // An en-passant target belongs to the side that can capture it; it cannot
+  // survive a turn change. Castling rights and move counters are independent.
+  if (fields[1] !== side) fields[3] = '-';
   fields[1] = side;
-  fields[2] = '-';
-  fields[3] = '-';
-  fields[4] = '0';
-  fields[5] = '1';
   return fields.join(' ');
 }
 

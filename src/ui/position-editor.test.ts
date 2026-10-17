@@ -11,9 +11,14 @@ describe('visual position editor', () => {
     expect(parsePosition(editPositionFen(edited, 'e4', 'empty')).pieces.some((piece) => piece.square === 'e4')).toBe(false);
   });
 
-  it('changes the side to move and clears position metadata that no longer applies', () => {
+  it('changes the side to move without discarding castling rights or move counters', () => {
     const edited = setPositionSideToMove('4k3/8/8/8/8/8/8/4K3 w - - 17 9', 'b');
-    expect(edited).toBe('4k3/8/8/8/8/8/8/4K3 b - - 0 1');
+    expect(edited).toBe('4k3/8/8/8/8/8/8/4K3 b - - 17 9');
+    const standard = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 17 42';
+    expect(setPositionSideToMove(standard, 'b')).toBe(standard.replace(' w ', ' b '));
+    const enPassant = '4k3/8/8/8/3pP3/8/8/4K3 b - e3 0 12';
+    expect(setPositionSideToMove(enPassant, 'w')).toBe('4k3/8/8/8/3pP3/8/8/4K3 w - - 0 12');
+    expect(setPositionSideToMove(enPassant, 'b')).toBe(enPassant);
     expect(() => editPositionFen('invalid FEN', 'e4', 'wp')).toThrow();
   });
 
