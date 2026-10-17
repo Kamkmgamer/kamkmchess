@@ -85,6 +85,24 @@ export function encodeAnthropicMessagesRequest(
     stream: true,
     max_tokens: config.maxOutputTokens,
   };
+  if (config.cache?.anthropicEphemeral === true) {
+    const cacheControl = { type: 'ephemeral' };
+    body.system = [
+      { type: 'text', text: history.instructions, cache_control: cacheControl },
+    ];
+    const prefixEnd = Math.min(
+      history.cachePrefixRecordCount ?? 0,
+      history.records.length,
+    ) - 1;
+    if (prefixEnd >= 0) {
+      body.messages = history.records.map((record, index) => ({
+        role: record.role,
+        content: index === prefixEnd
+          ? [{ type: 'text', text: record.text, cache_control: cacheControl }]
+          : record.text,
+      }));
+    }
+  }
   if (config.temperature !== undefined) {
     body.temperature = config.temperature;
   }
