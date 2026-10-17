@@ -21,4 +21,4 @@ Implementation code and deterministic tests for full retained-history compositio
 
 ## Limits
 
-These are synthetic fixtures. No native provider request, actual cache hit, provider charge, live handoff or board journey was run. Token capacity is only verified when the caller supplies the selected destination's tokenizer. Product acceptance cases remain `not_run` in `docs/spec/mvp-acceptance.json`.
+These are synthetic fixtures. The production model-request flow does not yet call `composeHistoryReplay`, `checkReplayCapacity`, or usage accounting; wiring them into queued model handoffs remains outstanding. No native provider request, actual cache hit, provider charge, or live handoff was run. Token capacity is only verified when the caller supplies the selected destination's tokenizer. Product acceptance cases remain `not_run` in `docs/spec/mvp-acceptance.json`.
