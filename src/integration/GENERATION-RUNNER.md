@@ -1,0 +1,7 @@
+# Generation composition runner
+
+`runGenerationTurn` composes one model request outside the UI. It starts with the controller's `begin-model-turn` fence, verifies that the selected provider, connection, protocol, route, disclosure consent, and bound credentials still match, composes retained history with the fresh position and clock, encodes the selected protocol, checks capacity, and then makes one injected transport call. It dispatches only a complete answer or refusal as a model turn effect. Failure, incomplete protocol output, and abort dispatch a fenced interruption. The runner does not retry.
+
+The result includes the raw protocol stream (including decoder raw events and usage records) and a request-scoped usage summary under the same stable request ID. Usage is labeled `EPHEMERAL NOT PERSISTED`: current storage has no usage journal, so closing or reloading the app loses this accounting. Estimates require a complete normalized provider usage shape and an explicitly supplied rate card; the runner currently has no rate-card source and returns `unknown` cost status while preserving provider raw usage. Provider charges are not independently verified.
+
+Capacity rejection occurs before transport and is treated as a failed turn request. A late completion after Stop may still be returned for diagnostics, but its effect dispatch is rejected by the controller fence and cannot change the game.
