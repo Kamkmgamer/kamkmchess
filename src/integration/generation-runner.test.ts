@@ -3,7 +3,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import { parsePosition } from '../rules/index.js';
 import type { GameController, ControllerSnapshotV1 } from '../controller/index.js';
 import type { ProtocolStreamDecoder, ProtocolStreamResult, ProviderProtocol } from '../providers/protocols/index.js';
-import { createConnectionProfile, openConnectionStore } from '../providers/connections/index.js';
+import { createConnectionProfile, openConnectionStore, reviseConnectionProfile } from '../providers/connections/index.js';
 import type { ConnectionStore } from '../providers/connections/index.js';
 import { runGenerationTurn } from './generation-runner.js';
 
@@ -57,7 +57,7 @@ async function fixture(options: { capacityBytes?: number; staleEffect?: boolean 
   return {
     profile, connections, controller, dispatch,
     options: {
-      controller, connections: connections as ConnectionStore, namespace, instructions: 'Play one legal move.',
+      controller, connections: connections as ConnectionStore, namespace, expectedProfileConfigRevision: profile.configRevision, instructions: 'Play one legal move.',
       generation: { maxOutputTokens: 100 }, capacity: { maxRequestBytes: options.capacityBytes ?? 10_000, maxOutputTokens: 100 },
       idFactory: () => 'stable-runner-request', now: () => 2_000,
     },
@@ -118,6 +118,67 @@ describe('generation composition runner', () => {
     expect(result.kind).toBe('capacity-rejected');
     expect(fetch).not.toHaveBeenCalled();
     expect(f.dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ kind: 'model-turn-interrupted', reason: 'failed', fence });
+  });
+
+  it('rejects a changed profile even when the new revision has consent and bound credentials', async () => {
+    const f = await fixture();
+    const changed = await reviseConnectionProfile(f.profile, { baseUrl: 'https://openrouter.ai/api/v2' });
+    await f.connections.saveProfile(f.options.namespace, changed);
+    await f.connections.assignCredential(f.options.namespace, changed.id, { apiKey: 'new-version-key' });
+    await f.connections.recordDisclosureChoice(f.options.namespace, changed, { decision: 'accepted', recordedAtMs: 2_000 });
+    const fetch = vi.fn(async () => response());
+
+    const result = await runGenerationTurn({ ...f.options, fetch, createDecoder: decoder(protocolResult()) });
+
+    expect(result).toMatchObject({ kind: 'interrupted', reason: 'failed', dispatch: 'accepted' });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(f.dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ kind: 'model-turn-interrupted', reason: 'failed', fence });
+    expect(f.dispatch.mock.calls.some(([intent]) => intent.kind === 'model-turn-effect')).toBe(false);
+  });
+
+  it.each([200, 503])('cancels a pending body read on abort for HTTP %i and interrupts the controller', async (status) => {
+    const f = await fixture();
+    const abort = new AbortController();
+    let markReadStarted: (() => void) | undefined;
+    const readStarted = new Promise<void>((resolve) => { markReadStarted = resolve; });
+    const streamCancel = vi.fn();
+    const body = new ReadableStream<Uint8Array>({ pull: () => { markReadStarted?.(); }, cancel: streamCancel });
+    const fetch = vi.fn(async () => new Response(body, { status }));
+    const running = runGenerationTurn({ ...f.options, signal: abort.signal, fetch, createDecoder: decoder(protocolResult()) });
+
+    await readStarted;
+    abort.abort();
+    const result = await running;
+
+    expect(result).toMatchObject({ kind: 'interrupted', reason: 'aborted', dispatch: 'accepted' });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(streamCancel).toHaveBeenCalledOnce();
+    expect(f.dispatch.mock.calls.map(([intent]) => intent.kind)).toEqual(['begin-model-turn', 'model-turn-interrupted']);
+    expect(f.dispatch.mock.calls.at(-1)?.[0]).toMatchObject({ kind: 'model-turn-interrupted', reason: 'aborted', fence });
+  });
+
+  it('keeps bytes consumed before abort in the protocol decoder', async () => {
+    const f = await fixture();
+    const abort = new AbortController();
+    let markPendingRead: (() => void) | undefined;
+    const pendingRead = new Promise<void>((resolve) => { markPendingRead = resolve; });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array([7])); },
+      pull: () => { markPendingRead?.(); },
+    });
+    const pushed: number[] = [];
+    const createDecoder = () => ({
+      push: (chunk: Uint8Array) => pushed.push(...chunk), abort: () => undefined,
+      finish: () => protocolResult({ terminal: 'aborted', raw: { chunks: [], events: [] } }),
+    });
+    const running = runGenerationTurn({ ...f.options, signal: abort.signal, fetch: async () => new Response(body), createDecoder });
+
+    await pendingRead;
+    abort.abort();
+    const result = await running;
+
+    expect(result).toMatchObject({ kind: 'interrupted', reason: 'aborted' });
+    expect(pushed).toEqual([7]);
   });
 
   it('keeps a completed late response fenced after Stop wins the race', async () => {

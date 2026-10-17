@@ -20,6 +20,8 @@ export interface GenerationRunnerOptions {
   readonly controller: GameController;
   readonly connections: ConnectionStore;
   readonly namespace: ConnectionNamespace;
+  /** Hash revision validated with the caller's model selection/diagnostic; never derive this from its numeric configurationRevision. */
+  readonly expectedProfileConfigRevision: string;
   readonly instructions: string;
   readonly generation: Omit<ProtocolGenerationConfig, 'model'>;
   readonly capacity: ReplayCapacityLimitsV1;
@@ -70,6 +72,12 @@ export async function runGenerationTurn(options: GenerationRunnerOptions): Promi
     if (selection.kind !== 'model') throw new Error('The active side has no model selection.');
     const profile = await options.connections.getProfile(options.namespace, selection.connectionId);
     if (!profile) throw new Error('The selected connection profile is unavailable.');
+    if (typeof options.expectedProfileConfigRevision !== 'string' || options.expectedProfileConfigRevision.length === 0) {
+      throw new Error('A validated connection profile configuration revision is required.');
+    }
+    if (profile.configRevision !== options.expectedProfileConfigRevision) {
+      throw new Error('The selected connection profile configuration has changed.');
+    }
     const protocol = protocolForSelection(profile, selection.protocol);
     activeProtocol = protocol;
     if (profile.provider !== selection.providerId) throw new Error('The selected provider does not match the saved connection.');
@@ -121,17 +129,26 @@ export async function runGenerationTurn(options: GenerationRunnerOptions): Promi
     const responseDecoder = (options.createDecoder ?? defaultDecoder)(protocol, response.status);
     activeDecoder = responseDecoder;
     if (!response.ok) {
-      if (response.body) await readBody(response.body, responseDecoder);
+      if (response.body) await readBody(response.body, responseDecoder, options.signal);
+      else if (options.signal?.aborted) responseDecoder.abort();
       protocolResult = responseDecoder.finish();
+      if (options.signal?.aborted) {
+        dispatch = await interrupt(options.controller, fence, 'aborted');
+        return resultInterrupted(requestId, 'aborted', protocolResult, dispatch, now(), undefined, protocol);
+      }
       dispatch = await interrupt(options.controller, fence, 'failed');
       return resultInterrupted(requestId, 'failed', protocolResult, dispatch, now(), 'Provider returned a non-success HTTP status.', protocol);
     }
     if (!response.body) {
+      if (options.signal?.aborted) responseDecoder.abort();
       protocolResult = responseDecoder.finish();
     } else {
       await readBody(response.body, responseDecoder, options.signal);
-      if (options.signal?.aborted) responseDecoder.abort();
       protocolResult = responseDecoder.finish();
+    }
+    if (options.signal?.aborted) {
+      dispatch = await interrupt(options.controller, fence, 'aborted');
+      return resultInterrupted(requestId, 'aborted', protocolResult, dispatch, now(), undefined, protocol);
     }
     const reason = terminalReason(protocolResult);
     if (reason !== null) {
@@ -165,14 +182,39 @@ export async function runGenerationTurn(options: GenerationRunnerOptions): Promi
 
 async function readBody(body: ReadableStream<Uint8Array>, decoder: ProtocolStreamDecoder, signal?: AbortSignal): Promise<void> {
   const reader = body.getReader();
+  let aborted = false;
+  const cancel = (): void => {
+    if (aborted) return;
+    aborted = true;
+    decoder.abort();
+    // Cancellation can race a pending read and can itself reject for custom streams.
+    // The read loop observes the signal and remains the single completion path.
+    void reader.cancel().catch(() => undefined);
+  };
+  signal?.addEventListener('abort', cancel, { once: true });
   try {
     while (true) {
-      if (signal?.aborted) { decoder.abort(); return; }
-      const { done, value } = await reader.read();
+      if (signal?.aborted) { cancel(); return; }
+      let item: ReadableStreamReadResult<Uint8Array>;
+      try {
+        item = await reader.read();
+      } catch (error) {
+        if (signal?.aborted) { cancel(); return; }
+        throw error;
+      }
+      const { done, value } = item;
+      if (signal?.aborted) {
+        if (!done) decoder.push(value);
+        cancel();
+        return;
+      }
       if (done) return;
       decoder.push(value);
     }
-  } finally { reader.releaseLock(); }
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+    reader.releaseLock();
+  }
 }
 
 function encode(protocol: ProviderProtocol, history: ReturnType<typeof composeHistoryReplay>['history'], config: ProtocolGenerationConfig) {
