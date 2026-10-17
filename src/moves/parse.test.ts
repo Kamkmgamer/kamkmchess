@@ -38,6 +38,7 @@ describe('completed answer classification', () => {
     });
     expect(classify('`E2E4`')).toMatchObject({ kind: 'move', text: 'e2e4', origin: 'fallback-standalone' });
     expect(classify('e2e4.')).toMatchObject({ kind: 'move', text: 'e2e4', origin: 'fallback-standalone' });
+    expect(classify('(e2e4)!')).toMatchObject({ kind: 'move', text: 'e2e4', origin: 'fallback-standalone' });
   });
 
   it('[MOV-01, RUL-01] uses king squares for castling and pawn squares for en passant', () => {
@@ -160,6 +161,8 @@ describe('completed answer classification', () => {
     expect(classify('I refuse to move.')).toMatchObject({ kind: 'resignation' });
     expect(classify('Resign.')).toMatchObject({ kind: 'resignation' });
     expect(classify('**I resign the game.**')).toMatchObject({ kind: 'resignation' });
+    expect(classify('Final Answer: I resign.')).toMatchObject({ kind: 'resignation', statement: 'Final Answer: I resign.' });
+    expect(classify('Final Decision: I resign.')).toMatchObject({ kind: 'resignation', statement: 'Final Decision: I resign.' });
   });
 
   it('[MOV-06] never resigns on quoted, hypothetical, historical, or attributed text', () => {
@@ -171,6 +174,8 @@ describe('completed answer classification', () => {
       'Earlier I said "I resign", but I changed my mind and will play on.',
       'Earlier in this conversation the assistant said it would resign.',
       'I would resign if the clock expired.',
+      '"Final Answer: I resign."',
+      'Final Answer: Earlier I said I resign, but I will play on.',
     ];
 
     for (const answerText of corpus) {
