@@ -1,11 +1,12 @@
-.scratch/cli-proxy-chess/linear-tools.json
-.scratch/cli-proxy-chess/mcp-*.json
-.scratch/cli-proxy-chess/live-*.json
+.scratch/
 __pycache__/
 node_modules/
 /dist/
 /coverage/
+.vercel/
 *.tsbuildinfo
+*.zip
+*.log
 .env
 .env.*
 !.env.example
