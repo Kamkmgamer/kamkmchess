@@ -128,6 +128,7 @@ export type ConnectionErrorCode =
   | 'invalid-model-id'
   | 'credential-required'
   | 'credential-destination-mismatch'
+  | 'unsupported-cache-option'
   | 'credential-store-unavailable'
   | 'credential-write-failed'
   | 'credential-invalid'

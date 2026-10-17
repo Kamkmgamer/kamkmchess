@@ -77,6 +77,34 @@ describe('prepared provider requests', () => {
     expect(request.url).not.toContain('canary');
   });
 
+  it('binds cache controls to the selected connection route during request preparation', async () => {
+    const openai = await createConnectionProfile({
+      id: 'openai-chat-cache', name: 'OpenAI Chat', provider: 'openai', protocol: 'chat-completions',
+    });
+    const openrouter = await createConnectionProfile({
+      id: 'openrouter-chat-cache', name: 'OpenRouter Chat', provider: 'openrouter', protocol: 'chat-completions',
+    });
+    const openaiCredentials = await bindTestCredentials(openai, { apiKey: 'openai-canary' });
+    const openrouterCredentials = await bindTestCredentials(openrouter, { apiKey: 'router-canary' });
+
+    expect(() => prepareGenerationRequest(openrouter, openrouterCredentials, '{}', {
+      model: 'selected-model', maxOutputTokens: 10, cache: { promptCacheKey: 'key' },
+    })).toThrowError(expect.objectContaining({ code: 'unsupported-cache-option' }));
+    expect(() => prepareGenerationRequest(openrouter, openrouterCredentials, '{"prompt_cache_key":"key"}'))
+      .toThrowError(expect.objectContaining({ code: 'unsupported-cache-option' }));
+    expect(() => prepareGenerationRequest(openai, openaiCredentials, '{}', {
+      model: 'selected-model', maxOutputTokens: 10, cache: { openRouterSessionId: 'session' },
+    })).toThrowError(expect.objectContaining({ code: 'unsupported-cache-option' }));
+    expect(() => prepareGenerationRequest(openai, openaiCredentials, '{"session_id":"session"}'))
+      .toThrowError(expect.objectContaining({ code: 'unsupported-cache-option' }));
+
+    const prepared = prepareGenerationRequest(openai, openaiCredentials, '{"prompt_cache_key":"key"}', {
+      model: 'selected-model', maxOutputTokens: 10, cache: { promptCacheKey: 'key' },
+    });
+    expect(prepared.init.body).toBe('{"prompt_cache_key":"key"}');
+    expect(prepared.init.body).not.toContain('provider');
+  });
+
   it('CON-03 rejects a bound credential when the profile destination changes', async () => {
     const profile = await createConnectionProfile({ id: 'proxy', name: 'Proxy', provider: 'openai' });
     const previousBinding = await bindTestCredentials(profile, { apiKey: 'do-not-forward-canary' });

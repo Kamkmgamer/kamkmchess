@@ -3,6 +3,7 @@ import { readBoundCredentialValues } from './credential-binding';
 import { assertCredentialBinding } from './store';
 import { ConnectionError } from './types';
 import type { BoundConnectionCredentials, ConnectionProfile, ConnectionProtocol } from './types';
+import type { ProtocolGenerationConfig } from '../protocols/types';
 
 export interface PreparedProviderRequest {
   readonly url: string;
@@ -13,8 +14,69 @@ export function prepareGenerationRequest(
   profile: ConnectionProfile,
   credentials: BoundConnectionCredentials,
   body: BodyInit,
+  config?: ProtocolGenerationConfig,
 ): PreparedProviderRequest {
+  validateCacheRoute(profile, config, body);
   return prepareRequest(profile, credentials, 'POST', body);
+}
+
+function validateCacheRoute(
+  profile: ConnectionProfile,
+  config: ProtocolGenerationConfig | undefined,
+  body: BodyInit,
+): void {
+  const cache = config?.cache;
+  const bodyCache = readBodyCacheControls(body);
+
+  const hasOpenAiCache = cache?.promptCacheKey !== undefined || cache?.promptCacheRetention !== undefined
+    || bodyCache.promptCacheKey || bodyCache.promptCacheRetention;
+  const hasOpenRouterSession = cache?.openRouterSessionId !== undefined || bodyCache.openRouterSession;
+  const hasAnthropicCache = cache?.anthropicEphemeral !== undefined || cache?.anthropicCacheMinimumTokens !== undefined
+    || bodyCache.anthropicCache;
+  if (!hasOpenAiCache && !hasOpenRouterSession && !hasAnthropicCache) return;
+  const supported = (!hasOpenAiCache || (profile.provider === 'openai' && ['chat-completions', 'responses'].includes(profile.protocol)))
+    && (!hasOpenRouterSession || (profile.provider === 'openrouter' && profile.protocol === 'chat-completions'))
+    && (!hasAnthropicCache || (profile.provider === 'anthropic' && profile.protocol === 'messages'));
+
+  if (!supported) {
+    throw new ConnectionError(
+      'unsupported-cache-option',
+      'The selected cache option is not supported by this connection provider and protocol.',
+    );
+  }
+}
+
+function readBodyCacheControls(body: BodyInit): {
+  promptCacheKey: boolean;
+  promptCacheRetention: boolean;
+  openRouterSession: boolean;
+  anthropicCache: boolean;
+} {
+  if (typeof body !== 'string') {
+    return { promptCacheKey: false, promptCacheRetention: false, openRouterSession: false, anthropicCache: false };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return { promptCacheKey: false, promptCacheRetention: false, openRouterSession: false, anthropicCache: false };
+  }
+  const found = { promptCacheKey: false, promptCacheRetention: false, openRouterSession: false, anthropicCache: false };
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(visit);
+    } else if (typeof value === 'object' && value !== null) {
+      for (const [key, nested] of Object.entries(value)) {
+        if (key === 'prompt_cache_key') found.promptCacheKey = true;
+        if (key === 'prompt_cache_retention') found.promptCacheRetention = true;
+        if (key === 'session_id') found.openRouterSession = true;
+        if (key === 'cache_control') found.anthropicCache = true;
+        visit(nested);
+      }
+    }
+  };
+  visit(parsed);
+  return found;
 }
 
 export function prepareCatalogRequest(
