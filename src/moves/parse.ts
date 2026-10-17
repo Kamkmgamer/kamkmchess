@@ -74,7 +74,7 @@ interface MoveRead {
   readonly text: string;
 }
 
-const COORDINATE_DECORATION = /^(?:[*_`"'\s])+|(?:[*_`"'\s])+$/g;
+const COORDINATE_DECORATION = /^(?:[*_`"'(\s])+|(?:[*_`"')!\s])+$/g;
 
 function stripCoordinateDecoration(text: string): string {
   return text.replace(COORDINATE_DECORATION, '').replace(/[.!]+$/, '');

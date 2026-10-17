@@ -26,6 +26,9 @@ import {
   legalMoves,
 } from '../rules/index.js';
 import type { CoordinateMove, Position } from '../rules/index.js';
+import { MAX_FORMAT_CORRECTIONS, MAX_ILLEGAL_MOVE_ATTEMPTS } from '../moves/index.js';
+import type { ModelTurnDecision } from '../moves/index.js';
+import { explainIllegalMove } from '../moves/violations.js';
 import { checkProofEvidence, createDeadnessQuery, createTimeoutMatingQuery, proofQueryIdentity } from '../proofs/index.js';
 import type { ProofQuery, ProofSearchPassResult } from '../proofs/index.js';
 import type {
@@ -46,11 +49,14 @@ export type HumanSideChoice = ClockSide | 'random';
 type ClockDiscrepancyReading = Extract<ClockReading, { status: 'reconciliation-required' }>;
 
 const INITIAL_POSITION = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+const MOVE_ATTEMPTS_EXTENSION = 'move-attempts';
 const GAME_CONTROLLER_INTENT_KINDS: ReadonlySet<string> = new Set([
   'begin-model-turn',
   'stop-model-turn',
+  'model-turn-interrupted',
   'human-move',
   'model-move',
+  'model-turn-effect',
 ]);
 
 function isGameControllerIntentKind(kind: unknown): kind is GameControllerIntentV1['kind'] {
@@ -73,7 +79,8 @@ export interface GameControllerOptions {
 
 export interface GameControllerSetupV1 {
   humanSide: HumanSideChoice;
-  modelSelection: ModelSelection;
+  /** Omit for a local game with two human players. */
+  modelSelection?: ModelSelection;
   namespace: GameNamespaceV1;
   ownershipEpoch: number;
   startingFen?: string;
@@ -120,7 +127,11 @@ export interface ControllerMoveEventV1 {
 export type GameControllerIntentV1 =
   | { schemaVersion: 1; kind: 'begin-model-turn'; fence: ControllerFenceV1 }
   | { schemaVersion: 1; kind: 'stop-model-turn'; fence: ControllerFenceV1 }
-  | ControllerMoveEventV1;
+  | { schemaVersion: 1; kind: 'model-turn-interrupted'; fence: ControllerFenceV1; reason: ModelTurnInterruptionReasonV1 }
+  | ControllerMoveEventV1
+  | { schemaVersion: 1; kind: 'model-turn-effect'; fence: ControllerFenceV1; effect: ModelTurnDecision };
+
+export type ModelTurnInterruptionReasonV1 = 'failed' | 'incomplete' | 'aborted';
 
 export interface ModelTurnRequestV1 {
   fence: ControllerFenceV1;
@@ -148,7 +159,7 @@ export interface GameController {
   continueAdjudication(fence: ControllerFenceV1): Promise<AdjudicationWorkV1 | null>;
   stopAdjudication(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
   acceptAdjudicationResult(input: AdjudicationResultInputV1): Promise<ControllerSnapshotV1>;
-  startGame(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1>;
+  startGame(fence: ControllerFenceV1, modelSelection?: ModelSelection): Promise<ControllerSnapshotV1>;
   undo(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
   undoMove(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
   takeback(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
@@ -247,7 +258,7 @@ const defaultIdFactory = (): string => globalThis.crypto.randomUUID();
 const defaultRandomSide = (): ClockSide => (Math.random() < 0.5 ? 'white' : 'black');
 interface PreparedSetup {
   readonly humanSide: ClockSide;
-  readonly modelSelection: ModelSelection;
+  readonly modelSelection: ModelSelection | null;
   readonly namespace: GameNamespaceV1;
   readonly ownershipEpoch: number;
   readonly startingFen: string;
@@ -595,6 +606,47 @@ function jsonSafe(value: unknown): GameCheckpointV1['extensions'][string]['data'
   }
 }
 
+function validateMoveAttemptsExtension(section: VersionedExtensionSectionV1 | undefined): void {
+  if (section === undefined) return;
+  const data = section.data;
+  if (section.version !== 1 || data === null || typeof data !== 'object' || Array.isArray(data)) {
+    throw new GameControllerError('saved-game-invalid', 'The saved move-attempt extension is invalid.');
+  }
+  const values = data as Record<string, unknown>;
+  if (Object.keys(values).some((key) => key !== 'white' && key !== 'black')) {
+    throw new GameControllerError('saved-game-invalid', 'The saved move-attempt extension is invalid.');
+  }
+  for (const side of ['white', 'black'] as const) {
+    const records = values[side] ?? [];
+    if (!Array.isArray(records) || records.some((item) => {
+      if (item === null || typeof item !== 'object' || Array.isArray(item)) return true;
+      const record = item as Record<string, unknown>;
+      const move = record.move;
+      const violation = record.violation;
+      return !Number.isSafeInteger(record.attempt) || (record.attempt as number) < 1 || (record.attempt as number) > MAX_ILLEGAL_MOVE_ATTEMPTS ||
+        record.modelConfigurationIdentity !== null && typeof record.modelConfigurationIdentity !== 'string' ||
+        move === null || typeof move !== 'object' || typeof (move as Record<string, unknown>).from !== 'string' || typeof (move as Record<string, unknown>).to !== 'string' ||
+        violation === null || typeof violation !== 'object' || typeof (violation as Record<string, unknown>).code !== 'string' ||
+        typeof (violation as Record<string, unknown>).message !== 'string';
+    })) throw new GameControllerError('saved-game-invalid', 'The saved move-attempt extension is invalid.');
+  }
+}
+
+function appendMoveAttempt(
+  extensions: GameCheckpointV1['extensions'], side: ClockSide, record: JsonValue,
+): GameCheckpointV1['extensions'] {
+  const section = extensions[MOVE_ATTEMPTS_EXTENSION];
+  validateMoveAttemptsExtension(section);
+  const data = section?.data as { white?: readonly JsonValue[]; black?: readonly JsonValue[] } | undefined;
+  return {
+    ...extensions,
+    [MOVE_ATTEMPTS_EXTENSION]: { version: 1, data: {
+      white: [...(data?.white ?? []), ...(side === 'white' ? [record] : [])],
+      black: [...(data?.black ?? []), ...(side === 'black' ? [record] : [])],
+    } },
+  };
+}
+
 function rebindPendingCandidates(
   prior: GameCheckpointV1,
   next: GameCheckpointV1,
@@ -638,7 +690,7 @@ function prepareSetup(
   idFactory: () => string,
   randomSide: () => ClockSide,
 ): PreparedSetup {
-  modelConfigurationIdentity(setup.modelSelection);
+  if (setup.modelSelection !== undefined) modelConfigurationIdentity(setup.modelSelection);
   if (!Number.isSafeInteger(setup.ownershipEpoch) || setup.ownershipEpoch < 0) {
     throw new GameControllerError('invalid-setup', 'The ownership epoch must be a nonnegative safe integer.');
   }
@@ -670,7 +722,7 @@ function prepareSetup(
   }
   return {
     humanSide,
-    modelSelection: freezeModelSelection(setup.modelSelection),
+    modelSelection: setup.modelSelection === undefined ? null : freezeModelSelection(setup.modelSelection),
     namespace,
     ownershipEpoch: setup.ownershipEpoch,
     startingFen: setup.startingFen ?? INITIAL_POSITION,
@@ -691,8 +743,8 @@ function makeCheckpoint(
 ): GameCheckpointV1 {
   const ledger = createRepetitionLedger(prepared.position);
   const players: Record<ClockSide, PlayerSelectionV1> = {
-    white: prepared.humanSide === 'white' ? { kind: 'human' } : prepared.modelSelection,
-    black: prepared.humanSide === 'black' ? { kind: 'human' } : prepared.modelSelection,
+    white: prepared.modelSelection === null || prepared.humanSide === 'white' ? { kind: 'human' } : prepared.modelSelection,
+    black: prepared.modelSelection === null || prepared.humanSide === 'black' ? { kind: 'human' } : prepared.modelSelection,
   };
   return {
     schemaVersion: 1,
@@ -725,9 +777,9 @@ function makeCheckpoint(
       segments: [
         {
           segmentId: prepared.segmentId,
-          providerId: prepared.modelSelection.providerId,
-          modelRoutingId: prepared.modelSelection.modelRoutingId,
-          connectionRevision: prepared.modelSelection.configurationRevision,
+          providerId: prepared.modelSelection?.providerId ?? null,
+          modelRoutingId: prepared.modelSelection?.modelRoutingId ?? null,
+          connectionRevision: prepared.modelSelection?.configurationRevision ?? null,
           startedAtMs: decisionTimeMs,
           messageIds: [],
         },
@@ -745,8 +797,8 @@ function makeCheckpoint(
         )
       : checkpointClock(clock, decisionTimeMs),
     budgets: {
-      formattingCorrectionsRemaining: 3,
-      illegalMoveAttemptsRemaining: { white: 4, black: 4 },
+      formattingCorrectionsRemaining: MAX_FORMAT_CORRECTIONS,
+      illegalMoveAttemptsRemaining: { white: MAX_ILLEGAL_MOVE_ATTEMPTS, black: MAX_ILLEGAL_MOVE_ATTEMPTS },
       manualRetriesBySide: { white: 0, black: 0 },
     },
     selections: { players },
@@ -961,6 +1013,7 @@ class IndexedGameController implements GameController {
   private clockReconciliationRequired = false;
   private pendingClockDiscrepancy: ClockDiscrepancyReading | null = null;
   private activeRequest: ModelTurnRequestV1 | null = null;
+  private restoredUnsettledModelRequest: ControllerFenceV1 | null = null;
   private initialization: Promise<ControllerSnapshotV1> | null = null;
   private operationQueue: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<(snapshot: ControllerSnapshotV1) => void>();
@@ -1242,29 +1295,36 @@ class IndexedGameController implements GameController {
     return operation;
   }
 
-  startGame(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1> {
+  startGame(fence: ControllerFenceV1, modelSelection?: ModelSelection): Promise<ControllerSnapshotV1> {
     const operation = this.operationQueue.then(async () => {
       const checkpoint = this.checkpoint;
       if (checkpoint === null || !sameFence(createFence(checkpoint), fence) || checkpoint.result.kind !== 'pending-adjudication' ||
           checkpoint.result.reason !== 'dead-position' || checkpoint.clocks.activeSide !== null ||
           this.adjudicationStatus(checkpoint).status !== 'setup-ready') return this.snapshot();
-      if (modelSelection.diagnostic !== 'passed-current-session') throw new GameControllerError('invalid-setup', 'A current-session diagnostic must pass before clocks start.');
-      modelConfigurationIdentity(modelSelection);
+      if (modelSelection !== undefined) {
+        if (modelSelection.diagnostic !== 'passed-current-session') throw new GameControllerError('invalid-setup', 'A current-session diagnostic must pass before clocks start.');
+        modelConfigurationIdentity(modelSelection);
+      } else if (checkpoint.selections.players.white.kind !== 'human' || checkpoint.selections.players.black.kind !== 'human') {
+        throw new GameControllerError('invalid-setup', 'A model selection is required to start a game against a model.');
+      }
       const committed = await this.commitMutation<{ kind: 'accepted' }>(fence, (context) => {
         const clock = startClock({ at: context.at, activeSide: fromPositionColor(context.position.sideToMove), timeControl: context.checkpoint.clocks.timeControl });
         const players = { ...context.checkpoint.selections.players };
-        const modelSide = players.white.kind === 'human' ? 'black' : 'white';
-        players[modelSide] = freezeModelSelection(modelSelection);
         const currentSegment = context.checkpoint.history.segments.findIndex((segment) => segment.segmentId === context.checkpoint.segmentId);
         const segments = context.checkpoint.history.segments.map((segment, index) => index === currentSegment
-          ? { ...segment, providerId: modelSelection.providerId, modelRoutingId: modelSelection.modelRoutingId,
+          ? modelSelection === undefined ? segment : { ...segment, providerId: modelSelection.providerId, modelRoutingId: modelSelection.modelRoutingId,
               connectionRevision: modelSelection.configurationRevision }
           : segment);
-        const event = context.createEvent('game-started-after-classification', context.decisionTimeMs, fence, {
+        if (modelSelection !== undefined) {
+          const modelSide = players.white.kind === 'human' ? 'black' : 'white';
+          players[modelSide] = freezeModelSelection(modelSelection);
+        }
+        const details = modelSelection === undefined ? { mode: 'two-human' } : {
           modelSelection: { providerId: modelSelection.providerId, connectionId: modelSelection.connectionId,
             configurationRevision: modelSelection.configurationRevision, modelRoutingId: modelSelection.modelRoutingId,
             protocol: modelSelection.protocol },
-        });
+        };
+        const event = context.createEvent('game-started-after-classification', context.decisionTimeMs, fence, details);
         return { checkpoint: { ...context.checkpoint, selections: { players }, history: { ...context.checkpoint.history, segments }, result: { kind: 'unresolved' },
           clocks: checkpointClock(clock, context.decisionTimeMs),
           archive: { ...context.checkpoint.archive, currentLine: { ...context.checkpoint.archive.currentLine,
@@ -1528,8 +1588,8 @@ class IndexedGameController implements GameController {
         },
         clocks: checkpointClock(clock, context.decisionTimeMs),
         budgets: {
-          formattingCorrectionsRemaining: 3,
-          illegalMoveAttemptsRemaining: { white: 4, black: 4 },
+          formattingCorrectionsRemaining: MAX_FORMAT_CORRECTIONS,
+          illegalMoveAttemptsRemaining: { white: MAX_ILLEGAL_MOVE_ATTEMPTS, black: MAX_ILLEGAL_MOVE_ATTEMPTS },
           manualRetriesBySide: { white: 0, black: 0 },
         },
         selections: { players },
@@ -1625,7 +1685,146 @@ class IndexedGameController implements GameController {
     }
     if (intent.kind === 'begin-model-turn') return this.beginModelTurn(intent.fence);
     if (intent.kind === 'stop-model-turn') return this.stopModelTurn(intent.fence);
+    if (intent.kind === 'model-turn-interrupted') {
+      if (!['failed', 'incomplete', 'aborted'].includes(intent.reason)) {
+        throw new GameControllerError('invalid-intent', 'The model turn interruption reason is unsupported.');
+      }
+      return this.interruptModelTurn(intent.fence, intent.reason);
+    }
+    if (intent.kind === 'model-turn-effect') return this.applyModelTurnEffect(intent);
     return this.acceptMove(intent);
+  }
+
+  private async applyModelTurnEffect(
+    intent: Extract<GameControllerIntentV1, { kind: 'model-turn-effect' }>,
+  ): Promise<GameControllerIntentResultV1> {
+    const { effect, fence } = intent;
+    if (effect === null || typeof effect !== 'object' || !['accepted-move', 'illegal-attempt', 'format-correction', 'model-resignation'].includes(effect.kind)) {
+      throw new GameControllerError('invalid-intent', 'The model turn effect shape is invalid.');
+    }
+    if (effect.kind === 'accepted-move') {
+      return this.acceptMove({ schemaVersion: 1, kind: 'model-move', fence, move: effect.move });
+    }
+    if (effect.budgets === null || typeof effect.budgets !== 'object' || effect.budgets.schemaVersion !== 1 ||
+      !Number.isSafeInteger(effect.budgets.illegalMoveAttempts) || !Number.isSafeInteger(effect.budgets.formatCorrections) ||
+      !Number.isSafeInteger(effect.budgets.manualRetries) ||
+      effect.kind === 'illegal-attempt' && (effect.record === null || typeof effect.record !== 'object' || !validCoordinateMove(effect.record.move) ||
+        effect.record.violation === null || typeof effect.record.violation !== 'object' || typeof effect.record.violation.code !== 'string' ||
+        typeof effect.record.violation.message !== 'string') ||
+      effect.kind === 'format-correction' && (typeof effect.reason !== 'string' || typeof effect.correction !== 'string' ||
+        typeof effect.automatic !== 'boolean' || !Number.isSafeInteger(effect.formatCorrectionsRemaining)) ||
+      effect.kind === 'model-resignation' && typeof effect.statement !== 'string') {
+      throw new GameControllerError('invalid-intent', 'The model turn effect shape is invalid.');
+    }
+    const checkpoint = this.checkpoint;
+    if (checkpoint === null) throw new GameControllerError('setup-required', 'Initialize the game before applying a model turn effect.');
+    const activePosition = this.position;
+    if (activePosition === null) throw new GameControllerError('saved-game-invalid', 'The active position is unavailable.');
+    const side = sideForCheckpoint(checkpoint);
+    if (checkpoint.selections.players[side].kind !== 'model' || this.activeRequest === null ||
+      !sameFence(this.activeRequest.fence, fence)) {
+      return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
+    }
+    validateMoveAttemptsExtension(checkpoint.extensions['move-attempts']);
+    const expectedAttempts = MAX_ILLEGAL_MOVE_ATTEMPTS - checkpoint.budgets.illegalMoveAttemptsRemaining[side];
+    const expectedFormatting = MAX_FORMAT_CORRECTIONS - checkpoint.budgets.formattingCorrectionsRemaining;
+    const expectedRetries = checkpoint.budgets.manualRetriesBySide[side];
+    if (expectedAttempts < 0 || expectedAttempts > MAX_ILLEGAL_MOVE_ATTEMPTS ||
+      expectedFormatting < 0 || expectedFormatting > MAX_FORMAT_CORRECTIONS || !Number.isSafeInteger(expectedRetries)) {
+      throw new GameControllerError('saved-game-invalid', 'The saved model turn recovery counters are invalid.');
+    }
+    const nextAttempts = effect.kind === 'illegal-attempt' ? expectedAttempts + 1 : expectedAttempts;
+    const nextFormatting = effect.kind === 'format-correction' && effect.automatic ? expectedFormatting + 1 : expectedFormatting;
+    if (effect.budgets.illegalMoveAttempts !== nextAttempts || effect.budgets.formatCorrections !== nextFormatting ||
+      effect.budgets.manualRetries !== expectedRetries || effect.budgets.schemaVersion !== 1 ||
+      !Number.isSafeInteger(nextAttempts) || nextAttempts > MAX_ILLEGAL_MOVE_ATTEMPTS ||
+      !Number.isSafeInteger(nextFormatting) || nextFormatting > MAX_FORMAT_CORRECTIONS) {
+      throw new GameControllerError('invalid-intent', 'The classified model turn effect has inconsistent recovery budgets.');
+    }
+    if (effect.kind === 'illegal-attempt') {
+      let isIllegal = false;
+      try {
+        applyCoordinateMove(activePosition, effect.record.move);
+      } catch (error) {
+        if (!(error instanceof IllegalMoveError)) throw error;
+        isIllegal = true;
+      }
+      const violation = isIllegal ? explainIllegalMove(activePosition, effect.record.move) : null;
+      const terminalAttempt = nextAttempts === MAX_ILLEGAL_MOVE_ATTEMPTS;
+      if (!isIllegal || effect.attempt !== nextAttempts || effect.record.attempt !== nextAttempts ||
+        effect.record.modelConfigurationIdentity !== fence.modelConfigurationIdentity ||
+        violation === null || effect.record.violation.code !== violation.code || effect.record.violation.message !== violation.message ||
+        effect.illegalMoveAttemptsRemaining !== MAX_ILLEGAL_MOVE_ATTEMPTS - nextAttempts ||
+        (terminalAttempt ? effect.loss?.winner !== 'human' || effect.loss.reason !== 'illegal-move' : effect.loss !== null)) {
+        throw new GameControllerError('invalid-intent', 'The classified illegal-attempt effect does not match the active turn.');
+      }
+    }
+    if (effect.kind === 'format-correction' &&
+      (effect.formatCorrectionsRemaining !== MAX_FORMAT_CORRECTIONS - nextFormatting ||
+        effect.automatic !== (expectedFormatting < MAX_FORMAT_CORRECTIONS) ||
+        (effect.pause !== (effect.automatic ? null : 'retry-or-switch')))) {
+      throw new GameControllerError('invalid-intent', 'The classified format-correction effect has inconsistent counters.');
+    }
+    const committed = await this.commitMutation<IntentMutationValue>(fence, (context) => {
+      const clockState = context.clockState;
+      if (clockState === null) return this.noClockCandidate(context, fence);
+      const reading = readClockAt(clockState, context.at, this.clockPolicy);
+      if (reading.status === 'expired') return this.expiryCandidate(context, fence, reading);
+      if (reading.status === 'reconciliation-required') return this.clockDiscrepancyCandidate(context, fence, reading);
+      const nextCheckpoint: GameCheckpointV1 = {
+        ...context.checkpoint,
+        revision: context.checkpoint.revision + 1,
+        requestGeneration: context.checkpoint.requestGeneration + 1,
+        analysisGeneration: context.checkpoint.analysisGeneration + 1,
+        budgets: {
+          formattingCorrectionsRemaining: MAX_FORMAT_CORRECTIONS - effect.budgets.formatCorrections,
+          illegalMoveAttemptsRemaining: {
+            ...context.checkpoint.budgets.illegalMoveAttemptsRemaining,
+            [side]: MAX_ILLEGAL_MOVE_ATTEMPTS - effect.budgets.illegalMoveAttempts,
+          },
+          manualRetriesBySide: {
+            ...context.checkpoint.budgets.manualRetriesBySide,
+            [side]: effect.budgets.manualRetries,
+          },
+        },
+        extensions: effect.kind === 'illegal-attempt'
+          ? appendMoveAttempt(context.checkpoint.extensions, side, jsonSafe(effect.record))
+          : context.checkpoint.extensions,
+      };
+      const terminal = effect.kind === 'model-resignation' ||
+        (effect.kind === 'illegal-attempt' && nextAttempts === MAX_ILLEGAL_MOVE_ATTEMPTS);
+      const eventKind = effect.kind === 'illegal-attempt' ? 'illegal-move-rejected' :
+        effect.kind === 'format-correction' ? 'model-format-correction' : 'model-resigned';
+      const details = effect.kind === 'illegal-attempt'
+        ? { attempt: effect.attempt, illegalMoveCode: effect.record.violation.code, rejectedMove: { ...effect.record.move }, modelConfigurationIdentity: effect.record.modelConfigurationIdentity }
+        : effect.kind === 'format-correction'
+          ? { reason: effect.reason, correction: effect.correction, automatic: effect.automatic, formatCorrectionsRemaining: effect.formatCorrectionsRemaining }
+          : { statement: effect.statement };
+      const event = context.createEvent(eventKind, context.decisionTimeMs, fence, details);
+      let result: GameResultV1 = context.checkpoint.result;
+      if (terminal) result = {
+        kind: 'final', winner: side === 'white' ? 'black' : 'white', reason: effect.kind === 'model-resignation' ? 'resignation' : 'illegal-move',
+        eventId: event.eventId, decidedAtMs: context.decisionTimeMs,
+      };
+      const finalCheckpoint = {
+        ...nextCheckpoint,
+        result,
+        clocks: terminal
+          ? pausedClockCheckpoint(clockState.timeControl, reading.remaining, context.decisionTimeMs, clockState.schemaVersion)
+          : context.checkpoint.clocks,
+        archive: { ...nextCheckpoint.archive, currentLine: { ...nextCheckpoint.archive.currentLine,
+          eventIds: [...nextCheckpoint.archive.currentLine.eventIds, event.eventId] } },
+      };
+      return { checkpoint: finalCheckpoint, position: context.position, clockState: terminal ? null : clockState,
+        value: { kind: 'accepted' as const } };
+    });
+    this.activeRequest = null;
+    if (committed.value.kind === 'expired') return { kind: 'expired', snapshot: committed.snapshot };
+    if (committed.value.kind === 'clock-reconciliation-required') {
+      this.clockReconciliationRequired = true;
+      return { kind: 'clock-reconciliation-required', snapshot: committed.snapshot };
+    }
+    return { kind: 'accepted', snapshot: committed.snapshot };
   }
 
   private async reconcileReady(): Promise<ControllerSnapshotV1> {
@@ -1683,6 +1882,13 @@ class IndexedGameController implements GameController {
           eventFence,
           { elapsedChargedMs: recovery.elapsedChargedMs, evidence: recovery.evidence },
         );
+        const interruptionEvent = this.restoredUnsettledModelRequest !== null &&
+          sameFence(this.restoredUnsettledModelRequest, eventFence)
+          ? context.createEvent('model-turn-interrupted', context.decisionTimeMs, eventFence, {
+              interruptedRequestGeneration: eventFence.requestGeneration,
+              reason: 'incomplete',
+            })
+          : null;
         const nextCheckpoint = {
           ...context.checkpoint,
           requestGeneration: context.checkpoint.requestGeneration + 1,
@@ -1690,7 +1896,8 @@ class IndexedGameController implements GameController {
           clocks: checkpointClock(recovery.clock, context.decisionTimeMs),
           archive: { ...context.checkpoint.archive, currentLine: { ...context.checkpoint.archive.currentLine,
             eventIds: [...context.checkpoint.archive.currentLine.eventIds,
-              ...(priorDiscrepancyEvent === null ? [] : [priorDiscrepancyEvent.eventId]), event.eventId] } },
+              ...(priorDiscrepancyEvent === null ? [] : [priorDiscrepancyEvent.eventId]), event.eventId,
+              ...(interruptionEvent === null ? [] : [interruptionEvent.eventId])] } },
         };
         return {
           checkpoint: { ...nextCheckpoint, extensions: rebindPendingCandidates(context.checkpoint, nextCheckpoint) },
@@ -1726,6 +1933,13 @@ class IndexedGameController implements GameController {
         eventFence,
         { evidence: reading.evidence },
       );
+      const interruptionEvent = this.restoredUnsettledModelRequest !== null &&
+        sameFence(this.restoredUnsettledModelRequest, eventFence)
+        ? context.createEvent('model-turn-interrupted', context.decisionTimeMs, eventFence, {
+            interruptedRequestGeneration: eventFence.requestGeneration,
+            reason: 'incomplete',
+          })
+        : null;
       const nextCheckpoint = {
         ...context.checkpoint,
         requestGeneration: context.checkpoint.requestGeneration + 1,
@@ -1733,7 +1947,8 @@ class IndexedGameController implements GameController {
         clocks: checkpointClock(clockState, context.decisionTimeMs),
         archive: { ...context.checkpoint.archive, currentLine: { ...context.checkpoint.archive.currentLine,
           eventIds: [...context.checkpoint.archive.currentLine.eventIds,
-            ...(priorDiscrepancyEvent === null ? [] : [priorDiscrepancyEvent.eventId]), event.eventId] } },
+            ...(priorDiscrepancyEvent === null ? [] : [priorDiscrepancyEvent.eventId]), event.eventId,
+            ...(interruptionEvent === null ? [] : [interruptionEvent.eventId])] } },
       };
       return {
         checkpoint: { ...nextCheckpoint, extensions: rebindPendingCandidates(context.checkpoint, nextCheckpoint) },
@@ -1743,6 +1958,7 @@ class IndexedGameController implements GameController {
       };
     });
     this.activeRequest = null;
+    this.restoredUnsettledModelRequest = null;
     return this.snapshot();
   }
 
@@ -1905,6 +2121,71 @@ class IndexedGameController implements GameController {
     return { kind: 'accepted', snapshot: committed.snapshot };
   }
 
+  private async interruptModelTurn(
+    fence: ControllerFenceV1,
+    reason: ModelTurnInterruptionReasonV1,
+  ): Promise<GameControllerIntentResultV1> {
+    const checkpoint = this.checkpoint;
+    if (checkpoint === null) {
+      throw new GameControllerError('setup-required', 'Initialize the game before settling a model turn.');
+    }
+    const side = sideForCheckpoint(checkpoint);
+    if (
+      checkpoint.selections.players[side].kind !== 'model' ||
+      this.activeRequest === null ||
+      !sameFence(this.activeRequest.fence, fence)
+    ) {
+      return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
+    }
+    const committed = await this.commitMutation<IntentMutationValue>(fence, (context) => {
+      const clockState = context.clockState;
+      if (clockState === null) return this.noClockCandidate(context, fence);
+      const reading = readClockAt(clockState, context.at, this.clockPolicy);
+      if (reading.status === 'expired') return this.expiryCandidate(context, fence, reading);
+      if (reading.status === 'reconciliation-required') {
+        return this.clockDiscrepancyCandidate(context, fence, reading);
+      }
+      const nextCheckpoint = {
+        ...context.checkpoint,
+        revision: context.checkpoint.revision + 1,
+        requestGeneration: context.checkpoint.requestGeneration + 1,
+        analysisGeneration: context.checkpoint.analysisGeneration + 1,
+      };
+      const event = context.createEvent(
+        'model-turn-interrupted',
+        context.decisionTimeMs,
+        fence,
+        { interruptedRequestGeneration: fence.requestGeneration, reason },
+      );
+      return {
+        checkpoint: {
+          ...nextCheckpoint,
+          archive: {
+            ...nextCheckpoint.archive,
+            currentLine: {
+              ...nextCheckpoint.archive.currentLine,
+              eventIds: [...nextCheckpoint.archive.currentLine.eventIds, event.eventId],
+            },
+          },
+        },
+        position: context.position,
+        clockState,
+        value: { kind: 'accepted' },
+      };
+    });
+    // Only clear the in-memory request after the storage transaction commits.
+    this.activeRequest = null;
+    if (committed.value.kind === 'clock-reconciliation-required') {
+      this.clockReconciliationRequired = true;
+      return { kind: 'clock-reconciliation-required', snapshot: committed.snapshot };
+    }
+    if (committed.value.kind === 'expired') return { kind: 'expired', snapshot: committed.snapshot };
+    if (committed.value.kind === 'rejected') {
+      return { kind: 'rejected', reason: committed.value.reason, snapshot: committed.snapshot };
+    }
+    return { kind: 'accepted', snapshot: committed.snapshot };
+  }
+
   private async acceptMove(event: ControllerMoveEventV1): Promise<GameControllerIntentResultV1> {
     const checkpoint = this.checkpoint;
     const position = this.position;
@@ -1998,6 +2279,18 @@ class IndexedGameController implements GameController {
         positionRevision: context.checkpoint.positionRevision + 1,
         requestGeneration: context.checkpoint.requestGeneration + 1,
         analysisGeneration: context.checkpoint.analysisGeneration + 1,
+        budgets: {
+          ...context.checkpoint.budgets,
+          formattingCorrectionsRemaining: MAX_FORMAT_CORRECTIONS,
+          illegalMoveAttemptsRemaining: {
+            ...context.checkpoint.budgets.illegalMoveAttemptsRemaining,
+            [fromPositionColor(transition.position.sideToMove)]: MAX_ILLEGAL_MOVE_ATTEMPTS,
+          },
+          manualRetriesBySide: {
+            ...context.checkpoint.budgets.manualRetriesBySide,
+            [fromPositionColor(transition.position.sideToMove)]: 0,
+          },
+        },
       };
       const moveEvent = context.createEvent(
         event.kind === 'human-move' ? 'human-move-accepted' : 'model-move-accepted',
@@ -2639,6 +2932,17 @@ class IndexedGameController implements GameController {
     this.position = position;
     this.clockState = createClockState(checkpoint);
     this.restored = this.clockState !== null;
+    const currentFence = createFence(recoveredCheckpoint);
+    const currentSide = sideForCheckpoint(recoveredCheckpoint);
+    const hasUnsettledStartedRequest = recoveredCheckpoint.result.kind === 'unresolved' &&
+      recoveredCheckpoint.selections.players[currentSide].kind === 'model' &&
+      events.some((event) => {
+        if (event.kind !== 'model-turn-started' || event.segmentId !== recoveredCheckpoint.segmentId) return false;
+        const payload = event.payload as { fence?: ControllerFenceV1; details?: { requestGeneration?: number } } | null;
+        return payload !== null && typeof payload === 'object' && payload.fence !== undefined &&
+          sameFence(payload.fence, currentFence) && payload.details?.requestGeneration === currentFence.requestGeneration;
+      });
+    this.restoredUnsettledModelRequest = this.restored && hasUnsettledStartedRequest ? currentFence : null;
     this.pendingClockDiscrepancy = null;
     const latestClockResolution = events
       .filter((event) =>
@@ -2723,6 +3027,15 @@ interface RegisteredController {
 // Use a registered wrapper so accidental factory calls cannot create a second writer.
 export function createRestartSetup(source: ControllerSnapshotV1): GameControllerSetupV1 {
   const checkpoint = source.checkpoint;
+  if (checkpoint.selections.players.white.kind === 'human' && checkpoint.selections.players.black.kind === 'human') {
+    return {
+      humanSide: 'white',
+      namespace: structuredClone(checkpoint.namespace),
+      ownershipEpoch: checkpoint.ownershipEpoch,
+      startingFen: checkpoint.rules.startingFen,
+      timeControl: { ...checkpoint.clocks.timeControl },
+    };
+  }
   const modelSelection = checkpoint.selections.players.white.kind === 'model'
     ? checkpoint.selections.players.white
     : checkpoint.selections.players.black;

@@ -108,6 +108,12 @@ export function encodeResponsesRequest(
   if (config.topP !== undefined) {
     body.top_p = config.topP;
   }
+  if (config.cache?.promptCacheKey !== undefined) {
+    body.prompt_cache_key = config.cache.promptCacheKey;
+  }
+  if (config.cache?.promptCacheRetention !== undefined) {
+    body.prompt_cache_retention = config.cache.promptCacheRetention;
+  }
 
   return {
     body,

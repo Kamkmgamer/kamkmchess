@@ -536,7 +536,7 @@ describe('guest lifecycle restart and rematch', () => {
 
       expect(restart.humanSide).toBe('white');
       expect(rematch.humanSide).toBe('black');
-      expect(rematch.modelSelection.modelRoutingId).toBe(restart.modelSelection.modelRoutingId);
+      expect(rematch.modelSelection!.modelRoutingId).toBe(restart.modelSelection!.modelRoutingId);
       expect(rematch.startingFen).toBe(restart.startingFen);
       expect(rematch.timeControl).toEqual(restart.timeControl);
 

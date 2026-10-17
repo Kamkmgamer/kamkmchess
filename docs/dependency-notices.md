@@ -7,6 +7,7 @@ Foundation inventory for [Establish the React/TypeScript application and build c
 | Package | Locked version | License | Source / copyright |
 | --- | --- | --- | --- |
 | chess.js | 1.4.0 | BSD-2-Clause | Jeff Hlywa. [chess.js source](https://github.com/jhlywa/chess.js). |
+| cm-chessboard | 8.15.3 | MIT | Stefan Haack. [cm-chessboard source](https://github.com/shaack/cm-chessboard). |
 | react | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | react-dom | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | scheduler | 0.28.0 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
@@ -40,8 +41,10 @@ TypeScript 6.0.3 stays within typescript-eslint 8.71.2's declared `>=4.8.4 <6.1.
 
 ## Artwork and later dependencies
 
-This build contains no piece sprites, icons, fonts or third-party artwork. It uses system fonts and a text-only placeholder. No source was copied from the disposable interface prototype.
+This build uses the standard piece sprite shipped by cm-chessboard and uses system fonts. The disposable prototype's application code is not included; the extracted theme values are identified below.
 
-The approved chess.js **1.4.0** runtime dependency is installed and listed above. cm-chessboard **8.15.3** remains a research baseline and is not installed yet. The board work must pin and review its actual version against [the dependency research](../research/chess-dependencies.md), preserve required dependency notices, and add the standard art's actual author/source, CC BY-SA 3.0 license and modification notices before distribution. The absence of the board package and artwork here does not replace those choices.
+The approved chess.js **1.4.0** and cm-chessboard **8.15.3** runtime dependencies are pinned. The board imports cm-chessboard's assets/pieces/standard.svg; it does not use the separately licensed NonCommercial Staunty sprite. The standard sprite identifies the Wikimedia Commons standard chess pieces, credits Cburnett, and carries the CC BY-SA 3.0 notice in the SVG. The asset is distributed without modification. The generated THIRD_PARTY_NOTICES.txt repeats this attribution and license.
+
+The selectable T3 Code palette values in src/ui/t3-palettes.ts were extracted from packages/shared/src/themePalettes.ts at commit 9503155da67add4fbd7fbc51c99ec19a0c8c4a2c, SHA-256 82385050b8b691ff280efc0e93ea9dd8a4bbfd64a4c50cf8536b5c15d1e74479. The prototype bundle's original source hash was verified against the owner-attached KHA-12 bundle (1631a48a909168bbc63bbb84164e5da2c0912f8fcb1c3f78faea87a797103ddf). The T3 Code MIT notice is retained at [T3-Code-MIT.txt](licenses/T3-Code-MIT.txt) and included in generated distribution notices. Palette data and board colors are the only extracted presentation inputs; prototype application code is not included.
 
 Exclude the optional NonCommercial piece set, research-only GPL replay packages and the unsafe stock solver from production. Experiment lockfiles and bundles are not production dependencies or distribution assets. Later artwork licensing remains separate from the original-code MIT license. Complete `OPS-05` requires the final game distribution and asset review, not just this foundation inventory.

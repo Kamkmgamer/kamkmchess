@@ -169,6 +169,9 @@ importers:
       chess.js:
         specifier: 1.4.0
         version: 1.4.0
+      cm-chessboard:
+        specifier: 8.15.3
+        version: 8.15.3
       react:
         specifier: 19.3.1
         version: 19.3.1
@@ -642,6 +645,9 @@ packages:
 
   chess.js@1.4.0:
     resolution: {integrity: sha512-BBJgrrtKQOzFLonR0l+k64A98NLemPwNsCskwb+29bRwobUa4iTm51E1kwGPbWXAcfdDa18nad6vpPPKPWarqw==}
+
+  cm-chessboard@8.15.3:
+    resolution: {integrity: sha512-PNoRvdpaN3kRW+ulpywglGYf/B9kp3bwUVQTE33Eujw6kcEa0XT4F+xpvHT7qTcsjaTh/u2I1fmOiHtRrdAadg==}
 
   convert-source-map@2.0.0:
     resolution: {integrity: sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==}
@@ -1627,6 +1633,8 @@ snapshots:
   chai@6.3.0: {}
 
   chess.js@1.4.0: {}
+
+  cm-chessboard@8.15.3: {}
 
   convert-source-map@2.0.0: {}
 

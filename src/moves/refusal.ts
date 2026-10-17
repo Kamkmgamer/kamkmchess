@@ -97,10 +97,12 @@ export function detectExplicitRefusal(answerText: string): RefusalDetection {
   if (QUOTE_PREFIX.test(rawLine)) return { kind: 'not-refusal', reason: 'quoted' };
   const statement = stripDecoration(rawLine);
   if (statement === '') return { kind: 'not-refusal', reason: 'not-final' };
-  if (matchesAny(RESIGNATION_PATTERNS, statement) || matchesAny(REFUSAL_PATTERNS, statement)) {
-    if (matchesAny(HISTORICAL_PATTERNS, statement)) return { kind: 'not-refusal', reason: 'historical' };
-    if (matchesAny(ATTRIBUTED_PATTERNS, statement)) return { kind: 'not-refusal', reason: 'attributed' };
-    if (matchesAny(HYPOTHETICAL_PATTERNS, statement)) return { kind: 'not-refusal', reason: 'hypothetical' };
+  // These two labels identify the model's final answer, not a historical answer.
+  const declaration = statement.replace(/^final\s+(?:answer|decision)\s*:\s*/i, '');
+  if (matchesAny(RESIGNATION_PATTERNS, declaration) || matchesAny(REFUSAL_PATTERNS, declaration)) {
+    if (matchesAny(HISTORICAL_PATTERNS, declaration)) return { kind: 'not-refusal', reason: 'historical' };
+    if (matchesAny(ATTRIBUTED_PATTERNS, declaration)) return { kind: 'not-refusal', reason: 'attributed' };
+    if (matchesAny(HYPOTHETICAL_PATTERNS, declaration)) return { kind: 'not-refusal', reason: 'hypothetical' };
     return { kind: 'refusal', statement };
   }
   return { kind: 'not-refusal', reason: 'unrecognized' };

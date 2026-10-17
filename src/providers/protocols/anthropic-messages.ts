@@ -85,6 +85,33 @@ export function encodeAnthropicMessagesRequest(
     stream: true,
     max_tokens: config.maxOutputTokens,
   };
+  const prefixTokenCount = history.cachePrefixTokenCount;
+  const minimumCacheTokens = config.cache?.anthropicCacheMinimumTokens;
+  const prefixRecordCount = history.cachePrefixRecordCount;
+  if (
+    config.cache?.anthropicEphemeral === true &&
+    typeof prefixTokenCount === 'number' &&
+    typeof minimumCacheTokens === 'number' &&
+    typeof prefixRecordCount === 'number' &&
+    Number.isSafeInteger(prefixTokenCount) &&
+    Number.isSafeInteger(minimumCacheTokens) &&
+    Number.isSafeInteger(prefixRecordCount) &&
+    minimumCacheTokens > 0 &&
+    prefixTokenCount >= minimumCacheTokens &&
+    prefixRecordCount > 0 &&
+    prefixRecordCount <= history.records.length
+  ) {
+    const cacheControl = { type: 'ephemeral' };
+    const prefixEnd = prefixRecordCount - 1;
+    if (prefixEnd >= 0) {
+      body.messages = history.records.map((record, index) => ({
+        role: record.role,
+        content: index === prefixEnd
+          ? [{ type: 'text', text: record.text, cache_control: cacheControl }]
+          : record.text,
+      }));
+    }
+  }
   if (config.temperature !== undefined) {
     body.temperature = config.temperature;
   }
