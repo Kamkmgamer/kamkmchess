@@ -1,5 +1,6 @@
 import {
   calculateMoveClockCandidate,
+  calculateUndoClockCandidate,
   DEFAULT_TIME_CONTROL,
   readClockAt,
   recoverClockAfterAbsence,
@@ -30,6 +31,7 @@ import type { ProofQuery, ProofSearchPassResult } from '../proofs/index.js';
 import type {
   AppliedMoveV1,
   ArchiveEventV1,
+  DiscardedLineReferenceV1,
   GameCheckpointV1,
   GameNamespaceV1,
   GameResultV1,
@@ -145,6 +147,11 @@ export interface GameController {
   stopAdjudication(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
   acceptAdjudicationResult(input: AdjudicationResultInputV1): Promise<ControllerSnapshotV1>;
   startGame(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1>;
+  undo(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
+  undoMove(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
+  takeback(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
+  startPractice(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1>;
+  beginPractice(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1>;
 }
 
 export interface AdjudicationWorkV1 {
@@ -1213,6 +1220,291 @@ class IndexedGameController implements GameController {
     return operation;
   }
 
+  private async undoImplementation(fence: ControllerFenceV1): Promise<ControllerSnapshotV1> {
+    if (this.restored) {
+      await this.reconcileReady();
+      return this.snapshot();
+    }
+    const checkpoint = this.checkpoint;
+    if (checkpoint?.result.kind === 'pending-adjudication' && checkpoint.result.activeClockDeadlineMs !== null &&
+        this.snapshot().clockReading?.status === 'expired') {
+      await this.reconcileReady();
+    }
+    const current = this.checkpoint;
+    if (current === null || !sameFence(createFence(current), fence)) return this.snapshot();
+    if (current.result.kind !== 'unresolved') return this.snapshot();
+    const baselineExtension = current.extensions['undo-baseline'];
+    const baseline = (baselineExtension as { data?: { checkpoint?: GameCheckpointV1 } } | undefined)?.data?.checkpoint;
+    if (baseline === undefined) return this.snapshot();
+
+    const humanSide: ClockSide = current.selections.players.white.kind === 'human' ? 'white' : 'black';
+    const removedCount = current.rules.moves.length - baseline.rules.moves.length;
+    if (removedCount <= 0) return this.snapshot();
+    let whiteRemoved = 0;
+    let blackRemoved = 0;
+    let removedPlySide: ClockSide = baseline.rules.sideToMove === 'white' ? 'white' : 'black';
+    for (let index = baseline.rules.moves.length; index < current.rules.moves.length; index += 1) {
+      if (removedPlySide === 'white') whiteRemoved += 1;
+      else blackRemoved += 1;
+      removedPlySide = removedPlySide === 'white' ? 'black' : 'white';
+    }
+    const incrementMs = current.clocks.timeControl.incrementMs;
+    const credits = { whiteMs: whiteRemoved * incrementMs, blackMs: blackRemoved * incrementMs };
+
+    const clockState = this.clockState;
+    if (clockState === null) return this.snapshot();
+
+    let committed: { snapshot: ControllerSnapshotV1; value: IntentMutationValue };
+    let rejectedCreditRemoval = false;
+    try {
+      committed = await this.commitMutation<IntentMutationValue>(fence, (context) => {
+        const contextClockState = context.clockState;
+        if (contextClockState === null) {
+          throw new GameControllerError('invalid-intent', 'Undo requires a running clock.');
+        }
+        const candidate = calculateUndoClockCandidate(
+          contextClockState,
+          { resumedSide: humanSide, incrementCreditsToRemove: credits },
+          context.at,
+          this.clockPolicy,
+        );
+        if (candidate.status === 'expired') {
+          return this.expiryCandidate(context, fence, candidate.reading);
+        }
+        if (candidate.status === 'reconciliation-required') {
+          return this.clockDiscrepancyCandidate(context, fence, candidate.reading);
+        }
+        if (candidate.status === 'rejected-credit-removal') {
+          rejectedCreditRemoval = true;
+          throw new GameControllerError('invalid-intent', 'Undo would leave a clock bank nonpositive.');
+        }
+        if (candidate.status !== 'candidate') {
+          throw new GameControllerError('invalid-intent', 'Undo clock candidate is unavailable.');
+        }
+
+        const restoredBase = structuredClone(baseline);
+      const oldLineId = context.checkpoint.archive.currentLine.lineId;
+      const newLineId = this.idFactory();
+      if (
+        typeof newLineId !== 'string' ||
+        newLineId.length === 0 ||
+        newLineId === oldLineId ||
+        context.checkpoint.archive.discardedLines.some((line) => line.lineId === newLineId)
+      ) {
+        throw new GameControllerError('invalid-configuration', 'The identifier source must return distinct nonempty IDs.');
+      }
+      const discardedLine: DiscardedLineReferenceV1 = {
+        lineId: oldLineId,
+        eventIds: [...context.checkpoint.archive.currentLine.eventIds],
+        discardedAtRevision: context.checkpoint.revision + 1,
+        reason: 'undo',
+      };
+      const event = context.createEvent('undo-accepted', context.decisionTimeMs, fence, {
+        removedMoveCount: removedCount,
+      });
+      restoredBase.archive.currentLine = {
+        ...restoredBase.archive.currentLine,
+        lineId: newLineId,
+      };
+      const baselineMessageIds = new Set(restoredBase.history.messages.map((message) => message.messageId));
+      const restoredSegmentIds = new Set(restoredBase.history.segments.map((segment) => segment.segmentId));
+      const mergedSegments = [
+        ...restoredBase.history.segments,
+        ...context.checkpoint.history.segments.filter((segment) => !restoredSegmentIds.has(segment.segmentId)),
+      ];
+      const mergedMessages = context.checkpoint.history.messages.map((message) => {
+        if (baselineMessageIds.has(message.messageId)) {
+          const baseMessage = restoredBase.history.messages.find((entry) => entry.messageId === message.messageId)!;
+          return {
+            ...baseMessage,
+            lineId: baseMessage.lineId === oldLineId ? newLineId : baseMessage.lineId,
+            disposition: baseMessage.lineId === oldLineId ? ('retained' as const) : baseMessage.disposition,
+          };
+        }
+        return message.lineId === oldLineId
+          ? { ...message, lineId: oldLineId, disposition: 'discarded' as const }
+          : { ...message };
+      });
+      for (const baseMessage of restoredBase.history.messages) {
+        if (!mergedMessages.some((message) => message.messageId === baseMessage.messageId)) {
+          mergedMessages.push(
+            baseMessage.lineId === oldLineId
+              ? { ...baseMessage, lineId: newLineId, disposition: 'retained' as const }
+              : { ...baseMessage },
+          );
+        }
+      }
+      const restoredCheckpoint: GameCheckpointV1 = {
+        ...restoredBase,
+        revision: context.checkpoint.revision + 1,
+        updatedAtMs: context.decisionTimeMs,
+        positionRevision: context.checkpoint.positionRevision + 1,
+        requestGeneration: context.checkpoint.requestGeneration + 1,
+        analysisGeneration: context.checkpoint.analysisGeneration + 1,
+        clocks: checkpointClock(candidate.clock, context.decisionTimeMs),
+        history: {
+          ...restoredBase.history,
+          currentSegmentId: restoredBase.history.currentSegmentId,
+          segments: mergedSegments,
+          messages: mergedMessages,
+        },
+        archive: {
+          ...restoredBase.archive,
+          discardedLines: [...restoredBase.archive.discardedLines, discardedLine],
+          currentLine: {
+            ...restoredBase.archive.currentLine,
+            lineId: newLineId,
+            eventIds: [...restoredBase.archive.currentLine.eventIds, event.eventId],
+          },
+        },
+        extensions: restoredBase.extensions,
+      };
+      return {
+        checkpoint: restoredCheckpoint,
+        position: parsePosition(restoredBase.rules.currentFen),
+        clockState: candidate.clock,
+        value: { kind: 'accepted' },
+      };
+    });
+      if (committed.value.kind === 'clock-reconciliation-required') {
+        this.clockReconciliationRequired = true;
+      }
+      if (committed.value.kind === 'accepted') {
+        this.activeRequest = null;
+      }
+      return committed.snapshot;
+    } catch (error) {
+      if (rejectedCreditRemoval) return this.snapshot();
+      throw error;
+    }
+  }
+
+  undo(fence: ControllerFenceV1): Promise<ControllerSnapshotV1> {
+    return this.undoImplementation(fence);
+  }
+  undoMove(fence: ControllerFenceV1): Promise<ControllerSnapshotV1> {
+    return this.undoImplementation(fence);
+  }
+  takeback(fence: ControllerFenceV1): Promise<ControllerSnapshotV1> {
+    return this.undoImplementation(fence);
+  }
+
+  private async startPracticeImplementation(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1> {
+    const checkpoint = this.checkpoint;
+    if (checkpoint?.result.kind === 'pending-adjudication' && checkpoint.result.activeClockDeadlineMs !== null &&
+        this.snapshot().clockReading?.status === 'expired') {
+      await this.reconcileReady();
+    }
+    const current = this.checkpoint;
+    if (current === null || !sameFence(createFence(current), fence)) return this.snapshot();
+    if (current.result.kind !== 'final') return this.snapshot();
+    const position = this.position;
+    if (position === null) return this.snapshot();
+    const facts = observeEndingFacts(position, restoreRepetitionLedger({
+      version: current.rules.repetitionLedger.version,
+      entries: current.rules.repetitionLedger.positions.map((entry) => ({ ...entry })),
+    }));
+    if (!facts.hasLegalMoves) return this.snapshot();
+    const humanSide: ClockSide = current.selections.players.white.kind === 'human' ? 'white' : 'black';
+    const approvedPracticeReasons = new Set(['resignation', 'illegal-move', 'timeout']);
+    if (!approvedPracticeReasons.has(current.result.reason)) return this.snapshot();
+    if (current.result.winner !== humanSide) return this.snapshot();
+    if (modelSelection.diagnostic !== 'passed-current-session') {
+      throw new GameControllerError('invalid-setup', 'A current-session diagnostic must pass before clocks start.');
+    }
+    modelConfigurationIdentity(modelSelection);
+
+    const newSegmentId = this.idFactory();
+    const newLineId = this.idFactory();
+    if (typeof newSegmentId !== 'string' || newSegmentId.length === 0 ||
+        typeof newLineId !== 'string' || newLineId.length === 0 || newSegmentId === newLineId ||
+        newLineId === current.archive.currentLine.lineId ||
+        current.archive.discardedLines.some((line) => line.lineId === newLineId)) {
+      throw new GameControllerError('invalid-configuration', 'The identifier source must return distinct nonempty IDs.');
+    }
+
+    const originalResult = current.result as Extract<GameResultV1, { kind: 'final' }>;
+    const timeControl = current.clocks.timeControl;
+    const clock = startClock({ at: this.timeSource.sample(), activeSide: fromPositionColor(position.sideToMove), timeControl });
+
+    const committed = await this.commitMutation<{ kind: 'accepted' }>(fence, (context) => {
+      const players = { ...context.checkpoint.selections.players };
+      const modelSide = players.white.kind === 'human' ? 'black' : 'white';
+      players[modelSide] = freezeModelSelection(modelSelection);
+      const segments = [...context.checkpoint.history.segments, {
+        segmentId: newSegmentId,
+        providerId: modelSelection.providerId,
+        modelRoutingId: modelSelection.modelRoutingId,
+        connectionRevision: modelSelection.configurationRevision,
+        startedAtMs: context.decisionTimeMs,
+        messageIds: [],
+      }];
+      const event = context.createEvent('practice-started', context.decisionTimeMs, fence, {
+        sourceResult: originalResult,
+      });
+      const nextCheckpoint: GameCheckpointV1 = {
+        ...context.checkpoint,
+        revision: context.checkpoint.revision + 1,
+        segmentId: newSegmentId,
+        positionRevision: context.checkpoint.positionRevision,
+        requestGeneration: context.checkpoint.requestGeneration + 1,
+        analysisGeneration: context.checkpoint.analysisGeneration + 1,
+        updatedAtMs: context.decisionTimeMs,
+        rules: { ...context.checkpoint.rules },
+        history: {
+          currentSegmentId: newSegmentId,
+          segments,
+          messages: context.checkpoint.history.messages.map((message) =>
+            message.lineId === context.checkpoint.archive.currentLine.lineId
+              ? { ...message, disposition: 'discarded' as const }
+              : { ...message },
+          ),
+        },
+        clocks: checkpointClock(clock, context.decisionTimeMs),
+        budgets: {
+          formattingCorrectionsRemaining: 3,
+          illegalMoveAttemptsRemaining: { white: 4, black: 4 },
+          manualRetriesBySide: { white: 0, black: 0 },
+        },
+        selections: { players },
+        archive: {
+          ...context.checkpoint.archive,
+          currentLine: { lineId: newLineId, eventIds: [event.eventId] },
+          discardedLines: [...context.checkpoint.archive.discardedLines, {
+            lineId: context.checkpoint.archive.currentLine.lineId,
+            eventIds: [...context.checkpoint.archive.currentLine.eventIds],
+            discardedAtRevision: context.checkpoint.revision + 1,
+            reason: 'branch',
+          }],
+        },
+        result: { kind: 'unresolved' },
+        practice: {
+          mode: 'practice',
+          scored: false,
+          sourceGameId: context.checkpoint.gameId,
+          sourcePositionFen: context.checkpoint.rules.currentFen,
+          originalResult,
+        },
+        extensions: context.checkpoint.extensions,
+      };
+      return {
+        checkpoint: nextCheckpoint,
+        position: context.position,
+        clockState: clock,
+        value: { kind: 'accepted' },
+      };
+    });
+    this.activeRequest = null;
+    return committed.snapshot;
+  }
+
+  startPractice(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1> {
+    return this.startPracticeImplementation(fence, modelSelection);
+  }
+  beginPractice(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1> {
+    return this.startPracticeImplementation(fence, modelSelection);
+  }
+
   private rememberClockDiscrepancy(reading: ClockDiscrepancyReading): void {
     if (!this.clockReconciliationRequired) {
       this.pendingClockDiscrepancy = structuredClone(reading);
@@ -1730,8 +2022,20 @@ class IndexedGameController implements GameController {
             eventIds: [...nextCheckpointWithMove.archive.currentLine.eventIds, candidateEvent.eventId] } },
         };
       }
+      const checkpointWithUndoBaseline = event.kind === 'human-move'
+        ? {
+            ...finalCheckpoint,
+            extensions: {
+              ...finalCheckpoint.extensions,
+              'undo-baseline': {
+                version: 1,
+                data: { checkpoint: context.checkpoint } as never,
+              },
+            },
+          }
+        : finalCheckpoint;
       return {
-        checkpoint: finalCheckpoint,
+        checkpoint: checkpointWithUndoBaseline,
         position: transition.position,
         clockState: finalResult === null ? clockCandidate.clock : null,
         value: { kind: 'accepted' as const },
@@ -2344,4 +2648,30 @@ interface RegisteredController {
 }
 
 // Use a registered wrapper so accidental factory calls cannot create a second writer.
+export function createRestartSetup(source: ControllerSnapshotV1): GameControllerSetupV1 {
+  const checkpoint = source.checkpoint;
+  const modelSelection = checkpoint.selections.players.white.kind === 'model'
+    ? checkpoint.selections.players.white
+    : checkpoint.selections.players.black;
+  return {
+    humanSide: checkpoint.selections.players.white.kind === 'human' ? 'white' : 'black',
+    modelSelection: structuredClone(modelSelection) as ModelSelection,
+    namespace: structuredClone(checkpoint.namespace),
+    ownershipEpoch: checkpoint.ownershipEpoch,
+    startingFen: checkpoint.rules.startingFen,
+    timeControl: { ...checkpoint.clocks.timeControl },
+  };
+}
+
+export function createRematchSetup(source: ControllerSnapshotV1): GameControllerSetupV1 {
+  const setup = createRestartSetup(source);
+  setup.humanSide = setup.humanSide === 'white' ? 'black' : 'white';
+  return setup;
+}
+
+export const prepareRestart = createRestartSetup;
+export const prepareRematch = createRematchSetup;
+export const createRestartGameSetup = createRestartSetup;
+export const createRematchGameSetup = createRematchSetup;
+
 const registry = new Map<string, RegisteredController>();
