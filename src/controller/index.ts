@@ -73,7 +73,8 @@ export interface GameControllerOptions {
 
 export interface GameControllerSetupV1 {
   humanSide: HumanSideChoice;
-  modelSelection: ModelSelection;
+  /** Omit for a local game with two human players. */
+  modelSelection?: ModelSelection;
   namespace: GameNamespaceV1;
   ownershipEpoch: number;
   startingFen?: string;
@@ -148,7 +149,7 @@ export interface GameController {
   continueAdjudication(fence: ControllerFenceV1): Promise<AdjudicationWorkV1 | null>;
   stopAdjudication(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
   acceptAdjudicationResult(input: AdjudicationResultInputV1): Promise<ControllerSnapshotV1>;
-  startGame(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1>;
+  startGame(fence: ControllerFenceV1, modelSelection?: ModelSelection): Promise<ControllerSnapshotV1>;
   undo(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
   undoMove(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
   takeback(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
@@ -247,7 +248,7 @@ const defaultIdFactory = (): string => globalThis.crypto.randomUUID();
 const defaultRandomSide = (): ClockSide => (Math.random() < 0.5 ? 'white' : 'black');
 interface PreparedSetup {
   readonly humanSide: ClockSide;
-  readonly modelSelection: ModelSelection;
+  readonly modelSelection: ModelSelection | null;
   readonly namespace: GameNamespaceV1;
   readonly ownershipEpoch: number;
   readonly startingFen: string;
@@ -638,7 +639,7 @@ function prepareSetup(
   idFactory: () => string,
   randomSide: () => ClockSide,
 ): PreparedSetup {
-  modelConfigurationIdentity(setup.modelSelection);
+  if (setup.modelSelection !== undefined) modelConfigurationIdentity(setup.modelSelection);
   if (!Number.isSafeInteger(setup.ownershipEpoch) || setup.ownershipEpoch < 0) {
     throw new GameControllerError('invalid-setup', 'The ownership epoch must be a nonnegative safe integer.');
   }
@@ -670,7 +671,7 @@ function prepareSetup(
   }
   return {
     humanSide,
-    modelSelection: freezeModelSelection(setup.modelSelection),
+    modelSelection: setup.modelSelection === undefined ? null : freezeModelSelection(setup.modelSelection),
     namespace,
     ownershipEpoch: setup.ownershipEpoch,
     startingFen: setup.startingFen ?? INITIAL_POSITION,
@@ -691,8 +692,8 @@ function makeCheckpoint(
 ): GameCheckpointV1 {
   const ledger = createRepetitionLedger(prepared.position);
   const players: Record<ClockSide, PlayerSelectionV1> = {
-    white: prepared.humanSide === 'white' ? { kind: 'human' } : prepared.modelSelection,
-    black: prepared.humanSide === 'black' ? { kind: 'human' } : prepared.modelSelection,
+    white: prepared.modelSelection === null || prepared.humanSide === 'white' ? { kind: 'human' } : prepared.modelSelection,
+    black: prepared.modelSelection === null || prepared.humanSide === 'black' ? { kind: 'human' } : prepared.modelSelection,
   };
   return {
     schemaVersion: 1,
@@ -725,9 +726,9 @@ function makeCheckpoint(
       segments: [
         {
           segmentId: prepared.segmentId,
-          providerId: prepared.modelSelection.providerId,
-          modelRoutingId: prepared.modelSelection.modelRoutingId,
-          connectionRevision: prepared.modelSelection.configurationRevision,
+          providerId: prepared.modelSelection?.providerId ?? null,
+          modelRoutingId: prepared.modelSelection?.modelRoutingId ?? null,
+          connectionRevision: prepared.modelSelection?.configurationRevision ?? null,
           startedAtMs: decisionTimeMs,
           messageIds: [],
         },
@@ -1242,29 +1243,36 @@ class IndexedGameController implements GameController {
     return operation;
   }
 
-  startGame(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1> {
+  startGame(fence: ControllerFenceV1, modelSelection?: ModelSelection): Promise<ControllerSnapshotV1> {
     const operation = this.operationQueue.then(async () => {
       const checkpoint = this.checkpoint;
       if (checkpoint === null || !sameFence(createFence(checkpoint), fence) || checkpoint.result.kind !== 'pending-adjudication' ||
           checkpoint.result.reason !== 'dead-position' || checkpoint.clocks.activeSide !== null ||
           this.adjudicationStatus(checkpoint).status !== 'setup-ready') return this.snapshot();
-      if (modelSelection.diagnostic !== 'passed-current-session') throw new GameControllerError('invalid-setup', 'A current-session diagnostic must pass before clocks start.');
-      modelConfigurationIdentity(modelSelection);
+      if (modelSelection !== undefined) {
+        if (modelSelection.diagnostic !== 'passed-current-session') throw new GameControllerError('invalid-setup', 'A current-session diagnostic must pass before clocks start.');
+        modelConfigurationIdentity(modelSelection);
+      } else if (checkpoint.selections.players.white.kind !== 'human' || checkpoint.selections.players.black.kind !== 'human') {
+        throw new GameControllerError('invalid-setup', 'A model selection is required to start a game against a model.');
+      }
       const committed = await this.commitMutation<{ kind: 'accepted' }>(fence, (context) => {
         const clock = startClock({ at: context.at, activeSide: fromPositionColor(context.position.sideToMove), timeControl: context.checkpoint.clocks.timeControl });
         const players = { ...context.checkpoint.selections.players };
-        const modelSide = players.white.kind === 'human' ? 'black' : 'white';
-        players[modelSide] = freezeModelSelection(modelSelection);
         const currentSegment = context.checkpoint.history.segments.findIndex((segment) => segment.segmentId === context.checkpoint.segmentId);
         const segments = context.checkpoint.history.segments.map((segment, index) => index === currentSegment
-          ? { ...segment, providerId: modelSelection.providerId, modelRoutingId: modelSelection.modelRoutingId,
+          ? modelSelection === undefined ? segment : { ...segment, providerId: modelSelection.providerId, modelRoutingId: modelSelection.modelRoutingId,
               connectionRevision: modelSelection.configurationRevision }
           : segment);
-        const event = context.createEvent('game-started-after-classification', context.decisionTimeMs, fence, {
+        if (modelSelection !== undefined) {
+          const modelSide = players.white.kind === 'human' ? 'black' : 'white';
+          players[modelSide] = freezeModelSelection(modelSelection);
+        }
+        const details = modelSelection === undefined ? { mode: 'two-human' } : {
           modelSelection: { providerId: modelSelection.providerId, connectionId: modelSelection.connectionId,
             configurationRevision: modelSelection.configurationRevision, modelRoutingId: modelSelection.modelRoutingId,
             protocol: modelSelection.protocol },
-        });
+        };
+        const event = context.createEvent('game-started-after-classification', context.decisionTimeMs, fence, details);
         return { checkpoint: { ...context.checkpoint, selections: { players }, history: { ...context.checkpoint.history, segments }, result: { kind: 'unresolved' },
           clocks: checkpointClock(clock, context.decisionTimeMs),
           archive: { ...context.checkpoint.archive, currentLine: { ...context.checkpoint.archive.currentLine,
@@ -2723,6 +2731,15 @@ interface RegisteredController {
 // Use a registered wrapper so accidental factory calls cannot create a second writer.
 export function createRestartSetup(source: ControllerSnapshotV1): GameControllerSetupV1 {
   const checkpoint = source.checkpoint;
+  if (checkpoint.selections.players.white.kind === 'human' && checkpoint.selections.players.black.kind === 'human') {
+    return {
+      humanSide: 'white',
+      namespace: structuredClone(checkpoint.namespace),
+      ownershipEpoch: checkpoint.ownershipEpoch,
+      startingFen: checkpoint.rules.startingFen,
+      timeControl: { ...checkpoint.clocks.timeControl },
+    };
+  }
   const modelSelection = checkpoint.selections.players.white.kind === 'model'
     ? checkpoint.selections.players.white
     : checkpoint.selections.players.black;

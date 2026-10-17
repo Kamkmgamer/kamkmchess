@@ -97,7 +97,7 @@ async function initializePlayable(
     ? await settlePendingAdjudication(controller, initialized)
     : initialized;
   return adjudicated.adjudication.status === 'setup-ready'
-    ? controller.startGame(adjudicated.fence, setup.modelSelection as ModelSelection)
+    ? controller.startGame(adjudicated.fence, setup.modelSelection)
     : adjudicated;
 }
 
@@ -141,6 +141,48 @@ describe('model configuration identity', () => {
 });
 
 describe('game controller setup', () => {
+  it('runs a local two-human game through the same committed controller transitions', async () => {
+    const testId = 'controller-local-two-human';
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 1_000 });
+    let generatedId = 0;
+    const controller = getOrCreateGameController({
+      gameId: testId,
+      store,
+      timeSource: { sample: (decisionTimeMs) => ({ monotonicMs: 5_000, wallTimeMs: decisionTimeMs ?? 1_000 }) },
+      clockPolicy: { maxReferenceDivergenceMs: 5 },
+      idFactory: () => `controller-local-two-human-${++generatedId}`,
+    });
+    try {
+      const setup: GameControllerSetupV1 = {
+        humanSide: 'white',
+        namespace: { kind: 'guest' },
+        ownershipEpoch: 0,
+      };
+      const initial = await controller.initialize(setup);
+      expect(initial.checkpoint.selections.players).toEqual({ white: { kind: 'human' }, black: { kind: 'human' } });
+      const ready = await settlePendingAdjudication(controller, initial);
+      const started = await controller.startGame(ready.fence);
+      expect(started.clockReading?.status).toBe('running');
+      expect(started.checkpoint.history.segments[0]).toMatchObject({
+        providerId: null,
+        modelRoutingId: null,
+        connectionRevision: null,
+      });
+
+      const whiteMove = await controller.dispatch({
+        schemaVersion: 1,
+        kind: 'human-move',
+        fence: started.fence,
+        move: { from: 'e2', to: 'e4' },
+      });
+      expect(whiteMove.kind).toBe('accepted');
+      expect(whiteMove.snapshot.checkpoint.rules.moves.map((move) => move.san)).toEqual(['e4']);
+      expect(whiteMove.snapshot.checkpoint.result.kind).toBe('pending-adjudication');
+    } finally {
+      store.close();
+    }
+  });
+
   it('classifies setup with checked evidence before diagnostics or clocks', async () => {
     const testId = 'controller-setup-adjudication-order';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 1_000 });
@@ -521,7 +563,7 @@ describe('game controller setup', () => {
 
     try {
       const initialization = controller.initialize(setup);
-      setup.modelSelection.modelRoutingId = 'mutated/after-call';
+      setup.modelSelection!.modelRoutingId = 'mutated/after-call';
       releaseRead();
       const snapshot = await initialization;
 

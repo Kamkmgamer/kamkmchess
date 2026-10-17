@@ -43,7 +43,7 @@ const sections = [
   'Third-party code notices',
   'Generated from pnpm-lock.yaml and the installed production packages.',
   'Original application code is MIT licensed. See LICENSE.txt.',
-  'No third-party artwork is distributed in this foundation build.',
+  'The Wikimedia standard chess-piece sprite by Cburnett is distributed unmodified under CC BY-SA 3.0. Its source and license notice are embedded in the sprite.',
 ];
 const inventory = [];
 
@@ -73,6 +73,14 @@ for (const metadata of packages.values()) {
     await readFile(join(directory, licenseFile), 'utf8'),
   );
 }
+
+sections.push(
+  'T3 Code theme palette data',
+  'Palette values extracted from packages/shared/src/themePalettes.ts at commit 9503155da67add4fbd7fbc51c99ec19a0c8c4a2c (SHA-256 82385050b8b691ff280efc0e93ea9dd8a4bbfd64a4c50cf8536b5c15d1e74479).',
+  await readFile(new URL('docs/licenses/T3-Code-MIT.txt', root), 'utf8'),
+  'Wikimedia standard chess pieces',
+  'Artist: Cburnett. Source: https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces/Standard. Distributed unmodified from cm-chessboard@8.15.3/assets/pieces/standard.svg under Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0): https://creativecommons.org/licenses/by-sa/3.0/. The sprite contains its full attribution and license header.',
+);
 
 await copyFile(new URL('LICENSE', root), new URL('dist/LICENSE.txt', root));
 await writeFile(new URL('dist/THIRD_PARTY_NOTICES.txt', root), `${sections.join('\n\n')}\n`);

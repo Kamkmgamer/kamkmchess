@@ -48,9 +48,9 @@ export interface RulesCheckpointV1 {
 
 export interface HistorySegmentV1 {
   segmentId: string;
-  providerId: string;
-  modelRoutingId: string;
-  connectionRevision: number;
+  providerId: string | null;
+  modelRoutingId: string | null;
+  connectionRevision: number | null;
   startedAtMs: number;
   messageIds: string[];
 }
