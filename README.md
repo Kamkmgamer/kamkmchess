@@ -27,12 +27,13 @@ Publishable files are in `dist/`. The build includes the application license, co
 | `npm run typecheck` | Strict TypeScript checks for browser code, tools and fixtures. |
 | `npm run lint` | ESLint, TypeScript and React Hooks/refresh checks; warnings fail. |
 | `npm test` | Run deterministic fixtures once. |
+| `npm test -- src/model-replies/model-replies.test.ts` | Run focused reply parser and recovery policy fixtures. |
 | `npm test -- src/rules/rules.test.ts` | Run the strict rules fixtures. |
 | `npm run test:watch` | Rerun selected fixtures during development. |
 | `npm run build` | Typecheck, compile static assets and collect runtime license notices. |
 | `npm run check` | Lint, full fixture suite and production build. |
 
-Vitest runs offline fixtures for strict rules, clock calculations, proof checking and search, archive validation, local storage, provider connections and protocols, and serialized controller decisions. A missing fixture suite fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md), [KHA-29 controller evidence](docs/implementation/KHA-29-controller-evidence.md), [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md), [KHA-34 connection API](docs/implementation/KHA-34-api.md) and [evidence](docs/implementation/KHA-34-evidence.md), and [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md).
+Vitest runs offline fixtures for strict rules, clock calculations, proof checking and search, archive validation, local storage, provider connections and protocols, serialized controller decisions, and the standalone model-replies parser and recovery policy. The model-replies module is not wired into the controller. A missing fixture suite fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md), [KHA-29 controller evidence](docs/implementation/KHA-29-controller-evidence.md), [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md), [KHA-34 connection API](docs/implementation/KHA-34-api.md) and [evidence](docs/implementation/KHA-34-evidence.md), [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md), and [KHA-36 parser evidence](docs/implementation/KHA-36-evidence.md).
 
 ## Implementation references
 
@@ -41,6 +42,7 @@ Vitest runs offline fixtures for strict rules, clock calculations, proof checkin
 - [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md)
 - [KHA-34 connection API](docs/implementation/KHA-34-api.md) and [evidence](docs/implementation/KHA-34-evidence.md)
 - [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md)
+- [KHA-36 parser and recovery policy evidence](docs/implementation/KHA-36-evidence.md)
 - [Dependency and artwork inventory](docs/dependency-notices.md)
 - [Approved specification](docs/spec/mvp-handoff.md) and [acceptance cases](docs/spec/mvp-acceptance.json)
 - [Implementation roadmap](docs/spec/implementation-plan.md) and [canonical Linear tracker](docs/agents/issue-tracker.md)
