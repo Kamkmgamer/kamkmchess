@@ -1834,6 +1834,13 @@ describe('game controller setup', () => {
         fence: initial.fence,
       });
       if (oldRequest.kind !== 'model-turn-started') throw new Error('The first model turn did not start.');
+      const completedOldRequest = await firstController.dispatch({
+        schemaVersion: 1, kind: 'model-turn-interrupted', fence: oldRequest.request.fence, reason: 'failed',
+      });
+      const activeRequest = await firstController.dispatch({
+        schemaVersion: 1, kind: 'begin-model-turn', fence: completedOldRequest.snapshot.fence,
+      });
+      if (activeRequest.kind !== 'model-turn-started') throw new Error(`The follow-up model turn did not start: ${activeRequest.kind}.`);
       store.close();
 
       vi.resetModules();
@@ -1881,13 +1888,76 @@ describe('game controller setup', () => {
       expect(recovered.clockReading?.remaining).toEqual({ whiteMs: 10_000, blackMs: 30_000 });
       const saved = await restoredStore.readGame(testId);
       expect(saved?.events.at(-1)).toMatchObject({
-        kind: 'clock-absence-reconciled',
+        kind: 'model-turn-interrupted',
         occurredAtMs: 21_000,
+        payload: {
+          details: { interruptedRequestGeneration: activeRequest.request.fence.requestGeneration, reason: 'incomplete' },
+        },
       });
+      expect(saved?.events.filter((event) => event.kind === 'model-turn-interrupted')).toHaveLength(2);
+      expect(saved?.events.find((event) => event.kind === 'model-turn-interrupted')?.payload).toMatchObject({
+        details: { interruptedRequestGeneration: oldRequest.request.fence.requestGeneration, reason: 'failed' },
+      });
+      expect(saved?.events.find((event) => event.kind === 'model-turn-interrupted' &&
+        (event.payload as { details?: { interruptedRequestGeneration?: number } }).details?.interruptedRequestGeneration ===
+          activeRequest.request.fence.requestGeneration)?.payload).toMatchObject({
+        details: { interruptedRequestGeneration: activeRequest.request.fence.requestGeneration },
+      });
+      expect(activeRequest.request.fence.requestGeneration).toBeGreaterThan(oldRequest.request.fence.requestGeneration);
+      const repeatedRecovery = await restoredController.reconcile();
+      expect(repeatedRecovery.readiness).toBe('ready');
+      expect((await restoredStore.readGame(testId))?.events.filter((event) => event.kind === 'model-turn-interrupted')).toHaveLength(2);
       expect(saved?.checkpoint.rules.moves).toHaveLength(0);
       restoredStore.close();
     } finally {
       store.close();
+    }
+  });
+
+  it('keeps expiry precedence when restoring an unsettled model request', async () => {
+    const testId = 'controller-restore-unsettled-model-expiry';
+    const factory = new IDBFactory();
+    let decisionTimeMs = 1_000;
+    let monotonicMs = 5_000;
+    const firstStore = await openGameStore({ databaseName: testId, factory, now: () => decisionTimeMs });
+    let generatedId = 0;
+    const firstController = getOrCreateGameController({
+      gameId: testId,
+      store: firstStore,
+      timeSource: { sample: (at) => ({ monotonicMs, wallTimeMs: at ?? decisionTimeMs }) },
+      clockPolicy: { maxReferenceDivergenceMs: 0 },
+      idFactory: () => `${testId}-id-${++generatedId}`,
+    });
+    try {
+      const initial = await initializePlayable(firstController, {
+        humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+        timeControl: { startingTimeMs: 100, incrementMs: 0 },
+      });
+      const started = await firstController.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: initial.fence });
+      if (started.kind !== 'model-turn-started') throw new Error('The model turn did not start.');
+      firstStore.close();
+
+      vi.resetModules();
+      decisionTimeMs = 1_150;
+      monotonicMs = 100;
+      const restoredStore = await openGameStore({ databaseName: testId, factory, now: () => decisionTimeMs });
+      const controllerModule = await import('./index.js');
+      const restoredController = controllerModule.getOrCreateGameController({
+        gameId: testId,
+        store: restoredStore,
+        timeSource: { sample: (at) => ({ monotonicMs, wallTimeMs: at ?? decisionTimeMs }) },
+        clockPolicy: { maxReferenceDivergenceMs: 0 },
+        idFactory: () => `${testId}-restored-${++generatedId}`,
+      });
+      await restoredController.initialize();
+      const reconciled = await restoredController.reconcile();
+      expect(reconciled.checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'timeout' });
+      const saved = await restoredStore.readGame(testId);
+      expect(saved?.events.some((event) => event.kind === 'timeout-candidate')).toBe(true);
+      expect(saved?.events.some((event) => event.kind === 'model-turn-interrupted')).toBe(false);
+      restoredStore.close();
+    } finally {
+      firstStore.close();
     }
   });
 

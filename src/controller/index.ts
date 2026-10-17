@@ -1013,6 +1013,7 @@ class IndexedGameController implements GameController {
   private clockReconciliationRequired = false;
   private pendingClockDiscrepancy: ClockDiscrepancyReading | null = null;
   private activeRequest: ModelTurnRequestV1 | null = null;
+  private restoredUnsettledModelRequest: ControllerFenceV1 | null = null;
   private initialization: Promise<ControllerSnapshotV1> | null = null;
   private operationQueue: Promise<void> = Promise.resolve();
   private readonly listeners = new Set<(snapshot: ControllerSnapshotV1) => void>();
@@ -1881,6 +1882,13 @@ class IndexedGameController implements GameController {
           eventFence,
           { elapsedChargedMs: recovery.elapsedChargedMs, evidence: recovery.evidence },
         );
+        const interruptionEvent = this.restoredUnsettledModelRequest !== null &&
+          sameFence(this.restoredUnsettledModelRequest, eventFence)
+          ? context.createEvent('model-turn-interrupted', context.decisionTimeMs, eventFence, {
+              interruptedRequestGeneration: eventFence.requestGeneration,
+              reason: 'incomplete',
+            })
+          : null;
         const nextCheckpoint = {
           ...context.checkpoint,
           requestGeneration: context.checkpoint.requestGeneration + 1,
@@ -1888,7 +1896,8 @@ class IndexedGameController implements GameController {
           clocks: checkpointClock(recovery.clock, context.decisionTimeMs),
           archive: { ...context.checkpoint.archive, currentLine: { ...context.checkpoint.archive.currentLine,
             eventIds: [...context.checkpoint.archive.currentLine.eventIds,
-              ...(priorDiscrepancyEvent === null ? [] : [priorDiscrepancyEvent.eventId]), event.eventId] } },
+              ...(priorDiscrepancyEvent === null ? [] : [priorDiscrepancyEvent.eventId]), event.eventId,
+              ...(interruptionEvent === null ? [] : [interruptionEvent.eventId])] } },
         };
         return {
           checkpoint: { ...nextCheckpoint, extensions: rebindPendingCandidates(context.checkpoint, nextCheckpoint) },
@@ -1924,6 +1933,13 @@ class IndexedGameController implements GameController {
         eventFence,
         { evidence: reading.evidence },
       );
+      const interruptionEvent = this.restoredUnsettledModelRequest !== null &&
+        sameFence(this.restoredUnsettledModelRequest, eventFence)
+        ? context.createEvent('model-turn-interrupted', context.decisionTimeMs, eventFence, {
+            interruptedRequestGeneration: eventFence.requestGeneration,
+            reason: 'incomplete',
+          })
+        : null;
       const nextCheckpoint = {
         ...context.checkpoint,
         requestGeneration: context.checkpoint.requestGeneration + 1,
@@ -1931,7 +1947,8 @@ class IndexedGameController implements GameController {
         clocks: checkpointClock(clockState, context.decisionTimeMs),
         archive: { ...context.checkpoint.archive, currentLine: { ...context.checkpoint.archive.currentLine,
           eventIds: [...context.checkpoint.archive.currentLine.eventIds,
-            ...(priorDiscrepancyEvent === null ? [] : [priorDiscrepancyEvent.eventId]), event.eventId] } },
+            ...(priorDiscrepancyEvent === null ? [] : [priorDiscrepancyEvent.eventId]), event.eventId,
+            ...(interruptionEvent === null ? [] : [interruptionEvent.eventId])] } },
       };
       return {
         checkpoint: { ...nextCheckpoint, extensions: rebindPendingCandidates(context.checkpoint, nextCheckpoint) },
@@ -1941,6 +1958,7 @@ class IndexedGameController implements GameController {
       };
     });
     this.activeRequest = null;
+    this.restoredUnsettledModelRequest = null;
     return this.snapshot();
   }
 
@@ -2914,6 +2932,17 @@ class IndexedGameController implements GameController {
     this.position = position;
     this.clockState = createClockState(checkpoint);
     this.restored = this.clockState !== null;
+    const currentFence = createFence(recoveredCheckpoint);
+    const currentSide = sideForCheckpoint(recoveredCheckpoint);
+    const hasUnsettledStartedRequest = recoveredCheckpoint.result.kind === 'unresolved' &&
+      recoveredCheckpoint.selections.players[currentSide].kind === 'model' &&
+      events.some((event) => {
+        if (event.kind !== 'model-turn-started' || event.segmentId !== recoveredCheckpoint.segmentId) return false;
+        const payload = event.payload as { fence?: ControllerFenceV1; details?: { requestGeneration?: number } } | null;
+        return payload !== null && typeof payload === 'object' && payload.fence !== undefined &&
+          sameFence(payload.fence, currentFence) && payload.details?.requestGeneration === currentFence.requestGeneration;
+      });
+    this.restoredUnsettledModelRequest = this.restored && hasUnsettledStartedRequest ? currentFence : null;
     this.pendingClockDiscrepancy = null;
     const latestClockResolution = events
       .filter((event) =>
