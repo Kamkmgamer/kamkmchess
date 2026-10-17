@@ -1,4 +1,6 @@
 .scratch/
+experiments/
+research/
 __pycache__/
 node_modules/
 /dist/
