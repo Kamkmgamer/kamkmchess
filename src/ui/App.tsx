@@ -396,7 +396,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
           <label>Starting minutes<input type="number" min="1" max="180" value={setupMinutes} onChange={(event) => setSetupMinutes(Number(event.target.value))} required /></label>
           <label>Increment seconds<input type="number" min="0" max="600" value={setupIncrement} onChange={(event) => setSetupIncrement(Number(event.target.value))} required /></label>
           <label className="fen-field">Custom starting position (six-field FEN)
-            <textarea rows={2} value={setupFen} onChange={(event) => setSetupFen(event.target.value)} placeholder="Leave blank for the standard position" />
+            <textarea rows={2} value={setupFen} onChange={(event) => { setSetupFen(event.target.value); setSetupError(''); }} placeholder="Leave blank for the standard position" />
           </label>
           <fieldset className="visual-editor">
             <legend>Visual piece editor</legend>
@@ -406,7 +406,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
                 {EDITOR_PIECES.map((piece) => <option key={piece.value} value={piece.value}>{piece.label}</option>)}
               </select></label>
               <label>Side to move<select value={editorSide} disabled={!editorPieces}
-                onChange={(event) => { try { setSetupFen(setPositionSideToMove(setupFen || STANDARD_FEN, event.target.value as 'w' | 'b')); } catch { /* Keep invalid text available for correction. */ } }}>
+                onChange={(event) => { try { setSetupFen(setPositionSideToMove(setupFen || STANDARD_FEN, event.target.value as 'w' | 'b')); setSetupError(''); } catch { /* Keep invalid text available for correction. */ } }}>
                 <option value="w">White</option><option value="b">Black</option>
               </select></label>
             </div>
@@ -417,7 +417,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
                 const glyph = piece ? EDITOR_PIECES.find((item) => item.value === `${piece.color}${piece.type}`)?.glyph : undefined;
                 return <button className="editor-square" type="button" key={square}
                   aria-label={`${square}, ${piece ? (piece.color === 'w' ? 'white ' : 'black ') + piece.type : 'empty'}`}
-                  onClick={() => { try { setSetupFen(editPositionFen(setupFen || STANDARD_FEN, square, editorPiece)); } catch (error) { setSetupError(error instanceof Error ? error.message : 'The position cannot be edited.'); } }}>
+                  onClick={() => { try { setSetupFen(editPositionFen(setupFen || STANDARD_FEN, square, editorPiece)); setSetupError(''); } catch (error) { setSetupError(error instanceof Error ? error.message : 'The position cannot be edited.'); } }}>
                   {glyph ?? <span className="sr-only">Empty</span>}
                 </button>;
               })}
