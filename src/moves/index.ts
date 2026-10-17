@@ -17,8 +17,6 @@ export type {
   TurnRecoveryEvent,
   TurnRecoveryOutcome,
 } from './budgets.js';
-export { acceptsReply, createFencedReply, markReplyHandled } from './fence.js';
-export type { FencedReply, TurnReplyFence } from './fence.js';
 export { explainIllegalMove, isSquareAttacked } from './violations.js';
 export type { IllegalMoveCode, IllegalMoveExplanation } from './violations.js';
 export type {

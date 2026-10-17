@@ -8,8 +8,9 @@ import { getOrCreateGameController, modelConfigurationIdentity } from './index.j
 import { checkProofEvidence, PROOF_CHECKER_VERSION, RULES_ADAPTER_VERSION, runProofSearchPass } from '../proofs/index.js';
 import type { ProofEvidence, ProofQuery, ProofSearchPassResult } from '../proofs/index.js';
 import type {
-  ControllerTimeSource,
+  ControllerFenceV1,
   ControllerSnapshotV1,
+  ControllerTimeSource,
   GameControllerIntentV1,
   GameControllerSetupV1,
   ModelSelection,
@@ -838,6 +839,54 @@ describe('game controller setup', () => {
           },
         },
       });
+    } finally {
+      store.close();
+    }
+  });
+
+  it('[MOV-08] accepts controller effects only for the current full fence and only once', async () => {
+    const testId = 'controller-move-effect-full-fence';
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
+    const controller = getOrCreateGameController({
+      gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
+      clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
+    });
+    try {
+      const snapshot = await initializePlayable(controller, {
+        humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+      });
+      const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: snapshot.fence });
+      if (started.kind !== 'model-turn-started') throw new Error('Expected a model request.');
+      const effect = decideModelTurn({
+        budgets: createTurnBudgets(), position: started.request.position,
+        classification: { kind: 'move', move: { from: 'e2', to: 'e4' }, text: 'e2e4', origin: 'json-move', retainedFields: [] },
+        modelConfigurationIdentity: started.request.fence.modelConfigurationIdentity,
+      });
+      if (effect.kind !== 'accepted-move') throw new Error('Expected an accepted-move effect.');
+
+      const staleFences: ControllerFenceV1[] = [
+        { ...started.request.fence, gameId: 'another-game' },
+        { ...started.request.fence, segmentId: 'another-segment' },
+        { ...started.request.fence, side: 'black' },
+        { ...started.request.fence, revision: started.request.fence.revision + 1 },
+        { ...started.request.fence, positionRevision: started.request.fence.positionRevision + 1 },
+        { ...started.request.fence, requestGeneration: started.request.fence.requestGeneration + 1 },
+        { ...started.request.fence, analysisGeneration: started.request.fence.analysisGeneration + 1 },
+        { ...started.request.fence, ownershipEpoch: started.request.fence.ownershipEpoch + 1 },
+        { ...started.request.fence, modelConfigurationIdentity: 'another-model' },
+      ];
+      for (const fence of staleFences) {
+        const rejected = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-effect', fence, effect });
+        expect(rejected).toMatchObject({ kind: 'rejected', reason: 'stale-fence' });
+      }
+
+      const accepted = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-effect', fence: started.request.fence, effect });
+      expect(accepted.kind).toBe('accepted');
+      if (accepted.kind !== 'accepted') throw new Error('Expected the current effect to commit.');
+      const duplicate = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-effect', fence: started.request.fence, effect });
+      expect(duplicate).toMatchObject({ kind: 'rejected', reason: 'stale-fence' });
+      expect(duplicate.snapshot.checkpoint.rules.moves).toHaveLength(1);
+      expect(controller.snapshot().checkpoint.rules.moves).toHaveLength(1);
     } finally {
       store.close();
     }

@@ -3,17 +3,14 @@ import { applyCoordinateMove, parsePosition } from '../rules/index.js';
 import {
   MAX_FORMAT_CORRECTIONS,
   MAX_ILLEGAL_MOVE_ATTEMPTS,
-  acceptsReply,
   applyTurnRecoveryEvent,
   classifyCompletedAnswer,
-  createFencedReply,
   createTurnBudgets,
   decideCompletedAnswer,
   decideModelTurn,
   explainIllegalMove,
-  markReplyHandled,
 } from './index.js';
-import type { TurnBudgetsV1, TurnReplyFence } from './index.js';
+import type { TurnBudgetsV1 } from './index.js';
 
 const INITIAL = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const WHITE_KING_IN_CHECK = '4k3/8/8/8/8/8/r7/4K3 w - - 0 1';
@@ -272,45 +269,5 @@ describe('model turn budgets', () => {
       kind: 'illegal-attempt',
       record: { violation: { code: 'no-piece-at-origin' } },
     });
-  });
-});
-
-describe('turn reply fencing', () => {
-  const turn: TurnReplyFence = {
-    gameId: 'game-1',
-    segmentId: 'segment-1',
-    side: 'black',
-    positionRevision: 4,
-    requestGeneration: 7,
-    ownershipEpoch: 2,
-  };
-
-  it('[MOV-08] accepts an unhandled reply once and refuses it afterwards', () => {
-    const reply = createFencedReply(turn);
-
-    expect(acceptsReply(turn, reply)).toBe(true);
-    expect(acceptsReply(turn, markReplyHandled(reply))).toBe(false);
-  });
-
-  it('[MOV-08] refuses a superseded, stale, or foreign-ownership reply', () => {
-    const samePositionLaterGeneration = createFencedReply({ ...turn, requestGeneration: 8 });
-    const earlierPosition = createFencedReply({ ...turn, positionRevision: 3 });
-    const otherSegment = createFencedReply({ ...turn, segmentId: 'segment-2' });
-    const newOwner = createFencedReply({ ...turn, ownershipEpoch: 3 });
-    const otherGame = createFencedReply({ ...turn, gameId: 'game-2' });
-
-    expect(acceptsReply(turn, samePositionLaterGeneration)).toBe(false);
-    expect(acceptsReply(turn, earlierPosition)).toBe(false);
-    expect(acceptsReply(turn, otherSegment)).toBe(false);
-    expect(acceptsReply(turn, newOwner)).toBe(false);
-    expect(acceptsReply(turn, otherGame)).toBe(false);
-  });
-
-  it('[MOV-08] refuses a duplicate reply of an accepted position', () => {
-    const reply = createFencedReply(turn);
-    const handled = markReplyHandled(reply);
-
-    expect(acceptsReply(turn, handled)).toBe(false);
-    expect(acceptsReply(turn, createFencedReply(turn))).toBe(true);
   });
 });
