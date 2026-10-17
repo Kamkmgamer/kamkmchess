@@ -26,6 +26,8 @@ import {
   legalMoves,
 } from '../rules/index.js';
 import type { CoordinateMove, Position } from '../rules/index.js';
+import { MAX_FORMAT_CORRECTIONS, MAX_ILLEGAL_MOVE_ATTEMPTS } from '../moves/index.js';
+import type { ModelTurnDecision } from '../moves/index.js';
 import { checkProofEvidence, createDeadnessQuery, createTimeoutMatingQuery, proofQueryIdentity } from '../proofs/index.js';
 import type { ProofQuery, ProofSearchPassResult } from '../proofs/index.js';
 import type {
@@ -51,6 +53,7 @@ const GAME_CONTROLLER_INTENT_KINDS: ReadonlySet<string> = new Set([
   'stop-model-turn',
   'human-move',
   'model-move',
+  'model-turn-effect',
 ]);
 
 function isGameControllerIntentKind(kind: unknown): kind is GameControllerIntentV1['kind'] {
@@ -121,7 +124,8 @@ export interface ControllerMoveEventV1 {
 export type GameControllerIntentV1 =
   | { schemaVersion: 1; kind: 'begin-model-turn'; fence: ControllerFenceV1 }
   | { schemaVersion: 1; kind: 'stop-model-turn'; fence: ControllerFenceV1 }
-  | ControllerMoveEventV1;
+  | ControllerMoveEventV1
+  | { schemaVersion: 1; kind: 'model-turn-effect'; fence: ControllerFenceV1; effect: ModelTurnDecision };
 
 export interface ModelTurnRequestV1 {
   fence: ControllerFenceV1;
@@ -746,8 +750,8 @@ function makeCheckpoint(
         )
       : checkpointClock(clock, decisionTimeMs),
     budgets: {
-      formattingCorrectionsRemaining: 3,
-      illegalMoveAttemptsRemaining: { white: 4, black: 4 },
+      formattingCorrectionsRemaining: MAX_FORMAT_CORRECTIONS,
+      illegalMoveAttemptsRemaining: { white: MAX_ILLEGAL_MOVE_ATTEMPTS, black: MAX_ILLEGAL_MOVE_ATTEMPTS },
       manualRetriesBySide: { white: 0, black: 0 },
     },
     selections: { players },
@@ -1536,8 +1540,8 @@ class IndexedGameController implements GameController {
         },
         clocks: checkpointClock(clock, context.decisionTimeMs),
         budgets: {
-          formattingCorrectionsRemaining: 3,
-          illegalMoveAttemptsRemaining: { white: 4, black: 4 },
+          formattingCorrectionsRemaining: MAX_FORMAT_CORRECTIONS,
+          illegalMoveAttemptsRemaining: { white: MAX_ILLEGAL_MOVE_ATTEMPTS, black: MAX_ILLEGAL_MOVE_ATTEMPTS },
           manualRetriesBySide: { white: 0, black: 0 },
         },
         selections: { players },
@@ -1633,7 +1637,99 @@ class IndexedGameController implements GameController {
     }
     if (intent.kind === 'begin-model-turn') return this.beginModelTurn(intent.fence);
     if (intent.kind === 'stop-model-turn') return this.stopModelTurn(intent.fence);
+    if (intent.kind === 'model-turn-effect') return this.applyModelTurnEffect(intent);
     return this.acceptMove(intent);
+  }
+
+  private async applyModelTurnEffect(
+    intent: Extract<GameControllerIntentV1, { kind: 'model-turn-effect' }>,
+  ): Promise<GameControllerIntentResultV1> {
+    const { effect, fence } = intent;
+    if (effect.kind === 'accepted-move') {
+      return this.acceptMove({ schemaVersion: 1, kind: 'model-move', fence, move: effect.move });
+    }
+    const checkpoint = this.checkpoint;
+    if (checkpoint === null) throw new GameControllerError('setup-required', 'Initialize the game before applying a model turn effect.');
+    const side = sideForCheckpoint(checkpoint);
+    if (checkpoint.selections.players[side].kind !== 'model' || this.activeRequest === null ||
+      !sameFence(this.activeRequest.fence, fence)) {
+      return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
+    }
+    const expectedAttempts = MAX_ILLEGAL_MOVE_ATTEMPTS - checkpoint.budgets.illegalMoveAttemptsRemaining[side];
+    const expectedFormatting = MAX_FORMAT_CORRECTIONS - checkpoint.budgets.formattingCorrectionsRemaining;
+    const expectedRetries = checkpoint.budgets.manualRetriesBySide[side];
+    const nextAttempts = effect.kind === 'illegal-attempt' ? effect.attempt : expectedAttempts;
+    const nextFormatting = effect.kind === 'format-correction' && effect.automatic ? expectedFormatting + 1 : expectedFormatting;
+    if (effect.budgets.illegalMoveAttempts !== nextAttempts || effect.budgets.formatCorrections !== nextFormatting ||
+      effect.budgets.manualRetries !== expectedRetries || effect.budgets.schemaVersion !== 1 ||
+      !Number.isSafeInteger(nextAttempts) || nextAttempts > MAX_ILLEGAL_MOVE_ATTEMPTS ||
+      !Number.isSafeInteger(nextFormatting) || nextFormatting > MAX_FORMAT_CORRECTIONS) {
+      throw new GameControllerError('invalid-intent', 'The classified model turn effect has inconsistent recovery budgets.');
+    }
+    const committed = await this.commitMutation<IntentMutationValue>(fence, (context) => {
+      const clockState = context.clockState;
+      if (clockState === null) return this.noClockCandidate(context, fence);
+      const reading = readClockAt(clockState, context.at, this.clockPolicy);
+      if (reading.status === 'expired') return this.expiryCandidate(context, fence, reading);
+      if (reading.status === 'reconciliation-required') return this.clockDiscrepancyCandidate(context, fence, reading);
+      const nextCheckpoint: GameCheckpointV1 = {
+        ...context.checkpoint,
+        revision: context.checkpoint.revision + 1,
+        requestGeneration: context.checkpoint.requestGeneration + 1,
+        analysisGeneration: context.checkpoint.analysisGeneration + 1,
+        budgets: {
+          formattingCorrectionsRemaining: MAX_FORMAT_CORRECTIONS - effect.budgets.formatCorrections,
+          illegalMoveAttemptsRemaining: {
+            ...context.checkpoint.budgets.illegalMoveAttemptsRemaining,
+            [side]: MAX_ILLEGAL_MOVE_ATTEMPTS - effect.budgets.illegalMoveAttempts,
+          },
+          manualRetriesBySide: {
+            ...context.checkpoint.budgets.manualRetriesBySide,
+            [side]: effect.budgets.manualRetries,
+          },
+        },
+        extensions: effect.kind === 'illegal-attempt'
+          ? { ...context.checkpoint.extensions, 'move-attempts': { version: 1, data: {
+            [side]: [
+              ...((context.checkpoint.extensions['move-attempts']?.data as { [key: string]: JsonValue } | undefined)?.[side] as unknown as readonly JsonValue[] | undefined ?? []),
+              effect.record as unknown as JsonValue,
+            ],
+          } } }
+          : context.checkpoint.extensions,
+      };
+      const terminal = effect.kind === 'model-resignation' || (effect.kind === 'illegal-attempt' && effect.loss !== null);
+      const eventKind = effect.kind === 'illegal-attempt' ? 'illegal-move-rejected' :
+        effect.kind === 'format-correction' ? 'model-format-correction' : 'model-resigned';
+      const details = effect.kind === 'illegal-attempt'
+        ? { attempt: effect.attempt, illegalMoveCode: effect.record.violation.code, rejectedMove: { ...effect.record.move }, modelConfigurationIdentity: effect.record.modelConfigurationIdentity }
+        : effect.kind === 'format-correction'
+          ? { reason: effect.reason, correction: effect.correction, automatic: effect.automatic, formatCorrectionsRemaining: effect.formatCorrectionsRemaining }
+          : { statement: effect.statement };
+      const event = context.createEvent(eventKind, context.decisionTimeMs, fence, details);
+      let result: GameResultV1 = context.checkpoint.result;
+      if (terminal) result = {
+        kind: 'final', winner: side === 'white' ? 'black' : 'white', reason: effect.kind === 'model-resignation' ? 'resignation' : 'illegal-move',
+        eventId: event.eventId, decidedAtMs: context.decisionTimeMs,
+      };
+      const finalCheckpoint = {
+        ...nextCheckpoint,
+        result,
+        clocks: terminal
+          ? pausedClockCheckpoint(clockState.timeControl, reading.remaining, context.decisionTimeMs, clockState.schemaVersion)
+          : context.checkpoint.clocks,
+        archive: { ...nextCheckpoint.archive, currentLine: { ...nextCheckpoint.archive.currentLine,
+          eventIds: [...nextCheckpoint.archive.currentLine.eventIds, event.eventId] } },
+      };
+      return { checkpoint: finalCheckpoint, position: context.position, clockState: terminal ? null : clockState,
+        value: { kind: 'accepted' as const } };
+    });
+    this.activeRequest = null;
+    if (committed.value.kind === 'expired') return { kind: 'expired', snapshot: committed.snapshot };
+    if (committed.value.kind === 'clock-reconciliation-required') {
+      this.clockReconciliationRequired = true;
+      return { kind: 'clock-reconciliation-required', snapshot: committed.snapshot };
+    }
+    return { kind: 'accepted', snapshot: committed.snapshot };
   }
 
   private async reconcileReady(): Promise<ControllerSnapshotV1> {
@@ -2006,6 +2102,18 @@ class IndexedGameController implements GameController {
         positionRevision: context.checkpoint.positionRevision + 1,
         requestGeneration: context.checkpoint.requestGeneration + 1,
         analysisGeneration: context.checkpoint.analysisGeneration + 1,
+        budgets: {
+          ...context.checkpoint.budgets,
+          formattingCorrectionsRemaining: MAX_FORMAT_CORRECTIONS,
+          illegalMoveAttemptsRemaining: {
+            ...context.checkpoint.budgets.illegalMoveAttemptsRemaining,
+            [fromPositionColor(transition.position.sideToMove)]: MAX_ILLEGAL_MOVE_ATTEMPTS,
+          },
+          manualRetriesBySide: {
+            ...context.checkpoint.budgets.manualRetriesBySide,
+            [fromPositionColor(transition.position.sideToMove)]: 0,
+          },
+        },
       };
       const moveEvent = context.createEvent(
         event.kind === 'human-move' ? 'human-move-accepted' : 'model-move-accepted',

@@ -45,3 +45,16 @@ Provider text is untrusted text. Routine telemetry excludes raw transcripts, sec
 Use deterministic fixture tests at the approved controller, rules, clock/checkpoint, archive/replay, connection, protocol and proof-checker interfaces. Test independent expected outcomes, fault/abort injection and stale-event races through those interfaces. Do not test private helper shapes or manufacture placeholder assertions to increase a test count.
 
 Native browser, screen-reader, mobile, deployed account, live-provider and cost runs have separate prerequisites and evidence records. A static build or fixture pass does not certify them.
+
+KHA-53 composes classified model turn effects at the match-controller boundary. Recovery
+counts are persisted in the existing `BudgetCheckpointV1` as remaining counts per side:
+`illegalMoveAttemptsRemaining` and `manualRetriesBySide` are keyed by side, while
+`formattingCorrectionsRemaining` applies to the active model turn. `TurnBudgetsV1` remains
+a spent-count value for one pending turn. The adapter derives persisted remaining counts
+from each classified effect and resets them when a move advances the turn. Illegal attempt
+records are retained in the versioned `move-attempts` checkpoint extension, alongside the
+current archive, without changing the storage schema. A nonterminal effect commits the
+recovery spend and increments request generation atomically; the next request starts with
+the new full controller fence, preserving retry-in-place on the same chess turn. Stop,
+expiry and stale fences commit no recovery spend. Final resignation and fourth-illegal
+attempt results are latched with the same atomic checkpoint write as their event.

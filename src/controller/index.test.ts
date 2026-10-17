@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import type { CoordinateMove } from '../rules/index.js';
+import { createTurnBudgets, decideModelTurn } from '../moves/index.js';
 import { openGameStore } from '../storage/index.js';
 import { getOrCreateGameController, modelConfigurationIdentity } from './index.js';
 import { checkProofEvidence, PROOF_CHECKER_VERSION, RULES_ADAPTER_VERSION, runProofSearchPass } from '../proofs/index.js';
@@ -836,6 +837,49 @@ describe('game controller setup', () => {
           },
         },
       });
+    } finally {
+      store.close();
+    }
+  });
+
+  it('persists classified illegal attempts and latches the fourth as an immutable loss', async () => {
+    const testId = 'controller-classified-illegal-attempts';
+    let decisionTimeMs = 2_000;
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
+    const controller = getOrCreateGameController({
+      gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? decisionTimeMs, wallTimeMs: at ?? decisionTimeMs }; } },
+      clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
+    });
+    try {
+      let snapshot = await initializePlayable(controller, {
+        humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+        timeControl: { startingTimeMs: 30_000, incrementMs: 0 },
+      });
+      let budgets = createTurnBudgets();
+      for (let attempt = 1; attempt <= 4; attempt += 1) {
+        const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: snapshot.fence });
+        expect(started.kind).toBe('model-turn-started');
+        if (started.kind !== 'model-turn-started') throw new Error('Expected a model request.');
+        const decision = decideModelTurn({
+          budgets, position: started.request.position,
+          classification: { kind: 'move', move: { from: 'e2', to: 'e5' }, text: 'e2e5', origin: 'json-move', retainedFields: [] },
+          modelConfigurationIdentity: started.request.fence.modelConfigurationIdentity,
+        });
+        expect(decision.kind).toBe('illegal-attempt');
+        if (decision.kind !== 'illegal-attempt') throw new Error('Expected an illegal-attempt effect.');
+        budgets = decision.budgets;
+        decisionTimeMs += 10;
+        const applied = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-effect', fence: started.request.fence, effect: decision });
+        expect(applied.kind).toBe('accepted');
+        if (applied.kind !== 'accepted') throw new Error('Expected the effect checkpoint to commit.');
+        snapshot = applied.snapshot;
+        expect(snapshot.checkpoint.budgets.illegalMoveAttemptsRemaining.white).toBe(4 - attempt);
+        expect(snapshot.checkpoint.result.kind === 'final' ? snapshot.checkpoint.result.reason : null)
+          .toBe(attempt === 4 ? 'illegal-move' : null);
+      }
+      const saved = await store.readGame(testId);
+      expect(saved?.events.filter((event) => event.kind === 'illegal-move-rejected')).toHaveLength(4);
+      expect(saved?.checkpoint.extensions['move-attempts']?.data).toMatchObject({ white: [{ attempt: 1 }, { attempt: 2 }, { attempt: 3 }, { attempt: 4 }] });
     } finally {
       store.close();
     }
