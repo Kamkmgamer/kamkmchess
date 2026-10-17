@@ -92,6 +92,7 @@ describe('generation composition runner', () => {
   it.each([
     ['incomplete', protocolResult({ terminal: 'truncated', content: 'empty', answerText: '' }), undefined, 'incomplete'],
     ['provider failure', protocolResult({ terminal: 'failed', content: 'empty', answerText: '', errors: [{ message: 'fixture provider error' }] }), undefined, 'failed'],
+    ['provider refusal', protocolResult({ terminal: 'complete', content: 'refusal', answerText: '', refusalText: 'I resign.' }), undefined, 'failed'],
     ['abort', null, Object.assign(new Error('aborted'), { name: 'AbortError' }), 'aborted'],
   ] as const)('interrupts %s without classifying provider content', async (_label, streamResult, fetchError, reason) => {
     const f = await fixture();

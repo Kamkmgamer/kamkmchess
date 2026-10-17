@@ -142,7 +142,7 @@ export async function runGenerationTurn(options: GenerationRunnerOptions): Promi
     const effect = decideCompletedAnswer({
       budgets: currentBudgets,
       position,
-      answer: { answerText: protocolResult.content === 'refusal' ? protocolResult.refusalText : protocolResult.answerText, position },
+      answer: { answerText: protocolResult.answerText, position },
       modelConfigurationIdentity: fence.modelConfigurationIdentity,
     });
     const applied = await options.controller.dispatch({ schemaVersion: 1, kind: 'model-turn-effect', fence, effect });
@@ -225,7 +225,9 @@ async function interrupt(controller: GameController, fence: ControllerFenceV1, r
 }
 
 function terminalReason(result: ProtocolStreamResult): ModelTurnInterruptionReasonV1 | null {
-  if (result.terminal === 'complete' && (result.content === 'answer' || result.content === 'refusal')) return null;
+  // Provider-level refusal metadata is not an authored chess resignation.
+  if (result.terminal === 'complete' && result.content === 'answer') return null;
+  if (result.content === 'refusal') return 'failed';
   if (result.terminal === 'aborted') return 'aborted';
   if (result.terminal === 'failed') return 'failed';
   return 'incomplete';
@@ -248,4 +250,3 @@ function resultInterrupted(requestId: string, reason: ModelTurnInterruptionReaso
 
 function abortError(): Error { const error = new Error('Generation request was aborted.'); error.name = 'AbortError'; return error; }
 function isAbort(error: unknown, signal?: AbortSignal): boolean { return signal?.aborted === true || (error instanceof Error && error.name === 'AbortError'); }
-
