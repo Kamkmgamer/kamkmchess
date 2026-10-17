@@ -76,11 +76,11 @@ lists a legal move and never suggests one. Legality itself stays with the rules 
 
 ## Reply fencing
 
-A reply is eligible only when its game, segment, side, position revision, request
-generation, and ownership epoch all still match the pending turn and it has not already
-been handled. A repeated FEN is not identity, so a board that returns after Undo or a
-switch cannot revive an old reply. The controller owns generation authority; this module
-only answers whether a reply is still eligible, and callers apply each reply at most once.
+A reply is eligible only when the controller's complete fence matches the active request.
+The controller compares game, segment, side, revision, position revision, request and
+analysis generations, ownership epoch, and model configuration identity. It advances the
+generation on accepted effects, so a repeated FEN after Undo or a switch cannot revive an
+old reply. Reply eligibility and at-most-once application are controller responsibilities.
 ## Controller composition
 
 The composition boundary calls `decideCompletedAnswer` for a completed choice-zero answer
