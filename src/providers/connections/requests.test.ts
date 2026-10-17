@@ -62,6 +62,24 @@ describe('prepareGenerationRequest cache wire controls', () => {
     }));
   });
 
+  it('rejects Anthropic system text cache controls on other routes', () => {
+    const { profile, credentials } = setup('openai', 'chat-completions');
+    expectUnsupported(profile, credentials, JSON.stringify({
+      system: [{ type: 'text', text: 'system prompt', cache_control: { type: 'ephemeral' } }],
+    }));
+  });
+
+  it('rejects malformed cache controls on Anthropic text blocks', () => {
+    const body = JSON.stringify({
+      messages: [{ role: 'user', content: [{ type: 'text', text: 'retained', cache_control: 'ephemeral' }] }],
+    });
+    const openAi = setup('openai', 'chat-completions');
+    expectUnsupported(openAi.profile, openAi.credentials, body);
+
+    const anthropic = setup('anthropic', 'messages');
+    expectUnsupported(anthropic.profile, anthropic.credentials, body);
+  });
+
   it('ignores disabled or incomplete Anthropic config when the wire body has no cache control', () => {
     const { profile, credentials } = setup('openai', 'chat-completions');
     const body = JSON.stringify({ messages: [] });

@@ -31,7 +31,7 @@ function validateCacheRoute(
   const hasOpenAiCache = cache?.promptCacheKey !== undefined || cache?.promptCacheRetention !== undefined
     || bodyCache.promptCacheKey || bodyCache.promptCacheRetention;
   const hasOpenRouterSession = cache?.openRouterSessionId !== undefined || bodyCache.openRouterSession;
-  const hasAnthropicCache = cache?.anthropicEphemeral === true || bodyCache.anthropicCache;
+  const hasAnthropicCache = cache?.anthropicEphemeral === true || bodyCache.anthropicCacheControl;
   if (!hasOpenAiCache && !hasOpenRouterSession && !hasAnthropicCache) return;
   const supported = (!hasOpenAiCache || (profile.provider === 'openai' && ['chat-completions', 'responses'].includes(profile.protocol)))
     && (!hasOpenRouterSession || (profile.provider === 'openrouter' && profile.protocol === 'chat-completions'))
@@ -43,13 +43,20 @@ function validateCacheRoute(
       'The selected cache option is not supported by this connection provider and protocol.',
     );
   }
+  if (profile.provider === 'anthropic' && bodyCache.invalidAnthropicCacheControl) {
+    throw new ConnectionError(
+      'unsupported-cache-option',
+      'The Anthropic cache control in the request body is invalid.',
+    );
+  }
 }
 
 function readBodyCacheControls(body: string): {
   promptCacheKey: boolean;
   promptCacheRetention: boolean;
   openRouterSession: boolean;
-  anthropicCache: boolean;
+  anthropicCacheControl: boolean;
+  invalidAnthropicCacheControl: boolean;
 } {
   let parsed: unknown;
   try {
@@ -61,20 +68,36 @@ function readBodyCacheControls(body: string): {
     throw new ConnectionError('invalid-request-body', 'The generation request body must be a JSON object.');
   }
   const root = parsed as Record<string, unknown>;
-  const found = { promptCacheKey: false, promptCacheRetention: false, openRouterSession: false, anthropicCache: false };
+  const found = {
+    promptCacheKey: false,
+    promptCacheRetention: false,
+    openRouterSession: false,
+    anthropicCacheControl: false,
+    invalidAnthropicCacheControl: false,
+  };
   found.promptCacheKey = Object.hasOwn(root, 'prompt_cache_key');
   found.promptCacheRetention = Object.hasOwn(root, 'prompt_cache_retention');
   found.openRouterSession = Object.hasOwn(root, 'session_id');
+  const inspectTextBlocks = (blocks: unknown[]) => {
+    for (const block of blocks) {
+      if (typeof block !== 'object' || block === null) continue;
+      const candidate = block as { type?: unknown; cache_control?: unknown };
+      if (candidate.type !== 'text' || !Object.hasOwn(candidate, 'cache_control')) continue;
+      found.anthropicCacheControl = true;
+      const control = candidate.cache_control;
+      if (typeof control !== 'object' || control === null || Array.isArray(control)
+        || (control as { type?: unknown }).type !== 'ephemeral') {
+        found.invalidAnthropicCacheControl = true;
+      }
+    }
+  };
+  if (Array.isArray(root.system)) inspectTextBlocks(root.system);
   if (Array.isArray(root.messages)) {
-    found.anthropicCache = root.messages.some((message) => {
-      if (typeof message !== 'object' || message === null || !Array.isArray((message as { content?: unknown }).content)) return false;
-      return ((message as { content: unknown[] }).content).some((block) => {
-        if (typeof block !== 'object' || block === null) return false;
-        const candidate = block as { type?: unknown; cache_control?: unknown };
-        if (candidate.type !== 'text' || typeof candidate.cache_control !== 'object' || candidate.cache_control === null) return false;
-        return (candidate.cache_control as { type?: unknown }).type === 'ephemeral';
-      });
-    });
+    for (const message of root.messages) {
+      if (typeof message !== 'object' || message === null) continue;
+      const content = (message as { content?: unknown }).content;
+      if (Array.isArray(content)) inspectTextBlocks(content);
+    }
   }
   return found;
 }
