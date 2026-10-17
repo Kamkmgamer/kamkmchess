@@ -36,7 +36,9 @@ import type {
   GameNamespaceV1,
   GameResultV1,
   GameStore,
+  JsonValue,
   PlayerSelectionV1,
+  VersionedExtensionSectionV1,
 } from '../storage/index.js';
 
 export type ModelSelection = Extract<PlayerSelectionV1, { kind: 'model' }>;
@@ -531,6 +533,36 @@ function withAdjudicationExtension(
   };
 }
 
+/**
+ * Rewrites the adjudication list so every retained candidate still describes the committed
+ * segment, epoch and position. Candidates are bound to the position that raised them, so an
+ * undo or a new practice segment drops the ones it moves away from instead of reviving them.
+ */
+function carriedAdjudicationExtensions(
+  extensions: GameCheckpointV1['extensions'],
+  candidates: readonly AdjudicationCandidateV1[],
+): GameCheckpointV1['extensions'] {
+  return {
+    ...extensions,
+    [ADJUDICATION_EXTENSION]: {
+      version: 1,
+      data: JSON.parse(JSON.stringify({ candidates, activeQueryIdentity: null })) as JsonValue,
+    },
+  };
+}
+
+function withoutExtension(
+  extensions: GameCheckpointV1['extensions'],
+  name: string,
+): GameCheckpointV1['extensions'] {
+  const retained: GameCheckpointV1['extensions'] = {};
+  for (const [key, section] of Object.entries(extensions)) {
+    if (key === name) continue;
+    retained[key] = section;
+  }
+  return retained;
+}
+
 function deadnessQuery(checkpoint: GameCheckpointV1): ProofQuery {
   return createDeadnessQuery({
     gameId: checkpoint.gameId,
@@ -746,6 +778,31 @@ function sameFence(left: ControllerFenceV1, right: ControllerFenceV1): boolean {
     left.analysisGeneration === right.analysisGeneration &&
     left.ownershipEpoch === right.ownershipEpoch &&
     left.modelConfigurationIdentity === right.modelConfigurationIdentity;
+}
+
+const UNDO_BASELINE_EXTENSION = 'undo-baseline';
+
+function undoBaselineSection(checkpoint: GameCheckpointV1): VersionedExtensionSectionV1 {
+  return { version: 1, data: JSON.parse(JSON.stringify(checkpoint)) as JsonValue };
+}
+
+/**
+ * Reads the stored baseline. The section data is the previous checkpoint verbatim, so an
+ * unrecognized or absent shape simply means Undo is unavailable rather than a hard failure.
+ */
+function readUndoBaseline(checkpoint: GameCheckpointV1): GameCheckpointV1 | undefined {
+  const section = checkpoint.extensions[UNDO_BASELINE_EXTENSION];
+  if (section === undefined || section.version !== 1) return undefined;
+  const data = section.data as Partial<GameCheckpointV1> | null;
+  if (data === null || typeof data !== 'object' || data.schemaVersion !== 1) return undefined;
+  if (typeof data.gameId !== 'string' || data.gameId !== checkpoint.gameId) return undefined;
+  return data.rules === undefined || data.clocks === undefined ? undefined : (data as GameCheckpointV1);
+}
+
+function withoutUndoBaseline(
+  extensions: GameCheckpointV1['extensions'],
+): GameCheckpointV1['extensions'] {
+  return withoutExtension(extensions, UNDO_BASELINE_EXTENSION);
 }
 
 function validCoordinateMove(move: CoordinateMove): boolean {
@@ -1233,8 +1290,8 @@ class IndexedGameController implements GameController {
     const current = this.checkpoint;
     if (current === null || !sameFence(createFence(current), fence)) return this.snapshot();
     if (current.result.kind !== 'unresolved') return this.snapshot();
-    const baselineExtension = current.extensions['undo-baseline'];
-    const baseline = (baselineExtension as { data?: { checkpoint?: GameCheckpointV1 } } | undefined)?.data?.checkpoint;
+    if (current.practice.mode === 'practice') return this.snapshot();
+    const baseline = readUndoBaseline(current);
     if (baseline === undefined) return this.snapshot();
 
     const humanSide: ClockSide = current.selections.players.white.kind === 'human' ? 'white' : 'black';
@@ -1357,7 +1414,12 @@ class IndexedGameController implements GameController {
             eventIds: [...restoredBase.archive.currentLine.eventIds, event.eventId],
           },
         },
-        extensions: restoredBase.extensions,
+        extensions: carriedAdjudicationExtensions(
+          restoredBase.extensions,
+          adjudicationExtension(restoredBase).data.candidates.filter(
+            (item) => item.status === 'accepted' && item.query.segmentId === context.checkpoint.segmentId,
+          ),
+        ),
       };
       return {
         checkpoint: restoredCheckpoint,
@@ -1380,13 +1442,13 @@ class IndexedGameController implements GameController {
   }
 
   undo(fence: ControllerFenceV1): Promise<ControllerSnapshotV1> {
-    return this.undoImplementation(fence);
+    return this.enqueueControllerOperation(() => this.undoImplementation(fence));
   }
   undoMove(fence: ControllerFenceV1): Promise<ControllerSnapshotV1> {
-    return this.undoImplementation(fence);
+    return this.enqueueControllerOperation(() => this.undoImplementation(fence));
   }
   takeback(fence: ControllerFenceV1): Promise<ControllerSnapshotV1> {
-    return this.undoImplementation(fence);
+    return this.enqueueControllerOperation(() => this.undoImplementation(fence));
   }
 
   private async startPracticeImplementation(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1> {
@@ -1425,9 +1487,13 @@ class IndexedGameController implements GameController {
 
     const originalResult = current.result as Extract<GameResultV1, { kind: 'final' }>;
     const timeControl = current.clocks.timeControl;
-    const clock = startClock({ at: this.timeSource.sample(), activeSide: fromPositionColor(position.sideToMove), timeControl });
 
     const committed = await this.commitMutation<{ kind: 'accepted' }>(fence, (context) => {
+      const clock = startClock({
+        at: context.at,
+        activeSide: fromPositionColor(context.position.sideToMove),
+        timeControl,
+      });
       const players = { ...context.checkpoint.selections.players };
       const modelSide = players.white.kind === 'human' ? 'black' : 'white';
       players[modelSide] = freezeModelSelection(modelSelection);
@@ -1485,7 +1551,10 @@ class IndexedGameController implements GameController {
           sourcePositionFen: context.checkpoint.rules.currentFen,
           originalResult,
         },
-        extensions: context.checkpoint.extensions,
+        extensions: carriedAdjudicationExtensions(
+          withoutUndoBaseline(context.checkpoint.extensions),
+          [],
+        ),
       };
       return {
         checkpoint: nextCheckpoint,
@@ -1499,10 +1568,17 @@ class IndexedGameController implements GameController {
   }
 
   startPractice(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1> {
-    return this.startPracticeImplementation(fence, modelSelection);
+    return this.enqueueControllerOperation(() => this.startPracticeImplementation(fence, modelSelection));
   }
   beginPractice(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1> {
-    return this.startPracticeImplementation(fence, modelSelection);
+    return this.enqueueControllerOperation(() => this.startPracticeImplementation(fence, modelSelection));
+  }
+
+  /** Every public mutation runs after earlier controller work so intents stay serialized. */
+  private enqueueControllerOperation(run: () => Promise<ControllerSnapshotV1>): Promise<ControllerSnapshotV1> {
+    const operation = this.operationQueue.then(() => run());
+    this.operationQueue = operation.then(() => undefined, () => undefined);
+    return operation;
   }
 
   private rememberClockDiscrepancy(reading: ClockDiscrepancyReading): void {
@@ -2027,10 +2103,7 @@ class IndexedGameController implements GameController {
             ...finalCheckpoint,
             extensions: {
               ...finalCheckpoint.extensions,
-              'undo-baseline': {
-                version: 1,
-                data: { checkpoint: context.checkpoint } as never,
-              },
+              [UNDO_BASELINE_EXTENSION]: undoBaselineSection(context.checkpoint),
             },
           }
         : finalCheckpoint;
