@@ -365,14 +365,14 @@ describe('game controller setup', () => {
 
   it('starts the selected side with the persisted 15+10 clock after setup', async () => {
     const testId = 'controller-setup-default';
+    let monotonicMs = 5_000;
+    let wallTimeMs = 1_000;
     const store = await openGameStore({
       databaseName: testId,
       factory: new IDBFactory(),
-      now: () => 1_000,
+      now: () => wallTimeMs,
     });
     let generatedId = 0;
-    let monotonicMs = 5_000;
-    let wallTimeMs = 1_000;
     const timeSource: ControllerTimeSource = {
       sample(decisionTimeMs) {
         return {
@@ -443,6 +443,12 @@ describe('game controller setup', () => {
       wallTimeMs = 901_000;
       expect(controller.snapshot().clockReading?.status).toBe('expired');
       expect(controller.snapshot().readiness).toBe('expiry-persistence-pending');
+      const expiryRevision = controller.snapshot().checkpoint.revision;
+      const reconciledExpiry = await controller.reconcile();
+      expect(reconciledExpiry.checkpoint.revision).toBeGreaterThan(expiryRevision);
+      expect(reconciledExpiry.checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'timeout', activeClockDeadlineMs: null });
+      expect(reconciledExpiry.checkpoint.clocks.activeSide).toBeNull();
+      expect((await store.readGame(testId))?.checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'timeout' });
     } finally {
       store.close();
     }

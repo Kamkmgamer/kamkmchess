@@ -4,7 +4,7 @@ import { openGameStore } from '../storage/index.js';
 import { getOrCreateGameController } from '../controller/index.js';
 import { checkProofEvidence, PROOF_CHECKER_VERSION, RULES_ADAPTER_VERSION } from '../proofs/index.js';
 import type { ProofEvidence } from '../proofs/index.js';
-import { parseCoordinateMove, submitBoardMove } from './board-input.js';
+import { isLocalBoardInputDisabled, parseCoordinateMove, startClassifiedLocalGame, submitBoardMove } from './board-input.js';
 
 describe('board input to controller seam', () => {
   it('parses coordinate entry and commits white and black moves through the game controller', async () => {
@@ -29,6 +29,9 @@ describe('board input to controller seam', () => {
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
       });
+      expect(isLocalBoardInputDisabled(initial, false)).toBe(true);
+      const beforeClassification = await startClassifiedLocalGame(controller, initial);
+      expect(beforeClassification.checkpoint.clocks.activeSide).toBeNull();
       expect(initial.checkpoint.selections.players).toEqual({
         white: { kind: 'human' },
         black: { kind: 'human' },
@@ -73,11 +76,14 @@ describe('board input to controller seam', () => {
           },
         },
       });
-      const started = await controller.startGame(ready.fence);
+      const started = await startClassifiedLocalGame(controller, ready);
+      expect(started.checkpoint.result.kind).toBe('unresolved');
+      expect(isLocalBoardInputDisabled(started, false)).toBe(false);
       const white = await submitBoardMove(controller, started, parseCoordinateMove('e2e4')!);
       expect(white.kind).toBe('accepted');
       expect(white.snapshot.checkpoint.rules.moves.map((move) => move.san)).toEqual(['e4']);
       expect(white.snapshot.checkpoint.result.kind).toBe('pending-adjudication');
+      expect(isLocalBoardInputDisabled(white.snapshot, false)).toBe(true);
       const stored = await store.readGame(gameId);
       expect(stored?.checkpoint.history.segments[0]).toMatchObject({
         providerId: null,

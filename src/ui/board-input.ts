@@ -26,3 +26,19 @@ export function submitBoardMove(
 ): Promise<GameControllerIntentResultV1> {
   return controller.dispatch({ schemaVersion: 1, kind: 'human-move', fence: snapshot.fence, move });
 }
+
+/** Start a local game only after the controller has accepted setup classification evidence. */
+export function startClassifiedLocalGame(
+  controller: GameController,
+  snapshot: ControllerSnapshotV1,
+): Promise<ControllerSnapshotV1> {
+  if (snapshot.adjudication.status !== 'setup-ready' ||
+      snapshot.checkpoint.result.kind !== 'pending-adjudication' ||
+      snapshot.checkpoint.clocks.activeSide !== null) return Promise.resolve(snapshot);
+  return controller.startGame(snapshot.fence);
+}
+
+export function isLocalBoardInputDisabled(snapshot: ControllerSnapshotV1, working: boolean): boolean {
+  return working || snapshot.checkpoint.result.kind !== 'unresolved' || snapshot.readiness !== 'ready' ||
+    snapshot.clockReading?.status !== 'running';
+}

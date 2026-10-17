@@ -7,7 +7,9 @@ import type { ControllerSnapshotV1 } from '../controller/index.js';
 import { runProofSearchPass } from '../proofs/index.js';
 import { legalMoves, parsePosition } from '../rules/index.js';
 import type { CoordinateMove, Promotion, Square } from '../rules/index.js';
-import { parseCoordinateMove, submitBoardMove } from './board-input.js';
+import { isLocalBoardInputDisabled, parseCoordinateMove, startClassifiedLocalGame, submitBoardMove } from './board-input.js';
+import { editPositionFen, editorSideToMove, readEditorPieces, setPositionSideToMove } from './position-editor.js';
+import type { EditorPiece } from './position-editor.js';
 import type { LocalGameSession, MatchComposition } from './match-composition.js';
 import { T3_PALETTES } from './t3-palettes.js';
 
@@ -21,6 +23,16 @@ interface AppProps {
 const PROMOTIONS: readonly { value: Promotion; label: string }[] = [
   { value: 'q', label: 'Queen' }, { value: 'r', label: 'Rook' },
   { value: 'b', label: 'Bishop' }, { value: 'n', label: 'Knight' },
+];
+const STANDARD_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+const EDITOR_PIECES: readonly { value: EditorPiece; label: string; glyph: string }[] = [
+  { value: 'empty', label: 'Remove piece', glyph: '·' },
+  { value: 'wk', label: 'White king', glyph: '♔' }, { value: 'wq', label: 'White queen', glyph: '♕' },
+  { value: 'wr', label: 'White rook', glyph: '♖' }, { value: 'wb', label: 'White bishop', glyph: '♗' },
+  { value: 'wn', label: 'White knight', glyph: '♘' }, { value: 'wp', label: 'White pawn', glyph: '♙' },
+  { value: 'bk', label: 'Black king', glyph: '♚' }, { value: 'bq', label: 'Black queen', glyph: '♛' },
+  { value: 'br', label: 'Black rook', glyph: '♜' }, { value: 'bb', label: 'Black bishop', glyph: '♝' },
+  { value: 'bn', label: 'Black knight', glyph: '♞' }, { value: 'bp', label: 'Black pawn', glyph: '♟' },
 ];
 
 function formatClock(milliseconds: number): string {
@@ -41,6 +53,7 @@ function ChessBoard({ fen, orientation, snapshot, disabled, onMove }: {
   readonly disabled: boolean;
   readonly onMove: (move: PromotionMove) => void;
 }) {
+  const [keyboardOrigin, setKeyboardOrigin] = useState<{ square: Square; fen: string } | null>(null);
   const host = useRef<HTMLDivElement>(null);
   const board = useRef<Chessboard | null>(null);
   const onMoveRef = useRef(onMove);
@@ -87,14 +100,28 @@ function ChessBoard({ fen, orientation, snapshot, disabled, onMove }: {
     <div className="board-frame">
       <div className="board-host" ref={host} role="img" aria-label="Chessboard. Use the coordinate move controls or inspect a square." />
       <details className="board-inspection">
-        <summary>Inspect board squares</summary>
+        <summary>Inspect or move with the keyboard</summary>
+        <p>Choose a square to inspect it. Choose a piece of the side to move, then its destination to play a move.</p>
         <div className="square-grid">
           {Array.from({ length: 64 }, (_, index) => {
             const square = ('abcdefgh'[index % 8] + String(8 - Math.floor(index / 8))) as Square;
-            return <button className="square-inspect" key={square} type="button" aria-label={squareDescription(snapshot, square)} onClick={() => {
-              const node = document.getElementById('board-announcement');
-              if (node) node.textContent = squareDescription(snapshot, square);
-            }}>{square}</button>;
+            return <button className="square-inspect" key={square} type="button"
+              aria-label={squareDescription(snapshot, square)} aria-pressed={keyboardOrigin?.square === square && keyboardOrigin.fen === snapshot.position.fen}
+              onClick={() => {
+                const node = document.getElementById('board-announcement');
+                if (node) node.textContent = squareDescription(snapshot, square);
+                if (disabled) return;
+                const piece = snapshot.position.pieces.find((item) => item.square === square);
+                if (keyboardOrigin === null || keyboardOrigin.fen !== snapshot.position.fen) {
+                  if (piece?.color === snapshot.position.sideToMove) setKeyboardOrigin({ square, fen: snapshot.position.fen });
+                  return;
+                }
+                if (piece?.color === snapshot.position.sideToMove) setKeyboardOrigin({ square, fen: snapshot.position.fen });
+                else {
+                  onMove({ from: keyboardOrigin.square, to: square });
+                  setKeyboardOrigin(null);
+                }
+              }}>{square}</button>;
           })}
         </div>
         <p id="board-announcement" className="sr-only" aria-live="polite" />
@@ -136,6 +163,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   const [setupFen, setSetupFen] = useState('');
   const [setupMinutes, setSetupMinutes] = useState(15);
   const [setupIncrement, setSetupIncrement] = useState(10);
+  const [editorPiece, setEditorPiece] = useState<EditorPiece>('wp');
   const [setupError, setSetupError] = useState('');
   const [working, setWorking] = useState(false);
   const setupReturnFocus = useRef<HTMLElement | null>(null);
@@ -152,8 +180,26 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
     return () => media.removeEventListener('change', update);
   }, []);
   useEffect(() => {
-    const timer = window.setInterval(() => setSnapshot(session.controller.snapshot()), 1_000);
-    return () => window.clearInterval(timer);
+    let stopped = false;
+    let timer = 0;
+    let reconciling = false;
+    const tick = async () => {
+      if (!reconciling) {
+        reconciling = true;
+        try {
+          const observed = session.controller.snapshot();
+          const needsReconciliation = observed.readiness === 'expiry-persistence-pending' ||
+            observed.readiness === 'restore-recovery-pending' || observed.clockReading?.status === 'expired';
+          const next = needsReconciliation ? await session.controller.reconcile() : observed;
+          if (!stopped) setSnapshot(next);
+        } catch {
+          if (!stopped) setSnapshot(session.controller.snapshot());
+        } finally { reconciling = false; }
+      }
+      if (!stopped) timer = window.setTimeout(() => void tick(), 1_000);
+    };
+    timer = window.setTimeout(() => void tick(), 1_000);
+    return () => { stopped = true; window.clearTimeout(timer); };
   }, [session.controller]);
   useEffect(() => {
     const palette = (T3_PALETTES.find((item) => item.id === theme) ?? T3_PALETTES[1]) as {
@@ -202,7 +248,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   };
   const openSetup = (trigger: HTMLElement, fen?: string) => {
     setupReturnFocus.current = trigger;
-    if (fen !== undefined) setSetupFen(fen);
+    setSetupFen(fen ?? STANDARD_FEN);
     setSetupOpen(true);
     window.setTimeout(() => document.getElementById('new-game-title')?.focus(), 0);
   };
@@ -256,10 +302,13 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
       const next = await session.controller.acceptAdjudicationResult({
         requestId: work.requestId, fence: work.fence, query: work.query, result,
       });
-      refresh(next);
-      setFeedback(next.checkpoint.result.kind === 'pending-adjudication'
-        ? 'The position remains pending. Continue the check to search another bounded pass.'
-        : statusLabel(next));
+      const playable = await startClassifiedLocalGame(session.controller, next);
+      refresh(playable);
+      setFeedback(playable.checkpoint.result.kind === 'pending-adjudication'
+        ? playable.adjudication.status === 'setup-ready'
+          ? 'Starting position classified. The local game clock is running.'
+          : 'The position remains pending. Continue the check to search another bounded pass.'
+        : statusLabel(playable));
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'The position check could not be saved.');
     } finally { setWorking(false); }
@@ -289,7 +338,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
       setOrientation('white');
       setCoordinate('');
       setPromotion(null);
-      setFeedback('New local game created. The starting position must be classified before its clock starts.');
+      setFeedback('New local game created. Classify its starting position before the clock starts.');
     } catch (error) {
       setSetupError(error instanceof Error ? error.message : 'The new game could not be saved.');
     } finally { setWorking(false); }
@@ -312,7 +361,13 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   const activeSide = snapshot.checkpoint.clocks.activeSide;
   const final = snapshot.checkpoint.result.kind === 'final';
   const pendingSetup = snapshot.checkpoint.result.kind === 'pending-adjudication' && activeSide === null;
-  const disabled = working || final || snapshot.readiness !== 'ready' || pendingSetup || snapshot.clockReading?.status !== 'running';
+  const disabled = isLocalBoardInputDisabled(snapshot, working);
+  let editorPieces: ReturnType<typeof readEditorPieces> | null = null;
+  let editorSide: 'w' | 'b' = 'w';
+  try {
+    editorPieces = readEditorPieces(setupFen || STANDARD_FEN);
+    editorSide = editorSideToMove(setupFen || STANDARD_FEN);
+  } catch { /* The FEN field reports the validation error on submit. */ }
 
   return (
     <main className="workspace">
@@ -343,6 +398,31 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
           <label className="fen-field">Custom starting position (six-field FEN)
             <textarea rows={2} value={setupFen} onChange={(event) => setSetupFen(event.target.value)} placeholder="Leave blank for the standard position" />
           </label>
+          <fieldset className="visual-editor">
+            <legend>Visual piece editor</legend>
+            <p className="muted">Choose a piece, then a square to place it or remove its current piece. Editing clears castling and en-passant rights.</p>
+            <div className="editor-tools">
+              <label>Piece to place<select value={editorPiece} onChange={(event) => setEditorPiece(event.target.value as EditorPiece)}>
+                {EDITOR_PIECES.map((piece) => <option key={piece.value} value={piece.value}>{piece.label}</option>)}
+              </select></label>
+              <label>Side to move<select value={editorSide} disabled={!editorPieces}
+                onChange={(event) => { try { setSetupFen(setPositionSideToMove(setupFen || STANDARD_FEN, event.target.value as 'w' | 'b')); } catch { /* Keep invalid text available for correction. */ } }}>
+                <option value="w">White</option><option value="b">Black</option>
+              </select></label>
+            </div>
+            {editorPieces ? <div className="editor-grid" role="group" aria-label="Visual starting position board">
+              {Array.from({ length: 64 }, (_, index) => {
+                const square = ('abcdefgh'[index % 8] + String(8 - Math.floor(index / 8))) as Square;
+                const piece = editorPieces?.find((item) => item.square === square);
+                const glyph = piece ? EDITOR_PIECES.find((item) => item.value === `${piece.color}${piece.type}`)?.glyph : undefined;
+                return <button className="editor-square" type="button" key={square}
+                  aria-label={`${square}, ${piece ? (piece.color === 'w' ? 'white ' : 'black ') + piece.type : 'empty'}`}
+                  onClick={() => { try { setSetupFen(editPositionFen(setupFen || STANDARD_FEN, square, editorPiece)); } catch (error) { setSetupError(error instanceof Error ? error.message : 'The position cannot be edited.'); } }}>
+                  {glyph ?? <span className="sr-only">Empty</span>}
+                </button>;
+              })}
+            </div> : <p className="error-message">Enter a valid FEN before using the visual editor.</p>}
+          </fieldset>
           {setupError && <p className="error-message" role="alert">{setupError}</p>}
           <button className="button primary" disabled={working} type="submit">Create game</button>
         </form>
@@ -422,6 +502,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
           <section className="detail-section">
             <div className="panel-heading"><h2>Match tools</h2></div>
             <p>Undo restores the committed position without refunding clock time. New games keep this result in saved history.</p>
+            <p className="muted">Practice after a model loss is unavailable in this two-human local game.</p>
             <button className="button secondary" type="button" onClick={(event) => openSetup(event.currentTarget)}>New local game</button>
           </section>
         </aside>
