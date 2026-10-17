@@ -14,6 +14,7 @@ import type { ProofEvidence, ProofQuery, ProofSearchPassResult } from '../proofs
 import { getOrCreateGameController } from './index.js';
 import type { ControllerTimeSource, ModelSelection } from './index.js';
 import type { CoordinateMove } from '../rules/index.js';
+import { initializeLegacyActiveGame, seedLegacyActiveGame } from './controller-test-support.js';
 
 interface PositiveWitnessFixture {
   readonly fen: string;
@@ -185,6 +186,100 @@ function checkedTimeoutPass(query: ProofQuery): ProofSearchPassResult {
 }
 
 describe('controller pending adjudication', () => {
+  it('classifies a new initialize setup before exposing Start or a clock', async () => {
+    const gameId = 'controller-adjudication-initialize-setup-gate';
+    const decisionTimeMs = 1_000;
+    const store = await openGameStore({
+      databaseName: gameId,
+      factory: new IDBFactory(),
+      now: () => decisionTimeMs,
+    });
+    const runner = new ControlledAdjudicationRunner();
+    const controller = getOrCreateGameController({
+      gameId,
+      store,
+      timeSource: {
+        sample(atDecisionTimeMs) {
+          return { monotonicMs: 5_000, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs };
+        },
+      },
+      clockPolicy: { maxReferenceDivergenceMs: 0 },
+      adjudicationRunner: runner,
+    });
+
+    try {
+      const setup = {
+        humanSide: 'white' as const,
+        modelSelection: model,
+        namespace: { kind: 'guest' as const },
+        ownershipEpoch: 0,
+        startingFen: '6rk/8/3N3K/8/8/8/8/8 w - - 0 1',
+        timeControl: { startingTimeMs: 30_000, incrementMs: 0 },
+      };
+      const pending = await controller.initialize(setup);
+
+      expect(pending.checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'dead-position' });
+      expect(pending.adjudication?.workflow).toBe('setup');
+      expect(pending.startAvailable).toBe(false);
+      expect(pending.clockReading).toBeNull();
+      expect(pending.checkpoint.clocks.activeSide).toBeNull();
+      expect(pending.checkpoint.rules.currentFen).toBe(setup.startingFen);
+      await waitFor(() => runner.calls.length === 1);
+
+      runner.calls[0]!.resolve(unknownPass(runner.calls[0]!.input.query));
+      await waitFor(() => controller.snapshot().adjudication?.candidates[0]?.status === 'awaiting-continuation');
+      const unresolved = controller.snapshot();
+      expect(unresolved.checkpoint.result.kind).toBe('pending-adjudication');
+      expect(unresolved.startAvailable).toBe(false);
+      expect(unresolved.clockReading).toBeNull();
+      expect(unresolved.checkpoint.rules.currentFen).toBe(setup.startingFen);
+      expect((await store.readGame(gameId))?.checkpoint.clocks.activeSide).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  it('restores a legacy active checkpoint when initialize receives its saved setup', async () => {
+    const gameId = 'controller-adjudication-legacy-initialize-restore';
+    const decisionTimeMs = 1_000;
+    const store = await openGameStore({
+      databaseName: gameId,
+      factory: new IDBFactory(),
+      now: () => decisionTimeMs,
+    });
+    const controller = getOrCreateGameController({
+      gameId,
+      store,
+      timeSource: {
+        sample(atDecisionTimeMs) {
+          return { monotonicMs: 5_000, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs };
+        },
+      },
+      clockPolicy: { maxReferenceDivergenceMs: 0 },
+    });
+    const setup = {
+      humanSide: 'white' as const,
+      modelSelection: model,
+      namespace: { kind: 'guest' as const },
+      ownershipEpoch: 0,
+      timeControl: { startingTimeMs: 30_000, incrementMs: 0 },
+    };
+
+    try {
+      await seedLegacyActiveGame(gameId, store, setup, { monotonicMs: 5_000 });
+      const restored = await controller.initialize(setup);
+
+      expect(restored.checkpoint.revision).toBe(1);
+      expect(restored.checkpoint.result).toEqual({ kind: 'unresolved' });
+      expect(restored.checkpoint.clocks.activeSide).toBe('white');
+      expect(restored.clockReading).toMatchObject({ status: 'running', remaining: { whiteMs: 30_000 } });
+      expect(restored.adjudication).toBeNull();
+      expect((await store.readGame(gameId))?.checkpoint.revision).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+
   it('finalizes supported setup deadness only from a replay-checked closed set', async () => {
     const gameId = 'controller-adjudication-known-dead-setup';
     const decisionTimeMs = 1_000;
@@ -385,13 +480,13 @@ describe('controller pending adjudication', () => {
     let restoredStore: Awaited<ReturnType<typeof openGameStore>> | null = null;
 
     try {
-      const started = await controller.initialize({
+      const started = await initializeLegacyActiveGame(controller, gameId, store, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 30_000, incrementMs: 0 },
-      });
+      }, { monotonicMs });
       const move = await controller.dispatch({
         schemaVersion: 1,
         kind: 'human-move',
@@ -463,13 +558,13 @@ describe('controller pending adjudication', () => {
     });
 
     try {
-      const started = await controller.initialize({
+      const started = await initializeLegacyActiveGame(controller, gameId, store, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 30_000, incrementMs: 0 },
-      });
+      }, { monotonicMs });
       const move = await controller.dispatch({
         schemaVersion: 1,
         kind: 'human-move',
@@ -607,14 +702,14 @@ describe('controller pending adjudication', () => {
     });
 
     try {
-      const started = await controller.initialize({
+      const started = await initializeLegacyActiveGame(controller, gameId, store, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         startingFen: '6rk/8/3N3K/8/8/8/8/8 w - - 0 1',
         timeControl: { startingTimeMs: 30_000, incrementMs: 0 },
-      });
+      }, { monotonicMs });
       expect(started.checkpoint.clocks.activeSide).toBe('white');
 
       decisionTimeMs = 32_000;
@@ -682,13 +777,13 @@ describe('controller pending adjudication', () => {
     });
 
     try {
-      const setup = await controller.initialize({
+      const setup = await initializeLegacyActiveGame(controller, gameId, store, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 30_000, incrementMs: 0 },
-      });
+      }, { monotonicMs });
       const move = await controller.dispatch({
         schemaVersion: 1,
         kind: 'human-move',

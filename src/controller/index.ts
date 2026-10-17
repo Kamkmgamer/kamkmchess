@@ -2774,6 +2774,7 @@ class IndexedGameController implements GameController {
   }
 
   private async loadOrCreate(setup?: GameControllerSetupV1): Promise<ControllerSnapshotV1> {
+    if (setup !== undefined) return this.createClassifiedSetup(setup);
     const existing = await this.store.readGame(this.gameId);
     if (existing !== null) {
       this.restore(existing.checkpoint, existing.events);
@@ -2781,89 +2782,7 @@ class IndexedGameController implements GameController {
       this.publish(snapshot);
       return snapshot;
     }
-    if (setup === undefined) {
-      throw new GameControllerError('setup-required', 'A new game requires a validated setup.');
-    }
-
-    const prepared = prepareSetup(setup, this.idFactory, this.randomSide);
-    let acceptedClock: ClockState | null = null;
-    let decisionCompleted = false;
-    const result = await this.store.commitCheckpoint({
-      gameId: this.gameId,
-      expectedRevision: null,
-      expectedEpoch: prepared.ownershipEpoch,
-      events: [],
-      chunks: [],
-      knownCredentials: [],
-      decide: (decisionTimeMs) => {
-        const at = sampleAtDecision(this.timeSource, decisionTimeMs);
-        const usedIds = new Set([prepared.segmentId, prepared.lineId]);
-        const eventId = nextUniqueId(this.idFactory, usedIds);
-        const startingFacts = observeEndingFacts(
-          prepared.position,
-          createRepetitionLedger(prepared.position),
-        );
-        const initialResult = finalResultForPosition(
-          prepared.position,
-          startingFacts,
-          eventId,
-          decisionTimeMs,
-        );
-        const clock = initialResult === null
-          ? startClock({
-              at,
-              activeSide: fromPositionColor(prepared.position.sideToMove),
-              timeControl: prepared.timeControl,
-            })
-          : null;
-        const checkpoint = makeCheckpoint(
-          this.gameId,
-          prepared,
-          clock,
-          decisionTimeMs,
-          eventId,
-          initialResult ?? { kind: 'unresolved' },
-        );
-        const details: Record<string, unknown> = {
-          humanSide: prepared.humanSide,
-          startingFen: prepared.startingFen,
-          timeControl: prepared.timeControl,
-        };
-        if (initialResult !== null) details.result = initialResult;
-        const event: ArchiveEventV1 = {
-          eventId,
-          gameId: this.gameId,
-          sequence: 0,
-          segmentId: prepared.segmentId,
-          kind: 'game-created',
-          occurredAtMs: decisionTimeMs,
-          receiveState: 'complete',
-          egressStatus: 'eligible',
-          payload: eventPayload(createFence(checkpoint), details),
-          chunkIds: [],
-        };
-        acceptedClock = clock;
-        decisionCompleted = true;
-        return {
-          checkpoint,
-          events: [event],
-          outboxOperationIds: [],
-        };
-      },
-    });
-    if (result.kind === 'revision-conflict') {
-      throw new GameControllerError('revision-conflict', 'A game with this ID already has a saved checkpoint.');
-    }
-    if (!decisionCompleted) {
-      throw new GameControllerError('invalid-configuration', 'The checkpoint decision did not produce controller state.');
-    }
-    this.checkpoint = result.checkpoint;
-    this.position = prepared.position;
-    this.clockState = acceptedClock;
-    this.restored = false;
-    const snapshot = this.snapshot();
-    this.publish(snapshot);
-    return snapshot;
+    throw new GameControllerError('setup-required', 'A new game requires exact setup classification before its clock can start.');
   }
 
   private restore(checkpoint: GameCheckpointV1, events: readonly ArchiveEventV1[]): void {

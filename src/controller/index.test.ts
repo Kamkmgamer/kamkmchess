@@ -10,6 +10,7 @@ import type {
 } from './index.js';
 import type { ProofAdjudicationRunnerV1 } from '../adjudication/index.js';
 import type { CheckpointCommitInputV1, GameStore } from '../storage/index.js';
+import { initializeLegacyActiveGame, seedLegacyActiveGame } from './controller-test-support.js';
 
 const model: ModelSelection = {
   kind: 'model',
@@ -95,6 +96,7 @@ describe('game controller setup', () => {
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
       };
+      await seedLegacyActiveGame(testId, store, setup, { monotonicMs: 5_000, hostOffsetMs: 200 });
       const [firstInitialization, remountInitialization] = await Promise.all([
         controller.initialize(setup),
         remountedController.initialize(setup),
@@ -264,7 +266,7 @@ describe('game controller setup', () => {
     }
   });
 
-  it('resolves Random once and fences the exact model on the position side to move', async () => {
+  it('restores a legacy Random choice without changing its resolved model side', async () => {
     const testId = 'controller-random-side';
     const store = await openGameStore({
       databaseName: testId,
@@ -290,15 +292,17 @@ describe('game controller setup', () => {
     });
 
     try {
-      const snapshot = await controller.initialize({
+      const setup: GameControllerSetupV1 = {
         humanSide: 'random',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 30_000, incrementMs: 3_000 },
-      });
+      };
+      await seedLegacyActiveGame(testId, store, setup, { monotonicMs: 300, resolvedHumanSide: 'black' });
+      const snapshot = await controller.initialize(setup);
 
-      expect(randomSelections).toBe(1);
+      expect(randomSelections).toBe(0);
       expect(snapshot.checkpoint.selections.players.black).toEqual({ kind: 'human' });
       expect(snapshot.checkpoint.selections.players.white).toMatchObject({ kind: 'model' });
       expect(snapshot.checkpoint.clocks).toMatchObject({
@@ -394,12 +398,12 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializeLegacyActiveGame(controller, testId, store, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
-      });
+      }, { monotonicMs: 300 });
       const started = await controller.dispatch({
         schemaVersion: 1,
         kind: 'begin-model-turn',
@@ -442,13 +446,13 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializeLegacyActiveGame(controller, testId, store, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 30_000, incrementMs: 3_000 },
-      });
+      }, { monotonicMs, hostOffsetMs: 100 });
       const started = await controller.dispatch({
         schemaVersion: 1,
         kind: 'begin-model-turn',
@@ -468,7 +472,7 @@ describe('game controller setup', () => {
       });
 
       expect(accepted.kind).toBe('accepted');
-      expect(accepted.snapshot.checkpoint.revision).toBe(3);
+      expect(accepted.snapshot.checkpoint.revision).toBe(4);
       expect(accepted.snapshot.checkpoint.positionRevision).toBe(1);
       expect(accepted.snapshot.checkpoint.rules.moves).toEqual([
         expect.objectContaining({
@@ -488,12 +492,13 @@ describe('game controller setup', () => {
       const saved = await store.readGame(testId);
       expect(saved?.events.map((event) => event.kind)).toEqual([
         'game-created',
+        'clock-absence-reconciled',
         'model-turn-started',
         'model-move-accepted',
         'adjudication-pending',
       ]);
       expect(saved?.events.find((event) => event.kind === 'model-move-accepted')).toMatchObject({
-        sequence: 2,
+        sequence: 3,
         occurredAtMs: 1_010,
         payload: {
           schemaVersion: 1,
@@ -539,12 +544,12 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initialized = await controller.initialize({
+      const initialized = await initializeLegacyActiveGame(controller, testId, store, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
-      });
+      }, { monotonicMs: 2_000 });
       const unsolicited = await controller.dispatch({
         schemaVersion: 1,
         kind: 'model-move',
@@ -586,12 +591,12 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializeLegacyActiveGame(controller, testId, store, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
-      });
+      }, { monotonicMs });
       wallTimeMs = 6_000;
       const discrepancy = controller.snapshot();
       expect(discrepancy.clockReading?.status).toBe('reconciliation-required');
@@ -674,13 +679,13 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializeLegacyActiveGame(controller, testId, baseStore, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 60_000, incrementMs: 1_000 },
-      });
+      }, { monotonicMs: 0 });
       decisionTimeMs = 1_500;
       abortNextCommit = true;
       await expect(controller.dispatch({
@@ -693,7 +698,10 @@ describe('game controller setup', () => {
       const afterAbort = await baseStore.readGame(testId);
       expect(afterAbort?.checkpoint.revision).toBe(initial.checkpoint.revision);
       expect(afterAbort?.checkpoint.rules.moves).toHaveLength(0);
-      expect(afterAbort?.events.map((event) => event.kind)).toEqual(['game-created']);
+      expect(afterAbort?.events.map((event) => event.kind)).toEqual([
+        'game-created',
+        'clock-absence-reconciled',
+      ]);
       expect(controller.snapshot().readiness).toBe('clock-reconciliation-required');
 
       const blocked = await controller.dispatch({
@@ -786,13 +794,13 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializeLegacyActiveGame(controller, testId, store, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 60_000, incrementMs: 1_000 },
-      });
+      }, { monotonicMs });
       const started = await controller.dispatch({
         schemaVersion: 1,
         kind: 'begin-model-turn',
@@ -813,7 +821,11 @@ describe('game controller setup', () => {
       const saved = await store.readGame(testId);
       expect(saved?.checkpoint.revision).toBe(started.snapshot.checkpoint.revision);
       expect(saved?.checkpoint.rules.moves).toHaveLength(0);
-      expect(saved?.events.map((event) => event.kind)).toEqual(['game-created', 'model-turn-started']);
+      expect(saved?.events.map((event) => event.kind)).toEqual([
+        'game-created',
+        'clock-absence-reconciled',
+        'model-turn-started',
+      ]);
     } finally {
       store.close();
     }
@@ -849,13 +861,13 @@ describe('game controller setup', () => {
       });
 
       try {
-        const initial = await controller.initialize({
+        const initial = await initializeLegacyActiveGame(controller, testId, store, {
           humanSide: 'black',
           modelSelection: model,
           namespace: { kind: 'guest' },
           ownershipEpoch: 0,
           timeControl: { startingTimeMs: 30_000, incrementMs: 3_000 },
-        });
+        }, { monotonicMs });
         const started = await controller.dispatch({
           schemaVersion: 1,
           kind: 'begin-model-turn',
@@ -926,12 +938,12 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializeLegacyActiveGame(controller, testId, store, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
-      });
+      }, { monotonicMs });
       const firstRequest = await controller.dispatch({
         schemaVersion: 1,
         kind: 'begin-model-turn',
@@ -1008,13 +1020,13 @@ describe('game controller setup', () => {
     });
 
     try {
-      let state = await controller.initialize({
+      let state = await initializeLegacyActiveGame(controller, testId, store, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 60_000, incrementMs: 0 },
-      });
+      }, { monotonicMs });
       const firstRequest = await controller.dispatch({
         schemaVersion: 1,
         kind: 'begin-model-turn',
@@ -1109,13 +1121,13 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializeLegacyActiveGame(controller, testId, baseStore, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 30_000, incrementMs: 3_000 },
-      });
+      }, { monotonicMs });
       const started = await controller.dispatch({
         schemaVersion: 1,
         kind: 'begin-model-turn',
@@ -1203,13 +1215,13 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializeLegacyActiveGame(controller, testId, baseStore, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 30_000, incrementMs: 3_000 },
-      });
+      }, { monotonicMs });
       const started = await controller.dispatch({
         schemaVersion: 1,
         kind: 'begin-model-turn',
@@ -1232,7 +1244,11 @@ describe('game controller setup', () => {
       expect(local.checkpoint.revision).toBe(started.snapshot.checkpoint.revision);
       expect(saved?.checkpoint.revision).toBe(started.snapshot.checkpoint.revision);
       expect(local.checkpoint.rules.moves).toHaveLength(0);
-      expect(saved?.events.map((event) => event.kind)).toEqual(['game-created', 'model-turn-started']);
+      expect(saved?.events.map((event) => event.kind)).toEqual([
+        'game-created',
+        'clock-absence-reconciled',
+        'model-turn-started',
+      ]);
       expect(local.clockReading?.remaining).toEqual({ whiteMs: 29_990, blackMs: 30_000 });
     } finally {
       baseStore.close();
@@ -1263,13 +1279,13 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await firstController.initialize({
+      const initial = await initializeLegacyActiveGame(firstController, testId, store, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 30_000, incrementMs: 3_000 },
-      });
+      }, { monotonicMs, hostOffsetMs: 200 });
       const oldRequest = await firstController.dispatch({
         schemaVersion: 1,
         kind: 'begin-model-turn',
@@ -1355,13 +1371,13 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await firstController.initialize({
+      const initial = await initializeLegacyActiveGame(firstController, testId, firstStore, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 30_000, incrementMs: 0 },
-      });
+      }, { monotonicMs: 5_000 });
       expect(initial.checkpoint.clocks.anchor).toEqual({ monotonicMs: 5_000, wallTimeMs: 1_000 });
       firstStore.close();
 
@@ -1430,7 +1446,10 @@ describe('game controller setup', () => {
         const afterAbort = await resumedBaseStore.readGame(testId);
         expect(afterAbort?.checkpoint.revision).toBe(restored.checkpoint.revision);
         expect(afterAbort?.checkpoint.rules.moves).toHaveLength(0);
-        expect(afterAbort?.events.map((event) => event.kind)).toEqual(['game-created']);
+        expect(afterAbort?.events.map((event) => event.kind)).toEqual([
+          'game-created',
+          'clock-absence-reconciled',
+        ]);
         expect(resumedController.snapshot().readiness).toBe('clock-reconciliation-required');
 
         decisionTimeMs = 21_000;
@@ -1446,6 +1465,7 @@ describe('game controller setup', () => {
         const savedDiscrepancy = await resumedBaseStore.readGame(testId);
         expect(savedDiscrepancy?.events.map((event) => event.kind)).toEqual([
           'game-created',
+          'clock-absence-reconciled',
           'clock-reconciliation-required',
         ]);
         expect(savedDiscrepancy?.events.at(-1)).toMatchObject({
@@ -1473,6 +1493,7 @@ describe('game controller setup', () => {
         const savedRecovery = await resumedBaseStore.readGame(testId);
         expect(savedRecovery?.events.map((event) => event.kind)).toEqual([
           'game-created',
+          'clock-absence-reconciled',
           'clock-reconciliation-required',
           'clock-absence-reconciled',
         ]);
@@ -1512,14 +1533,14 @@ describe('game controller setup', () => {
     });
 
     try {
-      let state = await controller.initialize({
+      let state = await initializeLegacyActiveGame(controller, testId, store, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         startingFen: 'rnbqkbnr/pppp1p1p/8/4p3/6P1/5P2/PPPPP2P/RNBQKBNR b KQkq g3 0 2',
         timeControl: { startingTimeMs: 60_000, incrementMs: 0 },
-      });
+      }, { monotonicMs: 50_000 });
       decisionTimeMs += 1_000;
       monotonicMs += 1_000;
       const mate = await controller.dispatch({
@@ -1581,14 +1602,14 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializeLegacyActiveGame(controller, testId, store, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         startingFen: '7k/8/6K1/5Q2/8/8/8/8 w - - 0 1',
         timeControl: { startingTimeMs: 60_000, incrementMs: 0 },
-      });
+      }, { monotonicMs: 90_000 });
       decisionTimeMs += 1_000;
       monotonicMs += 1_000;
       const accepted = await controller.dispatch({
@@ -1669,13 +1690,13 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await firstController.initialize({
+      const initial = await initializeLegacyActiveGame(firstController, testId, store, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
         ownershipEpoch: 0,
         timeControl: { startingTimeMs: 30_000, incrementMs: 3_000 },
-      });
+      }, { monotonicMs: 5_000 });
       const oldRequest = await firstController.dispatch({
         schemaVersion: 1,
         kind: 'begin-model-turn',
@@ -1729,6 +1750,7 @@ describe('game controller setup', () => {
       const saved = await restoredStore.readGame(testId);
       expect(saved?.events.map((event) => event.kind)).toEqual([
         'game-created',
+        'clock-absence-reconciled',
         'model-turn-started',
         'timeout-candidate',
       ]);

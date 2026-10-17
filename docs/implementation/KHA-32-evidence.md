@@ -6,6 +6,8 @@ This change connects the controller to the KHA-31 proof Worker and its public ch
 
 Setup callers can use `classifySetup` before model diagnosis or clock start. The controller saves unresolved setup with a stopped clock. A checked non-dead result makes the setup eligible for `startClassifiedSetup`, which also requires the current-session model diagnostic and an unchanged setup. A checked dead result saves a final dead-position draw with no clock.
 
+The public `initialize(setup)` entry point follows the same rule for a new game. It saves terminal setup without a clock or routes a nonterminal setup into pending exact classification with a stopped clock. An existing checkpoint is restored as saved, including a legacy active clock; clock recovery still requires the normal reconciliation path.
+
 After each nonterminal accepted move, the controller records a deadness candidate and fences moves and model-turn actions while the result is unknown. The active clock keeps running. `continue-adjudication` starts one bounded pass; `stop-adjudication` cancels the active pass. Unknown, corrupt, unsupported, canceled, resource-limited, and Worker failures stay pending. The controller checks every positive witness and complete closure again with `checkProofEvidence` before accepting it.
 
 When a clock expires, the controller saves the original deadline, effective expiry time, zeroed bank, fence generation, timeout query, and candidate order. Earlier unresolved deadness remains first. A checked earlier deadness proof can settle only that earlier event; a non-dead result advances to the saved timeout candidate. A checked timeout witness produces a loss, while checked impossibility produces a draw. Existing final results remain immutable.
@@ -18,7 +20,7 @@ Environment: Node 24.22.0, npm 11.19.1, Vite 8.3.4.
 
 | Method | Expected | Observed |
 | --- | --- | --- |
-| Controller and adjudication fixtures | Setup pending/checked setup, in-game pending, reload, Stop/Continue, ownership change, timeout proof, and earlier-deadness/later-flag ordering preserve saved facts | 8 adjudication controller tests passed. The existing 26 controller fixtures also passed with pending state and move fencing represented. |
+| Controller and adjudication fixtures | New `initialize(setup)` stays pending with Start unavailable and no clock after an unknown proof; an existing legacy active checkpoint still restores through `initialize(setup)`; gameplay and adjudication behavior remains covered | 36 tests passed across `src/controller/index.test.ts` and `src/controller/adjudication.test.ts`. |
 | Focused integration command across controller, adjudication, proof checker/search, game/proof storage, and archive | All selected public-boundary fixtures pass | 117 tests passed across 8 files. |
 | `npm run lint` | No warnings or errors | Passed. |
 | `npm run test -- --no-file-parallelism` | All offline tests pass without checker-fixture timing contention | 231 tests passed across 13 files. |
@@ -30,6 +32,6 @@ The feature tests use independent expected positions and checked proof results. 
 
 See the external worktree handoff at `D:/projects/kamkmchess/.scratch/implementation-swarm/KHA-32-api.md` for the controller methods, extension DTO, production Worker/checkpoint path, event ordering, and integration notes.
 
-The current application UI has no controller caller, so no browser flow was added. The explicit setup classification path is additive. Existing `initialize(setup)` retains the KHA-29 immediate-start contract for existing controller callers; new setup flows that need exact pre-clock classification must call `classifySetup` and then `startClassifiedSetup` after the proof and diagnostic pass. The production Worker factory compiled in the build, but browser Worker startup, native IndexedDB behavior, and UI interaction were not run.
+The current application UI has no controller caller, so no browser flow was added. `initialize(setup)` uses exact classification for a new nonterminal game and cannot start its clock before a checked non-dead result. When a checkpoint already exists, the same call restores the saved state and leaves clock recovery to the normal reconciliation path. Callers can use `classifySetup` and then `startClassifiedSetup` to keep the setup and diagnostic steps explicit. The production Worker factory compiled in the build, but browser Worker startup, native IndexedDB behavior, and UI interaction were not run.
 
 All 79 product acceptance cases remain `not_run`, including `ADJ-06`, `ADJ-07`, `ADJ-08`, `CLK-07`, `RUL-04`, and `RUL-07`. Native browser and assistive-technology journeys, live requests, cloud behavior, and whole-KHA-29 acceptance are not claimed. Exact analysis may remain pending; there is no completion-time promise for every position.
