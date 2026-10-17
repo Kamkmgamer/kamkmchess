@@ -3,6 +3,7 @@ import { IDBFactory } from 'fake-indexeddb';
 import type { CoordinateMove } from '../rules/index.js';
 import { createTurnBudgets, decideModelTurn } from '../moves/index.js';
 import type { ModelTurnDecision } from '../moves/index.js';
+import { validateGameArchive } from '../archive/index.js';
 import { openGameStore } from '../storage/index.js';
 import { getOrCreateGameController, modelConfigurationIdentity } from './index.js';
 import { checkProofEvidence, PROOF_CHECKER_VERSION, RULES_ADAPTER_VERSION, runProofSearchPass } from '../proofs/index.js';
@@ -1459,6 +1460,115 @@ describe('game controller setup', () => {
       });
       expect(duplicateOldReply.kind).toBe('rejected');
       expect(duplicateOldReply.snapshot.checkpoint.rules.moves).toHaveLength(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('settles a failed model request with a safe archive event and keeps budgets unchanged', async () => {
+    const testId = 'controller-model-turn-interrupted';
+    let decisionTimeMs = 4_000;
+    let monotonicMs = 8_000;
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
+    let generatedId = 0;
+    const controller = getOrCreateGameController({
+      gameId: testId,
+      store,
+      timeSource: { sample: (atDecisionTimeMs) => ({ monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs }) },
+      clockPolicy: { maxReferenceDivergenceMs: 0 },
+      idFactory: () => `${testId}-id-${++generatedId}`,
+    });
+
+    try {
+      const initial = await initializePlayable(controller, {
+        humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+        timeControl: { startingTimeMs: 60_000, incrementMs: 500 },
+      });
+      const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: initial.fence });
+      if (started.kind !== 'model-turn-started') throw new Error('Expected a model request.');
+      decisionTimeMs += 1_250;
+      monotonicMs += 1_250;
+      const settled = await controller.dispatch({
+        schemaVersion: 1,
+        kind: 'model-turn-interrupted',
+        fence: started.request.fence,
+        reason: 'failed',
+      });
+      expect(settled.kind).toBe('accepted');
+      expect(settled.snapshot.checkpoint.rules.currentFen).toBe(initial.checkpoint.rules.currentFen);
+      expect(settled.snapshot.checkpoint.rules.moves).toHaveLength(0);
+      expect(settled.snapshot.checkpoint.budgets).toEqual(initial.checkpoint.budgets);
+      expect(settled.snapshot.clockReading).toMatchObject({ status: 'running', remaining: { whiteMs: 58_750, blackMs: 60_000 } });
+
+      const saved = await store.readGame(testId);
+      const interrupted = saved?.events.find((event) => event.kind === 'model-turn-interrupted');
+      expect(interrupted?.payload).toMatchObject({
+        schemaVersion: 1,
+        fence: { requestGeneration: started.request.fence.requestGeneration },
+        details: { interruptedRequestGeneration: started.request.fence.requestGeneration, reason: 'failed' },
+      });
+      expect(JSON.stringify(interrupted?.payload)).not.toContain('provider response');
+      expect(saved?.checkpoint.archive.currentLine.eventIds).toContain(interrupted?.eventId);
+
+      const archive = await store.exportGameArchive(testId, []);
+      const validated = await validateGameArchive(JSON.parse(JSON.stringify(archive)));
+      expect(validated.events.find((event) => event.kind === 'model-turn-interrupted')).toEqual(interrupted);
+      const restoreStore = await openGameStore({ databaseName: `${testId}-restore`, factory: new IDBFactory(), now: () => decisionTimeMs });
+      try {
+        const restored = await restoreStore.importGameArchive(validated);
+        expect(restored.events.find((event) => event.kind === 'model-turn-interrupted')?.payload).toEqual(interrupted?.payload);
+      } finally {
+        restoreStore.close();
+      }
+
+      const lateReply = await controller.dispatch({
+        schemaVersion: 1, kind: 'model-move', fence: started.request.fence, move: { from: 'e2', to: 'e4' },
+      });
+      expect(lateReply.kind).toBe('rejected');
+      const explicitRetry = await controller.dispatch({
+        schemaVersion: 1, kind: 'begin-model-turn', fence: settled.snapshot.fence,
+      });
+      expect(explicitRetry.kind).toBe('model-turn-started');
+      const staleSettlement = await controller.dispatch({
+        schemaVersion: 1, kind: 'model-turn-interrupted', fence: started.request.fence, reason: 'aborted',
+      });
+      expect(staleSettlement).toMatchObject({ kind: 'rejected', reason: 'stale-fence' });
+    } finally {
+      store.close();
+    }
+  });
+
+  it('settles an expired model request through timeout adjudication without recording interruption', async () => {
+    const testId = 'controller-model-turn-interrupted-expiry';
+    let decisionTimeMs = 5_000;
+    let monotonicMs = 9_000;
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
+    let generatedId = 0;
+    const controller = getOrCreateGameController({
+      gameId: testId,
+      store,
+      timeSource: { sample: (atDecisionTimeMs) => ({ monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs }) },
+      clockPolicy: { maxReferenceDivergenceMs: 0 },
+      idFactory: () => `${testId}-id-${++generatedId}`,
+    });
+
+    try {
+      const initial = await initializePlayable(controller, {
+        humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+        timeControl: { startingTimeMs: 100, incrementMs: 0 },
+      });
+      const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: initial.fence });
+      if (started.kind !== 'model-turn-started') throw new Error('Expected a model request.');
+      decisionTimeMs += 150;
+      monotonicMs += 150;
+      const settled = await controller.dispatch({
+        schemaVersion: 1, kind: 'model-turn-interrupted', fence: started.request.fence, reason: 'incomplete',
+      });
+      expect(settled.kind).toBe('expired');
+      expect(settled.snapshot.checkpoint.budgets).toEqual(initial.checkpoint.budgets);
+      const saved = await store.readGame(testId);
+      expect(saved?.events.some((event) => event.kind === 'timeout-candidate')).toBe(true);
+      expect(saved?.events.some((event) => event.kind === 'model-turn-interrupted')).toBe(false);
     } finally {
       store.close();
     }

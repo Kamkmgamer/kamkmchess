@@ -53,6 +53,7 @@ const MOVE_ATTEMPTS_EXTENSION = 'move-attempts';
 const GAME_CONTROLLER_INTENT_KINDS: ReadonlySet<string> = new Set([
   'begin-model-turn',
   'stop-model-turn',
+  'model-turn-interrupted',
   'human-move',
   'model-move',
   'model-turn-effect',
@@ -126,8 +127,11 @@ export interface ControllerMoveEventV1 {
 export type GameControllerIntentV1 =
   | { schemaVersion: 1; kind: 'begin-model-turn'; fence: ControllerFenceV1 }
   | { schemaVersion: 1; kind: 'stop-model-turn'; fence: ControllerFenceV1 }
+  | { schemaVersion: 1; kind: 'model-turn-interrupted'; fence: ControllerFenceV1; reason: ModelTurnInterruptionReasonV1 }
   | ControllerMoveEventV1
   | { schemaVersion: 1; kind: 'model-turn-effect'; fence: ControllerFenceV1; effect: ModelTurnDecision };
+
+export type ModelTurnInterruptionReasonV1 = 'failed' | 'incomplete' | 'aborted';
 
 export interface ModelTurnRequestV1 {
   fence: ControllerFenceV1;
@@ -1680,6 +1684,12 @@ class IndexedGameController implements GameController {
     }
     if (intent.kind === 'begin-model-turn') return this.beginModelTurn(intent.fence);
     if (intent.kind === 'stop-model-turn') return this.stopModelTurn(intent.fence);
+    if (intent.kind === 'model-turn-interrupted') {
+      if (!['failed', 'incomplete', 'aborted'].includes(intent.reason)) {
+        throw new GameControllerError('invalid-intent', 'The model turn interruption reason is unsupported.');
+      }
+      return this.interruptModelTurn(intent.fence, intent.reason);
+    }
     if (intent.kind === 'model-turn-effect') return this.applyModelTurnEffect(intent);
     return this.acceptMove(intent);
   }
@@ -2081,6 +2091,71 @@ class IndexedGameController implements GameController {
         value: { kind: 'accepted' },
       };
     });
+    this.activeRequest = null;
+    if (committed.value.kind === 'clock-reconciliation-required') {
+      this.clockReconciliationRequired = true;
+      return { kind: 'clock-reconciliation-required', snapshot: committed.snapshot };
+    }
+    if (committed.value.kind === 'expired') return { kind: 'expired', snapshot: committed.snapshot };
+    if (committed.value.kind === 'rejected') {
+      return { kind: 'rejected', reason: committed.value.reason, snapshot: committed.snapshot };
+    }
+    return { kind: 'accepted', snapshot: committed.snapshot };
+  }
+
+  private async interruptModelTurn(
+    fence: ControllerFenceV1,
+    reason: ModelTurnInterruptionReasonV1,
+  ): Promise<GameControllerIntentResultV1> {
+    const checkpoint = this.checkpoint;
+    if (checkpoint === null) {
+      throw new GameControllerError('setup-required', 'Initialize the game before settling a model turn.');
+    }
+    const side = sideForCheckpoint(checkpoint);
+    if (
+      checkpoint.selections.players[side].kind !== 'model' ||
+      this.activeRequest === null ||
+      !sameFence(this.activeRequest.fence, fence)
+    ) {
+      return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
+    }
+    const committed = await this.commitMutation<IntentMutationValue>(fence, (context) => {
+      const clockState = context.clockState;
+      if (clockState === null) return this.noClockCandidate(context, fence);
+      const reading = readClockAt(clockState, context.at, this.clockPolicy);
+      if (reading.status === 'expired') return this.expiryCandidate(context, fence, reading);
+      if (reading.status === 'reconciliation-required') {
+        return this.clockDiscrepancyCandidate(context, fence, reading);
+      }
+      const nextCheckpoint = {
+        ...context.checkpoint,
+        revision: context.checkpoint.revision + 1,
+        requestGeneration: context.checkpoint.requestGeneration + 1,
+        analysisGeneration: context.checkpoint.analysisGeneration + 1,
+      };
+      const event = context.createEvent(
+        'model-turn-interrupted',
+        context.decisionTimeMs,
+        fence,
+        { interruptedRequestGeneration: fence.requestGeneration, reason },
+      );
+      return {
+        checkpoint: {
+          ...nextCheckpoint,
+          archive: {
+            ...nextCheckpoint.archive,
+            currentLine: {
+              ...nextCheckpoint.archive.currentLine,
+              eventIds: [...nextCheckpoint.archive.currentLine.eventIds, event.eventId],
+            },
+          },
+        },
+        position: context.position,
+        clockState,
+        value: { kind: 'accepted' },
+      };
+    });
+    // Only clear the in-memory request after the storage transaction commits.
     this.activeRequest = null;
     if (committed.value.kind === 'clock-reconciliation-required') {
       this.clockReconciliationRequired = true;
