@@ -1,7 +1,23 @@
-import type { PieceType, Square } from '../rules/index.js';
+import { PositionValidationError } from '../rules/index.js';
+import type { PieceType, PositionField, Square } from '../rules/index.js';
 
 export type EditorPiece = 'empty' | `w${PieceType}` | `b${PieceType}`;
 export interface EditorPieceOnSquare { readonly square: Square; readonly color: 'w' | 'b'; readonly type: PieceType; }
+
+const FIELD_LABELS: Readonly<Record<PositionField, string>> = {
+  fen: 'FEN', placement: 'piece placement', sideToMove: 'side to move',
+  castlingRights: 'castling rights', enPassantSquare: 'en-passant target',
+  halfmoveClock: 'halfmove clock', fullmoveNumber: 'fullmove number',
+  consistency: 'position consistency',
+};
+
+export function positionSetupError(error: unknown): string {
+  if (error instanceof PositionValidationError) {
+    const issue = error.issues[0];
+    if (issue) return `${FIELD_LABELS[issue.field]}${issue.square ? `, square ${issue.square}` : ''}: ${issue.message}`;
+  }
+  return error instanceof Error ? error.message : 'The position is invalid.';
+}
 
 function editorFields(fen: string): string[] {
   const fields = fen.trim().split(/\s+/);

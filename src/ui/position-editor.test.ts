@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { parsePosition } from '../rules/index.js';
-import { editPositionFen, readEditorPieces, setPositionSideToMove } from './position-editor.js';
+import { editPositionFen, positionSetupError, readEditorPieces, setPositionSideToMove } from './position-editor.js';
 
 describe('visual position editor', () => {
+  it('identifies the field and square of an invalid custom FEN', () => {
+    try {
+      parsePosition('4k3/8/8/8/8/8/8/4KK2 w - - 0 1');
+      throw new Error('Expected an invalid position');
+    } catch (error) {
+      expect(positionSetupError(error)).toBe('piece placement, square f1: The board cannot contain extra white kings.');
+    }
+    try {
+      parsePosition('4k3/8/8/8/8/8/8/4K3 w X - 0 1');
+      throw new Error('Expected invalid castling rights');
+    } catch (error) {
+      expect(positionSetupError(error)).toContain('castling rights:');
+    }
+  });
   it('places and removes pieces, clearing rights made stale by visual edits', () => {
     const standard = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
     const edited = editPositionFen(standard, 'a2', 'empty');

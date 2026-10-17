@@ -8,7 +8,7 @@ import { runProofSearchPass } from '../proofs/index.js';
 import { legalMoves, parsePosition } from '../rules/index.js';
 import type { CoordinateMove, Promotion, Square } from '../rules/index.js';
 import { isLocalBoardInputDisabled, parseCoordinateMove, startClassifiedLocalGame, submitBoardMove } from './board-input.js';
-import { editPositionFen, editorSideToMove, readEditorPieces, setPositionSideToMove } from './position-editor.js';
+import { editPositionFen, editorSideToMove, positionSetupError, readEditorPieces, setPositionSideToMove } from './position-editor.js';
 import type { EditorPiece } from './position-editor.js';
 import type { LocalGameSession, MatchComposition } from './match-composition.js';
 import { T3_PALETTES } from './t3-palettes.js';
@@ -321,7 +321,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
     if (setupFen.trim()) {
       try { startingFen = parsePosition(setupFen.trim()).fen; }
       catch (error) {
-        setSetupError(error instanceof Error ? error.message : 'The position is invalid.');
+        setSetupError(positionSetupError(error));
         return;
       }
     }
@@ -423,7 +423,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
               })}
             </div> : <p className="error-message">Enter a valid FEN before using the visual editor.</p>}
           </fieldset>
-          {setupError && <p className="error-message" role="alert">{setupError}</p>}
+           {setupError && <p id="setup-position-error" className="error-message" role="alert">{setupError}</p>}
           <button className="button primary" disabled={working} type="submit">Create game</button>
         </form>
       </section>}
