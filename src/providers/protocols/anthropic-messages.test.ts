@@ -441,6 +441,58 @@ describe('Anthropic Messages protocol decoder', () => {
     expect(request.body).not.toHaveProperty('anthropic-version');
     expect(request.body).not.toHaveProperty('x-api-key');
   });
+
+  it('[CST-01] adds a cache breakpoint only when the stable prefix meets the selected model minimum', () => {
+    const records = [
+      { id: 'old-user', role: 'user' as const, text: 'Retained question' },
+      { id: 'old-answer', role: 'assistant' as const, text: 'Retained answer' },
+      { id: 'fresh', role: 'user' as const, text: 'Fresh position' },
+    ];
+    const config = {
+      model: 'selected-claude-model',
+      maxOutputTokens: 256,
+      cache: { anthropicEphemeral: true, anthropicCacheMinimumTokens: 1024 },
+    };
+    const encode = (cachePrefixTokenCount?: number) => encodeAnthropicMessagesRequest(
+      {
+        instructions: 'Choose a move.',
+        records,
+        cachePrefixRecordCount: 2,
+        ...(cachePrefixTokenCount === undefined ? {} : { cachePrefixTokenCount }),
+      },
+      config,
+    ).body;
+
+    const tooShort = encode(1023);
+    const eligible = encode(1024);
+    const unknownMinimum = encodeAnthropicMessagesRequest(
+      {
+        instructions: 'Choose a move.',
+        records,
+        cachePrefixRecordCount: 2,
+        cachePrefixTokenCount: 2048,
+      },
+      {
+        model: 'selected-claude-model',
+        maxOutputTokens: 256,
+        cache: { anthropicEphemeral: true },
+      },
+    ).body;
+    const eligibleMessages = eligible.messages as Array<{
+      content: string | Array<Record<string, unknown>>;
+    }>;
+
+    expect(tooShort.system).toBe('Choose a move.');
+    expect(tooShort.messages).toEqual(records.map(({ role, text }) => ({ role, content: text })));
+    expect(eligible.system).toBe('Choose a move.');
+    expect(eligibleMessages[0]?.content).toBe('Retained question');
+    expect(eligibleMessages[1]?.content).toEqual([
+      { type: 'text', text: 'Retained answer', cache_control: { type: 'ephemeral' } },
+    ]);
+    expect(eligibleMessages[2]?.content).toBe('Fresh position');
+    expect(encode().messages).toEqual(records.map(({ role, text }) => ({ role, content: text })));
+    expect(unknownMinimum.messages).toEqual(records.map(({ role, text }) => ({ role, content: text })));
+  });
 });
 
 function sse(type: string, fields: Record<string, unknown>): string {

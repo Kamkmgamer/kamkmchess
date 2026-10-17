@@ -109,14 +109,18 @@ describe('retained history replay composition', () => {
 
   it('[CST-01] emits provider-specific cache body controls only when explicitly selected', () => {
     const replay = composeHistoryReplay(fixtureHistory(), 'Instructions', position('snapshot', 10));
-    const chat = encodeChatCompletionsRequest(replay.history, { model: 'm', maxOutputTokens: 10, cache: { promptCacheKey: 'key', promptCacheRetention: '24h', openRouterSessionId: 'session-1' } }).body;
+    const chat = encodeChatCompletionsRequest(replay.history, { model: 'm', maxOutputTokens: 10, cache: { promptCacheKey: 'key', promptCacheRetention: '24h' } }).body;
+    const openRouter = encodeChatCompletionsRequest(replay.history, { model: 'm', maxOutputTokens: 10, cache: { openRouterSessionId: 'session-1' } }).body;
     const responses = encodeResponsesRequest(replay.history, { model: 'm', maxOutputTokens: 10, cache: { promptCacheKey: 'responses-key', promptCacheRetention: 'in_memory' } }).body;
-    const anthropic = encodeAnthropicMessagesRequest(replay.history, { model: 'm', maxOutputTokens: 10, cache: { anthropicEphemeral: true } }).body;
+    const anthropicHistory = { ...replay.history, cachePrefixTokenCount: 1024 };
+    const anthropic = encodeAnthropicMessagesRequest(anthropicHistory, { model: 'claude-sonnet-4-5', maxOutputTokens: 10, cache: { anthropicEphemeral: true, anthropicCacheMinimumTokens: 1024 } }).body;
     const noCache = encodeChatCompletionsRequest(replay.history, { model: 'm', maxOutputTokens: 10 }).body;
 
-    expect(chat).toMatchObject({ prompt_cache_key: 'key', prompt_cache_retention: '24h', session_id: 'session-1' });
+    expect(chat).toMatchObject({ prompt_cache_key: 'key', prompt_cache_retention: '24h' });
+    expect(chat).not.toHaveProperty('session_id');
+    expect(openRouter).toHaveProperty('session_id', 'session-1');
     expect(responses).toMatchObject({ prompt_cache_key: 'responses-key', prompt_cache_retention: 'in_memory' });
-    expect(anthropic.system).toEqual([{ type: 'text', text: replay.history.instructions, cache_control: { type: 'ephemeral' } }]);
+    expect(anthropic.system).toBe(replay.history.instructions);
     expect((anthropic.messages as Array<{ content: unknown }>)[2]?.content).toEqual([
       { type: 'text', text: replay.history.records[2]?.text, cache_control: { type: 'ephemeral' } },
     ]);

@@ -85,15 +85,24 @@ export function encodeAnthropicMessagesRequest(
     stream: true,
     max_tokens: config.maxOutputTokens,
   };
-  if (config.cache?.anthropicEphemeral === true) {
+  const prefixTokenCount = history.cachePrefixTokenCount;
+  const minimumCacheTokens = config.cache?.anthropicCacheMinimumTokens;
+  const prefixRecordCount = history.cachePrefixRecordCount;
+  if (
+    config.cache?.anthropicEphemeral === true &&
+    typeof prefixTokenCount === 'number' &&
+    typeof minimumCacheTokens === 'number' &&
+    typeof prefixRecordCount === 'number' &&
+    Number.isSafeInteger(prefixTokenCount) &&
+    Number.isSafeInteger(minimumCacheTokens) &&
+    Number.isSafeInteger(prefixRecordCount) &&
+    minimumCacheTokens > 0 &&
+    prefixTokenCount >= minimumCacheTokens &&
+    prefixRecordCount > 0 &&
+    prefixRecordCount <= history.records.length
+  ) {
     const cacheControl = { type: 'ephemeral' };
-    body.system = [
-      { type: 'text', text: history.instructions, cache_control: cacheControl },
-    ];
-    const prefixEnd = Math.min(
-      history.cachePrefixRecordCount ?? 0,
-      history.records.length,
-    ) - 1;
+    const prefixEnd = prefixRecordCount - 1;
     if (prefixEnd >= 0) {
       body.messages = history.records.map((record, index) => ({
         role: record.role,

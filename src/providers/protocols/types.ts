@@ -76,6 +76,8 @@ export interface ProtocolHistory {
   records: readonly ProtocolTextRecord[];
   /** Number of leading records that belong to the stable retained-history prefix. */
   cachePrefixRecordCount?: number;
+  /** Optional tokenizer count for instructions plus the stable retained-history prefix. */
+  cachePrefixTokenCount?: number;
 }
 
 export interface ProtocolCacheOptions {
@@ -85,6 +87,8 @@ export interface ProtocolCacheOptions {
   promptCacheRetention?: 'in_memory' | '24h';
   /** OpenRouter Chat session affinity. Only pass for a selected OpenRouter Chat route. */
   openRouterSessionId?: string;
+  /** Anthropic ephemeral prompt caching minimum from the selected model's provider metadata. */
+  anthropicCacheMinimumTokens?: number;
   /** Anthropic ephemeral prompt caching, explicitly enabled for a supported model. */
   anthropicEphemeral?: boolean;
 }
