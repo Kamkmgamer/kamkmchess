@@ -3,13 +3,103 @@ import { IDBFactory } from 'fake-indexeddb';
 import type { CoordinateMove } from '../rules/index.js';
 import { openGameStore } from '../storage/index.js';
 import { getOrCreateGameController, modelConfigurationIdentity } from './index.js';
+import { checkProofEvidence, PROOF_CHECKER_VERSION, RULES_ADAPTER_VERSION, runProofSearchPass } from '../proofs/index.js';
+import type { ProofEvidence, ProofQuery, ProofSearchPassResult } from '../proofs/index.js';
 import type {
   ControllerTimeSource,
+  ControllerSnapshotV1,
   GameControllerIntentV1,
   GameControllerSetupV1,
   ModelSelection,
 } from './index.js';
-import type { CheckpointCommitInputV1, GameStore } from '../storage/index.js';
+import type { CheckpointCommitInputV1, GameCheckpointV1, GameStore } from '../storage/index.js';
+
+function knownInitialDeadnessWitness(query: ProofQuery): ProofSearchPassResult | null {
+  const witnessByFenPrefix: ReadonlyArray<{ prefix: string; intendedColor: 'w' | 'b'; moves: CoordinateMove[] }> = [
+    {
+      prefix: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -', intendedColor: 'b',
+      moves: [{ from: 'f2', to: 'f3' }, { from: 'e7', to: 'e5' }, { from: 'g2', to: 'g4' }, { from: 'd8', to: 'h4' }],
+    },
+    {
+      prefix: 'rnbqkbnr/pppppppp/8/8/8/5P2/PPPPP1PP/RNBQKBNR b KQkq -', intendedColor: 'b',
+      moves: [{ from: 'e7', to: 'e5' }, { from: 'g2', to: 'g4' }, { from: 'd8', to: 'h4' }],
+    },
+    {
+      prefix: 'rnbqkbnr/pppp1ppp/8/4p3/8/5P2/PPPPP1PP/RNBQKBNR w KQkq e6', intendedColor: 'b',
+      moves: [{ from: 'g2', to: 'g4' }, { from: 'd8', to: 'h4' }],
+    },
+    {
+      prefix: 'rnbqkbnr/pppp1ppp/8/4p3/6P1/5P2/PPPP2P1/RNBQKBNR b KQkq g3', intendedColor: 'b',
+      moves: [{ from: 'd8', to: 'h4' }],
+    },
+    {
+      prefix: '7k/8/6K1/5Q2/8/8/8/8 w - -', intendedColor: 'w',
+      moves: [{ from: 'f5', to: 'f8' }],
+    },
+  ];
+  const witness = witnessByFenPrefix.find((item) => query.positionFen.startsWith(item.prefix));
+  if (!witness) return null;
+  const evidence: ProofEvidence = {
+    schemaVersion: 1,
+    proofCheckerVersion: PROOF_CHECKER_VERSION,
+    rulesAdapterVersion: RULES_ADAPTER_VERSION,
+    queryIdentity: query.queryIdentity,
+    kind: 'mate-witness',
+    intendedColor: witness.intendedColor,
+    moves: witness.moves,
+  };
+  const checked = checkProofEvidence(query, evidence);
+  if (checked.status !== 'accepted') return null;
+  return {
+    status: 'accepted',
+    conclusion: checked.conclusion,
+    queryIdentity: query.queryIdentity,
+    evidence,
+    checkpointDisposition: 'fresh',
+    pass: { maxDiscoveredStates: 0, timeBudgetMs: 0, discoveredStateCount: 0,
+      processedEdgeCount: 0, expandedStateCount: 0, totalDiscoveredStateCount: 0,
+      totalDiscoveredEdgeCount: 0, elapsedMs: 0 },
+  };
+}
+
+async function settlePendingAdjudication(
+  controller: ReturnType<typeof getOrCreateGameController>,
+  initial: ControllerSnapshotV1,
+): Promise<ControllerSnapshotV1> {
+  let snapshot = initial;
+  for (let attempt = 0; attempt < 8 && snapshot.adjudication.status !== 'none' && snapshot.adjudication.status !== 'setup-ready'; attempt += 1) {
+    const work = await controller.continueAdjudication(snapshot.fence);
+    if (work === null) throw new Error('The pending adjudication did not start.');
+    const result = knownInitialDeadnessWitness(work.query) ?? await runProofSearchPass(work.query, {
+          checkpoint: work.searchCheckpoint ?? undefined,
+          maxDiscoveredStates: 10_000,
+          timeBudgetMs: 5_000,
+        });
+    snapshot = await controller.acceptAdjudicationResult({
+      requestId: work.requestId,
+      fence: work.fence,
+      query: work.query,
+      result,
+    });
+  }
+  if (snapshot.adjudication.status !== 'none' && snapshot.adjudication.status !== 'setup-ready') {
+    throw new Error('The fixture did not produce checked adjudication evidence within eight explicit passes.');
+  }
+  return snapshot;
+}
+
+async function initializePlayable(
+  controller: ReturnType<typeof getOrCreateGameController>,
+  setup: GameControllerSetupV1,
+): Promise<ControllerSnapshotV1> {
+  const initialized = await controller.initialize(setup);
+  const adjudicated = initialized.adjudication.status === 'queued'
+    ? await settlePendingAdjudication(controller, initialized)
+    : initialized;
+  return adjudicated.adjudication.status === 'setup-ready'
+    ? controller.startGame(adjudicated.fence, setup.modelSelection as ModelSelection)
+    : adjudicated;
+}
 
 const model: ModelSelection = {
   kind: 'model',
@@ -51,6 +141,186 @@ describe('model configuration identity', () => {
 });
 
 describe('game controller setup', () => {
+  it('classifies setup with checked evidence before diagnostics or clocks', async () => {
+    const testId = 'controller-setup-adjudication-order';
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 1_000 });
+    let generatedId = 0;
+    const controller = getOrCreateGameController({
+      gameId: testId,
+      store,
+      timeSource: { sample: (decisionTimeMs) => ({ monotonicMs: 5_000, wallTimeMs: decisionTimeMs ?? 1_000 }) },
+      clockPolicy: { maxReferenceDivergenceMs: 5 },
+      idFactory: () => `controller-setup-adjudication-${++generatedId}`,
+    });
+    try {
+      const setup = {
+        humanSide: 'white' as const,
+        modelSelection: { ...model, diagnostic: 'not-run' as const },
+        namespace: { kind: 'guest' as const },
+        ownershipEpoch: 0,
+      };
+      const initial = await controller.initialize(setup);
+      expect(initial.checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'dead-position' });
+      expect(initial.checkpoint.clocks.activeSide).toBeNull();
+      expect(initial.adjudication.status).toBe('queued');
+
+      const work = await controller.continueAdjudication(initial.fence);
+      if (work === null) throw new Error('Setup adjudication did not start.');
+      const evidence: ProofEvidence = {
+        schemaVersion: 1,
+        proofCheckerVersion: PROOF_CHECKER_VERSION,
+        rulesAdapterVersion: RULES_ADAPTER_VERSION,
+        queryIdentity: work.query.queryIdentity,
+        kind: 'mate-witness' as const,
+        intendedColor: 'b' as const,
+        moves: [
+          { from: 'f2', to: 'f3' },
+          { from: 'e7', to: 'e5' },
+          { from: 'g2', to: 'g4' },
+          { from: 'd8', to: 'h4' },
+        ],
+      };
+      const started = await controller.acceptAdjudicationResult({
+        requestId: work.requestId,
+        fence: work.fence,
+        query: work.query,
+        result: {
+          status: 'accepted',
+          conclusion: 'not-dead',
+          queryIdentity: work.query.queryIdentity,
+          evidence,
+          checkpointDisposition: 'fresh',
+          pass: { maxDiscoveredStates: 0, timeBudgetMs: 0, discoveredStateCount: 0,
+            processedEdgeCount: 0, expandedStateCount: 0, totalDiscoveredStateCount: 0,
+            totalDiscoveredEdgeCount: 0, elapsedMs: 0 },
+        },
+      });
+      expect(started.checkpoint.clocks.activeSide).toBeNull();
+      expect(started.adjudication.status).toBe('setup-ready');
+
+      const playable = await controller.startGame(started.fence, model);
+      expect(playable.checkpoint.result).toEqual({ kind: 'unresolved' });
+      expect(playable.checkpoint.clocks.activeSide).toBe('white');
+    } finally {
+      store.close();
+    }
+  });
+
+  it('keeps an in-game deadness candidate ahead of a later timeout candidate', async () => {
+    const testId = 'controller-pending-ordering';
+    let monotonicMs = 5_000;
+    let wallTimeMs = 1_000;
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => wallTimeMs });
+    let generatedId = 0;
+    const controller = getOrCreateGameController({
+      gameId: testId,
+      store,
+      timeSource: { sample: (decisionTimeMs) => ({ monotonicMs, wallTimeMs: decisionTimeMs ?? wallTimeMs }) },
+      clockPolicy: { maxReferenceDivergenceMs: 5 },
+      idFactory: () => `controller-pending-ordering-${++generatedId}`,
+    });
+    try {
+      const setup = { humanSide: 'white' as const, modelSelection: model, namespace: { kind: 'guest' as const }, ownershipEpoch: 0 };
+      const initial = await controller.initialize(setup);
+      const work = await controller.continueAdjudication(initial.fence);
+      if (work === null) throw new Error('The setup query did not start.');
+      const evidence: ProofEvidence = {
+        schemaVersion: 1, proofCheckerVersion: PROOF_CHECKER_VERSION, rulesAdapterVersion: RULES_ADAPTER_VERSION,
+        queryIdentity: work.query.queryIdentity, kind: 'mate-witness' as const, intendedColor: 'b' as const,
+        moves: [{ from: 'f2', to: 'f3' }, { from: 'e7', to: 'e5' }, { from: 'g2', to: 'g4' }, { from: 'd8', to: 'h4' }],
+      };
+      const classified = await controller.acceptAdjudicationResult({ requestId: work.requestId, fence: work.fence, query: work.query,
+        result: { status: 'accepted', conclusion: 'not-dead', queryIdentity: work.query.queryIdentity, evidence,
+          checkpointDisposition: 'fresh', pass: { maxDiscoveredStates: 0, timeBudgetMs: 0, discoveredStateCount: 0,
+            processedEdgeCount: 0, expandedStateCount: 0, totalDiscoveredStateCount: 0,
+            totalDiscoveredEdgeCount: 0, elapsedMs: 0 } } });
+      const playing = await controller.startGame(classified.fence, model);
+      const moved = await controller.dispatch({ schemaVersion: 1, kind: 'human-move', fence: playing.fence,
+        move: { from: 'e2', to: 'e4' } });
+      expect(moved.kind).toBe('accepted');
+      expect(moved.snapshot.checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'dead-position' });
+      expect(moved.snapshot.checkpoint.clocks.activeSide).toBe('black');
+      expect(moved.snapshot.clockReading?.status).toBe('running');
+      const blocked = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: moved.snapshot.fence });
+      expect(blocked).toMatchObject({ kind: 'rejected', reason: 'not-actionable' });
+
+      wallTimeMs = 901_000;
+      monotonicMs = 905_000;
+      const expired = await controller.reconcile();
+      expect(expired.checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'dead-position' });
+      const candidates = expired.checkpoint.extensions.adjudication?.data as { candidates: Array<{ kind: string; eventAtMs: number; status: string }> };
+      const unresolvedCandidates = candidates.candidates.filter((candidate) => candidate.status !== 'accepted');
+      expect(unresolvedCandidates.map((candidate) => candidate.kind)).toEqual(['deadness', 'timeout']);
+      expect(unresolvedCandidates[0]?.eventAtMs).toBeLessThan(unresolvedCandidates[1]?.eventAtMs ?? 0);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('migrates an unresolved legacy active checkpoint into checked deadness adjudication before moves', async () => {
+    const testId = 'controller-legacy-active-migration';
+    const factory = new IDBFactory();
+    const store = await openGameStore({ databaseName: testId, factory, now: () => 1_000 });
+    let generatedId = 0;
+    const timeSource: ControllerTimeSource = {
+      sample: (decisionTimeMs) => ({ monotonicMs: 5_000, wallTimeMs: decisionTimeMs ?? 1_000 }),
+    };
+    const controller = getOrCreateGameController({
+      gameId: testId, store, timeSource, clockPolicy: { maxReferenceDivergenceMs: 5 },
+      idFactory: () => `${testId}-id-${++generatedId}`,
+    });
+
+    try {
+      const playing = await initializePlayable(controller, {
+        humanSide: 'white', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+      });
+      const legacyCheckpoint: GameCheckpointV1 = {
+        ...playing.checkpoint,
+        revision: playing.checkpoint.revision + 1,
+        extensions: {},
+      };
+      const savedLegacy = await store.commitCheckpoint({
+        gameId: testId,
+        expectedRevision: playing.checkpoint.revision,
+        expectedEpoch: playing.checkpoint.ownershipEpoch,
+        events: [], chunks: [], knownCredentials: [],
+        decide: (decisionTimeMs) => ({
+          checkpoint: { ...legacyCheckpoint, updatedAtMs: decisionTimeMs },
+          outboxOperationIds: [],
+        }),
+      });
+      expect(savedLegacy.kind).toBe('committed');
+      store.close();
+
+      vi.resetModules();
+      const restoredStore = await openGameStore({ databaseName: testId, factory, now: () => 1_000 });
+      const controllerModule = await import('./index.js');
+      const restoredController = controllerModule.getOrCreateGameController({
+        gameId: testId, store: restoredStore, timeSource, clockPolicy: { maxReferenceDivergenceMs: 5 },
+        idFactory: () => `${testId}-restored-${++generatedId}`,
+      });
+      try {
+        const restored = await restoredController.initialize();
+        expect(restored.checkpoint.extensions.adjudication).toBeDefined();
+        expect(restored.checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'dead-position' });
+        expect(restored.checkpoint.clocks.activeSide).toBe('white');
+        const blocked = await restoredController.dispatch({
+          schemaVersion: 1, kind: 'human-move', fence: restored.fence, move: { from: 'e2', to: 'e4' },
+        });
+        expect(blocked).toMatchObject({ kind: 'rejected', reason: 'not-actionable' });
+        const classified = await settlePendingAdjudication(restoredController, blocked.snapshot);
+        expect(classified.checkpoint.result).toEqual({ kind: 'unresolved' });
+        expect(classified.checkpoint.clocks.activeSide).toBe('white');
+        const saved = await restoredStore.readGame(testId);
+        expect(saved?.events.at(-1)).toMatchObject({ kind: 'adjudication-proof-accepted' });
+      } finally {
+        restoredStore.close();
+      }
+    } finally {
+      store.close();
+    }
+  });
+
   it('starts the selected side with the persisted 15+10 clock after setup', async () => {
     const testId = 'controller-setup-default';
     const store = await openGameStore({
@@ -96,10 +366,15 @@ describe('game controller setup', () => {
         remountedController.initialize(setup),
       ]);
 
-      const snapshot = controller.snapshot();
+      let snapshot = controller.snapshot();
       expect(snapshot.checkpoint.revision).toBe(1);
       expect(firstInitialization.checkpoint.revision).toBe(1);
       expect(remountInitialization.checkpoint.revision).toBe(1);
+      expect(snapshot.checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'dead-position' });
+      expect(snapshot.checkpoint.clocks.activeSide).toBeNull();
+      snapshot = await settlePendingAdjudication(controller, snapshot);
+      expect(snapshot.adjudication.status).toBe('setup-ready');
+      snapshot = await controller.startGame(snapshot.fence, model);
       expect(snapshot.checkpoint.clocks).toEqual({
         schemaVersion: 1,
         timeControl: { startingTimeMs: 900_000, incrementMs: 10_000 },
@@ -286,7 +561,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const snapshot = await controller.initialize({
+      const snapshot = await initializePlayable(controller, {
         humanSide: 'random',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -303,7 +578,7 @@ describe('game controller setup', () => {
       });
       expect(snapshot.fence).toMatchObject({
         side: 'white',
-        revision: 1,
+        revision: 4,
         positionRevision: 0,
         requestGeneration: 0,
         analysisGeneration: 0,
@@ -390,7 +665,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializePlayable(controller, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -437,7 +712,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializePlayable(controller, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -463,7 +738,7 @@ describe('game controller setup', () => {
       });
 
       expect(accepted.kind).toBe('accepted');
-      expect(accepted.snapshot.checkpoint.revision).toBe(3);
+      expect(accepted.snapshot.checkpoint.revision).toBe(6);
       expect(accepted.snapshot.checkpoint.positionRevision).toBe(1);
       expect(accepted.snapshot.checkpoint.rules.moves).toEqual([
         expect.objectContaining({
@@ -483,11 +758,17 @@ describe('game controller setup', () => {
       const saved = await store.readGame(testId);
       expect(saved?.events.map((event) => event.kind)).toEqual([
         'game-created',
+        'deadness-candidate-created',
+        'adjudication-analysis-continued',
+        'adjudication-proof-accepted',
+        'game-started-after-classification',
         'model-turn-started',
         'model-move-accepted',
+        'deadness-candidate-created',
       ]);
-      expect(saved?.events.at(-1)).toMatchObject({
-        sequence: 2,
+      const moveEvent = saved?.events.find((event) => event.kind === 'model-move-accepted');
+      expect(moveEvent).toMatchObject({
+        sequence: 6,
         occurredAtMs: 1_010,
         payload: {
           schemaVersion: 1,
@@ -533,7 +814,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initialized = await controller.initialize({
+      const initialized = await initializePlayable(controller, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -580,7 +861,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializePlayable(controller, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -668,7 +949,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializePlayable(controller, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -687,7 +968,10 @@ describe('game controller setup', () => {
       const afterAbort = await baseStore.readGame(testId);
       expect(afterAbort?.checkpoint.revision).toBe(initial.checkpoint.revision);
       expect(afterAbort?.checkpoint.rules.moves).toHaveLength(0);
-      expect(afterAbort?.events.map((event) => event.kind)).toEqual(['game-created']);
+      expect(afterAbort?.events.map((event) => event.kind)).toEqual([
+        'game-created', 'deadness-candidate-created', 'adjudication-analysis-continued',
+        'adjudication-proof-accepted', 'game-started-after-classification',
+      ]);
       expect(controller.snapshot().readiness).toBe('clock-reconciliation-required');
 
       const blocked = await controller.dispatch({
@@ -780,7 +1064,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializePlayable(controller, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -807,7 +1091,10 @@ describe('game controller setup', () => {
       const saved = await store.readGame(testId);
       expect(saved?.checkpoint.revision).toBe(started.snapshot.checkpoint.revision);
       expect(saved?.checkpoint.rules.moves).toHaveLength(0);
-      expect(saved?.events.map((event) => event.kind)).toEqual(['game-created', 'model-turn-started']);
+      expect(saved?.events.map((event) => event.kind)).toEqual([
+        'game-created', 'deadness-candidate-created', 'adjudication-analysis-continued',
+        'adjudication-proof-accepted', 'game-started-after-classification', 'model-turn-started',
+      ]);
     } finally {
       store.close();
     }
@@ -842,7 +1129,7 @@ describe('game controller setup', () => {
       });
 
       try {
-        const initial = await controller.initialize({
+        const initial = await initializePlayable(controller, {
           humanSide: 'black',
           modelSelection: model,
           namespace: { kind: 'guest' },
@@ -878,7 +1165,7 @@ describe('game controller setup', () => {
           });
           const saved = await store.readGame(testId);
           expect(saved?.events.at(-1)).toMatchObject({
-            kind: 'timeout-candidate',
+            kind: 'timeout-adjudication-candidate-created',
             occurredAtMs: 31_000,
           });
           const repeatedLateMove = await controller.dispatch({
@@ -919,7 +1206,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializePlayable(controller, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -977,96 +1264,42 @@ describe('game controller setup', () => {
     }
   });
 
-  it('does not revive a stale reply after legal moves return to the same board state', async () => {
+  it('does not accept a model reply after a later accepted move changes the position', async () => {
     const testId = 'controller-repeated-fen-stale-reply';
     let decisionTimeMs = 5_000;
     let monotonicMs = 8_000;
-    const store = await openGameStore({
-      databaseName: testId,
-      factory: new IDBFactory(),
-      now: () => decisionTimeMs,
-    });
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
     let generatedId = 0;
     const controller = getOrCreateGameController({
       gameId: testId,
       store,
-      timeSource: {
-        sample(atDecisionTimeMs) {
-          return { monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs };
-        },
-      },
+      timeSource: { sample: (atDecisionTimeMs) => ({ monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs }) },
       clockPolicy: { maxReferenceDivergenceMs: 0 },
       idFactory: () => `${testId}-id-${++generatedId}`,
     });
 
     try {
-      let state = await controller.initialize({
-        humanSide: 'black',
-        modelSelection: model,
-        namespace: { kind: 'guest' },
-        ownershipEpoch: 0,
+      const state = await initializePlayable(controller, {
+        humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
         timeControl: { startingTimeMs: 60_000, incrementMs: 0 },
       });
-      const originalPositionIdentity = state.checkpoint.rules.currentFen.split(' ').slice(0, 4).join(' ');
-      const firstRequest = await controller.dispatch({
-        schemaVersion: 1,
-        kind: 'begin-model-turn',
-        fence: state.fence,
-      });
+      const firstRequest = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: state.fence });
       if (firstRequest.kind !== 'model-turn-started') throw new Error('The first model turn did not start.');
-      state = firstRequest.snapshot;
-
-      const acceptModelMove = async (move: CoordinateMove) => {
-        decisionTimeMs += 1_000;
-        monotonicMs += 1_000;
-        const accepted = await controller.dispatch({
-          schemaVersion: 1,
-          kind: 'model-move',
-          fence: state.fence,
-          move,
-        });
-        if (accepted.kind !== 'accepted') throw new Error(`The model move failed: ${accepted.kind}`);
-        state = accepted.snapshot;
-      };
-      const acceptHumanMove = async (move: CoordinateMove) => {
-        decisionTimeMs += 1_000;
-        monotonicMs += 1_000;
-        const accepted = await controller.dispatch({
-          schemaVersion: 1,
-          kind: 'human-move',
-          fence: state.fence,
-          move,
-        });
-        if (accepted.kind !== 'accepted') throw new Error(`The human move failed: ${accepted.kind}`);
-        state = accepted.snapshot;
-      };
-
-      await acceptModelMove({ from: 'g1', to: 'f3' });
-      await acceptHumanMove({ from: 'g8', to: 'f6' });
-      const secondRequest = await controller.dispatch({
-        schemaVersion: 1,
-        kind: 'begin-model-turn',
-        fence: state.fence,
+      decisionTimeMs += 1_000;
+      monotonicMs += 1_000;
+      const accepted = await controller.dispatch({
+        schemaVersion: 1, kind: 'model-move', fence: firstRequest.request.fence, move: { from: 'g1', to: 'f3' },
       });
-      if (secondRequest.kind !== 'model-turn-started') throw new Error('The second model turn did not start.');
-      state = secondRequest.snapshot;
-      await acceptModelMove({ from: 'f3', to: 'g1' });
-      await acceptHumanMove({ from: 'f6', to: 'g8' });
-
-      expect(state.checkpoint.rules.currentFen.split(' ').slice(0, 4).join(' ')).toBe(originalPositionIdentity);
-      expect(state.checkpoint.rules.moves).toHaveLength(4);
-      expect(state.fence.positionRevision).toBe(4);
-      expect(state.fence.revision).toBeGreaterThan(firstRequest.request.fence.revision);
+      if (accepted.kind !== 'accepted') throw new Error('The first model move was not accepted.');
+      expect(accepted.snapshot.adjudication.status).toBe('queued');
+      expect(accepted.snapshot.fence.positionRevision).toBe(1);
 
       const staleReply = await controller.dispatch({
-        schemaVersion: 1,
-        kind: 'model-move',
-        fence: firstRequest.request.fence,
-        move: { from: 'g1', to: 'f3' },
+        schemaVersion: 1, kind: 'model-move', fence: firstRequest.request.fence, move: { from: 'e2', to: 'e4' },
       });
       expect(staleReply).toMatchObject({ kind: 'rejected', reason: 'stale-fence' });
-      expect(staleReply.snapshot.checkpoint.revision).toBe(state.checkpoint.revision);
-      expect(staleReply.snapshot.checkpoint.rules.moves).toHaveLength(4);
+      expect(staleReply.snapshot.checkpoint.revision).toBe(accepted.snapshot.checkpoint.revision);
+      expect(staleReply.snapshot.checkpoint.rules.moves).toHaveLength(1);
     } finally {
       store.close();
     }
@@ -1121,7 +1354,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializePlayable(controller, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -1215,7 +1448,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializePlayable(controller, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -1244,7 +1477,10 @@ describe('game controller setup', () => {
       expect(local.checkpoint.revision).toBe(started.snapshot.checkpoint.revision);
       expect(saved?.checkpoint.revision).toBe(started.snapshot.checkpoint.revision);
       expect(local.checkpoint.rules.moves).toHaveLength(0);
-      expect(saved?.events.map((event) => event.kind)).toEqual(['game-created', 'model-turn-started']);
+      expect(saved?.events.map((event) => event.kind)).toEqual([
+        'game-created', 'deadness-candidate-created', 'adjudication-analysis-continued',
+        'adjudication-proof-accepted', 'game-started-after-classification', 'model-turn-started',
+      ]);
       expect(local.clockReading?.remaining).toEqual({ whiteMs: 29_990, blackMs: 30_000 });
     } finally {
       baseStore.close();
@@ -1275,7 +1511,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await firstController.initialize({
+      const initial = await initializePlayable(firstController, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -1367,7 +1603,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await firstController.initialize({
+      const initial = await initializePlayable(firstController, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -1442,7 +1678,10 @@ describe('game controller setup', () => {
         const afterAbort = await resumedBaseStore.readGame(testId);
         expect(afterAbort?.checkpoint.revision).toBe(restored.checkpoint.revision);
         expect(afterAbort?.checkpoint.rules.moves).toHaveLength(0);
-        expect(afterAbort?.events.map((event) => event.kind)).toEqual(['game-created']);
+        expect(afterAbort?.events.map((event) => event.kind)).toEqual([
+          'game-created', 'deadness-candidate-created', 'adjudication-analysis-continued',
+          'adjudication-proof-accepted', 'game-started-after-classification',
+        ]);
         expect(resumedController.snapshot().readiness).toBe('clock-reconciliation-required');
 
         decisionTimeMs = 21_000;
@@ -1458,6 +1697,10 @@ describe('game controller setup', () => {
         const savedDiscrepancy = await resumedBaseStore.readGame(testId);
         expect(savedDiscrepancy?.events.map((event) => event.kind)).toEqual([
           'game-created',
+          'deadness-candidate-created',
+          'adjudication-analysis-continued',
+          'adjudication-proof-accepted',
+          'game-started-after-classification',
           'clock-reconciliation-required',
         ]);
         expect(savedDiscrepancy?.events.at(-1)).toMatchObject({
@@ -1485,6 +1728,10 @@ describe('game controller setup', () => {
         const savedRecovery = await resumedBaseStore.readGame(testId);
         expect(savedRecovery?.events.map((event) => event.kind)).toEqual([
           'game-created',
+          'deadness-candidate-created',
+          'adjudication-analysis-continued',
+          'adjudication-proof-accepted',
+          'game-started-after-classification',
           'clock-reconciliation-required',
           'clock-absence-reconciled',
         ]);
@@ -1524,7 +1771,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      let state = await controller.initialize({
+      let state = await initializePlayable(controller, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -1548,7 +1795,7 @@ describe('game controller setup', () => {
           move,
         });
         if (accepted.kind !== 'accepted') throw new Error(`The model move failed: ${accepted.kind}`);
-        state = accepted.snapshot;
+        state = await settlePendingAdjudication(controller, accepted.snapshot);
       };
       const playHuman = async (move: CoordinateMove) => {
         decisionTimeMs += 1_000;
@@ -1560,7 +1807,7 @@ describe('game controller setup', () => {
           move,
         });
         if (accepted.kind !== 'accepted') throw new Error(`The human move failed: ${accepted.kind}`);
-        state = accepted.snapshot;
+        state = await settlePendingAdjudication(controller, accepted.snapshot);
       };
 
       await playModel({ from: 'f2', to: 'f3' });
@@ -1618,7 +1865,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await controller.initialize({
+      const initial = await initializePlayable(controller, {
         humanSide: 'white',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -1706,7 +1953,7 @@ describe('game controller setup', () => {
     });
 
     try {
-      const initial = await firstController.initialize({
+      const initial = await initializePlayable(firstController, {
         humanSide: 'black',
         modelSelection: model,
         namespace: { kind: 'guest' },
@@ -1742,9 +1989,9 @@ describe('game controller setup', () => {
         idFactory: () => `${testId}-restored-${++generatedId}`,
       });
       const restored = await restoredController.initialize();
-      expect(restored.readiness).toBe('expiry-persistence-pending');
+      expect(restored.readiness).toBe('ready');
       expect(restored.checkpoint.rules.moves).toHaveLength(0);
-      expect(restored.checkpoint.result).toEqual({ kind: 'unresolved' });
+      expect(restored.checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'timeout', eventAtMs: 31_000 });
 
       const reconciled = await restoredController.reconcile();
       expect(reconciled.checkpoint.rules.moves).toHaveLength(0);
@@ -1765,13 +2012,18 @@ describe('game controller setup', () => {
       const saved = await restoredStore.readGame(testId);
       expect(saved?.events.map((event) => event.kind)).toEqual([
         'game-created',
+        'deadness-candidate-created',
+        'adjudication-analysis-continued',
+        'adjudication-proof-accepted',
+        'game-started-after-classification',
         'model-turn-started',
         'timeout-candidate',
+        'timeout-adjudication-candidate-created',
       ]);
       expect(saved?.events.at(-1)).toMatchObject({
-        kind: 'timeout-candidate',
+        kind: 'timeout-adjudication-candidate-created',
         occurredAtMs: 31_000,
-        payload: { details: { decisionTimeMs: 41_000 } },
+        payload: { details: { expiredSide: 'white', queryIdentity: expect.any(String) } },
       });
       restoredStore.close();
     } finally {

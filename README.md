@@ -40,6 +40,7 @@ Vitest runs offline fixtures for strict rules, clock calculations, proof checkin
 
 - [Module responsibilities and authority](docs/architecture/modules.md)
 - [KHA-29 serialized controller evidence](docs/implementation/KHA-29-controller-evidence.md)
+- [KHA-32 pending adjudication API and evidence](docs/implementation/KHA-32-pending-adjudication.md)
 - [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md)
 - [KHA-34 connection API](docs/implementation/KHA-34-api.md) and [evidence](docs/implementation/KHA-34-evidence.md)
 - [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md)
