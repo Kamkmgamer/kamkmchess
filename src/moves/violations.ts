@@ -1,4 +1,5 @@
-import type { Color, CoordinateMove, File, PieceOnSquare, Position, Rank, Square } from '../rules/index.js';
+import { isSquareAttackedInFen } from '../rules/index.js';
+import type { Color, CoordinateMove, PieceOnSquare, Position, Square } from '../rules/index.js';
 
 /**
  * Rule-specific explanations for one illegal model attempt.
@@ -23,117 +24,13 @@ export interface IllegalMoveExplanation {
   readonly message: string;
 }
 
-const KNIGHT_OFFSETS: readonly (readonly [number, number])[] = [
-  [1, 2],
-  [2, 1],
-  [2, -1],
-  [1, -2],
-  [-1, -2],
-  [-2, -1],
-  [-2, 1],
-  [-1, 2],
-];
-
-const KING_OFFSETS: readonly (readonly [number, number])[] = [
-  [0, 1],
-  [1, 1],
-  [1, 0],
-  [1, -1],
-  [0, -1],
-  [-1, -1],
-  [-1, 0],
-  [-1, 1],
-];
-
-const DIAGONALS: readonly (readonly [number, number])[] = [
-  [1, 1],
-  [1, -1],
-  [-1, 1],
-  [-1, -1],
-];
-
-const ORTHOGONALS: readonly (readonly [number, number])[] = [
-  [1, 0],
-  [-1, 0],
-  [0, 1],
-  [0, -1],
-];
-
-const FILES: readonly File[] = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
-const RANKS: readonly Rank[] = ['1', '2', '3', '4', '5', '6', '7', '8'];
-
-function fileIndex(file: File): number {
-  return FILES.indexOf(file);
-}
-
-function squareAt(fileIndexFromOrigin: number, rankIndex: number): Square | null {
-  const file = FILES[fileIndexFromOrigin];
-  const rank = RANKS[rankIndex];
-  if (file === undefined || rank === undefined) return null;
-  return `${file}${rank}`;
-}
-
 function pieceAt(position: Position, square: Square): PieceOnSquare | null {
   return position.pieces.find((piece) => piece.square === square) ?? null;
 }
 
-function rayAttacks(
-  position: Position,
-  from: Square,
-  offsets: readonly (readonly [number, number])[],
-  defender: Color,
-): boolean {
-  const file = fileIndex(from[0] as File);
-  const rank = Number(from[1]) - 1;
-  for (const [fileDelta, rankDelta] of offsets) {
-    let currentFile = file + fileDelta;
-    let currentRank = rank + rankDelta;
-    while (currentFile >= 0 && currentFile < FILES.length && currentRank >= 0 && currentRank < RANKS.length) {
-      const square = squareAt(currentFile, currentRank);
-      if (square === null) break;
-      const piece = pieceAt(position, square);
-      if (piece !== null) {
-        if (piece.color === defender) {
-          const type = piece.type;
-          if (type === 'q' || (offsets === DIAGONALS && type === 'b') || (offsets === ORTHOGONALS && type === 'r')) {
-            return true;
-          }
-        }
-        break;
-      }
-      currentFile += fileDelta;
-      currentRank += rankDelta;
-    }
-  }
-  return false;
-}
-
 /** Reports whether `defender` attacks `square` in the given position. */
 export function isSquareAttacked(position: Position, square: Square, defender: Color): boolean {
-  const file = fileIndex(square[0] as File);
-  const rank = Number(square[1]) - 1;
-
-  for (const [fileDelta, rankDelta] of KING_OFFSETS) {
-    const neighbour = squareAt(file + fileDelta, rank + rankDelta);
-    if (neighbour === null) continue;
-    const piece = pieceAt(position, neighbour);
-    if (piece?.color === defender && piece.type === 'k') return true;
-  }
-  for (const [fileDelta, rankDelta] of KNIGHT_OFFSETS) {
-    const origin = squareAt(file + fileDelta, rank + rankDelta);
-    if (origin === null) continue;
-    const piece = pieceAt(position, origin);
-    if (piece?.color === defender && piece.type === 'n') return true;
-  }
-  const pawnRank = defender === 'w' ? rank - 1 : rank + 1;
-  for (const fileDelta of [-1, 1]) {
-    const origin = squareAt(file + fileDelta, pawnRank);
-    if (origin === null) continue;
-    const piece = pieceAt(position, origin);
-    if (piece?.color === defender && piece.type === 'p') return true;
-  }
-  if (rayAttacks(position, square, DIAGONALS, defender)) return true;
-  return rayAttacks(position, square, ORTHOGONALS, defender);
+  return isSquareAttackedInFen(position.fen, square, defender);
 }
 
 function castlingRight(position: Position, move: CoordinateMove): string | null {
