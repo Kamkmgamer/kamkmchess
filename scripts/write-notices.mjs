@@ -55,8 +55,13 @@ for (const metadata of packages.values()) {
   }
 
   const files = await readdir(directory);
-  const licenseFile = files.find((file) => /^license(?:\.(?:txt|md))?$/i.test(file));
-  if (!licenseFile) {
+  const licenseFile = files.find((file) => /^licen[sc]e(?:\.(?:txt|md))?$/i.test(file));
+  // This exact release distributes its complete BSD terms in README.md.
+  const readmeLicense = manifest.name === 'glob-to-regexp' && manifest.version === '0.4.1'
+    ? (await readFile(join(directory, 'README.md'), 'utf8')).match(/^## License\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]?.trim()
+    : undefined;
+  const licenseText = licenseFile ? await readFile(join(directory, licenseFile), 'utf8') : readmeLicense;
+  if (!licenseText) {
     throw new Error(`Review the missing license text for ${manifest.name}`);
   }
 
@@ -70,7 +75,7 @@ for (const metadata of packages.values()) {
   sections.push(
     `${manifest.name}@${manifest.version} (${manifest.license ?? 'license not declared'})`,
     `Source: ${manifest.homepage ?? manifest.repository?.url ?? `https://www.npmjs.com/package/${manifest.name}/v/${manifest.version}`}`,
-    await readFile(join(directory, licenseFile), 'utf8'),
+    licenseText,
   );
 }
 

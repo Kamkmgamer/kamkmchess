@@ -126,11 +126,46 @@ textarea:focus-visible, summary:focus-visible {
 .promotion-panel p { color: var(--dim); margin: 6px 0 12px; }
 .promotion-options { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 5px; }
 .feedback { position: sticky; bottom: 0; margin: 14px 0 0; padding: 8px 10px; min-height: 36px; color: var(--dim); background: color-mix(in srgb, var(--paper), transparent 7%); }
+.feedback:empty { background: transparent; pointer-events: none; }
 .setup-panel { padding: 16px; margin: 0 auto 20px; max-width: 1060px; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; }
 .setup-panel > .panel-heading { margin-bottom: 14px; }
 .setup-panel h2 { font-size: 16px; margin: 0; }
 .setup-panel p { margin: 4px 0; color: var(--dim); }
 .setup-form { display: grid; grid-template-columns: repeat(2, minmax(160px, 1fr)); align-items: end; gap: 12px; }
+.opponent-panel { min-width: 0; margin-top: 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); }
+.connection-picker, .connection-form, .model-controls { display: grid; gap: 10px; min-width: 0; margin-top: 12px; }
+.connection-picker label, .connection-form label, .model-controls label { display: grid; gap: 5px; min-width: 0; font-weight: 550; }
+.connection-form { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: end; }
+.connection-form input, .connection-form select, .connection-picker select, .model-controls input {
+  width: 100%; min-width: 0; min-height: 36px; border: 1px solid var(--rule); border-radius: 7px;
+  background: var(--surface); padding: 7px 9px; color: var(--ink);
+}
+.connection-url { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.opponent-fields { min-width: 0; margin: 0; padding: 0; border: 0; display: grid; gap: 12px; }
+.opponent-fields > label { display: grid; gap: 5px; }
+.opponent-fields > label > select { width: 100%; min-height: 38px; border: 1px solid var(--rule); border-radius: 7px; background: var(--surface); padding: 7px 9px; color: var(--ink); }
+.proxy-quick-form > p, .proxy-quick-form > label, .proxy-advanced { grid-column: 1 / -1; }
+.proxy-advanced summary { cursor: pointer; color: var(--dim); padding-block: 6px; }
+.proxy-advanced .connection-form { margin-top: 8px; }
+.connection-url code { font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 11px; }
+.model-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+.model-controls > p, .model-controls > label { grid-column: 1 / -1; }
+.model-controls > .button, .model-controls > .model-choice { justify-self: start; }
+.model-choice { max-width: 100%; overflow-wrap: anywhere; border: 1px solid var(--rule); border-radius: 6px; padding: 5px 8px; background: var(--surface); color: var(--ink); cursor: pointer; }
+.model-choice[aria-pressed="true"] { border-color: var(--green); background: var(--soft); }
+.disclosure-panel { grid-column: 1 / -1; padding: 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--soft); overflow-wrap: anywhere; }
+.disclosure-panel h3 { margin: 0 0 8px; font-size: 14px; }
+.disclosure-panel ul { padding-left: 20px; }
+.disclosure-panel a { display: inline-block; margin-right: 12px; }
+.button-row, .recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.feedback-inline { grid-column: 1 / -1; min-height: 18px; overflow-wrap: anywhere; }
+.conversation-details { margin-top: 10px; }
+.conversation-details summary { cursor: pointer; font-weight: 550; }
+.conversation-row { margin-top: 8px; padding: 9px; border: 1px solid var(--rule); border-radius: 7px; background: var(--paper); overflow: hidden; }
+.conversation-row.discarded { opacity: .72; }
+.conversation-row pre { max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, "SF Mono", Consolas, monospace; }
+.recovery-actions { margin: 10px 0; }
+.recovery-actions p { flex-basis: 100%; }
 .setup-form .fen-field { grid-column: 1 / -1; }
 .setup-form textarea { resize: vertical; font-family: ui-monospace, "SF Mono", Consolas, monospace; }
 .visual-editor { grid-column: 1 / -1; min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--rule); border-radius: 8px; }
@@ -169,6 +204,9 @@ textarea:focus-visible, summary:focus-visible {
   .details-panel { grid-template-columns: 1fr; }
   .status-block, .detail-section:nth-child(2) { grid-column: auto; grid-row: auto; }
   .setup-form { grid-template-columns: 1fr 1fr; }
+  .connection-form { grid-template-columns: 1fr; }
+  .connection-form > *, .connection-url, .model-controls > *, .disclosure-panel, .feedback-inline { grid-column: 1; }
+  .model-controls { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }

@@ -34,6 +34,7 @@ import {
 } from './types.js';
 import { validateProofSearchCheckpoint } from './checkpoint.js';
 import { proofSearchStatePositionFen } from './state-position.js';
+import { tryFastMatingWitness } from './fast-witness.js';
 
 const DEFAULT_DISCOVERED_STATE_BUDGET = 10_000;
 const DEFAULT_PASS_TIME_BUDGET_MS = 5_000;
@@ -323,6 +324,33 @@ export async function runProofSearchPass(
         expandedStateCount: 0,
         totalDiscoveredStateCount: restart.discoveredStateCount,
         totalDiscoveredEdgeCount: restart.discoveredEdgeCount,
+        elapsedMs: Math.max(0, monotonicNow() - startedAt),
+      },
+    };
+  }
+  const remainingFastBudgetMs = timeBudgetMs - (monotonicNow() - startedAt);
+  const fastWitness = options.fastWitness === false || remainingFastBudgetMs <= 0
+    ? null
+    : await tryFastMatingWitness(query, {
+      timeBudgetMs: remainingFastBudgetMs,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+    });
+  if (fastWitness && monotonicNow() - startedAt < timeBudgetMs) {
+    if (options.signal?.aborted) {
+      return {
+        status: 'non-result', reason: 'cancelled', queryIdentity: query.queryIdentity,
+        checkpoint: null, checkpointDisposition: options.checkpoint === undefined ? 'fresh' : 'resumed',
+        pass: {
+          ...fastWitness.pass, maxDiscoveredStates, timeBudgetMs,
+          elapsedMs: Math.max(0, monotonicNow() - startedAt),
+        },
+      };
+    }
+    return {
+      ...fastWitness,
+      checkpointDisposition: options.checkpoint === undefined ? 'fresh' : 'resumed',
+      pass: {
+        ...fastWitness.pass, maxDiscoveredStates, timeBudgetMs,
         elapsedMs: Math.max(0, monotonicNow() - startedAt),
       },
     };

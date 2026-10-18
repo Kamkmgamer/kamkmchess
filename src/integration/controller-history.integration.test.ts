@@ -10,6 +10,9 @@ import type { GameController, GameControllerSetupV1, ModelSelection } from '../c
 import type { ControllerSnapshotV1 } from '../controller/index.js';
 import type { CoordinateMove } from '../rules/index.js';
 import { composeHistoryReplay } from '../history-cost/index.js';
+import { getGenerationJournal, runGenerationTurn } from './generation-runner.js';
+import { createConnectionProfile, openConnectionStore } from '../providers/connections/index.js';
+import type { ProtocolStreamDecoder, ProtocolStreamResult, ProviderProtocol } from '../providers/protocols/index.js';
 import { isLocalBoardInputDisabled, parseCoordinateMove, startClassifiedLocalGame, submitBoardMove } from '../ui/board-input.js';
 
 const modelSelection: ModelSelection = {
@@ -306,4 +309,111 @@ describe('controller and retained history integration seams', () => {
       store.close();
     }
   }, 15_000);
+
+  it('persists failed and completed provider turns, replays the first plan after reload, and discards it on Undo', async () => {
+    const gameId = 'integration-durable-generation-history';
+    const factory = new IDBFactory();
+    const now = () => 5_000;
+    const store = await openGameStore({ databaseName: gameId, factory, now });
+    const controller = getOrCreateGameController({ gameId, store,
+      timeSource: { sample: (decisionTimeMs) => ({ monotonicMs: now(), wallTimeMs: decisionTimeMs ?? now() }) },
+      clockPolicy: { maxReferenceDivergenceMs: 0 } });
+    const namespace = { kind: 'guest' as const };
+    const connections = await openConnectionStore({ databaseName: `${gameId}-connections`, factory });
+    const profile = await createConnectionProfile({ id: 'durable-openai', name: 'Fixture', provider: 'openai' });
+    await connections.saveProfile(namespace, profile);
+    await connections.assignCredential(namespace, profile.id, { apiKey: 'fixture-private-secret' });
+    await connections.recordDisclosureChoice(namespace, profile, { decision: 'accepted', recordedAtMs: now() });
+    const selected: ModelSelection = {
+      ...modelSelection, providerId: 'openai', connectionId: profile.id, protocol: 'responses',
+      configurationRevision: 1, modelRoutingId: 'fixture-model',
+    };
+    try {
+      const initialized = await controller.initialize({ humanSide: 'black', modelSelection: selected, namespace, ownershipEpoch: 0 });
+      const setupWork = await controller.continueAdjudication(initialized.fence);
+      if (!setupWork) throw new Error('Expected setup classification.');
+      const setupEvidence: ProofEvidence = {
+        schemaVersion: 1, proofCheckerVersion: PROOF_CHECKER_VERSION, rulesAdapterVersion: RULES_ADAPTER_VERSION,
+        queryIdentity: setupWork.query.queryIdentity, kind: 'mate-witness', intendedColor: 'b',
+        moves: [{ from: 'f2', to: 'f3' }, { from: 'e7', to: 'e5' }, { from: 'g2', to: 'g4' }, { from: 'd8', to: 'h4' }],
+      };
+      const setupChecked = checkProofEvidence(setupWork.query, setupEvidence);
+      if (setupChecked.status !== 'accepted') throw new Error('Expected checked setup evidence.');
+      const ready = await controller.acceptAdjudicationResult({ requestId: setupWork.requestId, fence: setupWork.fence,
+        query: setupWork.query, result: { status: 'accepted', conclusion: setupChecked.conclusion,
+          queryIdentity: setupChecked.queryIdentity, evidence: setupEvidence, checkpointDisposition: 'fresh',
+          pass: { maxDiscoveredStates: 0, timeBudgetMs: 0, discoveredStateCount: 0, processedEdgeCount: 0,
+            expandedStateCount: 0, totalDiscoveredStateCount: 0, totalDiscoveredEdgeCount: 0, elapsedMs: 0 } } });
+      let active = await controller.startGame(ready.fence, selected);
+      const responses: ProtocolStreamResult[] = [
+        { protocol: 'responses', terminal: 'failed', content: 'empty', answerText: '', reasoningText: 'partial reasoning', planText: '', refusalText: '',
+          usage: { input_tokens: 10, output_tokens: 2, input_tokens_details: { cached_tokens: 0 } }, usageRecords: [], errors: [{ message: 'synthetic interruption' }],
+          incompleteDetails: [], toolRecords: [], otherChoices: [], unknownEvents: [], raw: { chunks: [], events: [] } },
+        { protocol: 'responses', terminal: 'complete', content: 'answer', answerText: '{"move":"e2e4"}', reasoningText: 'first reasoning', planText: 'first plan', refusalText: '',
+          usage: { input_tokens: 20, output_tokens: 5, input_tokens_details: { cached_tokens: 0 } }, usageRecords: [], errors: [], incompleteDetails: [], toolRecords: [], otherChoices: [], unknownEvents: [], raw: { chunks: [], events: [] } },
+        { protocol: 'responses', terminal: 'complete', content: 'answer', answerText: '{"move":"g1f3"}', reasoningText: 'second reasoning', planText: 'second plan', refusalText: '',
+          usage: { input_tokens: 30, output_tokens: 6, input_tokens_details: { cached_tokens: 4 } }, usageRecords: [], errors: [], incompleteDetails: [], toolRecords: [], otherChoices: [], unknownEvents: [], raw: { chunks: [], events: [] } },
+      ];
+      const requestBodies: string[] = [];
+      let runCount = 0;
+      const fixtureFetch = async (_url: string, init: RequestInit) => {
+        requestBodies.push(String(init.body));
+        const body = requestBodies.length === 1 ? 'fixture-private-secret' : `wire-${runCount}`;
+        return new Response(new TextEncoder().encode(body), { status: 200 });
+      };
+      const createDecoder = (protocol: ProviderProtocol): ProtocolStreamDecoder => {
+        expect(protocol).toBe('responses');
+        const result = responses[runCount++]!;
+        return { push: () => undefined, abort: () => undefined, finish: () => result };
+      };
+      const run = () => runGenerationTurn({ controller, connections, namespace,
+        expectedProfileConfigRevision: profile.configRevision, instructions: 'Play one legal move.',
+        generation: { maxOutputTokens: 100 }, capacity: { maxOutputTokens: 100 }, fetch: fixtureFetch,
+        createDecoder, now });
+      const failed = await run();
+      expect(failed).toMatchObject({ kind: 'interrupted', reason: 'failed', persistence: 'saved-locally-quarantined' });
+      const first = await run();
+      expect(first).toMatchObject({ kind: 'completed', dispatch: 'accepted', persistence: 'saved-locally-quarantined' });
+      active = controller.snapshot();
+      const afterFirst = await acceptWitness(controller, active, 'w', [
+        { from: 'e7', to: 'e5' }, { from: 'd1', to: 'h5' }, { from: 'b8', to: 'c6' },
+        { from: 'f1', to: 'c4' }, { from: 'g8', to: 'f6' }, { from: 'h5', to: 'f7' },
+      ]);
+      const black = await submitBoardMove(controller, afterFirst, parseCoordinateMove('e7e5')!);
+      if (black.kind !== 'accepted') throw new Error('Expected the human reply to commit.');
+      const afterBlack = await acceptWitness(controller, black.snapshot, 'w', [
+        { from: 'd1', to: 'h5' }, { from: 'b8', to: 'c6' }, { from: 'f1', to: 'c4' },
+        { from: 'g8', to: 'f6' }, { from: 'h5', to: 'f7' },
+      ]);
+      const second = await run();
+      expect(second).toMatchObject({ kind: 'completed', dispatch: 'accepted' });
+      expect(requestBodies[2]).toContain('first plan');
+      expect(requestBodies[2]).toContain('first reasoning');
+      expect(requestBodies[2]).toContain('rnbqkbnr/pppp1ppp/8/4p3');
+      expect(requestBodies[2]).toContain('current-match-input');
+      expect(requestBodies[0]).not.toContain('fixture-private-secret');
+      const stored = await store.readGame(gameId);
+      expect(stored?.checkpoint.archive.egressStatus).toBe('credential-echo-quarantined');
+      await expect(store.exportGameArchive(gameId, ['fixture-private-secret'])).rejects.toMatchObject({ code: 'credential-echo' });
+      expect(stored?.checkpoint.history.messages.map((message) => message.content)).toContain('first plan');
+      expect(stored?.checkpoint.history.messages.map((message) => message.content)).toContain('partial reasoning');
+      const journal = getGenerationJournal(stored!);
+      expect(journal.retainedEvents.filter((event) => event.kind === 'model-request-persisted')).toHaveLength(3);
+      const terminalUsage = journal.retainedEvents.filter((event) => event.kind === 'model-turn-transcript-finalized');
+      expect(JSON.stringify(terminalUsage)).toContain('input_tokens');
+      expect(afterBlack.checkpoint.history.messages.some((message) => message.content === 'first plan')).toBe(true);
+      store.close();
+      const restoredStore = await openGameStore({ databaseName: gameId, factory, now });
+      try {
+        const restored = await restoredStore.readGame(gameId);
+        expect(restored?.checkpoint.history.messages.find((message) => message.content === 'first plan')?.disposition).toBe('retained');
+        expect(getGenerationJournal(restored!).retainedEvents.filter((event) => event.kind === 'model-request-persisted')).toHaveLength(3);
+        expect(restored?.checkpoint.archive.egressStatus).toBe('credential-echo-quarantined');
+      } finally {
+        restoredStore.close();
+      }
+    } finally {
+      store.close();
+    }
+  }, 30_000);
 });

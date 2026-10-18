@@ -36,6 +36,7 @@ import type { OpenConnectionStoreOptions } from './indexeddb';
 import type { CatalogCheckResult } from './catalog';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const CLERK_USER_ID = /^user_[A-Za-z0-9]{16,}$/;
 const bindingOwners = new WeakMap<ConnectionPersistence, object>();
 
 export interface ConnectionStore {
@@ -259,7 +260,8 @@ export function createConnectionStore(persistence: ConnectionPersistence): Conne
 export function namespaceKey(namespace: ConnectionNamespace): string {
   if (namespace.kind === 'guest') return 'guest';
   if (namespace.kind === 'account' && UUID.test(namespace.accountId)) return `account:${namespace.accountId.toLowerCase()}`;
-  throw new ConnectionError('invalid-profile', 'Account connection storage requires a valid account UUID.');
+  if (namespace.kind === 'account' && CLERK_USER_ID.test(namespace.accountId)) return `account:${namespace.accountId}`;
+  throw new ConnectionError('invalid-profile', 'Account connection storage requires a valid account identifier.');
 }
 
 export function assertCredentialBinding(

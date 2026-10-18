@@ -1,6 +1,6 @@
 # Dependency and asset inventory
 
-Foundation inventory for [Establish the React/TypeScript application and build checks](https://linear.app/kamkm/issue/KHA-26/establish-the-reacttypescript-application-and-build-checks), recorded 2026-10-16. `package.json` pins direct versions and `package-lock.json` locks the complete graph, including platform-specific optional build packages. Original application code is MIT licensed under [LICENSE](../LICENSE).
+Inventory for [Establish the React/TypeScript application and build checks](https://linear.app/kamkm/issue/KHA-26/establish-the-reacttypescript-application-and-build-checks), updated 2026-10-18. `package.json` pins direct versions and `pnpm-lock.yaml` locks the complete graph, including platform-specific optional build packages. Original application code is MIT licensed under [LICENSE](../LICENSE).
 
 ## Distributed runtime code
 
@@ -11,8 +11,13 @@ Foundation inventory for [Establish the React/TypeScript application and build c
 | react | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | react-dom | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | scheduler | 0.28.0 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
+| @clerk/clerk-js | 6.39.1 | MIT | [Clerk JavaScript source](https://github.com/clerk/javascript), optional account client loaded only when accounts are configured. |
 
-`npm run build` reads actual installed runtime package versions, checks them against the lockfile, and copies each full license text into `dist/THIRD_PARTY_NOTICES.txt`. It copies the original-code license to `dist/LICENSE.txt`. Missing license text or a runtime version mismatch fails the build. Ship these files with the assets.
+`pnpm build` reads actual installed runtime package versions, checks them against the lockfile, and copies each full license text into `dist/THIRD_PARTY_NOTICES.txt`. It copies the original-code license to `dist/LICENSE.txt`. Missing license text or a runtime version mismatch fails the build. Ship these files with the assets.
+
+The generated inventory includes the Clerk client's transitive dependencies. `pnpm-workspace.yaml` explicitly denies the reviewed `browser-tabs-lock` and `core-js` install scripts, which only print funding banners and are not required to build. Application TypeScript remains strict, including exact optional properties. `skipLibCheck` skips third-party declaration-file checking because this Clerk release includes incompatible declarations; application adapter code still typechecks.
+
+Notice collection accepts both `LICENSE` and `LICENCE` filenames. The pinned `glob-to-regexp@0.4.1` release includes its complete BSD-2-Clause copyright, conditions and disclaimer in the final License section of its distributed README. The generator includes that section verbatim; it still fails for an unreviewed missing license.
 
 The build also writes `dist/DEPENDENCY_INVENTORY.json` with every locked package path, version, declared license, tooling/runtime scope and optional flag. This includes optional packages for other operating systems, not a claim that they are all installed or bundled. Review the lockfile and this inventory on changes. Tooling is not copied as a browser runtime dependency. The Vite module-preload polyfill is disabled for the selected modern targets.
 
@@ -21,6 +26,7 @@ The build also writes `dist/DEPENDENCY_INVENTORY.json` with every locked package
 | Package | Pinned version | Declared license |
 | --- | --- | --- |
 | @eslint/js | 10.0.1 | MIT |
+| @playwright/test | 1.64.1 | Apache-2.0 |
 | @types/node | 24.19.2 | MIT |
 | @types/react | 19.3.0 | MIT |
 | @types/react-dom | 19.3.0 | MIT |

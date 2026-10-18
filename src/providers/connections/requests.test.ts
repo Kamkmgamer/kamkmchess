@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { bindCredentialValues, captureCredentialBindingGeneration, createCredentialBindingOwner } from './credential-binding';
 import { getConnectionEndpoints } from './profile';
 import { prepareGenerationRequest } from './requests';
+import { namespaceKey } from './store';
 import type { ConnectionProfile, ConnectionProvider, ConnectionProtocol } from './types';
 
 function setup(provider: ConnectionProvider, protocol: ConnectionProtocol) {
@@ -34,6 +35,14 @@ function expectUnsupported(profile: ConnectionProfile, credentials: ReturnType<t
 }
 
 describe('prepareGenerationRequest cache wire controls', () => {
+  it('keeps Clerk account identifiers opaque and case-sensitive while preserving UUID keys', () => {
+    const upper = 'user_2AbCdEfGhIjKlMnOpQrStUvWx';
+    const lower = 'user_2abcdefghijklmnopqrstuvwx';
+    expect(namespaceKey({ kind: 'account', accountId: upper })).toBe(`account:${upper}`);
+    expect(namespaceKey({ kind: 'account', accountId: lower })).not.toBe(namespaceKey({ kind: 'account', accountId: upper }));
+    expect(namespaceKey({ kind: 'account', accountId: 'A0B1C2D3-E4F5-6789-ABCD-EF0123456789' })).toBe('account:a0b1c2d3-e4f5-6789-abcd-ef0123456789');
+  });
+
   it('rejects opaque Blob JSON bodies at the JSON text boundary', () => {
     const { profile, credentials } = setup('openai', 'chat-completions');
     expect(() => prepareGenerationRequest(profile, credentials, new Blob(['{"session_id":"s"}']) as unknown as string))

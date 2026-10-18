@@ -22,7 +22,7 @@ function protocolResult(overrides: Partial<ProtocolStreamResult> = {}): Protocol
   };
 }
 
-async function fixture(options: { capacityBytes?: number; staleEffect?: boolean } = {}) {
+async function fixture(options: { capacityBytes?: number; staleEffect?: boolean; formattingCorrectionsRemaining?: number } = {}) {
   const namespace = { kind: 'guest' as const };
   const profile = await createConnectionProfile({ id: 'runner-connection', name: 'Runner', provider: 'openrouter' });
   const connections = await openConnectionStore({ databaseName: `runner-connections-${crypto.randomUUID()}`, factory: new IDBFactory() });
@@ -35,8 +35,8 @@ async function fixture(options: { capacityBytes?: number; staleEffect?: boolean 
     selections: { players: { white: { kind: 'model' as const, providerId: 'openrouter', connectionId: profile.id,
       configurationRevision: 1, modelRoutingId: 'fixture-model', protocol: 'chat-completions' as const, diagnostic: 'passed-current-session' as const }, black: { kind: 'human' as const } } },
     clocks: { timeControl: { startingTimeMs: 60_000, incrementMs: 0 } },
-    budgets: { illegalMoveAttemptsRemaining: { white: 4, black: 4 }, formattingCorrectionsRemaining: 3, manualRetriesBySide: { white: 0, black: 0 } },
-    extensions: {},
+    budgets: { illegalMoveAttemptsRemaining: { white: 4, black: 4 }, formattingCorrectionsRemaining: options.formattingCorrectionsRemaining ?? 3, manualRetriesBySide: { white: 0, black: 0 } },
+    extensions: {}, result: { kind: 'unresolved' },
   };
   const clockReading = {
     status: 'running' as const, activeSide: 'white' as const, remaining: { whiteMs: 60_000, blackMs: 60_000 }, elapsedMs: 0,
@@ -45,15 +45,17 @@ async function fixture(options: { capacityBytes?: number; staleEffect?: boolean 
       anchor: { monotonicMs: 0, wallTimeMs: 1_000 }, observedAt: { monotonicMs: 0, wallTimeMs: 1_000 },
       elapsed: { monotonicMs: 0, wallMs: 0, hostAdjustedMs: null }, maxObservedDivergenceMs: 0 },
   };
-  const snapshot = { checkpoint, position, clockReading, fence } as unknown as ControllerSnapshotV1;
+  const selected = checkpoint.selections.players.white;
+  const snapshot = { checkpoint, position, clockReading, fence, modelHandoff: { committed: selected, producing: null, queued: null } } as unknown as ControllerSnapshotV1;
   let stopped = false;
   const dispatch = vi.fn(async (intent: { kind: string }) => {
-    if (intent.kind === 'begin-model-turn') return { kind: 'model-turn-started', snapshot, request: { fence, position, clockReading } } as never;
+    if (intent.kind === 'begin-model-turn') return { kind: 'model-turn-started', snapshot, request: { fence, position, clockReading, selection: selected } } as never;
     if (intent.kind === 'stop-model-turn') { stopped = true; return { kind: 'accepted', snapshot } as never; }
     if (intent.kind === 'model-turn-effect' && (stopped || options.staleEffect)) return { kind: 'rejected', reason: 'not-actionable', snapshot } as never;
     return { kind: 'accepted', snapshot } as never;
   });
-  const controller = { snapshot: () => snapshot, dispatch } as unknown as GameController;
+  const archive = vi.fn(async () => fence);
+  const controller = { snapshot: () => snapshot, dispatch, appendModelTurnArchive: archive } as unknown as GameController;
   return {
     profile, connections, controller, dispatch,
     options: {
@@ -84,9 +86,21 @@ describe('generation composition runner', () => {
     if (result.kind !== 'completed') throw new Error('Expected completed request.');
     expect(result.requestId).toBe('stable-runner-request');
     expect(result.usage).toMatchObject({ requestId: result.requestId, rawUsage: { prompt_tokens: 20 }, status: 'unknown' });
-    expect(result.persistence).toBe('EPHEMERAL NOT PERSISTED');
+    expect(result.persistence).toBe('saved-locally');
+    expect(result.recovery).toBeNull();
+    expect(f.controller.appendModelTurnArchive).toHaveBeenCalled();
     expect(f.dispatch.mock.calls.map(([intent]) => intent.kind)).toEqual(['begin-model-turn', 'model-turn-effect']);
     expect(f.dispatch.mock.calls[1]?.[0]).toMatchObject({ fence, effect: { kind: 'accepted-move', move: { from: 'e2', to: 'e4' } } });
+  });
+
+  it('returns automatic recovery for an interpretable illegal move and paused recovery after formatting budget exhaustion', async () => {
+    const illegal = await fixture();
+    const illegalResult = await runGenerationTurn({ ...illegal.options, fetch: async () => response(), createDecoder: decoder(protocolResult({ answerText: '{"move":"e2e5"}' })) });
+    expect(illegalResult).toMatchObject({ kind: 'completed', dispatch: 'accepted', recovery: { kind: 'automatic', detail: 'e2e5 is not legal in this position. Please choose a legal move yourself.' } });
+
+    const exhausted = await fixture({ formattingCorrectionsRemaining: 0 });
+    const pausedResult = await runGenerationTurn({ ...exhausted.options, fetch: async () => response(), createDecoder: decoder(protocolResult({ answerText: 'no move here' })) });
+    expect(pausedResult).toMatchObject({ kind: 'completed', dispatch: 'accepted', recovery: { kind: 'paused', detail: expect.stringContaining('Your last message did not contain a move.') } });
   });
 
   it.each([

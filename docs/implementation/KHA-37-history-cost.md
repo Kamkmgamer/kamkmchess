@@ -1,6 +1,6 @@
 # KHA-37 implementation evidence
 
-Implementation code and deterministic tests for full retained-history composition, provider-specific prompt-cache request controls, capacity rejection, and native usage accounting.
+Implementation code and deterministic tests for full retained-history composition, provider-specific prompt-cache request controls, capacity rejection, and native usage accounting. The request/stream archive path is now wired through `src/integration/generation-runner.ts` and the serialized controller archive method.
 
 ## Method
 
@@ -14,6 +14,9 @@ Implementation code and deterministic tests for full retained-history compositio
 
 - `src/history-cost/history.test.ts`: nine ordered source/destination protocol combinations, attribution and escaping, discarded-line exclusion, fresh clock suffix, stable prefix, provider-specific cache body controls, and byte/token capacity rejection.
 - `src/history-cost/usage.test.ts`: Chat Completions, Responses and Anthropic usage fixtures; cache category reconciliation; reasoning inclusion; raw unknown-field retention; estimate/measured separation; unknown usage/rates and currency separation.
+- `src/integration/controller-history.integration.test.ts`: local two-request Responses fixture plus an earlier failed request; asserts persisted raw request/response journal and usage, database close/reopen, first-turn user input/answer/reasoning/plan replay in the next request body, and credential-echo quarantine/export blocking.
+- `src/integration/generation-runner.test.ts`: runner persistence seam and stale Stop response behavior.
+- Shared runner/controller contract: [KHA-37 API](KHA-37-api.md). The return persistence field now reports local save/quarantine state, not a placeholder.
 - `pnpm run typecheck`: passed.
 - `pnpm run lint`: passed.
 - `pnpm run test`: 27 files, 353 tests passed.
@@ -21,4 +24,4 @@ Implementation code and deterministic tests for full retained-history compositio
 
 ## Limits
 
-These are synthetic fixtures. The production model-request flow does not yet call `composeHistoryReplay`, `checkReplayCapacity`, or usage accounting; wiring them into queued model handoffs remains outstanding. No native provider request, actual cache hit, provider charge, or live handoff was run. Token capacity is only verified when the caller supplies the selected destination's tokenizer. Product acceptance cases remain `not_run` in `docs/spec/mvp-acceptance.json`.
+These are synthetic fixtures. No native provider request, actual cache hit, provider charge, or live handoff was run. The current runner is a single move-turn API; diagnostics/correction/retry callers need to supply request purpose and their own accounting inputs before those categories can be reported. Rates and measured charges remain absent by default, so their cost is unknown. Token capacity is only verified when the caller supplies the selected destination's tokenizer. Raw late bytes arriving after Stop are rejected by the request fence and are not archived as late evidence. Queued model handoffs now use the [controller handoff API](KHA-38-controller-api.md). The Chromium suite checks full discarded conversation retention after Undo. Cache request controls exist in the protocol API; the current play UI does not expose cache configuration. Product acceptance cases remain `not_run` in `docs/spec/mvp-acceptance.json`.

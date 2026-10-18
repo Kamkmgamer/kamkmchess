@@ -82,7 +82,7 @@ describe('cooperative proof search', () => {
     expect(restarted).toMatchObject({ status: 'non-result', reason: 'state-budget', checkpointDisposition: 'resumed' });
   });
 
-  it('honors cancellation between successor batches and returns a resumable non-result', async () => {
+  it('honors cancellation during fast discovery and returns a resumable non-result', async () => {
     const query = createDeadnessQuery({
       ...scope,
       positionFen: '7k/8/8/NNNNN3/8/NNNNNNNN/8/KNNNNNNN w - - 0 1',
@@ -95,7 +95,7 @@ describe('cooperative proof search', () => {
     expect(result).toMatchObject({ status: 'non-result', reason: 'cancelled', checkpoint: { frontier: expect.any(Array) } });
     if (result.status !== 'non-result' || result.checkpoint === null) throw new Error('Cancellation must preserve progress.');
     expect(validateProofSearchCheckpoint(result.checkpoint).status).toBe('valid');
-    expect(result.pass.processedEdgeCount).toBeGreaterThan(0);
+    expect(result.pass.processedEdgeCount).toBe(0);
     expect(result.pass.processedEdgeCount).toBeLessThan(1000);
   });
 
@@ -183,7 +183,7 @@ describe('cooperative proof search', () => {
       positionFen: '6k1/5ppp/8/3pP3/8/8/8/1K2R3 b - - 1 2',
     });
 
-    const result = await runProofSearchPass(query, { maxDiscoveredStates: 32, timeBudgetMs: 10_000 });
+    const result = await runProofSearchPass(query, { maxDiscoveredStates: 32, timeBudgetMs: 10_000, fastWitness: false });
 
     expect(result.status).toBe('non-result');
     if (result.status !== 'non-result' || result.checkpoint === null) {
@@ -198,6 +198,7 @@ describe('cooperative proof search', () => {
       checkpoint: result.checkpoint,
       maxDiscoveredStates: 1,
       timeBudgetMs: 10_000,
+      fastWitness: false,
     })).toMatchObject({ status: 'non-result', checkpointDisposition: 'resumed' });
   });
 

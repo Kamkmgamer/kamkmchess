@@ -33,6 +33,7 @@ import { checkProofEvidence, createDeadnessQuery, createTimeoutMatingQuery, proo
 import type { ProofQuery, ProofSearchPassResult } from '../proofs/index.js';
 import type {
   AppliedMoveV1,
+  ArchiveChunkV1,
   ArchiveEventV1,
   DiscardedLineReferenceV1,
   GameCheckpointV1,
@@ -43,6 +44,7 @@ import type {
   PlayerSelectionV1,
   VersionedExtensionSectionV1,
 } from '../storage/index.js';
+import { sha256Hex } from '../archive/index.js';
 
 export type ModelSelection = Extract<PlayerSelectionV1, { kind: 'model' }>;
 export type HumanSideChoice = ClockSide | 'random';
@@ -52,6 +54,10 @@ const INITIAL_POSITION = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0
 const MOVE_ATTEMPTS_EXTENSION = 'move-attempts';
 const GAME_CONTROLLER_INTENT_KINDS: ReadonlySet<string> = new Set([
   'begin-model-turn',
+  'queue-model-selection',
+  'cancel-model-selection',
+  'resume-prior-model',
+  'retry-model-selection',
   'stop-model-turn',
   'model-turn-interrupted',
   'human-move',
@@ -70,6 +76,8 @@ export interface ControllerTimeSource {
 
 export interface GameControllerOptions {
   gameId: string;
+  /** Stable logical store namespace, such as JSON.stringify(connectionNamespace). Defaults to legacy guest scope. */
+  registryScope?: string;
   store: GameStore;
   clockPolicy: ClockComparisonPolicy;
   timeSource?: ControllerTimeSource;
@@ -115,6 +123,13 @@ export interface ControllerSnapshotV1 {
     readonly query: ProofQuery | null;
     readonly requestId: string | null;
   };
+  modelHandoff: ModelHandoffSnapshotV1;
+}
+
+export interface ModelHandoffSnapshotV1 {
+  readonly committed: ModelSelection | null;
+  readonly producing: ModelSelection | null;
+  readonly queued: { readonly selection: ModelSelection; readonly state: 'queued' | 'awaiting-first-reply' | 'failed'; readonly failure: string | null } | null;
 }
 
 export interface ControllerMoveEventV1 {
@@ -126,6 +141,8 @@ export interface ControllerMoveEventV1 {
 
 export type GameControllerIntentV1 =
   | { schemaVersion: 1; kind: 'begin-model-turn'; fence: ControllerFenceV1 }
+  | { schemaVersion: 1; kind: 'queue-model-selection'; fence: ControllerFenceV1; candidate: ModelSelection }
+  | { schemaVersion: 1; kind: 'cancel-model-selection' | 'resume-prior-model' | 'retry-model-selection'; fence: ControllerFenceV1 }
   | { schemaVersion: 1; kind: 'stop-model-turn'; fence: ControllerFenceV1 }
   | { schemaVersion: 1; kind: 'model-turn-interrupted'; fence: ControllerFenceV1; reason: ModelTurnInterruptionReasonV1 }
   | ControllerMoveEventV1
@@ -137,6 +154,7 @@ export interface ModelTurnRequestV1 {
   fence: ControllerFenceV1;
   position: Position;
   clockReading: ClockReading;
+  selection: ModelSelection;
 }
 
 export type GameControllerIntentResultV1 =
@@ -153,6 +171,7 @@ export type GameControllerIntentResultV1 =
 export interface GameController {
   initialize(setup?: GameControllerSetupV1): Promise<ControllerSnapshotV1>;
   dispatch(intent: GameControllerIntentV1): Promise<GameControllerIntentResultV1>;
+  appendModelTurnArchive(fence: ControllerFenceV1, entry: ModelTurnArchiveEntryV1, knownCredentials?: readonly string[]): Promise<ControllerFenceV1 | null>;
   reconcile(): Promise<ControllerSnapshotV1>;
   snapshot(): ControllerSnapshotV1;
   subscribe(listener: (snapshot: ControllerSnapshotV1) => void): () => void;
@@ -165,7 +184,17 @@ export interface GameController {
   takeback(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
   startPractice(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1>;
   beginPractice(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1>;
+  queueModelSelection(fence: ControllerFenceV1, candidate: ModelSelection): Promise<ControllerSnapshotV1>;
+  cancelModelSelection(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
+  resumePriorModel(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
+  retryModelSelection(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
 }
+
+export type ModelTurnArchiveEntryV1 =
+  | { kind: 'request'; requestId: string; protocol: string; modelId: string; body: Uint8Array }
+  | { kind: 'response-chunk'; requestId: string; bytes: Uint8Array }
+  | { kind: 'terminal'; requestId: string; outcome: 'complete' | 'partial' | 'failed' | 'aborted'; details: unknown;
+      messages: readonly { role: 'system' | 'developer' | 'user' | 'assistant' | 'tool' | 'function'; content: string }[] };
 
 export interface AdjudicationWorkV1 {
   readonly requestId: string;
@@ -434,9 +463,15 @@ function sideForCheckpoint(checkpoint: GameCheckpointV1): ClockSide {
   return toClockSide(checkpoint.rules.sideToMove);
 }
 
+function modelSideForCheckpoint(checkpoint: GameCheckpointV1): ClockSide | null {
+  if (checkpoint.selections.players.white.kind === 'model') return 'white';
+  if (checkpoint.selections.players.black.kind === 'model') return 'black';
+  return null;
+}
+
 function createFence(checkpoint: GameCheckpointV1): ControllerFenceV1 {
   const side = sideForCheckpoint(checkpoint);
-  const selection = checkpoint.selections.players[side];
+  const selection = handoffData(checkpoint).producing ?? checkpoint.selections.players[side];
   return {
     schemaVersion: 1,
     gameId: checkpoint.gameId,
@@ -657,9 +692,61 @@ function rebindPendingCandidates(
     const query = candidate.kind === 'timeout'
       ? timeoutQuery(next, candidate.query.predicate === 'timeout-opponent-mating' && candidate.query.expiredColor === 'w' ? 'white' : 'black')
       : deadnessQuery(next);
-    return { ...candidate, query, searchCheckpoint: null, status: 'queued' as const, requestId: null };
+    return {
+      kind: candidate.kind,
+      eventId: candidate.eventId,
+      eventAtMs: candidate.eventAtMs,
+      deadlineMs: candidate.deadlineMs,
+      query,
+      searchCheckpoint: null,
+      status: 'queued' as const,
+      requestId: null,
+    };
   });
   return withAdjudicationExtension(prior, { version: 1, data: { candidates, activeQueryIdentity: null } });
+}
+
+/** Prepare a locally owned checkpoint from an accepted cloud checkpoint without changing chess state. */
+export function prepareOwnershipTakeover(checkpoint: GameCheckpointV1, newEpoch: number): GameCheckpointV1 {
+  if (!Number.isSafeInteger(newEpoch) || newEpoch <= checkpoint.ownershipEpoch ||
+      checkpoint.revision >= Number.MAX_SAFE_INTEGER || checkpoint.requestGeneration >= Number.MAX_SAFE_INTEGER ||
+      checkpoint.analysisGeneration >= Number.MAX_SAFE_INTEGER) {
+    throw new GameControllerError('invalid-configuration', 'Ownership takeover requires a strictly newer safe epoch and available generation counters.');
+  }
+  const handoff = handoffData(checkpoint);
+  const queued = handoff.queued === null ? null : {
+    ...handoff.queued,
+    state: 'queued' as const,
+    failure: null,
+  };
+  const next: GameCheckpointV1 = {
+    ...checkpoint,
+    revision: checkpoint.revision + 1,
+    ownershipEpoch: newEpoch,
+    requestGeneration: checkpoint.requestGeneration + 1,
+    analysisGeneration: checkpoint.analysisGeneration + 1,
+    extensions: withHandoff(checkpoint, { producing: null, queued }),
+  };
+  const adjudication = adjudicationExtension(checkpoint);
+  const candidates = adjudication.data.candidates.map((candidate) => {
+    const query = candidate.kind === 'timeout'
+      ? timeoutQuery(next, candidate.query.predicate === 'timeout-opponent-mating' && candidate.query.expiredColor === 'w' ? 'white' : 'black')
+      : deadnessQuery(next);
+    return {
+      kind: candidate.kind,
+      eventId: candidate.eventId,
+      eventAtMs: candidate.eventAtMs,
+      deadlineMs: candidate.deadlineMs,
+      query,
+      searchCheckpoint: null,
+      status: 'queued' as const,
+      requestId: null,
+    };
+  });
+  return {
+    ...next,
+    extensions: withAdjudicationExtension(next, { version: 1, data: { candidates, activeQueryIdentity: null } }),
+  };
 }
 
 function copySnapshot(snapshot: ControllerSnapshotV1): ControllerSnapshotV1 {
@@ -670,6 +757,7 @@ function copySnapshot(snapshot: ControllerSnapshotV1): ControllerSnapshotV1 {
     fence: { ...snapshot.fence },
     readiness: snapshot.readiness,
     adjudication: structuredClone(snapshot.adjudication),
+    modelHandoff: structuredClone(snapshot.modelHandoff),
   };
 }
 
@@ -832,7 +920,42 @@ function sameFence(left: ControllerFenceV1, right: ControllerFenceV1): boolean {
     left.modelConfigurationIdentity === right.modelConfigurationIdentity;
 }
 
+function sameRequestFence(left: ControllerFenceV1, right: ControllerFenceV1): boolean {
+  return left.gameId === right.gameId && left.segmentId === right.segmentId && left.side === right.side &&
+    left.positionRevision === right.positionRevision && left.requestGeneration === right.requestGeneration &&
+    left.analysisGeneration === right.analysisGeneration && left.ownershipEpoch === right.ownershipEpoch &&
+    left.modelConfigurationIdentity === right.modelConfigurationIdentity;
+}
+
 const UNDO_BASELINE_EXTENSION = 'undo-baseline';
+const MODEL_HANDOFF_EXTENSION = 'model-handoff';
+interface ModelHandoffDataV1 {
+  readonly producing: ModelSelection | null;
+  readonly queued: { readonly selection: ModelSelection; readonly state: 'queued' | 'awaiting-first-reply' | 'failed'; readonly failure: string | null } | null;
+}
+
+function handoffData(checkpoint: GameCheckpointV1): ModelHandoffDataV1 {
+  const section = checkpoint.extensions[MODEL_HANDOFF_EXTENSION];
+  if (section?.version === 1 && section.data && typeof section.data === 'object') {
+    const data = section.data as unknown as ModelHandoffDataV1;
+    if ((data.producing === null || data.producing?.kind === 'model') &&
+        (data.queued === null || data.queued?.selection?.kind === 'model')) return data;
+  }
+  return { producing: null, queued: null };
+}
+
+function withHandoff(checkpoint: GameCheckpointV1, data: ModelHandoffDataV1): GameCheckpointV1['extensions'] {
+  return { ...checkpoint.extensions, [MODEL_HANDOFF_EXTENSION]: { version: 1, data: jsonSafe(data) } };
+}
+
+function handoffSnapshot(checkpoint: GameCheckpointV1): ModelHandoffSnapshotV1 {
+  const side = checkpoint.selections.players.white.kind === 'model' ? 'white' : 'black';
+  const committed = checkpoint.selections.players[side];
+  const state = handoffData(checkpoint);
+  return { committed: committed.kind === 'model' ? freezeModelSelection(committed) : null,
+    producing: state.producing === null ? null : freezeModelSelection(state.producing),
+    queued: state.queued === null ? null : { ...state.queued, selection: freezeModelSelection(state.queued.selection) } };
+}
 
 function undoBaselineSection(checkpoint: GameCheckpointV1): VersionedExtensionSectionV1 {
   return { version: 1, data: JSON.parse(JSON.stringify(checkpoint)) as JsonValue };
@@ -1059,6 +1182,77 @@ class IndexedGameController implements GameController {
     return operation;
   }
 
+  appendModelTurnArchive(fence: ControllerFenceV1, entry: ModelTurnArchiveEntryV1, knownCredentials: readonly string[] = []): Promise<ControllerFenceV1 | null> {
+    let frozen: ModelTurnArchiveEntryV1;
+    try { frozen = structuredClone(entry); } catch {
+      return Promise.reject(new GameControllerError('invalid-intent', 'The model archive entry must be cloneable.'));
+    }
+    const credentials = [...knownCredentials];
+    const operation = this.operationQueue.then(() => this.appendModelTurnArchiveReady(fence, frozen, credentials));
+    this.operationQueue = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+
+  private async appendModelTurnArchiveReady(fence: ControllerFenceV1, entry: ModelTurnArchiveEntryV1, knownCredentials: readonly string[]): Promise<ControllerFenceV1 | null> {
+    const checkpoint = this.checkpoint;
+    const active = this.activeRequest;
+    if (checkpoint === null || active === null || !sameRequestFence(active.fence, fence) ||
+        !sameRequestFence(createFence(checkpoint), fence)) return null;
+    const stored = await this.store.readGame(this.gameId);
+    if (stored === null || stored.checkpoint.revision !== checkpoint.revision || stored.checkpoint.ownershipEpoch !== checkpoint.ownershipEpoch ||
+        !sameRequestFence(active.fence, fence) || this.checkpoint !== checkpoint) return null;
+    const eventId = nextUniqueId(this.idFactory, new Set(stored.events.map((event) => event.eventId)));
+    const eventSequence = stored.events.reduce((n, event) => Math.max(n, event.sequence), -1) + 1;
+    const chunkSequence = stored.chunks.reduce((n, chunk) => Math.max(n, chunk.sequence), -1) + 1;
+    const occurredAtMs = this.timeSource.sample().wallTimeMs;
+    const chunkId = 'body' in entry || 'bytes' in entry ? nextUniqueId(this.idFactory, new Set(stored.chunks.map((chunk) => chunk.chunkId))) : null;
+    const bytes = 'body' in entry ? entry.body : 'bytes' in entry ? entry.bytes : null;
+    const chunk: ArchiveChunkV1 | null = bytes === null || chunkId === null ? null : {
+      chunkId, gameId: this.gameId, sequence: chunkSequence, receivedAtMs: occurredAtMs,
+      isFinal: entry.kind === 'request' || entry.kind === 'terminal', egressStatus: 'eligible',
+      bytes: new Uint8Array(bytes), sha256: await sha256Hex(bytes),
+    };
+    const event = {
+      eventId, gameId: this.gameId, sequence: eventSequence, segmentId: checkpoint.segmentId,
+      kind: entry.kind === 'request' ? 'model-request-persisted' : entry.kind === 'response-chunk' ? 'model-response-chunk-received' : 'model-turn-transcript-finalized',
+      occurredAtMs, receiveState: entry.kind === 'response-chunk' || (entry.kind === 'terminal' && entry.outcome !== 'complete')
+        ? 'partial' as const : 'complete' as const,
+      egressStatus: 'eligible' as const,
+      payload: eventPayload(fence, entry.kind === 'request'
+        ? { requestId: entry.requestId, protocol: entry.protocol, modelId: entry.modelId, bodyChunkId: chunkId }
+        : entry.kind === 'response-chunk'
+          ? { requestId: entry.requestId, bodyChunkId: chunkId }
+          : { requestId: entry.requestId, outcome: entry.outcome, details: jsonSafe(entry.details) }),
+      chunkIds: chunk === null ? [] : [chunk.chunkId],
+    } satisfies ArchiveEventV1;
+    const historyMessages = entry.kind === 'terminal' ? entry.messages.map((message, index) => ({
+      messageId: `${entry.requestId}:${index}`, segmentId: checkpoint.segmentId,
+      lineId: checkpoint.archive.currentLine.lineId, role: message.role, content: message.content,
+      eventIds: [eventId], disposition: 'retained' as const,
+    })) : [];
+    const nextHistory = historyMessages.length === 0 ? checkpoint.history : {
+      ...checkpoint.history,
+      messages: [...checkpoint.history.messages, ...historyMessages],
+      segments: checkpoint.history.segments.map((segment) => segment.segmentId === checkpoint.segmentId
+        ? { ...segment, messageIds: [...segment.messageIds, ...historyMessages.map((message) => message.messageId)] } : segment),
+    };
+    const nextCheckpoint = {
+      ...checkpoint, revision: checkpoint.revision + 1, updatedAtMs: occurredAtMs, history: nextHistory,
+      archive: { ...checkpoint.archive, currentLine: { ...checkpoint.archive.currentLine,
+        eventIds: [...checkpoint.archive.currentLine.eventIds, eventId] } },
+    };
+    const result = await this.store.commitCheckpoint({
+      gameId: this.gameId, expectedRevision: checkpoint.revision, expectedEpoch: checkpoint.ownershipEpoch,
+      events: [event], chunks: chunk === null ? [] : [chunk], knownCredentials,
+      decide: () => ({ checkpoint: nextCheckpoint, outboxOperationIds: [] }),
+    });
+    if (result.kind !== 'committed' || this.checkpoint !== checkpoint || !sameRequestFence(active.fence, fence)) return null;
+    this.checkpoint = result.checkpoint;
+    this.activeRequest = { ...active, fence: createFence(result.checkpoint) };
+    this.publish(this.snapshot());
+    return this.snapshot().fence;
+  }
+
   reconcile(): Promise<ControllerSnapshotV1> {
     const operation = this.operationQueue.then(() => this.reconcileReady());
     this.operationQueue = operation.then(() => undefined, () => undefined);
@@ -1101,6 +1295,7 @@ class IndexedGameController implements GameController {
       fence: createFence(checkpoint),
       readiness,
       adjudication: this.adjudicationStatus(checkpoint),
+      modelHandoff: handoffSnapshot(checkpoint),
     };
   }
 
@@ -1684,6 +1879,8 @@ class IndexedGameController implements GameController {
       return { kind: 'rejected', reason: 'not-actionable', snapshot };
     }
     if (intent.kind === 'begin-model-turn') return this.beginModelTurn(intent.fence);
+    if (intent.kind === 'queue-model-selection' || intent.kind === 'cancel-model-selection' ||
+        intent.kind === 'resume-prior-model' || intent.kind === 'retry-model-selection') return this.changeModelSelection(intent);
     if (intent.kind === 'stop-model-turn') return this.stopModelTurn(intent.fence);
     if (intent.kind === 'model-turn-interrupted') {
       if (!['failed', 'incomplete', 'aborted'].includes(intent.reason)) {
@@ -1692,7 +1889,65 @@ class IndexedGameController implements GameController {
       return this.interruptModelTurn(intent.fence, intent.reason);
     }
     if (intent.kind === 'model-turn-effect') return this.applyModelTurnEffect(intent);
-    return this.acceptMove(intent);
+    if (intent.kind === 'human-move' || intent.kind === 'model-move') return this.acceptMove(intent);
+    throw new GameControllerError('invalid-intent', 'The controller intent kind is unsupported.');
+  }
+
+  private async changeModelSelection(intent: Extract<GameControllerIntentV1, { kind: 'queue-model-selection' | 'cancel-model-selection' | 'resume-prior-model' | 'retry-model-selection' }>): Promise<GameControllerIntentResultV1> {
+    const checkpoint = this.checkpoint;
+    if (checkpoint === null) throw new GameControllerError('setup-required', 'Initialize the game before changing model selection.');
+    const side = modelSideForCheckpoint(checkpoint);
+    if (side === null || checkpoint.result.kind !== 'unresolved') {
+      return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
+    }
+    const current = handoffData(checkpoint);
+    let queued = current.queued;
+    if (intent.kind === 'queue-model-selection') {
+      const candidate = freezeModelSelection(intent.candidate);
+      modelConfigurationIdentity(candidate);
+      if (candidate.diagnostic !== 'passed-current-session') throw new GameControllerError('invalid-intent', 'A current-session diagnostic must pass before queueing a model.');
+      const committed = checkpoint.selections.players[side] as ModelSelection;
+      queued = modelConfigurationIdentity(candidate) === modelConfigurationIdentity(committed)
+        ? null : { selection: candidate, state: 'queued', failure: null };
+    } else if (intent.kind === 'cancel-model-selection' || intent.kind === 'resume-prior-model') queued = null;
+    else {
+      if (queued === null || queued.state !== 'failed') return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
+      queued = { ...queued, state: 'queued', failure: null };
+    }
+    const committed = await this.commitMutation<IntentMutationValue>(intent.fence, (context) => {
+      const clock = context.clockState;
+      if (clock === null) return this.noClockCandidate(context, intent.fence);
+      const reading = readClockAt(clock, context.at, this.clockPolicy);
+      if (reading.status === 'expired') return this.expiryCandidate(context, intent.fence, reading);
+      if (reading.status === 'reconciliation-required') return this.clockDiscrepancyCandidate(context, intent.fence, reading);
+      const event = context.createEvent('model-selection-queued', context.decisionTimeMs, intent.fence, {
+        action: intent.kind, candidateIdentity: queued === null ? null : modelConfigurationIdentity(queued.selection),
+      });
+      const next = { ...context.checkpoint, revision: context.checkpoint.revision + 1,
+        extensions: withHandoff(context.checkpoint, { producing: current.producing, queued }),
+        archive: { ...context.checkpoint.archive, currentLine: { ...context.checkpoint.archive.currentLine,
+          eventIds: [...context.checkpoint.archive.currentLine.eventIds, event.eventId] } } };
+      return { checkpoint: next, position: context.position, clockState: clock, value: { kind: 'accepted' as const } };
+    });
+    if (committed.value.kind === 'clock-reconciliation-required') this.clockReconciliationRequired = true;
+    if (this.activeRequest !== null) this.activeRequest = { ...this.activeRequest, fence: committed.snapshot.fence };
+    return committed.value.kind === 'expired' ? { kind: 'expired', snapshot: committed.snapshot } :
+      committed.value.kind === 'clock-reconciliation-required' ? { kind: 'clock-reconciliation-required', snapshot: committed.snapshot } :
+      committed.value.kind === 'rejected' ? { kind: 'rejected', reason: committed.value.reason, snapshot: committed.snapshot } :
+      { kind: 'accepted', snapshot: committed.snapshot };
+  }
+
+  queueModelSelection(fence: ControllerFenceV1, candidate: ModelSelection): Promise<ControllerSnapshotV1> {
+    return this.dispatch({ schemaVersion: 1, kind: 'queue-model-selection', fence, candidate }).then((result) => result.snapshot);
+  }
+  cancelModelSelection(fence: ControllerFenceV1): Promise<ControllerSnapshotV1> {
+    return this.dispatch({ schemaVersion: 1, kind: 'cancel-model-selection', fence }).then((result) => result.snapshot);
+  }
+  resumePriorModel(fence: ControllerFenceV1): Promise<ControllerSnapshotV1> {
+    return this.dispatch({ schemaVersion: 1, kind: 'resume-prior-model', fence }).then((result) => result.snapshot);
+  }
+  retryModelSelection(fence: ControllerFenceV1): Promise<ControllerSnapshotV1> {
+    return this.dispatch({ schemaVersion: 1, kind: 'retry-model-selection', fence }).then((result) => result.snapshot);
   }
 
   private async applyModelTurnEffect(
@@ -1703,7 +1958,12 @@ class IndexedGameController implements GameController {
       throw new GameControllerError('invalid-intent', 'The model turn effect shape is invalid.');
     }
     if (effect.kind === 'accepted-move') {
-      return this.acceptMove({ schemaVersion: 1, kind: 'model-move', fence, move: effect.move });
+      const state = handoffData(this.checkpoint!);
+      const side = sideForCheckpoint(this.checkpoint!);
+      const prior = this.checkpoint!.selections.players[side] as ModelSelection;
+      const candidate = state.producing !== null &&
+        modelConfigurationIdentity(state.producing) !== modelConfigurationIdentity(prior) ? state.producing : undefined;
+      return this.acceptMove({ schemaVersion: 1, kind: 'model-move', fence, move: effect.move }, candidate);
     }
     if (effect.budgets === null || typeof effect.budgets !== 'object' || effect.budgets.schemaVersion !== 1 ||
       !Number.isSafeInteger(effect.budgets.illegalMoveAttempts) || !Number.isSafeInteger(effect.budgets.formatCorrections) ||
@@ -1726,9 +1986,13 @@ class IndexedGameController implements GameController {
       return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
     }
     validateMoveAttemptsExtension(checkpoint.extensions['move-attempts']);
-    const expectedAttempts = MAX_ILLEGAL_MOVE_ATTEMPTS - checkpoint.budgets.illegalMoveAttemptsRemaining[side];
-    const expectedFormatting = MAX_FORMAT_CORRECTIONS - checkpoint.budgets.formattingCorrectionsRemaining;
-    const expectedRetries = checkpoint.budgets.manualRetriesBySide[side];
+    const handoff = handoffData(checkpoint);
+    const committedSelection = checkpoint.selections.players[side] as ModelSelection;
+    const firstCandidateReply = handoff.queued?.state === 'awaiting-first-reply' && handoff.producing !== null &&
+      modelConfigurationIdentity(handoff.producing) !== modelConfigurationIdentity(committedSelection);
+    const expectedAttempts = firstCandidateReply ? 0 : MAX_ILLEGAL_MOVE_ATTEMPTS - checkpoint.budgets.illegalMoveAttemptsRemaining[side];
+    const expectedFormatting = firstCandidateReply ? 0 : MAX_FORMAT_CORRECTIONS - checkpoint.budgets.formattingCorrectionsRemaining;
+    const expectedRetries = firstCandidateReply ? 0 : checkpoint.budgets.manualRetriesBySide[side];
     if (expectedAttempts < 0 || expectedAttempts > MAX_ILLEGAL_MOVE_ATTEMPTS ||
       expectedFormatting < 0 || expectedFormatting > MAX_FORMAT_CORRECTIONS || !Number.isSafeInteger(expectedRetries)) {
       throw new GameControllerError('saved-game-invalid', 'The saved model turn recovery counters are invalid.');
@@ -1771,6 +2035,22 @@ class IndexedGameController implements GameController {
       const reading = readClockAt(clockState, context.at, this.clockPolicy);
       if (reading.status === 'expired') return this.expiryCandidate(context, fence, reading);
       if (reading.status === 'reconciliation-required') return this.clockDiscrepancyCandidate(context, fence, reading);
+      const handoff = handoffData(context.checkpoint);
+      const committedSelection = context.checkpoint.selections.players[side] as ModelSelection;
+      const candidateTurn = handoff.queued?.state === 'awaiting-first-reply' && handoff.producing !== null &&
+        modelConfigurationIdentity(handoff.producing) !== modelConfigurationIdentity(committedSelection);
+      const promoting = effect.kind !== 'format-correction' && handoff.producing !== null &&
+        handoff.producing !== null && modelConfigurationIdentity(handoff.producing) !== modelConfigurationIdentity(committedSelection)
+        ? handoff.producing : null;
+      const segmentId = promoting === null ? null : context.createEventId();
+      const players = promoting === null ? context.checkpoint.selections.players
+        : { ...context.checkpoint.selections.players, [side]: freezeModelSelection(promoting) };
+      const promotedHistory = promoting === null || segmentId === null ? context.checkpoint.history : {
+        ...context.checkpoint.history, currentSegmentId: segmentId,
+        segments: [...context.checkpoint.history.segments, { segmentId, providerId: promoting.providerId,
+          modelRoutingId: promoting.modelRoutingId, connectionRevision: promoting.configurationRevision,
+          startedAtMs: context.decisionTimeMs, messageIds: [] }],
+      };
       const nextCheckpoint: GameCheckpointV1 = {
         ...context.checkpoint,
         revision: context.checkpoint.revision + 1,
@@ -1787,9 +2067,20 @@ class IndexedGameController implements GameController {
             [side]: effect.budgets.manualRetries,
           },
         },
-        extensions: effect.kind === 'illegal-attempt'
-          ? appendMoveAttempt(context.checkpoint.extensions, side, jsonSafe(effect.record))
-          : context.checkpoint.extensions,
+        ...(promoting === null ? {} : { segmentId: segmentId as string, selections: { players }, history: promotedHistory }),
+        extensions: (() => {
+          const nextExtensions = withHandoff(context.checkpoint, promoting === null
+          ? { producing: null, queued: effect.kind === 'format-correction' && handoff.queued !== null && handoff.producing !== null &&
+            modelConfigurationIdentity(handoff.queued.selection) === modelConfigurationIdentity(handoff.producing)
+            ? effect.pause !== null || candidateTurn
+              ? { ...handoff.queued, state: 'failed', failure: 'The candidate reply was not interpretable. Retry, replace, or resume the prior model.' }
+              : { ...handoff.queued, state: 'queued', failure: null }
+            : handoff.queued }
+          : { producing: null, queued: handoff.queued !== null &&
+              modelConfigurationIdentity(handoff.queued.selection) !== modelConfigurationIdentity(promoting)
+            ? handoff.queued : null });
+          return effect.kind === 'illegal-attempt' ? appendMoveAttempt(nextExtensions, side, jsonSafe(effect.record)) : nextExtensions;
+        })(),
       };
       const terminal = effect.kind === 'model-resignation' ||
         (effect.kind === 'illegal-attempt' && nextAttempts === MAX_ILLEGAL_MOVE_ATTEMPTS);
@@ -1801,6 +2092,22 @@ class IndexedGameController implements GameController {
           ? { reason: effect.reason, correction: effect.correction, automatic: effect.automatic, formatCorrectionsRemaining: effect.formatCorrectionsRemaining }
           : { statement: effect.statement };
       const event = context.createEvent(eventKind, context.decisionTimeMs, fence, details);
+      const feedback = effect.kind === 'illegal-attempt' || effect.kind === 'format-correction' ? effect.correction : null;
+      const feedbackMessageId = feedback === null ? null : context.createEventId();
+      const history = feedback === null || feedbackMessageId === null ? nextCheckpoint.history : {
+        ...nextCheckpoint.history,
+        messages: [...nextCheckpoint.history.messages, {
+          messageId: feedbackMessageId,
+          segmentId: nextCheckpoint.segmentId,
+          lineId: context.checkpoint.archive.currentLine.lineId,
+          role: 'user' as const,
+          content: feedback,
+          eventIds: [event.eventId],
+          disposition: 'retained' as const,
+        }],
+        segments: nextCheckpoint.history.segments.map((segment) => segment.segmentId === nextCheckpoint.segmentId
+          ? { ...segment, messageIds: [...segment.messageIds, feedbackMessageId] } : segment),
+      };
       let result: GameResultV1 = context.checkpoint.result;
       if (terminal) result = {
         kind: 'final', winner: side === 'white' ? 'black' : 'white', reason: effect.kind === 'model-resignation' ? 'resignation' : 'illegal-move',
@@ -1808,6 +2115,7 @@ class IndexedGameController implements GameController {
       };
       const finalCheckpoint = {
         ...nextCheckpoint,
+        history,
         result,
         clocks: terminal
           ? pausedClockCheckpoint(clockState.timeControl, reading.remaining, context.decisionTimeMs, clockState.schemaVersion)
@@ -1975,6 +2283,11 @@ class IndexedGameController implements GameController {
     if (this.activeRequest !== null) {
       return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
     }
+    const handoff = handoffData(checkpoint);
+    const selection = handoff.queued?.state === 'failed'
+      ? null
+      : handoff.queued?.selection ?? checkpoint.selections.players[side] as ModelSelection;
+    if (selection === null) return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
     const currentFacts = observeEndingFacts(
       position,
       restoreRepetitionLedger({
@@ -2002,6 +2315,8 @@ class IndexedGameController implements GameController {
         revision: context.checkpoint.revision + 1,
         requestGeneration: context.checkpoint.requestGeneration + 1,
         analysisGeneration: context.checkpoint.analysisGeneration + 1,
+        extensions: withHandoff(context.checkpoint, { producing: selection,
+          queued: handoff.queued === null ? null : { ...handoff.queued, state: 'awaiting-first-reply', failure: null } }),
       };
       const requestFence = createFence(requestCheckpoint);
       const event = context.createEvent(
@@ -2051,6 +2366,7 @@ class IndexedGameController implements GameController {
       fence: committed.snapshot.fence,
       position: committed.snapshot.position,
       clockReading,
+      selection,
     };
     this.activeRequest = request;
     return {
@@ -2093,9 +2409,20 @@ class IndexedGameController implements GameController {
         fence,
         { stoppedRequestGeneration: fence.requestGeneration },
       );
+      const handoff = handoffData(context.checkpoint);
+      const committedSelection = context.checkpoint.selections.players[side] as ModelSelection;
+      const stoppedCandidate = handoff.queued?.state === 'awaiting-first-reply' && handoff.producing !== null &&
+        modelConfigurationIdentity(handoff.producing) !== modelConfigurationIdentity(committedSelection) &&
+        modelConfigurationIdentity(handoff.queued.selection) === modelConfigurationIdentity(handoff.producing);
+      const stoppedCheckpoint = {
+        ...nextCheckpoint,
+        extensions: withHandoff(context.checkpoint, { producing: null, queued: stoppedCandidate
+          ? { ...handoff.queued!, state: 'failed', failure: 'The candidate request was stopped. Retry, replace, or resume the prior model.' }
+          : handoff.queued }),
+      };
       return {
         checkpoint: {
-          ...nextCheckpoint,
+          ...stoppedCheckpoint,
           archive: {
             ...nextCheckpoint.archive,
             currentLine: {
@@ -2157,9 +2484,20 @@ class IndexedGameController implements GameController {
         fence,
         { interruptedRequestGeneration: fence.requestGeneration, reason },
       );
+      const handoff = handoffData(context.checkpoint);
+      const committedSelection = context.checkpoint.selections.players[side] as ModelSelection;
+      const failedCandidate = handoff.queued?.state === 'awaiting-first-reply' && handoff.producing !== null &&
+        modelConfigurationIdentity(handoff.producing) !== modelConfigurationIdentity(committedSelection) &&
+        modelConfigurationIdentity(handoff.queued.selection) === modelConfigurationIdentity(handoff.producing);
+      const interruptedCheckpoint = {
+        ...nextCheckpoint,
+        extensions: withHandoff(context.checkpoint, { producing: null, queued: failedCandidate
+          ? { ...handoff.queued!, state: 'failed', failure: `The candidate turn ${reason}; retry, replace, or resume the prior model.` }
+          : handoff.queued }),
+      };
       return {
         checkpoint: {
-          ...nextCheckpoint,
+          ...interruptedCheckpoint,
           archive: {
             ...nextCheckpoint.archive,
             currentLine: {
@@ -2186,7 +2524,7 @@ class IndexedGameController implements GameController {
     return { kind: 'accepted', snapshot: committed.snapshot };
   }
 
-  private async acceptMove(event: ControllerMoveEventV1): Promise<GameControllerIntentResultV1> {
+  private async acceptMove(event: ControllerMoveEventV1, promotion?: ModelSelection): Promise<GameControllerIntentResultV1> {
     const checkpoint = this.checkpoint;
     const position = this.position;
     if (checkpoint === null || position === null) {
@@ -2364,15 +2702,27 @@ class IndexedGameController implements GameController {
         result,
       };
       let finalCheckpoint = nextCheckpointWithMove;
+      if (promotion !== undefined) {
+        const segmentId = context.createEventId();
+        const players = { ...finalCheckpoint.selections.players, [side]: freezeModelSelection(promotion) };
+        const segments = [...finalCheckpoint.history.segments, { segmentId, providerId: promotion.providerId,
+          modelRoutingId: promotion.modelRoutingId, connectionRevision: promotion.configurationRevision,
+          startedAtMs: context.decisionTimeMs, messageIds: [] }];
+        finalCheckpoint = { ...finalCheckpoint, segmentId, selections: { players },
+          history: { ...finalCheckpoint.history, currentSegmentId: segmentId, segments },
+          extensions: withHandoff(finalCheckpoint, { producing: null, queued: handoffData(context.checkpoint).queued !== null &&
+            modelConfigurationIdentity(handoffData(context.checkpoint).queued!.selection) !== modelConfigurationIdentity(promotion)
+            ? handoffData(context.checkpoint).queued : null }) };
+      }
       if (finalResult === null) {
-        const query = deadnessQuery(nextCheckpointWithMove);
-        const candidateEvent = context.createEvent('deadness-candidate-created', context.decisionTimeMs, createFence(nextCheckpointWithMove), {
+        const query = deadnessQuery(finalCheckpoint);
+        const candidateEvent = context.createEvent('deadness-candidate-created', context.decisionTimeMs, createFence(finalCheckpoint), {
           queryIdentity: query.queryIdentity,
           reason: 'position-entry',
           precedingMoveEventId: moveEvent.eventId,
         });
         const currentExtension = adjudicationExtension(context.checkpoint);
-        const candidates = [...currentExtension.data.candidates, {
+        const candidates = [...currentExtension.data.candidates.filter((item) => item.status === 'accepted' && item.query.segmentId === finalCheckpoint.segmentId), {
           kind: 'deadness' as const,
           eventId: candidateEvent.eventId,
           eventAtMs: context.decisionTimeMs,
@@ -2383,13 +2733,18 @@ class IndexedGameController implements GameController {
           requestId: null,
         }];
         finalCheckpoint = {
-          ...nextCheckpointWithMove,
-          extensions: withAdjudicationExtension(nextCheckpointWithMove, { version: 1, data: {
+          ...finalCheckpoint,
+          extensions: withAdjudicationExtension(finalCheckpoint, { version: 1, data: {
             candidates, activeQueryIdentity: null,
           } }),
-          archive: { ...nextCheckpointWithMove.archive, currentLine: { ...nextCheckpointWithMove.archive.currentLine,
+          archive: { ...finalCheckpoint.archive, currentLine: { ...finalCheckpoint.archive.currentLine,
             eventIds: [...nextCheckpointWithMove.archive.currentLine.eventIds, candidateEvent.eventId] } },
         };
+      }
+      if (promotion === undefined) {
+        finalCheckpoint = { ...finalCheckpoint, extensions: withHandoff(finalCheckpoint, {
+          producing: null, queued: handoffData(context.checkpoint).queued,
+        }) };
       }
       const checkpointWithUndoBaseline = event.kind === 'human-move'
         ? {
@@ -2978,14 +3333,19 @@ function samePolicy(left: ClockComparisonPolicy, right: ClockComparisonPolicy): 
   return left.maxReferenceDivergenceMs === right.maxReferenceDivergenceMs;
 }
 
-/** Returns the one actionable controller associated with a game for this page lifetime. */
+/** Returns the one actionable controller associated with a game until its registration is released. */
 export function getOrCreateGameController(options: GameControllerOptions): GameController {
   if (typeof options.gameId !== 'string' || options.gameId.length === 0) {
     throw new GameControllerError('invalid-configuration', 'The game ID must be a nonempty string.');
   }
   assertClockPolicy(options.clockPolicy);
   const timeSource = options.timeSource ?? defaultTimeSource;
-  const existing = registry.get(options.gameId);
+  const registryScope = options.registryScope ?? 'guest';
+  if (typeof registryScope !== 'string' || registryScope.length === 0) {
+    throw new GameControllerError('invalid-configuration', 'The controller registry scope must be a nonempty stable string.');
+  }
+  const registryKey = JSON.stringify([registryScope, options.gameId]);
+  const existing = registry.get(registryKey);
   if (existing !== undefined) {
     const configured = existing.configuration;
     if (
@@ -3008,7 +3368,7 @@ export function getOrCreateGameController(options: GameControllerOptions): GameC
     options.idFactory ?? defaultIdFactory,
     options.randomSide ?? defaultRandomSide,
   );
-  registry.set(options.gameId, {
+  registry.set(registryKey, {
     controller,
     configuration: {
       store: options.store,
@@ -3017,6 +3377,19 @@ export function getOrCreateGameController(options: GameControllerOptions): GameC
     },
   });
   return controller;
+}
+
+/** Releases only the exact controller registered for this store scope and game ID. */
+export function releaseGameController(options: {
+  readonly gameId: string;
+  readonly registryScope: string;
+  readonly controller: GameController;
+}): boolean {
+  const registryKey = JSON.stringify([options.registryScope, options.gameId]);
+  const registered = registry.get(registryKey);
+  if (registered === undefined || registered.controller !== options.controller) return false;
+  registry.delete(registryKey);
+  return true;
 }
 
 interface RegisteredController {

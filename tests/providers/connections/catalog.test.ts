@@ -6,6 +6,25 @@ import {
 import { bindTestCredentials } from '../../support/connections';
 
 describe('explicit connection checks', () => {
+  it('uses one authenticated, non-paginated CLIProxyAPI models request and preserves exact advertised IDs', async () => {
+    const profile = await createConnectionProfile({ id: 'cliproxy', name: 'CLIProxyAPI', provider: 'cliproxy' });
+    const credentials = await bindTestCredentials(profile, { apiKey: 'cliproxy-key-canary' });
+    const requests: Array<{ input: RequestInfo | URL; init?: RequestInit }> = [];
+    const result = await checkConnection(profile, credentials, {
+      fetch: async (input, init) => {
+        requests.push({ input, ...(init === undefined ? {} : { init }) });
+        return new Response(JSON.stringify({ data: [{ id: 'Vendor/Model:Exact_v2' }], has_more: true }), { status: 200 });
+      },
+      now: () => 42,
+    });
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.input).toBe('http://127.0.0.1:8317/v1/models');
+    expect(requests[0]?.init).toMatchObject({ method: 'GET', credentials: 'omit', redirect: 'error' });
+    expect(new Headers(requests[0]?.init?.headers).get('authorization')).toBe('Bearer cliproxy-key-canary');
+    expect(result).toMatchObject({ status: 'partial', models: [{ id: 'Vendor/Model:Exact_v2' }] });
+  });
+
   it('CON-02/03 sends only a catalog GET with omitted cookies and redirect rejection', async () => {
     const profile = await createConnectionProfile({
       id: 'router',

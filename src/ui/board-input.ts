@@ -1,4 +1,4 @@
-import type { ControllerSnapshotV1, GameController, GameControllerIntentResultV1 } from '../controller/index.js';
+import type { ControllerSnapshotV1, GameController, GameControllerIntentResultV1, ModelSelection } from '../controller/index.js';
 import type { CoordinateMove, Promotion, Square } from '../rules/index.js';
 
 const SQUARE = /^[a-h][1-8]$/;
@@ -31,11 +31,12 @@ export function submitBoardMove(
 export function startClassifiedLocalGame(
   controller: GameController,
   snapshot: ControllerSnapshotV1,
+  modelSelection?: ModelSelection,
 ): Promise<ControllerSnapshotV1> {
   if (snapshot.adjudication.status !== 'setup-ready' ||
       snapshot.checkpoint.result.kind !== 'pending-adjudication' ||
       snapshot.checkpoint.clocks.activeSide !== null) return Promise.resolve(snapshot);
-  return controller.startGame(snapshot.fence);
+  return controller.startGame(snapshot.fence, modelSelection);
 }
 
 export function isLocalBoardInputDisabled(snapshot: ControllerSnapshotV1, working: boolean): boolean {
