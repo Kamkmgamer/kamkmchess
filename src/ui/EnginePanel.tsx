@@ -1,7 +1,7 @@
 ﻿import { useEffect, useRef, useState } from 'react';
 import type { ModelSelection } from '../controller/index.js';
 import { createEngineSelection, engineSettings, recommendEngine } from '../engines/local.js';
-import { BROWSER_ENGINES, downloadBrowserEngine, searchBrowserEngine, supportsBrowserEngines } from '../engines/browser.js';
+import { BROWSER_ENGINES, BrowserUciEngine, downloadBrowserEngine, supportsBrowserEngines } from '../engines/browser.js';
 import type { BrowserEngineId, BrowserEngineSettings, EngineProgress } from '../engines/browser.js';
 import { IconButton } from './Icon.js';
 
@@ -17,17 +17,21 @@ export function EnginePanel({ label, selected, onSelect }: Props) {
   useEffect(() => { callback.current = onSelect; }, [onSelect]);
   useEffect(() => {
     const controller = new AbortController();
+    let engine: BrowserUciEngine | null = null;
     const timer = window.setTimeout(() => {
       callback.current(null); setState('loading'); setProgress(null);
       void (async () => {
         if (!supportsBrowserEngines()) throw new Error('Unsupported browser');
-        await downloadBrowserEngine(settings.engineId, progress => { if (!controller.signal.aborted) setProgress(progress); }, controller.signal);
-        await searchBrowserEngine({ ...settings, moveTimeMs: 250 }, TEST_POSITION, controller.signal);
+        const source = await downloadBrowserEngine(settings.engineId, progress => { if (!controller.signal.aborted) setProgress(progress); }, controller.signal);
+        if (controller.signal.aborted) return;
+        engine = new BrowserUciEngine(source);
+        try { await engine.search({ ...settings, moveTimeMs: 250 }, TEST_POSITION, controller.signal); }
+        finally { engine.close(); }
         if (controller.signal.aborted) return;
         callback.current(createEngineSelection(settings)); setState('ready'); setProgress(null);
       })().catch(() => { if (!controller.signal.aborted) { setState('failed'); setProgress(null); } });
     }, 150);
-    return () => { window.clearTimeout(timer); controller.abort(); };
+    return () => { window.clearTimeout(timer); controller.abort(); engine?.close(); };
   }, [settings, attempt]);
   function change(next: BrowserEngineSettings) { callback.current(null); setState('loading'); setSettings(next); }
   return <section className="engine-setup" aria-label={label} aria-busy={state === 'loading'}>

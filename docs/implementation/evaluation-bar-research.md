@@ -16,4 +16,4 @@ The app already uses Lichess's separate Chessground and chessops packages. Neith
 
 The implementation therefore adds a small React bar and an independent UCI evaluation path to the existing engine module. No lila component or stylesheet is copied or added as a dependency. The numeric mapping uses the same published centipawn scale, expressed with a hyperbolic tangent. Mate scores fill the winning color's bar; mate zero explicitly means the root side to move is checkmated. Scores always use White's perspective, including when Black starts a custom position.
 
-This requires no new engine package. `stockfish@19.0.1` already supplies the full and Lite single-threaded builds. Analysis selects the full build only when downloaded and uses Lite otherwise. No Lichess API calls or hosted analysis service are involved.
+This requires no new engine package. `stockfish@19.0.1` already supplies the full and Lite single-threaded builds. Analysis always uses Lite to avoid loading another full Stockfish instance alongside an opponent. No Lichess API calls or hosted analysis service are involved.

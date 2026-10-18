@@ -19,7 +19,7 @@ import { EnginePanel } from './EnginePanel.js';
 import { composePlayers, MATCH_MODES, seatKinds } from './match-modes.js';
 import type { MatchMode } from './match-modes.js';
 import { isEngineSelection, runEngineTurn } from '../engines/local.js';
-import { BROWSER_ENGINES } from '../engines/browser.js';
+import { BROWSER_ENGINES, stopBrowserEngines, stopUnusedBrowserEngines } from '../engines/browser.js';
 import { engineSettings } from '../engines/local.js';
 import { Icon, IconButton } from './Icon.js';
 import { conciseError, conciseTurnError } from './concise-error.js';
@@ -118,7 +118,19 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     generationController.current?.abort();
     practiceController.current?.abort();
     generationController.current = null;
+    stopBrowserEngines();
   }, [session.gameId]);
+  const whitePlayer = snapshot.checkpoint.selections.players.white;
+  const blackPlayer = snapshot.checkpoint.selections.players.black;
+  const queuedPlayer = snapshot.modelHandoff.queued?.selection;
+  const whiteEngineId = isEngineSelection(whitePlayer) ? engineSettings(whitePlayer).engineId : null;
+  const blackEngineId = isEngineSelection(blackPlayer) ? engineSettings(blackPlayer).engineId : null;
+  const queuedEngineId = queuedPlayer && isEngineSelection(queuedPlayer) ? engineSettings(queuedPlayer).engineId : null;
+  useEffect(() => {
+    const keep = snapshot.checkpoint.result.kind === 'final' || generationState === 'stopped'
+      ? [] : [whiteEngineId, blackEngineId, queuedEngineId].filter(id => id !== null);
+    stopUnusedBrowserEngines(keep);
+  }, [whiteEngineId, blackEngineId, queuedEngineId, snapshot.checkpoint.result.kind, generationState]);
   useEffect(() => session.controller.subscribe(refresh), [refresh, session.controller]);
   useEffect(() => {
     let current = true;
@@ -772,7 +784,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           <time className={`clock ${activeSide === side ? 'running' : ''}`} aria-label={`${side} clock ${formatClock(clocks[`${side}Ms`])}`}>{formatClock(clocks[`${side}Ms`])}</time>
         </div>)}
         <div className={`playing-board${spectator ? ' with-evaluation' : ''}`}>
-          {spectator && <EvaluationBar key={session.gameId} orientation={orientation} startingFen={snapshot.checkpoint.rules.startingFen}
+          {spectator && !focusPage && <EvaluationBar key={session.gameId} orientation={orientation} startingFen={snapshot.checkpoint.rules.startingFen}
             moves={snapshot.checkpoint.rules.moves.slice(0, history.ply).map(move => `${move.from}${move.to}${move.promotion ?? ''}`).join(' ')} />}
           <ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} />
         </div>
