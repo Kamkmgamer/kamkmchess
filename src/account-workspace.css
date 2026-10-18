@@ -13,4 +13,4 @@
 
 .account-workspace { padding-inline: 20px; }
 .account-panel { padding: 0; }
-.account-privacy-link { display: inline-flex; align-items: center; min-height: 44px; margin-top: 12px; color: var(--dim); font-size: 12px; text-underline-offset: 3px; }
+.account-privacy-link { display: flex; width: fit-content; align-items: center; min-height: 44px; margin-top: 12px; color: var(--dim); font-size: 12px; text-underline-offset: 3px; }
