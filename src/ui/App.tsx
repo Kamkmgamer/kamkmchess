@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ChessBoard } from './ChessBoard.js';
+import { EvaluationBar } from './EvaluationBar.js';
 import { MoveList } from './MoveList.js';
 import { useBoardHistory } from './use-board-history.js';
 import type { ControllerSnapshotV1 } from '../controller/index.js';
@@ -774,7 +775,11 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
           <OpponentBadge player={players[side]} side={side} /><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
           <time className={`clock ${activeSide === side ? 'running' : ''}`} aria-label={`${side} clock ${formatClock(clocks[`${side}Ms`])}`}>{formatClock(clocks[`${side}Ms`])}</time>
         </div>)}
-        <div className="playing-board"><ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} /></div>
+        <div className={`playing-board${spectator ? ' with-evaluation' : ''}`}>
+          {spectator && <EvaluationBar key={session.gameId} orientation={orientation} startingFen={snapshot.checkpoint.rules.startingFen}
+            moves={snapshot.checkpoint.rules.moves.slice(0, history.ply).map(move => `${move.from}${move.to}${move.promotion ?? ''}`).join(' ')} />}
+          <ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} />
+        </div>
         <nav className="board-tools" aria-label="Board tools"><IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />
           <IconButton icon="undo" label="Undo" onClick={() => void undo()} disabled={working || snapshot.readiness !== 'ready' || !snapshot.checkpoint.rules.moves.length || snapshot.checkpoint.result.kind !== 'unresolved'} />
           <IconButton icon="code" label="Type a move" disabled={disabled} onClick={() => openTool('move')} /></nav>

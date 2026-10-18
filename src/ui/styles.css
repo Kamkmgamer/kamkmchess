@@ -92,6 +92,18 @@ textarea:focus-visible, summary:focus-visible {
 }
 .clock.running { background: var(--green); color: var(--paper); }
 .board-frame { padding: 3px 0; }
+.playing-board.with-evaluation { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
+.evaluation-bar { position: relative; align-self: stretch; margin-block: 3px; padding: 0; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; background: #333; cursor: default; }
+.evaluation-white { position: absolute; inset: 0; background: #f5f5f5; transform-origin: bottom; transition: transform 400ms cubic-bezier(.16, 1, .3, 1); }
+.evaluation-bar.reversed .evaluation-white { transform-origin: top; }
+.evaluation-midpoint { position: absolute; top: 50%; left: 0; width: 100%; border-top: 1px solid #888; }
+.evaluation-score { position: absolute; left: 0; width: 100%; font-size: 10px; line-height: 18px; font-weight: 700; font-variant-numeric: tabular-nums; text-align: center; }
+.evaluation-score.for-white { color: #222; background: #f5f5f5; }
+.evaluation-score.for-black { color: #fff; background: #333; }
+.evaluation-score.at-bottom { bottom: 3px; }
+.evaluation-score.at-top { top: 3px; }
+.evaluation-bar.pending { opacity: .65; }
+.evaluation-bar[data-state="failed"] { cursor: pointer; }
 .board-host { width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 4px; }
 /* Chessground owns hit testing and piece transforms; these rules retain the board palette. */
 .board-host.cg-wrap { box-sizing: border-box; }

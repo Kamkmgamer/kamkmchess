@@ -75,6 +75,7 @@ test('downloads Stockfish in the browser under production CSP and resumes from c
   await page.screenshot({ path: testInfo.outputPath('engine-mobile.png'), fullPage: true });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
+  await expect(page.locator('.evaluation-bar')).toHaveCount(0);
   await expect(page.locator('.player-row').getByRole('img', { name: 'Stockfish logo' })).toBeVisible();
   await expect(page.locator('.player-row .light-piece')).toBeVisible();
   await page.getByRole('button', { name: 'Type a move', exact: true }).click();
@@ -89,13 +90,30 @@ test('downloads Stockfish in the browser under production CSP and resumes from c
   expect(errors).toEqual([]);
 });
 
-test('two browser engines alternate, stop safely, and resume', async ({ page }) => {
+test('two browser engines alternate, evaluate with downloaded full Stockfish, stop safely, and resume', async ({ page }, testInfo) => {
   await openMode(page, 'engine-engine');
   await prepareEngine(page.getByRole('region', { name: 'White engine', exact: true }), 'stockfish-full');
   await prepareEngine(page.getByRole('region', { name: 'Black engine', exact: true }));
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect.poll(() => moves(page).count()).toBeGreaterThanOrEqual(3);
   await page.getByRole('button', { name: 'Stop generation', exact: true }).click();
+  const bar = page.locator('.evaluation-bar');
+  await expect(bar).toHaveAttribute('data-state', 'ready');
+  await expect(bar).toHaveAttribute('data-engine', 'Stockfish 19');
+  await page.getByRole('button', { name: 'First', exact: true }).click();
+  await expect(bar).toHaveAttribute('data-state', 'ready');
+  await expect(bar).toHaveAccessibleName(/White evaluation/);
+  await page.getByRole('button', { name: 'Flip board', exact: true }).click();
+  await expect(bar).toHaveClass(/reversed/);
+  await page.screenshot({ path: testInfo.outputPath('evaluation-desktop.png'), fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: testInfo.outputPath('evaluation-mobile.png'), fullPage: true });
+  await page.setViewportSize({ width: 320, height: 700 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const boardBounds = await page.locator('.board-host').boundingBox();
+  const barBounds = await bar.boundingBox();
+  expect(Math.abs(boardBounds!.height - barBounds!.height)).toBeLessThan(2);
+  await page.getByRole('button', { name: 'Live', exact: true }).click();
   const count = await moves(page).count();
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Retry engine turn', exact: true }).click();
@@ -117,9 +135,13 @@ test('a browser engine plays an LLM with either seat independently configured', 
   expect(turns.length).toBeGreaterThanOrEqual(2);
   expect(turns.every(turn => turn.model === 'white-fixture' && turn.side === 'white')).toBe(true);
   await page.getByRole('button', { name: 'Stop generation', exact: true }).click();
+  await expect(page.locator('.evaluation-bar')).toHaveAttribute('data-state', 'ready');
+  await expect(page.locator('.evaluation-bar')).toHaveAttribute('data-engine', 'Stockfish 19 Lite');
 });
 
 test('two LLMs alternate with separate routing IDs and side-specific plans', async ({ page }, testInfo) => {
+  const engineDownloads: string[] = [];
+  page.on('request', request => { if (request.url().includes('/engines/')) engineDownloads.push(request.url()); });
   const turns = await aiFixture(page);
   await openMode(page, 'ai-ai');
   await prepareAi(page, 'White', 'openai/gpt-5-codex'); await prepareAi(page, 'Black', 'anthropic/claude-sonnet-4.6');
@@ -131,6 +153,10 @@ test('two LLMs alternate with separate routing IDs and side-specific plans', asy
   expect(turns[2]?.thinking).toMatchObject({ plan: 'Plan from openai/gpt-5-codex' });
   expect(turns[3]?.thinking).toMatchObject({ plan: 'Plan from anthropic/claude-sonnet-4.6' });
   await page.getByRole('button', { name: 'Stop generation', exact: true }).click();
+  await expect(page.locator('.evaluation-bar')).toHaveAttribute('data-state', 'ready');
+  await expect(page.locator('.evaluation-bar')).toHaveAttribute('data-engine', 'Stockfish 19 Lite');
+  expect(engineDownloads.length).toBeGreaterThan(0);
+  expect(engineDownloads.every(url => url.includes('lite-single'))).toBe(true);
   await expect.poll(() => page.locator('.player-row img').evaluateAll(images => images.every(image =>
     image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();

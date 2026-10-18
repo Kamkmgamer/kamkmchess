@@ -4,6 +4,16 @@ New game supports human versus human, human versus AI, human versus engine, engi
 
 Engines calculate moves in a Web Worker on the player's device. They do not use a terminal, a native executable, a local server, or a provider API. AI means an LLM accessed through a configured provider connection, such as a GPT, Claude, Gemini or Grok model. Existing provider routing and diagnostics apply separately to each LLM.
 
+## Spectator evaluation
+
+AI versus AI, engine versus engine, and engine versus AI show an evaluation bar beside the board. Human versus human, human versus AI, and human versus engine do not start evaluation or show the bar. Scores use White's perspective in pawns, with `M` for mate distance. The white and black areas flip with board orientation. Reviewing move history analyzes the displayed position with its original FEN and preceding moves, preserving repetition context.
+
+Analysis automatically uses Stockfish 19 when both pinned assets are downloaded in this session or present in the browser cache. Otherwise it downloads Stockfish 19 Lite, about 2 MB. It never automatically downloads the full build for evaluation. If a downloaded full build fails to start or analyze, analysis switches to Lite for the rest of that evaluator's lifetime. A failed Lite evaluation shows a retry action on the bar.
+
+The evaluator owns a separate worker with a 16 MB hash and an 800 ms search budget per displayed position. It streams primary, exact UCI scores and cancels stale searches when navigating, changing games, or leaving the board. Clock ticks do not restart analysis. Evaluation cannot submit moves, change controller state, or occupy an opponent's worker. Reduced-motion preferences disable bar animation.
+
+See [Lichess evaluation research](implementation/evaluation-bar-research.md) for upstream sources and the reuse decision.
+
 ## Download and play
 
 1. Choose a mode and a browser engine.
