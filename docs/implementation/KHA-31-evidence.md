@@ -36,7 +36,7 @@ Fixtures call the public query, search, checker, and storage APIs. Accepted resu
 | Expanded-state completeness | Checkpoints retain first-discovery parents and validated expansion progress. Missing or incomplete state, edge, frontier, or parent data cannot grant a verdict. |
 | Database upgrade | The proof-search database closes its connection when another tab requests a version upgrade. |
 | Partial pass and cancellation | State-budget and cancellation outcomes remain non-results and retain validated progress for a later pass. |
-| Five-second unknown fixture | The real time-budget fixture remains unknown. It does not return a verdict when the pass reaches the five-second budget. |
+| Five-second cutoff fixture | A controlled monotonic clock expires the graph pass after partial traversal. It returns a non-result with a validated checkpoint that a later state-bounded pass resumes. Fast witness discovery is disabled for this cutoff test. The historical unknown position can now produce a checked mating witness on faster machines, so it cannot guarantee a real-time cutoff. |
 
 The default search pass allows 10,000 newly discovered states and 5,000 ms. A fresh pass counts its root as a discovered state; a resumed pass counts only new states. State and time limits, cancellation, an invalid checkpoint, or a checker rejection never establish a negative result. The checker currently limits accepted closures to 10,000 states and 100,000 edges.
 
