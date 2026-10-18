@@ -72,11 +72,45 @@ textarea:focus-visible, summary:focus-visible {
 .clock.running { background: var(--green); color: var(--paper); }
 .board-frame { padding: 3px 0; }
 .board-host { width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 4px; }
-.board-host .cm-chessboard { width: 100%; height: 100%; }
-.board-host .cm-chessboard.green .board .square.white { fill: #eeeed2; }
-.board-host .cm-chessboard.green .board .square.black { fill: #769656; }
-.board-host .cm-chessboard.green .coordinates .coordinate.white { fill: #55743c; }
-.board-host .cm-chessboard.green .coordinates .coordinate.black { fill: #eeeed2; }
+/* Chessground owns hit testing and piece transforms; these rules retain the board palette. */
+.board-host.cg-wrap { box-sizing: border-box; }
+.board-host cg-board {
+  background-color: #eeeed2;
+  background-image: conic-gradient(#769656 25%, #eeeed2 0 50%, #769656 0 75%, #eeeed2 0);
+  background-size: 25% 25%;
+  touch-action: none;
+}
+.board-host cg-board square.last-move { background-color: rgb(246 235 97 / 48%); }
+.board-host cg-board square.selected { background-color: rgb(246 235 97 / 65%); }
+.board-host cg-board square.move-dest { background: radial-gradient(rgb(21 35 14 / 25%) 17%, transparent 18%); }
+.board-host cg-board square.move-dest.oc { background: radial-gradient(transparent 79%, rgb(21 35 14 / 35%) 80%); }
+.board-host cg-board square.move-dest:hover { background-color: rgb(246 235 97 / 35%); }
+.board-host cg-board square.premove-dest { background: radial-gradient(rgb(57 61 150 / 35%) 17%, transparent 18%); }
+.board-host cg-board square.premove-dest.oc { background: radial-gradient(transparent 79%, rgb(57 61 150 / 40%) 80%); }
+.board-host cg-board square.current-premove { background-color: rgb(100 112 220 / 50%); }
+.premove-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; font-size: 12px; }
+.board-hint { margin: 6px 0 0; }
+.board-host coords { color: #eeeed2; font-size: clamp(9px, 1.2vw, 13px); font-weight: 600; opacity: 1; }
+.board-host coords.ranks { top: 0; left: 4px; }
+.board-host coords.ranks coord { transform: none; padding-top: 3px; }
+.board-host coords.files { bottom: 2px; left: 0; text-transform: lowercase; text-align: right; }
+.board-host coords.files coord { padding-right: 4px; }
+.board-host.orientation-white coords.ranks coord:nth-child(even),
+.board-host.orientation-white coords.files coord:nth-child(even),
+.board-host.orientation-black coords.ranks coord:nth-child(odd),
+.board-host.orientation-black coords.files coord:nth-child(odd) { color: #55743c; }
+.board-host piece.white.king { background-image: url('./pieces/wk.svg'); }
+.board-host piece.white.queen { background-image: url('./pieces/wq.svg'); }
+.board-host piece.white.rook { background-image: url('./pieces/wr.svg'); }
+.board-host piece.white.bishop { background-image: url('./pieces/wb.svg'); }
+.board-host piece.white.knight { background-image: url('./pieces/wn.svg'); }
+.board-host piece.white.pawn { background-image: url('./pieces/wp.svg'); }
+.board-host piece.black.king { background-image: url('./pieces/bk.svg'); }
+.board-host piece.black.queen { background-image: url('./pieces/bq.svg'); }
+.board-host piece.black.rook { background-image: url('./pieces/br.svg'); }
+.board-host piece.black.bishop { background-image: url('./pieces/bb.svg'); }
+.board-host piece.black.knight { background-image: url('./pieces/bn.svg'); }
+.board-host piece.black.pawn { background-image: url('./pieces/bp.svg'); }
 .board-inspection { margin-top: 8px; color: var(--dim); font-size: 12px; }
 .board-inspection summary { cursor: pointer; width: max-content; }
 .square-grid { display: grid; grid-template-columns: repeat(8, minmax(25px, 1fr)); max-width: 400px; margin-top: 8px; }
@@ -112,6 +146,11 @@ textarea:focus-visible, summary:focus-visible {
 .move-list li { display: flex; gap: 8px; padding: 5px 8px; font-variant-numeric: tabular-nums; }
 .move-list li:nth-child(4n + 1), .move-list li:nth-child(4n + 2) { background: var(--soft); }
 .move-list li span { width: 22px; color: var(--dim); }
+.move-list li button { border: 0; border-radius: 3px; padding: 0 5px; background: transparent; color: inherit; font-weight: 600; cursor: pointer; }
+.move-list li button:hover { background: var(--rule); }
+.move-list li button[aria-current="step"] { background: var(--green); color: var(--paper); }
+.history-controls { padding-top: 8px; }
+.history-controls p { margin: 4px 0 0; }
 .fen-value { overflow-wrap: anywhere; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; }
 .button {
   border: 1px solid transparent; border-radius: 7px; padding: 7px 11px; min-height: 36px;
@@ -210,5 +249,4 @@ textarea:focus-visible, summary:focus-visible {
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
-  .board-host :is(.pieces-layer, .markers-layer, .coordinates) { animation: none !important; }
 }

@@ -74,6 +74,111 @@ async function move(page: Page, coordinate: string) {
 
 const movesOnBoard = (page: Page) => page.getByRole('list', { name: 'Committed moves' }).locator('li');
 
+async function dragBoardMove(page: Page, from: string, to: string) {
+  await page.locator('cg-board').scrollIntoViewIfNeeded();
+  const box = await page.locator('cg-board').boundingBox();
+  if (!box) throw new Error('Missing board');
+  const flipped = await page.locator('.board-host').evaluate((element) => element.classList.contains('orientation-black'));
+  const point = (square: string) => {
+    const file = square.charCodeAt(0) - 97;
+    const rank = Number(square[1]) - 1;
+    return {
+      x: box.x + ((flipped ? 7 - file : file) + .5) * box.width / 8,
+      y: box.y + ((flipped ? rank : 7 - rank) + .5) * box.height / 8,
+    };
+  };
+  const origin = point(from), destination = point(to);
+  await page.mouse.move(origin.x, origin.y);
+  await page.mouse.down();
+  await page.mouse.move(destination.x, destination.y, { steps: 6 });
+  await page.mouse.up();
+}
+
+test('executes one legal premove after the AI reply', async ({ page }) => {
+  let release: (() => void) | undefined;
+  await provider(page, [], async (route, index, fixture) => {
+    if (index === 0) {
+      await new Promise<void>((resolve) => { release = resolve; });
+      await fixture.respond(route, '{"move":"e7e5"}');
+    } else await fixture.respond(route, '{"resign":true}');
+  });
+  await page.goto('/');
+  await configure(page);
+  await move(page, 'e2e4');
+  await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
+  await dragBoardMove(page, 'g1', 'f3');
+  await expect(page.getByText('Premove g1 to f3 queued.', { exact: true })).toBeVisible();
+  await expect(page.locator('square.current-premove:visible')).toHaveCount(2);
+  await expect(movesOnBoard(page)).toHaveCount(1);
+  release?.();
+  await expect(movesOnBoard(page)).toHaveCount(3);
+  await expect(movesOnBoard(page).last()).toContainText('Nf3');
+  await expect(page.locator('square.current-premove:visible')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel premove' })).toHaveCount(0);
+});
+
+test('drops an illegal premove after the AI reply without submitting a move', async ({ page }) => {
+  let release: (() => void) | undefined;
+  const fixture = await provider(page, [], async (route, _index, mock) => {
+    await new Promise<void>((resolve) => { release = resolve; });
+    await mock.respond(route, '{"move":"e7e5"}');
+  });
+  await page.goto('/');
+  await configure(page);
+  await move(page, 'e2e4');
+  await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
+  await dragBoardMove(page, 'e4', 'd5');
+  await expect(page.getByText('Premove e4 to d5 queued.', { exact: true })).toBeVisible();
+  release?.();
+  await expect(movesOnBoard(page)).toHaveCount(2);
+  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Cancel premove' })).toHaveCount(0);
+  expect(fixture.modelCalls).toHaveLength(1);
+});
+
+test('cancels premoves and keeps a reviewed position while the AI finishes', async ({ page }) => {
+  let release: (() => void) | undefined;
+  await provider(page, [], async (route, _index, fixture) => {
+    await new Promise<void>((resolve) => { release = resolve; });
+    await fixture.respond(route, '{"move":"e7e5"}');
+  });
+  await page.goto('/');
+  await configure(page);
+  await move(page, 'e2e4');
+  await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
+  await dragBoardMove(page, 'g1', 'f3');
+  await expect(page.getByRole('button', { name: 'Cancel premove' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'Cancel premove' })).toHaveCount(0);
+  await dragBoardMove(page, 'g1', 'f3');
+  await page.getByRole('button', { name: 'Cancel premove' }).click();
+  await expect(page.locator('square.current-premove:visible')).toHaveCount(0);
+  await dragBoardMove(page, 'g1', 'f3');
+  await page.getByRole('heading', { name: 'Classic match' }).click();
+  await page.keyboard.press('Home');
+  await expect(page.getByRole('button', { name: 'Cancel premove' })).toHaveCount(0);
+  release?.();
+  await expect(movesOnBoard(page)).toHaveCount(2);
+  await expect(page.getByRole('navigation', { name: 'Move history' })).toContainText('Viewing move 0 of 2');
+  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Live', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+});
+
+test('plays against the AI without a position-check worker', async ({ page }) => {
+  const fixture = await provider(page, ['e7e5']);
+  const workers: string[] = [];
+  page.on('worker', worker => workers.push(worker.url()));
+  await page.route('**/assets/proof-search.worker-*.js', route => route.abort('connectionrefused'));
+  await page.goto('/');
+  await configure(page);
+  await move(page, 'e2e4');
+  await expect(movesOnBoard(page)).toHaveCount(2);
+  expect(fixture.modelCalls).toHaveLength(1);
+  expect(workers.filter(url => url.includes('proof-search'))).toHaveLength(0);
+  await expect(page.getByRole('button', { name: 'Continue position check' })).toHaveCount(0);
+});
+
 test('finishes a legal AI match, preserves plans, restores its result and fits mobile', async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -334,10 +439,10 @@ test('a model playing White continues through knight and bishop development', as
   await expect(movesOnBoard(page)).toHaveCount(5);
   await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
   expect(fixture.modelCalls).toHaveLength(3);
-  expect(searchWorkers.filter((url) => url.includes('proof-search.worker'))).toHaveLength(1);
+  expect(searchWorkers.filter((url) => url.includes('proof-search.worker'))).toHaveLength(0);
 });
 
-test('keeps one proof worker while playing through move 15', async ({ page }) => {
+test('plays through move 15 without proof workers', async ({ page }) => {
   const chess = new Chess();
   const coordinates = 'e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Nb8 d4 Nbd7 Nbd2 Bb7 Bc2 Re8 Nf1 Bf8 Ng3 g6 a4 c5'
     .split(' ').map((san) => chess.move(san).lan);
@@ -352,7 +457,7 @@ test('keeps one proof worker while playing through move 15', async ({ page }) =>
   }
   await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
   expect(fixture.modelCalls).toHaveLength(15);
-  expect(workers.filter((url) => url.includes('proof-search.worker'))).toHaveLength(1);
+  expect(workers.filter((url) => url.includes('proof-search.worker'))).toHaveLength(0);
 });
 
 test('CLIProxyAPI supports a prefixed endpoint and reports a failed check without starting play', async ({ page }) => {

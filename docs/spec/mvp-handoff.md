@@ -1,5 +1,7 @@
 # MVP specification handoff
 
+The owner's 2026-10-18 [Lichess rules amendment](../implementation/lichess-rules-research.md) supersedes exhaustive dead-position and timeout proof-search requirements below. Interactive games use chessops legal moves and material checks with bounded timeout handling; legacy exact-search tools are offline compatibility code.
+
 The owner's 2026-10-18 [compact model input amendment](compact-model-input.md) supersedes the full-transcript replay requirements below. Model requests now contain chess state, current-turn feedback and the latest plan and returned reasoning for that side; complete provider traffic remains archived.
 
 Revision 2, updated on 2026-10-16 after the owner changed the account and hosting stack. Revision 1 remains the source for product behavior except where this revision changes the stack. The original approval is recorded in [Agree on MVP acceptance criteria and the specification handoff](https://linear.app/kamkm/issue/KHA-14/agree-on-mvp-acceptance-criteria-and-the-specification-handoff), resolution comment `3bcd24a7-2bd5-43fb-8a35-095bac2575f2`; the stack amendment is recorded on [Choose the application architecture and data boundaries](https://linear.app/kamkm/issue/KHA-13/choose-the-application-architecture-and-data-boundaries).

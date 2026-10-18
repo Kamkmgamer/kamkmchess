@@ -2,7 +2,7 @@ export { applyCoordinateMove, IllegalMoveError, legalMoves } from './transitions
 export type { Transition } from './transitions.js';
 export { parsePosition, PositionValidationError } from './position.js';
 export { isSquareAttackedInFen } from './chess-adapter.js';
-export { observeEndingFacts } from './endings.js';
+export { observeEndingFacts, timeoutWinner } from './endings.js';
 export type { EndingFacts, ObservedEnding } from './endings.js';
 export {
   createRepetitionLedger,

@@ -24,8 +24,9 @@
   },
   "dependencies": {
     "@clerk/clerk-js": "6.39.1",
+    "@lichess-org/chessground": "10.4.2",
     "chess.js": "1.4.0",
-    "cm-chessboard": "8.15.3",
+    "chessops": "0.15.1",
     "react": "19.3.1",
     "react-dom": "19.3.1"
   },

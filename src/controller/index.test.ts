@@ -154,10 +154,10 @@ describe('queued model handoff', () => {
       return { monotonicMs: at ?? 1_000, wallTimeMs: at ?? 1_000 };
     } }, clockPolicy: { maxReferenceDivergenceMs: 0 } };
     try {
-      const guest = getOrCreateGameController({ ...options, registryScope: JSON.stringify({ kind: 'guest' }), store: guestStore });
-      const account = getOrCreateGameController({ ...options, registryScope: JSON.stringify({ kind: 'account', accountId: 'account-1' }), store: accountStore });
+      const guest = getOrCreateGameController({ positionChecks: 'legacy-proof', ...options, registryScope: JSON.stringify({ kind: 'guest' }), store: guestStore });
+      const account = getOrCreateGameController({ positionChecks: 'legacy-proof', ...options, registryScope: JSON.stringify({ kind: 'account', accountId: 'account-1' }), store: accountStore });
       expect(account).not.toBe(guest);
-      expect(() => getOrCreateGameController({ ...options, registryScope: JSON.stringify({ kind: 'guest' }), store: accountStore }))
+      expect(() => getOrCreateGameController({ positionChecks: 'legacy-proof', ...options, registryScope: JSON.stringify({ kind: 'guest' }), store: accountStore }))
         .toThrow(/cannot be rebound/);
     } finally {
       guestStore.close();
@@ -168,7 +168,7 @@ describe('queued model handoff', () => {
   it('rebinds cloud checkpoint ownership and rejects a prior-owner request fence', async () => {
     const testId = 'controller-ownership-takeover';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, registryScope: 'old-owner', store,
       timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
       clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
@@ -193,7 +193,7 @@ describe('queued model handoff', () => {
         expectedEpoch: checkpointBefore.ownershipEpoch, events: [], chunks: [], knownCredentials: [],
         decide: () => ({ checkpoint: adopted, events: [], outboxOperationIds: [] }) });
       expect(committed.kind).toBe('committed');
-      const nextOwner = getOrCreateGameController({
+      const nextOwner = getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId, registryScope: 'new-owner', store,
         timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
         clockPolicy: { maxReferenceDivergenceMs: 0 },
@@ -211,7 +211,7 @@ describe('queued model handoff', () => {
   it('keeps a failed candidate blocked until the user resumes the prior model', async () => {
     const testId = 'controller-candidate-failure-resume';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
       clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
     });
@@ -270,7 +270,7 @@ describe('queued model handoff', () => {
   it('queues on the human turn and promotes only after the candidate legal reply', async () => {
     const testId = 'controller-queue-on-human-turn';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
       clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
     });
@@ -308,7 +308,7 @@ describe('queued model handoff', () => {
   it('replaces a cross-provider candidate while an old-model request completes under its original selection', async () => {
     const testId = 'controller-queued-model-handoff';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
       clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
     });
@@ -372,7 +372,7 @@ describe('game controller setup', () => {
     const testId = 'controller-local-two-human';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 1_000 });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (decisionTimeMs) => ({ monotonicMs: 5_000, wallTimeMs: decisionTimeMs ?? 1_000 }) },
@@ -414,7 +414,7 @@ describe('game controller setup', () => {
     const testId = 'controller-setup-adjudication-order';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 1_000 });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (decisionTimeMs) => ({ monotonicMs: 5_000, wallTimeMs: decisionTimeMs ?? 1_000 }) },
@@ -481,7 +481,7 @@ describe('game controller setup', () => {
     let wallTimeMs = 1_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => wallTimeMs });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (decisionTimeMs) => ({ monotonicMs, wallTimeMs: decisionTimeMs ?? wallTimeMs }) },
@@ -534,7 +534,7 @@ describe('game controller setup', () => {
     const timeSource: ControllerTimeSource = {
       sample: (decisionTimeMs) => ({ monotonicMs: 5_000, wallTimeMs: decisionTimeMs ?? 1_000 }),
     };
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource, clockPolicy: { maxReferenceDivergenceMs: 5 },
       idFactory: () => `${testId}-id-${++generatedId}`,
     });
@@ -564,7 +564,7 @@ describe('game controller setup', () => {
       vi.resetModules();
       const restoredStore = await openGameStore({ databaseName: testId, factory, now: () => 1_000 });
       const controllerModule = await import('./index.js');
-      const restoredController = controllerModule.getOrCreateGameController({
+      const restoredController = controllerModule.getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId, store: restoredStore, timeSource, clockPolicy: { maxReferenceDivergenceMs: 5 },
         idFactory: () => `${testId}-restored-${++generatedId}`,
       });
@@ -616,8 +616,8 @@ describe('game controller setup', () => {
       clockPolicy: { maxReferenceDivergenceMs: 5 },
       idFactory: () => `controller-id-${++generatedId}`,
     };
-    const controller = getOrCreateGameController(options);
-    const remountedController = getOrCreateGameController({
+    const controller = getOrCreateGameController({ ...options, positionChecks: 'legacy-proof' });
+    const remountedController = getOrCreateGameController({ positionChecks: 'legacy-proof',
       ...options,
       clockPolicy: { maxReferenceDivergenceMs: 5 },
     });
@@ -716,7 +716,7 @@ describe('game controller setup', () => {
       },
     };
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: delayedStore,
       timeSource,
@@ -776,7 +776,7 @@ describe('game controller setup', () => {
       },
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: delayedReadStore,
       timeSource: {
@@ -819,7 +819,7 @@ describe('game controller setup', () => {
     });
     let generatedId = 0;
     let randomSelections = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -873,7 +873,7 @@ describe('game controller setup', () => {
       factory: new IDBFactory(),
       now: () => 15_000,
     });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -922,7 +922,7 @@ describe('game controller setup', () => {
       factory: new IDBFactory(),
       now: () => 10_000,
     });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -970,7 +970,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1071,7 +1071,7 @@ describe('game controller setup', () => {
   it('[MOV-08] accepts controller effects only for the current full fence and only once', async () => {
     const testId = 'controller-move-effect-full-fence';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
       clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
     });
@@ -1120,7 +1120,7 @@ describe('game controller setup', () => {
     const testId = 'controller-classified-illegal-attempts';
     let decisionTimeMs = 2_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? decisionTimeMs, wallTimeMs: at ?? decisionTimeMs }; } },
       clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
     });
@@ -1171,7 +1171,7 @@ describe('game controller setup', () => {
     const testId = 'controller-format-correction-feedback';
     let decisionTimeMs = 2_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? decisionTimeMs, wallTimeMs: at ?? decisionTimeMs }; } },
       clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
     });
@@ -1207,7 +1207,7 @@ describe('game controller setup', () => {
   it('rejects forged attempt counters, records, losses, and accepted moves through public dispatch', async () => {
     const testId = 'controller-rejects-forged-effects';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
       clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
     });
@@ -1270,7 +1270,7 @@ describe('game controller setup', () => {
       now: () => 2_000,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1314,7 +1314,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1396,7 +1396,7 @@ describe('game controller setup', () => {
       },
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1519,7 +1519,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1585,7 +1585,7 @@ describe('game controller setup', () => {
         now: () => decisionTimeMs,
       });
       let generatedId = 0;
-      const controller = getOrCreateGameController({
+      const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId,
         store,
         timeSource: {
@@ -1662,7 +1662,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1739,7 +1739,7 @@ describe('game controller setup', () => {
     let monotonicMs = 8_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (atDecisionTimeMs) => ({ monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs }) },
@@ -1812,7 +1812,7 @@ describe('game controller setup', () => {
     let monotonicMs = 9_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (atDecisionTimeMs) => ({ monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs }) },
@@ -1848,7 +1848,7 @@ describe('game controller setup', () => {
     let monotonicMs = 8_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (atDecisionTimeMs) => ({ monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs }) },
@@ -1919,7 +1919,7 @@ describe('game controller setup', () => {
       },
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: delayedStore,
       timeSource: {
@@ -2013,7 +2013,7 @@ describe('game controller setup', () => {
       },
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: abortingStore,
       timeSource: {
@@ -2076,7 +2076,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const firstController = getOrCreateGameController({
+    const firstController = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -2120,7 +2120,7 @@ describe('game controller setup', () => {
         now: () => decisionTimeMs,
       });
       const controllerModule = await import('./index.js');
-      const restoredController = controllerModule.getOrCreateGameController({
+      const restoredController = controllerModule.getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId,
         store: restoredStore,
         timeSource: {
@@ -2189,7 +2189,7 @@ describe('game controller setup', () => {
     let monotonicMs = 5_000;
     const firstStore = await openGameStore({ databaseName: testId, factory, now: () => decisionTimeMs });
     let generatedId = 0;
-    const firstController = getOrCreateGameController({
+    const firstController = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: firstStore,
       timeSource: { sample: (at) => ({ monotonicMs, wallTimeMs: at ?? decisionTimeMs }) },
@@ -2210,7 +2210,7 @@ describe('game controller setup', () => {
       monotonicMs = 100;
       const restoredStore = await openGameStore({ databaseName: testId, factory, now: () => decisionTimeMs });
       const controllerModule = await import('./index.js');
-      const restoredController = controllerModule.getOrCreateGameController({
+      const restoredController = controllerModule.getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId,
         store: restoredStore,
         timeSource: { sample: (at) => ({ monotonicMs, wallTimeMs: at ?? decisionTimeMs }) },
@@ -2238,7 +2238,7 @@ describe('game controller setup', () => {
       now: () => 1_000,
     });
     let generatedId = 0;
-    const firstController = getOrCreateGameController({
+    const firstController = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: firstStore,
       timeSource: {
@@ -2292,7 +2292,7 @@ describe('game controller setup', () => {
         },
       });
       const controllerModule = await import('./index.js');
-      const resumedController = controllerModule.getOrCreateGameController({
+      const resumedController = controllerModule.getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId,
         store: resumedStore,
         timeSource: {
@@ -2406,7 +2406,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -2500,7 +2500,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -2588,7 +2588,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const firstController = getOrCreateGameController({
+    const firstController = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -2625,7 +2625,7 @@ describe('game controller setup', () => {
         now: () => decisionTimeMs,
       });
       const controllerModule = await import('./index.js');
-      const restoredController = controllerModule.getOrCreateGameController({
+      const restoredController = controllerModule.getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId,
         store: restoredStore,
         timeSource: {

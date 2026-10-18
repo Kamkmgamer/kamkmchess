@@ -6,8 +6,10 @@ Inventory for [Establish the React/TypeScript application and build checks](http
 
 | Package | Locked version | License | Source / copyright |
 | --- | --- | --- | --- |
+| chessops | 0.15.1 | GPL-3.0-or-later | Niklas Fiekas and contributors. [chessops source](https://github.com/niklasf/chessops). |
+| @badrap/result | 0.3.1 | MIT | [Source](https://github.com/badrap/result). |
 | chess.js | 1.4.0 | BSD-2-Clause | Jeff Hlywa. [chess.js source](https://github.com/jhlywa/chess.js). |
-| cm-chessboard | 8.15.3 | MIT | Stefan Haack. [cm-chessboard source](https://github.com/shaack/cm-chessboard). |
+| @lichess-org/chessground | 10.4.2 | GPL-3.0-or-later | Lichess team. [Chessground source](https://github.com/lichess-org/chessground). |
 | react | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | react-dom | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | scheduler | 0.28.0 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
@@ -47,10 +49,10 @@ TypeScript 6.0.3 stays within typescript-eslint 8.71.2's declared `>=4.8.4 <6.1.
 
 ## Artwork and later dependencies
 
-This build uses the standard piece sprite shipped by cm-chessboard and uses system fonts. The disposable prototype's application code is not included; the extracted theme values are identified below.
+This build uses Chessground, chessops and system fonts. The owner authorized replacing cm-chessboard with Chessground on 2026-10-18, superseding the original board choice and GPL exclusion for this dependency. The combined browser application is distributed under GPL-3.0-or-later; original application code remains independently available under MIT. Ship exact corresponding source from https://github.com/Kamkmgamer/kamkmchess for the deployed version and the generated Chessground license notice. The disposable prototype's application code is not included; the extracted theme values are identified below.
 
-The approved chess.js **1.4.0** and cm-chessboard **8.15.3** runtime dependencies are pinned. The board imports cm-chessboard's assets/pieces/standard.svg; it does not use the separately licensed NonCommercial Staunty sprite. The standard sprite identifies the Wikimedia Commons standard chess pieces, credits Cburnett, and carries the CC BY-SA 3.0 notice in the SVG. The asset is distributed without modification. The generated THIRD_PARTY_NOTICES.txt repeats this attribution and license.
+The chessops **0.15.1**, chess.js **1.4.0** (legacy offline proof tools), and @lichess-org/chessground **10.4.2** dependencies are pinned. The board uses the existing Wikimedia Commons standard pieces by Cburnett and Rfc1394 under CC BY-SA 3.0. Individual images in `src/ui/pieces/` were extracted from cm-chessboard **8.15.3**'s standard sprite, retained as `standard.svg` with its original attribution. Each extracted image records the source, license and extraction. The generated THIRD_PARTY_NOTICES.txt repeats this attribution and license. The separately licensed NonCommercial Staunty sprite is not used.
 
 The selectable T3 Code palette values in src/ui/t3-palettes.ts were extracted from packages/shared/src/themePalettes.ts at commit 9503155da67add4fbd7fbc51c99ec19a0c8c4a2c, SHA-256 82385050b8b691ff280efc0e93ea9dd8a4bbfd64a4c50cf8536b5c15d1e74479. The prototype bundle's original source hash was verified against the owner-attached KHA-12 bundle (1631a48a909168bbc63bbb84164e5da2c0912f8fcb1c3f78faea87a797103ddf). The T3 Code MIT notice is retained at [T3-Code-MIT.txt](licenses/T3-Code-MIT.txt) and included in generated distribution notices. Palette data and board colors are the only extracted presentation inputs; prototype application code is not included.
 
-Exclude the optional NonCommercial piece set, research-only GPL replay packages and the unsafe stock solver from production. Experiment lockfiles and bundles are not production dependencies or distribution assets. Later artwork licensing remains separate from the original-code MIT license. Complete `OPS-05` requires the final game distribution and asset review, not just this foundation inventory.
+Exclude the optional NonCommercial piece set, research-only replay packages and the unsafe stock solver from production. Experiment lockfiles and bundles are not production dependencies or distribution assets. Artwork licensing remains separate from the code licenses. Complete `OPS-05` requires the final game distribution and asset review, not just this foundation inventory.

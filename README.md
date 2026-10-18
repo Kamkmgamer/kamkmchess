@@ -2,6 +2,14 @@
 
 Chess against AI models that choose their own moves. The Classic workspace supports local two-player games and browser-direct AI opponents, with device-local saves, continuous clocks, explicit connection diagnostics, compact chess requests, complete conversation archives, Undo, and request recovery. Optional account storage remains disabled until its deployment is configured and verified.
 
+The board uses Lichess's [Chessground](https://github.com/lichess-org/chessground) for animated moves, square-wide mouse and touch dragging, legal destinations, and previous-move highlights. The combined browser application includes GPL-3.0-or-later code; original application code remains available under MIT. See [dependency and artwork notices](docs/dependency-notices.md). Distributions must include the exact corresponding source, available in this repository, along with the generated license notices.
+
+Use Left/Right to review earlier or later moves, Home for the starting position, and End or **Live** to return to play. Moves in the list are clickable. Reviewing history leaves the live game and clocks running. During an AI turn, drag or click your piece to queue one premove. It plays only if legal after the reply; Escape, right-click, and **Cancel premove** clear it. Entering history or starting another game also clears queued input.
+
+Right-drag draws green arrows and right-click marks circles. Hold Shift for red, Control for blue, or Alt for amber. Repeat a drawing to remove it, or left-click an empty square to clear drawings.
+
+Legal moves, king safety, SAN and material checks use Lichess's **chessops 0.15.1**. Positions are classified synchronously; normal play creates no proof-search worker or graph. Draws use practical insufficient-material rules, repetition and the fifty-move rule. Timeouts use side-specific material and a bounded one-ply forced-outcome check. This replaces the former exhaustive dead-position search: unusual blocked positions can remain playable. Older pending saves are migrated automatically and their search data is dropped. The legacy proof tools remain for archive compatibility and offline fixtures. See [rules research and sources](docs/implementation/lichess-rules-research.md).
+
 Each model move receives the current FEN and side, starting FEN with SAN move history, remaining clocks and increment, repeated-position counts when relevant, current-turn retry feedback, and the latest plan and returned reasoning for that side. Replies are asked to include a brief plan for the next turn. This rolling memory survives reloads and follows Undo; raw provider traffic and older thinking stay in the archive. Existing saved games use the same compact requests. See [model input policy](docs/spec/compact-model-input.md).
 
 To play through CLIProxyAPI, choose **New game** and AI mode. CLIProxyAPI is preselected with `http://127.0.0.1:8317/v1`. Enter your proxy API key and exact **Model ID**, then choose **Connect and use model**. Accept the destination disclosure to send one compatibility check. After it passes, choose **Start game**. A bare proxy origin gains `/v1`; existing path prefixes and pasted Chat Completions URLs are preserved. Advanced settings include authentication and protocol overrides. Choose authentication **None** only if your proxy is deliberately configured without a key.
@@ -17,12 +25,14 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Vite prints the local URL. The development server binds to loopback. For the production build:
+Vite prints the local URL. The development server binds to loopback. Keep `pnpm dev` running while playing. For the production build:
 
 ```sh
 pnpm check
 pnpm preview
 ```
+
+The browser tests can start a temporary preview at port 5175 and stop it when they finish; an already-open page at that address cannot reload assets after the server stops. For a persistent production preview, run `pnpm build` followed by `pnpm preview --port 5175 --strictPort` and leave that process running.
 
 Browser files are in `dist/`. The build includes the application license and production dependency notices. Vercel is the selected host. Its Go function routes `/v1/*` to Clerk-authenticated PostgreSQL storage operations; see [API contracts](docs/architecture/go-api.md) and [hosting configuration](docs/implementation/KHA-44-hosting.md). No hosting or account service is needed for guest play. Hosted infrastructure is not provisioned by running the app.
 

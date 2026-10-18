@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { IDBFactory } from 'fake-indexeddb';
 import { createConnectionProfile, openConnectionStore } from '../providers/connections/index.js';
-import { checkProofEvidence, PROOF_CHECKER_VERSION, RULES_ADAPTER_VERSION } from '../proofs/index.js';
-import type { ProofEvidence } from '../proofs/index.js';
 import { openGameStore } from '../storage/index.js';
 import { controllerRevisionForConfig } from './opponent-selection.js';
 
@@ -92,39 +90,7 @@ describe('match composition namespace boundary', () => {
       expect(composition.registryScope).toBe('cloud-db:suspend-account');
       const session = await composition.startNewLocalGame({ humanSide: 'black', modelSelection: runSelection });
       let snapshot = session.controller.snapshot();
-      const work = await session.controller.continueAdjudication(snapshot.fence);
-      if (work === null) throw new Error('The initial proof query did not start.');
-      const evidence: ProofEvidence = {
-        schemaVersion: 1,
-        proofCheckerVersion: PROOF_CHECKER_VERSION,
-        rulesAdapterVersion: RULES_ADAPTER_VERSION,
-        queryIdentity: work.query.queryIdentity,
-        kind: 'mate-witness',
-        intendedColor: 'b',
-        moves: [
-          { from: 'f2', to: 'f3' },
-          { from: 'e7', to: 'e5' },
-          { from: 'g2', to: 'g4' },
-          { from: 'd8', to: 'h4' },
-        ],
-      };
-      const checked = checkProofEvidence(work.query, evidence);
-      if (checked.status !== 'accepted') throw new Error('The standard-position witness was rejected.');
-      snapshot = await session.controller.acceptAdjudicationResult({
-        requestId: work.requestId,
-        fence: work.fence,
-        query: work.query,
-        result: {
-          status: 'accepted',
-          conclusion: checked.conclusion,
-          queryIdentity: work.query.queryIdentity,
-          evidence,
-          checkpointDisposition: 'fresh',
-          pass: { maxDiscoveredStates: 0, timeBudgetMs: 0, discoveredStateCount: 0,
-            processedEdgeCount: 0, expandedStateCount: 0, totalDiscoveredStateCount: 0,
-            totalDiscoveredEdgeCount: 0, elapsedMs: 0 },
-        },
-      });
+      expect(snapshot.adjudication.status).toBe('none');
       snapshot = await session.controller.startGame(snapshot.fence, runSelection);
       expect(snapshot.checkpoint.clocks.activeSide).toBe('white');
       const producing = await session.controller.dispatch({
@@ -165,9 +131,7 @@ describe('match composition namespace boundary', () => {
       await composition.suspend();
       expect(reopened.controller.snapshot().checkpoint.requestGeneration).toBe(manuallyStopped.snapshot.checkpoint.requestGeneration);
 
-      const closeAnalysis = vi.spyOn(reopened.analysis, 'close');
       await composition.dispose();
-      expect(closeAnalysis).toHaveBeenCalledTimes(1);
       expect(closeGameStore).toHaveBeenCalledTimes(1);
       const lateCallback = await reopened.controller.dispatch({
         schemaVersion: 1,
@@ -178,7 +142,6 @@ describe('match composition namespace boundary', () => {
       expect(lateCallback).toMatchObject({ kind: 'rejected', reason: 'stale-fence' });
 
       await composition.dispose();
-      expect(closeAnalysis).toHaveBeenCalledTimes(1);
       expect(closeGameStore).toHaveBeenCalledTimes(1);
       await expect(composition.openActiveGame()).rejects.toThrow(/disposed/);
 

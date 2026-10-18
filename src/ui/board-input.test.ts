@@ -16,7 +16,7 @@ describe('board input to controller seam', () => {
     const gameId = 'ui-board-input-controller-seam';
     const store = await openGameStore({ databaseName: gameId, factory: new IDBFactory(), now: () => 1_000 });
     let sequence = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId,
       store,
       timeSource: { sample: (decisionTimeMs) => ({ monotonicMs: 5_000, wallTimeMs: decisionTimeMs ?? 1_000 }) },

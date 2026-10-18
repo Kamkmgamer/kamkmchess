@@ -9,9 +9,9 @@ const outDir = resolve('.scratch/position-check-benchmark');
 await build({
   configFile: false,
   logLevel: 'silent',
-  build: { ssr: resolve('src/proofs/index.ts'), outDir, emptyOutDir: false },
+  build: { ssr: resolve('src/rules/index.ts'), outDir, emptyOutDir: false },
 });
-const { createDeadnessQuery, runProofSearchPass } = await import(pathToFileURL(resolve(outDir, 'index.js')).href);
+const { parsePosition, createRepetitionLedger, observeEndingFacts, legalMoves } = await import(pathToFileURL(resolve(outDir, 'index.js')).href);
 const maximum = process.argv.find((arg) => arg.startsWith('--max-ms='));
 const maxMs = maximum ? Number(maximum.slice('--max-ms='.length)) : Infinity;
 if (!(maxMs > 0)) throw new Error('--max-ms must be positive.');
@@ -28,18 +28,15 @@ const positions = [
 for (const [name, line] of positions) {
   const chess = new Chess();
   for (const move of line.split(' ').filter(Boolean)) chess.move(move);
-  const query = createDeadnessQuery({
-    gameId: 'benchmark', segmentId: '1', positionRevision: '1',
-    analysisGeneration: '1', ownershipEpoch: '1', positionFen: chess.fen(),
-  });
   const times = [];
-  for (let sample = 0; sample < 8; sample += 1) {
+  for (let sample = 0; sample < 101; sample += 1) {
     const before = performance.now();
-    const result = await runProofSearchPass(query, { timeBudgetMs: 3_000 });
+    const position = parsePosition(chess.fen());
+    const ledger = createRepetitionLedger(position);
+    const result = observeEndingFacts(position, ledger);
+    const moves = legalMoves(position);
     times.push(performance.now() - before);
-    if (result.status !== 'accepted' || result.conclusion !== 'not-dead') {
-      throw new Error(`${name}: ${result.status}, ${result.reason ?? result.conclusion}`);
-    }
+    if (!result.hasLegalMoves || result.insufficientMaterial || moves.length === 0) throw new Error(`${name}: unexpected ending`);
   }
   const first = times.shift();
   times.sort((a, b) => a - b);
@@ -47,6 +44,31 @@ for (const [name, line] of positions) {
   const minimum = times[0];
   const maximum = times.at(-1);
   if (first === undefined || median === undefined || minimum === undefined || maximum === undefined) throw new Error('No benchmark samples.');
-  console.log(`${name}: first ${first.toFixed(1)} ms; warmed median ${median.toFixed(1)} ms, range ${minimum.toFixed(1)}-${maximum.toFixed(1)} ms`);
+  console.log(`${name}: first ${first.toFixed(3)} ms; warmed median ${median.toFixed(3)} ms, range ${minimum.toFixed(3)}-${maximum.toFixed(3)} ms`);
   if (median > maxMs) process.exitCode = 1;
+}
+
+if (process.argv.includes('--memory')) {
+  if (!globalThis.gc) throw new Error('Use node --expose-gc scripts/benchmark-position-check.mjs --memory');
+  const fen = new Chess().fen();
+  const batch = () => {
+    for (let index = 0; index < 5_000; index += 1) {
+      const position = parsePosition(fen);
+      observeEndingFacts(position, createRepetitionLedger(position));
+      legalMoves(position);
+    }
+  };
+  batch();
+  globalThis.gc();
+  const baseline = process.memoryUsage().heapUsed;
+  const samples = [];
+  for (let index = 0; index < 5; index += 1) {
+    batch();
+    globalThis.gc();
+    samples.push(process.memoryUsage().heapUsed);
+  }
+  /** @param {number} bytes */
+  const mib = bytes => (bytes / 1_048_576).toFixed(2);
+  console.log(`Heap after warmup and GC: ${mib(baseline)} MiB; after each 5,000 fresh checks: ${samples.map(mib).join(', ')} MiB`);
+  if ((samples.at(-1) ?? baseline) - baseline > 8 * 1_048_576) throw new Error('Rules heap grew by more than 8 MiB after GC.');
 }

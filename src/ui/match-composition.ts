@@ -6,9 +6,6 @@ import type { ConnectionNamespace, ConnectionStore } from '../providers/connecti
 import { OpponentService } from '../opponents/index.js';
 import { runGenerationTurn } from '../integration/index.js';
 import type { GenerationRunResult } from '../integration/index.js';
-import { createAdjudicationAnalysisRunner } from '../adjudication/index.js';
-import { createControllerAnalysis } from '../adjudication-controller/index.js';
-import type { ControllerAnalysisV1 } from '../adjudication-controller/index.js';
 import type { StoredGameV1 } from '../storage/index.js';
 import { openGameStore } from '../storage/index.js';
 import type { GameStore } from '../storage/index.js';
@@ -38,7 +35,6 @@ export interface LocalGameSession {
   readonly gameId: string;
   readonly restored: boolean;
   readonly controller: GameController;
-  readonly analysis: ControllerAnalysisV1;
 }
 
 /** Composition owns storage and the one active game writer for this page lifetime. */
@@ -190,14 +186,6 @@ export class MatchComposition {
         } catch (error) {
           failures.push(error);
         }
-        snapshot = session.controller.snapshot();
-      }
-      if (snapshot.adjudication.status === 'running') {
-        try {
-          await session.analysis.stopAnalysis(snapshot.fence);
-        } catch (error) {
-          failures.push(error);
-        }
       }
     }
     if (failures.length > 0) {
@@ -228,11 +216,6 @@ export class MatchComposition {
     for (const result of generationResults) if (result.status === 'rejected') failures.push(result.reason);
 
     for (const session of this.sessions) {
-      try {
-        await session.analysis.close();
-      } catch (error) {
-        failures.push(error);
-      }
       releaseGameController({
         gameId: session.gameId,
         registryScope: this.registryScope,
@@ -273,8 +256,7 @@ export class MatchComposition {
       store,
       clockPolicy: { maxReferenceDivergenceMs: 5_000 },
     });
-    const analysis = createControllerAnalysis(controller, createAdjudicationAnalysisRunner());
-    const session = { gameId, restored: false, controller, analysis };
+    const session = { gameId, restored: false, controller };
     this.sessions.add(session);
     return session;
   }

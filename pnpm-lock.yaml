@@ -169,12 +169,15 @@ importers:
       '@clerk/clerk-js':
         specifier: 6.39.1
         version: 6.39.1(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(typescript@6.0.3)(zod@4.6.7)
+      '@lichess-org/chessground':
+        specifier: 10.4.2
+        version: 10.4.2
       chess.js:
         specifier: 1.4.0
         version: 1.4.0
-      cm-chessboard:
-        specifier: 8.15.3
-        version: 8.15.3
+      chessops:
+        specifier: 0.15.1
+        version: 0.15.1
       react:
         specifier: 19.3.1
         version: 19.3.1
@@ -300,6 +303,10 @@ packages:
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
 
+  '@badrap/result@0.3.1':
+    resolution: {integrity: sha512-ECvpsyZYknoRD0peG1K+UkX5llld3TyK1Ot9Cq2epSoWK19nyzpGKVl98sadSmohu5wHNuiDl+Ex9SVdcIjiFg==}
+    engines: {node: '>= 22'}
+
   '@base-org/account@2.0.1':
     resolution: {integrity: sha512-tySVNx+vd6XEynZL0uvB10uKiwnAfThr8AbKTwILVG86mPbLAhEOInQIk+uDnvpTvfdUhC1Bi5T/46JvFoLZQQ==}
 
@@ -411,6 +418,10 @@ packages:
 
   '@keyv/serialize@1.1.1':
     resolution: {integrity: sha512-dXn3FZhPv0US+7dtJsIi2R+c7qWYiReoEh5zUntWCf4oSpMNib8FDhSoed6m3QyZdx5hK7iLFkYk3rNxwt8vTA==}
+
+  '@lichess-org/chessground@10.4.2':
+    resolution: {integrity: sha512-T7j43oF2OIxwUlP42eHtX79drYkzCaSvuW4ENdrooW9pxAvbrse4g8OL3EH2HeA4Rn0tuOGQvAUC71NfK5lsVw==}
+    engines: {node: '>=24', pnpm: '>=12'}
 
   '@noble/ciphers@1.3.0':
     resolution: {integrity: sha512-2I0gnIVPtfnMw9ee9h1dJG7tp81+8Ob3OJb3Mv37rx5L40/b0i7djjCVvGOVqc9AEIQyvyu1i6ypKdFw8R8gQw==}
@@ -784,12 +795,12 @@ packages:
   chess.js@1.4.0:
     resolution: {integrity: sha512-BBJgrrtKQOzFLonR0l+k64A98NLemPwNsCskwb+29bRwobUa4iTm51E1kwGPbWXAcfdDa18nad6vpPPKPWarqw==}
 
+  chessops@0.15.1:
+    resolution: {integrity: sha512-hQDwv90AFkrPEsRJBebh3ZE+xDga25TCCv4lavNT2plZmd33UKNFYaZsE+7rafMbnBRrDEWUVsSYFqY3qCIGZw==}
+
   clsx@1.2.1:
     resolution: {integrity: sha512-EcR6r5a8bj6pu3ycsa/E/cKVGuTgZJZdsyUYHOksG/UHIiKfjxzRxYJpyVBwYaQeOvghal9fcc4PidlgzugAQg==}
     engines: {node: '>=6'}
-
-  cm-chessboard@8.15.3:
-    resolution: {integrity: sha512-PNoRvdpaN3kRW+ulpywglGYf/B9kp3bwUVQTE33Eujw6kcEa0XT4F+xpvHT7qTcsjaTh/u2I1fmOiHtRrdAadg==}
 
   commander@13.1.0:
     resolution: {integrity: sha512-/rFeCpNJQbhSZjGVwO9RFV3xPqbnERS8MmIQzCtD/zl6gpJuV/bMLuN92oG3F7d8oDEHHRrujSXNUr8fpjntKw==}
@@ -1583,6 +1594,8 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
+  '@badrap/result@0.3.1': {}
+
   '@base-org/account@2.0.1(@types/react@19.3.0)(react@19.3.1)(typescript@6.0.3)(zod@4.6.7)':
     dependencies:
       '@noble/hashes': 1.4.0
@@ -1743,6 +1756,8 @@ snapshots:
       keyv: 5.6.0
 
   '@keyv/serialize@1.1.1': {}
+
+  '@lichess-org/chessground@10.4.2': {}
 
   '@noble/ciphers@1.3.0': {}
 
@@ -2060,9 +2075,11 @@ snapshots:
 
   chess.js@1.4.0: {}
 
-  clsx@1.2.1: {}
+  chessops@0.15.1:
+    dependencies:
+      '@badrap/result': 0.3.1
 
-  cm-chessboard@8.15.3: {}
+  clsx@1.2.1: {}
 
   commander@13.1.0: {}
 

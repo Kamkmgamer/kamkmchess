@@ -320,7 +320,7 @@ export function parsePosition(fen: string): Position {
     return reject(
       'placement',
       'library-rejected-position',
-      error instanceof Error ? error.message : 'chess.js rejected the validated position.',
+      error instanceof Error ? error.message : 'The rules engine rejected the validated position.',
     );
   }
 

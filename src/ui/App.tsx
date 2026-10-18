@@ -1,17 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Chessboard, COLOR, INPUT_EVENT_TYPE, PIECES_FILE_TYPE } from 'cm-chessboard';
-import spriteUrl from 'cm-chessboard/assets/pieces/standard.svg?url';
-import 'cm-chessboard/assets/chessboard.css';
+import { ChessBoard } from './ChessBoard.js';
+import { useBoardHistory } from './use-board-history.js';
 import type { ControllerSnapshotV1 } from '../controller/index.js';
 import type { ModelSelection } from '../controller/index.js';
-import {
-  checkProofEvidence,
-  PROOF_CHECKER_VERSION,
-  PROOF_SCHEMA_VERSION,
-  RULES_ADAPTER_VERSION,
-} from '../proofs/index.js';
-import type { ProofEvidence, ProofSearchPassResult } from '../proofs/index.js';
 import { legalMoves, parsePosition } from '../rules/index.js';
 import type { CoordinateMove, Promotion, Square } from '../rules/index.js';
 import { isLocalBoardInputDisabled, parseCoordinateMove, startClassifiedLocalGame, submitBoardMove } from './board-input.js';
@@ -51,97 +43,6 @@ function formatClock(milliseconds: number): string {
   const total = Math.max(0, Math.ceil(milliseconds / 1_000));
   return Math.floor(total / 60) + ':' + (total % 60).toString().padStart(2, '0');
 }
-function squareDescription(snapshot: ControllerSnapshotV1, square: Square): string {
-  const piece = snapshot.position.pieces.find((item) => item.square === square);
-  if (!piece) return square + ', empty';
-  const names: Record<string, string> = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
-  return square + ', ' + (piece.color === 'w' ? 'White ' : 'Black ') + names[piece.type];
-}
-
-function ChessBoard({ fen, orientation, snapshot, disabled, onMove }: {
-  readonly fen: string;
-  readonly orientation: 'white' | 'black';
-  readonly snapshot: ControllerSnapshotV1;
-  readonly disabled: boolean;
-  readonly onMove: (move: PromotionMove) => void;
-}) {
-  const [keyboardOrigin, setKeyboardOrigin] = useState<{ square: Square; fen: string } | null>(null);
-  const host = useRef<HTMLDivElement>(null);
-  const board = useRef<Chessboard | null>(null);
-  const onMoveRef = useRef(onMove);
-  useEffect(() => { onMoveRef.current = onMove; }, [onMove]);
-  useEffect(() => {
-    if (!host.current) return undefined;
-    const instance = new Chessboard(host.current, {
-      position: fen,
-      orientation: orientation === 'white' ? COLOR.white : COLOR.black,
-      assetsUrl: '',
-      style: {
-        cssClass: 'green', borderType: 'frame', showCoordinates: true, animationDuration: 140,
-        pieces: { type: PIECES_FILE_TYPE.svgSprite, file: spriteUrl, tileSize: 40 },
-      },
-    });
-    board.current = instance;
-    return () => {
-      instance.disableMoveInput();
-      instance.destroy();
-      board.current = null;
-    };
-    // The board is a stable widget. State changes are applied by the effects below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => { void board.current?.setPosition(fen, false); }, [fen]);
-  useEffect(() => {
-    if (board.current) void board.current.setOrientation(orientation === 'white' ? COLOR.white : COLOR.black, false);
-  }, [orientation]);
-  useEffect(() => {
-    if (!board.current) return;
-    if (disabled) board.current.disableMoveInput();
-    else board.current.enableMoveInput((event) => {
-      if (event.type === INPUT_EVENT_TYPE.moveInputStarted) {
-        const piece = event.squareFrom ? snapshot.position.pieces.find((item) => item.square === event.squareFrom) : undefined;
-        return piece?.color === snapshot.position.sideToMove;
-      }
-      if (event.type === INPUT_EVENT_TYPE.validateMoveInput && event.squareFrom && event.squareTo) {
-        onMoveRef.current({ from: event.squareFrom as Square, to: event.squareTo as Square });
-      }
-      return false;
-    });
-  }, [disabled, snapshot.position]);
-  return (
-    <div className="board-frame">
-      <div className="board-host" ref={host} role="img" aria-label="Chessboard. Use the coordinate move controls or inspect a square." />
-      <details className="board-inspection">
-        <summary>Inspect or move with the keyboard</summary>
-        <p>Choose a square to inspect it. Choose a piece of the side to move, then its destination to play a move.</p>
-        <div className="square-grid">
-          {Array.from({ length: 64 }, (_, index) => {
-            const square = ('abcdefgh'[index % 8] + String(8 - Math.floor(index / 8))) as Square;
-            return <button className="square-inspect" key={square} type="button"
-              aria-label={squareDescription(snapshot, square)} aria-pressed={keyboardOrigin?.square === square && keyboardOrigin.fen === snapshot.position.fen}
-              onClick={() => {
-                const node = document.getElementById('board-announcement');
-                if (node) node.textContent = squareDescription(snapshot, square);
-                if (disabled) return;
-                const piece = snapshot.position.pieces.find((item) => item.square === square);
-                if (keyboardOrigin === null || keyboardOrigin.fen !== snapshot.position.fen) {
-                  if (piece?.color === snapshot.position.sideToMove) setKeyboardOrigin({ square, fen: snapshot.position.fen });
-                  return;
-                }
-                if (piece?.color === snapshot.position.sideToMove) setKeyboardOrigin({ square, fen: snapshot.position.fen });
-                else {
-                  onMove({ from: keyboardOrigin.square, to: square });
-                  setKeyboardOrigin(null);
-                }
-              }}>{square}</button>;
-          })}
-        </div>
-        <p id="board-announcement" className="sr-only" aria-live="polite" />
-      </details>
-    </div>
-  );
-}
-
 function statusLabel(snapshot: ControllerSnapshotV1): string {
   if (snapshot.readiness === 'restore-recovery-pending') return 'Restoring saved game';
   if (snapshot.readiness === 'expiry-persistence-pending') return 'Saving clock result';
@@ -154,44 +55,17 @@ function statusLabel(snapshot: ControllerSnapshotV1): string {
   return (snapshot.position.sideToMove === 'w' ? 'White' : 'Black') + ' to move';
 }
 
-/** The standard position has a tiny, independently checked non-deadness witness. */
-async function acceptStandardPositionWitness(
-  controller: LocalGameSession['controller'],
-  snapshot: ControllerSnapshotV1,
-): Promise<ControllerSnapshotV1> {
-  if (snapshot.position.fen !== STANDARD_FEN || snapshot.adjudication.query?.predicate !== 'global-deadness') return snapshot;
-  const work = await controller.continueAdjudication(snapshot.fence);
-  if (!work) return controller.snapshot();
-  const evidence: ProofEvidence = {
-    schemaVersion: PROOF_SCHEMA_VERSION,
-    proofCheckerVersion: PROOF_CHECKER_VERSION,
-    rulesAdapterVersion: RULES_ADAPTER_VERSION,
-    kind: 'mate-witness' as const,
-    queryIdentity: work.query.queryIdentity,
-    intendedColor: 'b',
-    moves: [
-      { from: 'f2', to: 'f3' }, { from: 'e7', to: 'e5' },
-      { from: 'g2', to: 'g4' }, { from: 'd8', to: 'h4' },
-    ],
-  };
-  const checked = checkProofEvidence(work.query, evidence);
-  if (checked.status !== 'accepted' || checked.conclusion !== 'not-dead') {
-    throw new Error('The standard-position witness did not pass the proof checker.');
-  }
-  const result: ProofSearchPassResult = {
-    status: 'accepted', conclusion: 'not-dead', queryIdentity: work.query.queryIdentity, evidence,
-    checkpointDisposition: 'fresh',
-    pass: { maxDiscoveredStates: 0, timeBudgetMs: 0, discoveredStateCount: 0, processedEdgeCount: 0,
-      expandedStateCount: 0, totalDiscoveredStateCount: 0, totalDiscoveredEdgeCount: 0, elapsedMs: 0 },
-  };
-  return controller.acceptAdjudicationResult({ requestId: work.requestId, fence: work.fence, query: work.query, result });
-}
-
-function MoveRows({ snapshot }: { readonly snapshot: ControllerSnapshotV1 }) {
+function MoveRows({ snapshot, selectedPly, onSelect }: {
+  readonly snapshot: ControllerSnapshotV1;
+  readonly selectedPly: number;
+  readonly onSelect: (ply: number) => void;
+}) {
   const moves = snapshot.checkpoint.rules.moves;
   if (!moves.length) return <p className="muted">Moves appear here after they are committed.</p>;
   return <ol className="move-list" aria-label="Committed moves">{moves.map((move, index) =>
-    <li key={move.moveId}><span>{Math.floor(index / 2) + 1}.</span><strong>{move.san}</strong></li>)}</ol>;
+    <li key={move.moveId}><span>{Math.floor(index / 2) + 1}.</span><button type="button"
+      aria-current={selectedPly === index + 1 ? 'step' : undefined}
+      aria-label={`View move ${index + 1}: ${move.san}`} onClick={() => onSelect(index + 1)}>{move.san}</button></li>)}</ol>;
 }
 
 export function App({ composition, initialSession, initialSnapshot }: AppProps) {
@@ -223,11 +97,11 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   const [generationJournal, setGenerationJournal] = useState<GenerationJournalV1 | null>(null);
   const [journalRefresh, setJournalRefresh] = useState(0);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const history = useBoardHistory(snapshot, !setupOpen && !promotion && !recoveryOpen);
   const [usageLabel, setUsageLabel] = useState('Unknown until provider usage is returned.');
   const generationController = useRef<AbortController | null>(null);
   const generationFenceKey = useRef('');
   const sessionRef = useRef(session);
-  const analysisAttemptKey = useRef('');
   const setupReturnFocus = useRef<HTMLElement | null>(null);
   const refresh = useCallback((next: ControllerSnapshotV1) => {
     setSnapshot(next);
@@ -314,37 +188,14 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
 
   useEffect(() => {
     const current = session.controller.snapshot();
-    if (current.checkpoint.result.kind !== 'pending-adjudication' || current.adjudication.status === 'running') return;
-    const query = current.adjudication.query;
-    if (!query) return;
-    const key = `${current.checkpoint.gameId}/${current.checkpoint.segmentId}/${current.checkpoint.positionRevision}/${query.queryIdentity}`;
-    if (analysisAttemptKey.current === key) return;
-    analysisAttemptKey.current = key;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const standard = current.position.fen === STANDARD_FEN && query.predicate === 'global-deadness';
-        const result = standard
-          ? await acceptStandardPositionWitness(session.controller, current)
-          : await session.analysis.continueAnalysis(current.fence);
-        if (!cancelled) {
-          const started = await startClassifiedLocalGame(session.controller, result,
-            snapshot.checkpoint.selections.players.white.kind === 'model' || snapshot.checkpoint.selections.players.black.kind === 'model'
-              ? (snapshot.checkpoint.selections.players.white.kind === 'model'
-                ? snapshot.checkpoint.selections.players.white : snapshot.checkpoint.selections.players.black) as ModelSelection
-              : modelSelection ?? undefined);
-          refresh(started);
-        }
-      } catch (error) {
-        if (!cancelled) setFeedback(error instanceof Error ? error.message : 'The automatic position check failed. Continue it from match details.');
-      }
-    })();
-    return () => { cancelled = true; };
-  // The durable game/query identity is the trigger; clock display ticks must not
-  // cancel an active Worker pass or authorize another one.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelSelection, refresh, session, snapshot.checkpoint.gameId, snapshot.checkpoint.segmentId,
-    snapshot.checkpoint.positionRevision, snapshot.checkpoint.result.kind, snapshot.adjudication.query?.queryIdentity]);
+    if (current.checkpoint.result.kind !== 'unresolved' || current.checkpoint.clocks.activeSide !== null) return;
+    const players = current.checkpoint.selections.players;
+    const selection = players.white.kind === 'model' ? players.white : players.black.kind === 'model' ? players.black : undefined;
+    if (selection && selection.diagnostic !== 'passed-current-session') return;
+    void startClassifiedLocalGame(session.controller, current, selection).then(refresh).catch(error => {
+      setFeedback(error instanceof Error ? error.message : 'The game could not start.');
+    });
+  }, [session, refresh, snapshot.checkpoint.result.kind, snapshot.checkpoint.clocks.activeSide]);
 
   const generationSide = snapshot.position.sideToMove === 'w' ? 'white' : 'black';
   const generationSelection = snapshot.checkpoint.selections.players[generationSide];
@@ -493,8 +344,10 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
       } else if (result.kind === 'expired') setFeedback('The active clock expired. The controller is checking the result.');
       else if (result.kind === 'clock-reconciliation-required') setFeedback('The clock needs review before play can continue.');
       else setFeedback('Move saved.');
+      return result.kind === 'accepted';
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'The move could not be saved.');
+      return false;
     } finally { setWorking(false); }
   }, [refresh, session.controller]);
 
@@ -515,7 +368,9 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
     if (hasPromotions) {
       setPromotion(move);
       setFeedback('Choose a piece for promotion from ' + move.from + ' to ' + move.to + '.');
-    } else void submitMove(move);
+      return Promise.resolve(false);
+    }
+    return submitMove(move);
   }, [snapshot.position, submitMove]);
 
   const selectPromotion = (piece: Promotion) => {
@@ -541,38 +396,6 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
     }
     void submitMove(move);
     setCoordinate('');
-  };
-
-  const runPositionCheck = async () => {
-    setWorking(true);
-    try {
-      setFeedback('Checking this position. The clocks remain active.');
-      const observed = session.controller.snapshot();
-      const standardSetup = observed.position.fen === STANDARD_FEN && observed.adjudication.query?.predicate === 'global-deadness';
-      const next = standardSetup
-        ? await acceptStandardPositionWitness(session.controller, observed)
-        : await session.analysis.continueAnalysis(observed.fence);
-      const playable = await startClassifiedLocalGame(session.controller, next, modelSelection ?? undefined);
-      refresh(playable);
-      setFeedback(playable.checkpoint.result.kind === 'pending-adjudication'
-        ? playable.adjudication.status === 'setup-ready'
-          ? 'Starting position classified. The local game clock is running.'
-          : 'The position remains pending. Continue the check to search another bounded pass.'
-        : statusLabel(playable));
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'The position check could not be saved.');
-    } finally { setWorking(false); }
-  };
-
-  const stopPositionCheck = async () => {
-    setWorking(true);
-    try {
-      const stopped = await session.analysis.stopAnalysis(session.controller.snapshot().fence);
-      refresh(stopped);
-      setFeedback('This bounded position-check pass stopped safely. The position remains unresolved until another pass is completed.');
-    } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'The position check could not be stopped.');
-    } finally { setWorking(false); }
   };
 
   const revalidateSavedOpponent = async (selection: ModelSelection, identity: OpponentIdentityV1) => {
@@ -674,8 +497,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
       setGenerationDetail('');
       setJournalRefresh((revision) => revision + 1);
       setRecoveryOpen(false);
-      const withWitness = await acceptStandardPositionWitness(nextSession.controller, nextSession.controller.snapshot());
-      const started = await startClassifiedLocalGame(nextSession.controller, withWitness, matchMode === 'ai' ? modelSelection ?? undefined : undefined);
+      const started = await startClassifiedLocalGame(nextSession.controller, nextSession.controller.snapshot(), matchMode === 'ai' ? modelSelection ?? undefined : undefined);
       refresh(started);
       setOrientation(started.checkpoint.selections.players.white.kind === 'human' ? 'white' : 'black');
       if (matchMode === 'ai' && opponentIdentity) {
@@ -684,7 +506,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
         service.recoverCandidate('resume-prior');
       }
       setFeedback(started.checkpoint.clocks.activeSide === null
-        ? 'New game saved. This custom position needs an exact position check before the clock starts.'
+        ? 'New game saved. ' + statusLabel(started) + '.'
         : 'New game saved locally. The match clock is running.');
     } catch (error) {
       setSetupError(error instanceof Error ? error.message : 'The new game could not be saved.');
@@ -767,11 +589,16 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   };
   const activeSide = snapshot.checkpoint.clocks.activeSide;
   const final = snapshot.checkpoint.result.kind === 'final';
-  const pendingSetup = snapshot.checkpoint.result.kind === 'pending-adjudication' && activeSide === null;
   const sideKey = snapshot.position.sideToMove === 'w' ? 'white' : 'black';
   const activePlayer = snapshot.checkpoint.selections.players[sideKey];
   const isModelTurn = activePlayer.kind === 'model';
-  const disabled = isLocalBoardInputDisabled(snapshot, working || isModelTurn || generationState === 'producing');
+  const disabled = history.reviewing || promotion !== null || isLocalBoardInputDisabled(snapshot, working || isModelTurn || generationState === 'producing');
+  const players = snapshot.checkpoint.selections.players;
+  const humanColor = players.white.kind === 'human' && players.black.kind === 'model' ? 'white'
+    : players.black.kind === 'human' && players.white.kind === 'model' ? 'black' : null;
+  const premoveColor = !history.reviewing && !final && !setupOpen && !promotion &&
+    snapshot.readiness === 'ready' && snapshot.clockReading?.status === 'running' ? humanColor : null;
+  const allowPremove = premoveColor !== null && isModelTurn && !working;
   const playerLabel = (side: 'white' | 'black') => {
     const player = snapshot.checkpoint.selections.players[side];
     return player.kind === 'model' ? player.modelRoutingId : 'Local player';
@@ -865,7 +692,8 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
               dateTime={'PT' + Math.max(0, Math.ceil(clocks.blackMs / 1_000)) + 'S'}
               aria-label={'Black clock ' + formatClock(clocks.blackMs)}>{formatClock(clocks.blackMs)}</time>
           </div>
-          <ChessBoard fen={snapshot.position.fen} orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} />
+          <ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} view={history}
+            premoveColor={premoveColor} allowPremove={allowPremove} />
           <div className={'player-row ' + (snapshot.position.sideToMove === 'w' && activeSide === 'white' ? 'active' : '')}>
             <span className="player-badge light-piece" aria-hidden="true">W</span>
             <div className="player-name"><strong>White</strong><span>{playerLabel('white')}</span></div>
@@ -873,6 +701,17 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
               dateTime={'PT' + Math.max(0, Math.ceil(clocks.whiteMs / 1_000)) + 'S'}
               aria-label={'White clock ' + formatClock(clocks.whiteMs)}>{formatClock(clocks.whiteMs)}</time>
           </div>
+          <nav className="history-controls" aria-label="Move history">
+            <div className="button-row">
+              <button className="button quiet" type="button" onClick={() => history.select(0)} disabled={history.ply === 0} aria-keyshortcuts="Home">First</button>
+              <button className="button quiet" type="button" onClick={() => history.select(history.ply - 1)} disabled={history.ply === 0} aria-keyshortcuts="ArrowLeft">Previous</button>
+              <button className="button quiet" type="button" onClick={() => history.select(history.ply + 1)} disabled={!history.reviewing} aria-keyshortcuts="ArrowRight">Next</button>
+              <button className="button quiet" type="button" onClick={() => history.select(history.count)} disabled={!history.reviewing} aria-keyshortcuts="End">Live</button>
+            </div>
+            <p className="muted" aria-live="polite">{history.reviewing
+              ? `Viewing move ${history.ply} of ${history.count}. The live game continues.`
+              : 'Live position. Use the left and right arrow keys to review moves.'}</p>
+          </nav>
           {promotion && <section className="promotion-panel" aria-labelledby="promotion-title">
             <h2 id="promotion-title">Choose a promotion piece</h2>
             <p>From {promotion.from} to {promotion.to}. Your clock continues while you choose.</p>
@@ -902,10 +741,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
             <h2 id="match-status-title">{generationState === 'producing' ? 'AI is choosing a move' : statusLabel(snapshot)}</h2>
             <p>{final && snapshot.checkpoint.result.kind === 'final'
               ? 'Final result recorded: ' + snapshot.checkpoint.result.reason.replaceAll('-', ' ') + '.'
-              : pendingSetup ? 'The controller is classifying this starting position before play can begin.'
-                : snapshot.checkpoint.result.kind === 'pending-adjudication'
-                  ? 'The result is unresolved during an exact position check. The active clock keeps running.'
-                  : snapshot.clockReading?.status === 'expired'
+              : snapshot.clockReading?.status === 'expired'
                     ? 'A clock has expired. Its result must be reconciled by the controller.'
                     : 'Moves and clocks are committed by the local game controller. The active clock continues during requests and recovery.'}</p>
             <p className="muted">Save status: saved on this device after each accepted controller transaction.</p>
@@ -937,21 +773,15 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
             {snapshot.modelHandoff.queued && <p className="muted">Queued candidate: {snapshot.modelHandoff.queued.selection.modelRoutingId} · {snapshot.modelHandoff.queued.state}</p>}
             {snapshot.modelHandoff.queued && snapshot.modelHandoff.queued.state !== 'failed' &&
               <button className="button quiet" type="button" onClick={() => void cancelQueuedModel()} disabled={working}>Cancel queued model</button>}
-            {(pendingSetup || snapshot.checkpoint.result.kind === 'pending-adjudication') &&
-              <div className="button-row">
-                <button className="button primary" type="button" onClick={() => void runPositionCheck()} disabled={working}>
-                  {working ? 'Checking position…' : 'Continue position check'}
-                </button>
-                {snapshot.adjudication.status === 'running' && <button className="button secondary" type="button" onClick={() => void stopPositionCheck()}>Stop position check</button>}
-              </div>}
+
           </section>
           <section className="detail-section" aria-labelledby="moves-title">
             <div className="panel-heading"><h2 id="moves-title">Moves</h2><span className="count">{snapshot.checkpoint.rules.moves.length}</span></div>
-            <MoveRows snapshot={snapshot} />
+            <MoveRows snapshot={snapshot} selectedPly={history.ply} onSelect={history.select} />
           </section>
           <section className="detail-section" aria-labelledby="position-title">
             <div className="panel-heading"><h2 id="position-title">Position</h2></div>
-            <p className="fen-value">{snapshot.position.fen}</p>
+            <p className="fen-value">{history.position.fen}</p>
             <p className="muted">Standard chess · White: {playerLabel('white')} · Black: {playerLabel('black')}</p>
           </section>
           <section className="detail-section" aria-labelledby="editor-title">

@@ -118,7 +118,7 @@ async function acceptWitness(
 function createController(gameId: string, now: () => number) {
   return openGameStore({ databaseName: gameId, factory: new IDBFactory(), now }).then((store) => ({
     store,
-    controller: getOrCreateGameController({
+    controller: getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId,
       store,
       timeSource: { sample: (decisionTimeMs) => ({ monotonicMs: now(), wallTimeMs: decisionTimeMs ?? now() }) },
@@ -284,7 +284,7 @@ describe('controller and retained history integration seams', () => {
     const factory = new IDBFactory();
     const now = () => 5_000;
     const store = await openGameStore({ databaseName: gameId, factory, now });
-    const controller = getOrCreateGameController({ gameId, store,
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof', gameId, store,
       timeSource: { sample: (decisionTimeMs) => ({ monotonicMs: now(), wallTimeMs: decisionTimeMs ?? now() }) },
       clockPolicy: { maxReferenceDivergenceMs: 0 } });
     const namespace = { kind: 'guest' as const };

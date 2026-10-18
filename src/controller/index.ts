@@ -23,13 +23,14 @@ import {
   parsePosition,
   recordPosition,
   restoreRepetitionLedger,
-  legalMoves,
+  timeoutWinner,
 } from '../rules/index.js';
 import type { CoordinateMove, Position } from '../rules/index.js';
 import { MAX_FORMAT_CORRECTIONS, MAX_ILLEGAL_MOVE_ATTEMPTS } from '../moves/index.js';
 import type { ModelTurnDecision } from '../moves/index.js';
 import { explainIllegalMove } from '../moves/violations.js';
-import { checkProofEvidence, createDeadnessQuery, createTimeoutMatingQuery, proofQueryIdentity } from '../proofs/index.js';
+import { checkProofEvidence } from '../proofs/checker.js';
+import { createDeadnessQuery, createTimeoutMatingQuery, proofQueryIdentity } from '../proofs/queries.js';
 import type { ProofQuery, ProofSearchPassResult } from '../proofs/index.js';
 import type {
   AppliedMoveV1,
@@ -76,6 +77,8 @@ export interface ControllerTimeSource {
 
 export interface GameControllerOptions {
   gameId: string;
+  /** Legacy proof replay is opt-in; interactive games use bounded Lichess rules. */
+  positionChecks?: 'lichess' | 'legacy-proof';
   /** Stable logical store namespace, such as JSON.stringify(connectionNamespace). Defaults to legacy guest scope. */
   registryScope?: string;
   store: GameStore;
@@ -298,6 +301,7 @@ interface PreparedSetup {
 }
 
 interface RegistryConfiguration {
+  readonly positionChecks: string;
   readonly store: GameStore;
   readonly timeSource: ControllerTimeSource;
   readonly clockPolicy: ClockComparisonPolicy;
@@ -436,6 +440,7 @@ function finalResultForPosition(
   facts: ReturnType<typeof observeEndingFacts>,
   eventId: string,
   decidedAtMs: number,
+  materialChecks = true,
 ): Extract<GameResultV1, { kind: 'final' }> | null {
   const sideToMove = fromPositionColor(position.sideToMove);
   if (facts.checkmate) {
@@ -450,6 +455,9 @@ function finalResultForPosition(
   if (facts.stalemate) {
     return { kind: 'final', winner: 'draw', reason: 'stalemate', eventId, decidedAtMs };
   }
+  if (materialChecks && facts.insufficientMaterial) {
+    return { kind: 'final', winner: 'draw', reason: 'dead-position', eventId, decidedAtMs };
+  }
   if (facts.thirdRepetition) {
     return { kind: 'final', winner: 'draw', reason: 'threefold-repetition', eventId, decidedAtMs };
   }
@@ -457,6 +465,34 @@ function finalResultForPosition(
     return { kind: 'final', winner: 'draw', reason: 'fifty-move-rule', eventId, decidedAtMs };
   }
   return null;
+}
+
+function lichessExtensions(checkpoint: GameCheckpointV1): GameCheckpointV1['extensions'] {
+  const extensions = { ...checkpoint.extensions };
+  delete extensions[ADJUDICATION_EXTENSION];
+  // A legacy undo baseline can itself contain the old proof graph.
+  delete extensions['undo-baseline'];
+  extensions['position-rules'] = { version: 1, data: { policy: 'lichess', chessops: '0.15.1' } };
+  return extensions;
+}
+
+function migrateLichessCheckpoint(checkpoint: GameCheckpointV1, position: Position): GameCheckpointV1 {
+  if (checkpoint.extensions['position-rules'] !== undefined && checkpoint.extensions[ADJUDICATION_EXTENSION] === undefined) return checkpoint;
+  if (checkpoint.result.kind === 'final') {
+    const verified = validateAcceptedAdjudicationEvidence(checkpoint);
+    return { ...verified, extensions: lichessExtensions(verified) };
+  }
+  const ledger = restoreRepetitionLedger({ version: checkpoint.rules.repetitionLedger.version,
+    entries: checkpoint.rules.repetitionLedger.positions });
+  const old = checkpoint.result;
+  const eventId = old.kind === 'pending-adjudication' ? old.eventId : checkpoint.archive.currentLine.eventIds[0] ?? 'rules-migration';
+  let result: GameResultV1 = finalResultForPosition(position, observeEndingFacts(position, ledger), eventId, checkpoint.updatedAtMs) ?? { kind: 'unresolved' };
+  if (result.kind === 'unresolved' && old.kind === 'pending-adjudication' && (old.reason === 'timeout' || (old.activeClockDeadlineMs !== null && checkpoint.clocks.activeSide === null))) {
+    result = { kind: 'final', winner: timeoutWinner(position, position.sideToMove), reason: 'timeout', eventId,
+      decidedAtMs: old.eventAtMs };
+  }
+  return { ...checkpoint, result, extensions: lichessExtensions(checkpoint),
+    clocks: result.kind === 'final' ? { ...checkpoint.clocks, activeSide: null, anchor: null } : checkpoint.clocks };
 }
 
 function sideForCheckpoint(checkpoint: GameCheckpointV1): ClockSide {
@@ -588,6 +624,7 @@ function carriedAdjudicationExtensions(
   extensions: GameCheckpointV1['extensions'],
   candidates: readonly AdjudicationCandidateV1[],
 ): GameCheckpointV1['extensions'] {
+  if (extensions['position-rules'] !== undefined) return withoutExtension(extensions, ADJUDICATION_EXTENSION);
   return {
     ...extensions,
     [ADJUDICATION_EXTENSION]: {
@@ -686,6 +723,7 @@ function rebindPendingCandidates(
   prior: GameCheckpointV1,
   next: GameCheckpointV1,
 ): GameCheckpointV1['extensions'] {
+  if (next.extensions['position-rules'] !== undefined) return withoutExtension(next.extensions, ADJUDICATION_EXTENSION);
   const extension = adjudicationExtension(prior);
   const candidates = extension.data.candidates.map((candidate) => {
     if (candidate.status === 'accepted') return candidate;
@@ -727,6 +765,7 @@ export function prepareOwnershipTakeover(checkpoint: GameCheckpointV1, newEpoch:
     analysisGeneration: checkpoint.analysisGeneration + 1,
     extensions: withHandoff(checkpoint, { producing: null, queued }),
   };
+  if (next.extensions['position-rules'] !== undefined) return next;
   const adjudication = adjudicationExtension(checkpoint);
   const candidates = adjudication.data.candidates.map((candidate) => {
     const query = candidate.kind === 'timeout'
@@ -958,7 +997,71 @@ function handoffSnapshot(checkpoint: GameCheckpointV1): ModelHandoffSnapshotV1 {
 }
 
 function undoBaselineSection(checkpoint: GameCheckpointV1): VersionedExtensionSectionV1 {
-  return { version: 1, data: JSON.parse(JSON.stringify(checkpoint)) as JsonValue };
+  const previous = readUndoBaseline(checkpoint);
+  const points = previous === undefined ? [] : [...undoPoints(previous), compactUndoPoint(previous)];
+  const extensions = withoutExtension(withoutUndoBaseline(checkpoint.extensions), 'undo-points');
+  if (points.length > 0) extensions['undo-points'] = { version: 1, data: jsonSafe(points) };
+  return { version: 1, data: JSON.parse(JSON.stringify({ ...checkpoint, extensions })) as JsonValue };
+}
+
+interface CompactUndoPoint {
+  readonly moveCount: number;
+  readonly eventCount: number;
+  readonly messageCount: number;
+  readonly segmentCount: number;
+  readonly discardedLineCount: number;
+  readonly segmentId: string;
+  readonly selections: GameCheckpointV1['selections'];
+  readonly budgets: GameCheckpointV1['budgets'];
+  readonly extensions: GameCheckpointV1['extensions'];
+}
+
+function undoPoints(checkpoint: GameCheckpointV1): readonly CompactUndoPoint[] {
+  const section = checkpoint.extensions['undo-points'];
+  if (section === undefined) return [];
+  if (section.version !== 1 || !Array.isArray(section.data)) {
+    throw new GameControllerError('saved-game-invalid', 'The saved undo points are invalid.');
+  }
+  return section.data as unknown as readonly CompactUndoPoint[];
+}
+
+function compactUndoPoint(checkpoint: GameCheckpointV1): CompactUndoPoint {
+  return { moveCount: checkpoint.rules.moves.length, eventCount: checkpoint.archive.currentLine.eventIds.length,
+    messageCount: checkpoint.history.messages.length, segmentCount: checkpoint.history.segments.length,
+    discardedLineCount: checkpoint.archive.discardedLines.length, segmentId: checkpoint.segmentId,
+    selections: checkpoint.selections, budgets: checkpoint.budgets,
+    extensions: withoutExtension(withoutUndoBaseline(checkpoint.extensions), 'undo-points') };
+}
+
+/** Rebuild older takebacks from existing ledgers; retain only small turn metadata. */
+function previousUndoCheckpoint(checkpoint: GameCheckpointV1): GameCheckpointV1 | null {
+  const points = undoPoints(checkpoint);
+  const point = points.at(-1);
+  if (point === undefined) return null;
+  if (!Number.isSafeInteger(point.moveCount) || point.moveCount < 0 || point.moveCount >= checkpoint.rules.moves.length ||
+      !Number.isSafeInteger(point.eventCount) || point.eventCount < 0 || point.eventCount > checkpoint.archive.currentLine.eventIds.length ||
+      !Number.isSafeInteger(point.messageCount) || point.messageCount < 0 || point.messageCount > checkpoint.history.messages.length ||
+      !Number.isSafeInteger(point.segmentCount) || point.segmentCount < 1 || point.segmentCount > checkpoint.history.segments.length ||
+      !Number.isSafeInteger(point.discardedLineCount) || point.discardedLineCount < 0 || point.discardedLineCount > checkpoint.archive.discardedLines.length) {
+    throw new GameControllerError('saved-game-invalid', 'The saved undo point does not match the move and archive ledgers.');
+  }
+  const moves = checkpoint.rules.moves.slice(0, point.moveCount);
+  const position = parsePosition(moves.at(-1)?.fenAfter ?? checkpoint.rules.startingFen);
+  let ledger = createRepetitionLedger(parsePosition(checkpoint.rules.startingFen));
+  for (const move of moves) ledger = recordPosition(ledger, parsePosition(move.fenAfter));
+  const extensions = { ...point.extensions };
+  if (points.length > 1) extensions['undo-points'] = { version: 1, data: jsonSafe(points.slice(0, -1)) };
+  return { ...checkpoint, segmentId: point.segmentId, selections: point.selections, budgets: point.budgets,
+    rules: { ...checkpoint.rules, moves, currentFen: position.fen, sideToMove: fromPositionColor(position.sideToMove),
+      castlingRights: position.castlingRights, enPassantSquare: position.enPassantSquare,
+      halfmoveClock: position.halfmoveClock, fullmoveNumber: position.fullmoveNumber,
+      repetitionLedger: { version: 1, positions: ledger.entries.map(entry => ({ ...entry })) } },
+    history: { currentSegmentId: point.segmentId, segments: checkpoint.history.segments.slice(0, point.segmentCount),
+      messages: checkpoint.history.messages.slice(0, point.messageCount) },
+    archive: { ...checkpoint.archive, discardedLines: checkpoint.archive.discardedLines.slice(0, point.discardedLineCount),
+      currentLine: { ...checkpoint.archive.currentLine, eventIds: checkpoint.archive.currentLine.eventIds.slice(0, point.eventCount) } },
+    extensions,
+  };
 }
 
 /**
@@ -1022,49 +1125,6 @@ function eventPayload(
     details,
   };
   return structuredClone(versionedPayload) as unknown as ArchiveEventV1['payload'];
-}
-
-function algebraicNotation(
-  position: Position,
-  move: CoordinateMove,
-  facts: ReturnType<typeof observeEndingFacts>,
-  isCapture: boolean,
-): string {
-  const movingPiece = position.pieces.find((piece) => piece.square === move.from);
-  if (movingPiece === undefined) throw new Error('The legal move has no moving piece.');
-
-  let notation: string;
-  const fileDelta = move.to.charCodeAt(0) - move.from.charCodeAt(0);
-  if (movingPiece.type === 'k' && Math.abs(fileDelta) === 2) {
-    notation = fileDelta > 0 ? 'O-O' : 'O-O-O';
-  } else {
-    const isPawn = movingPiece.type === 'p';
-    let disambiguation = '';
-    if (!isPawn) {
-      const alternatives = legalMoves(position).filter((candidate) => {
-        if (candidate.from === move.from || candidate.to !== move.to) return false;
-        return position.pieces.some(
-          (piece) => piece.square === candidate.from && piece.type === movingPiece.type,
-        );
-      });
-      if (alternatives.length > 0) {
-        const sharesFile = alternatives.some((candidate) => candidate.from[0] === move.from[0]);
-        const sharesRank = alternatives.some((candidate) => candidate.from[1] === move.from[1]);
-        if (!sharesFile) disambiguation = move.from[0] ?? '';
-        else if (!sharesRank) disambiguation = move.from[1] ?? '';
-        else disambiguation = move.from;
-      }
-    }
-
-    const pieceLetter = isPawn ? '' : movingPiece.type.toUpperCase();
-    const captureMarker = isCapture ? 'x' : '';
-    const pawnFile = isPawn && isCapture ? move.from[0] : '';
-    const promotion = move.promotion === undefined ? '' : `=${move.promotion.toUpperCase()}`;
-    notation = `${pieceLetter}${disambiguation}${pawnFile}${captureMarker}${move.to}${promotion}`;
-  }
-
-  if (facts.checkmate) return `${notation}#`;
-  return facts.inCheck ? `${notation}+` : notation;
 }
 
 function recoveryReading(state: ClockState, sample: TimeSample, policy: ClockComparisonPolicy): RecoveryReading {
@@ -1148,6 +1208,7 @@ class IndexedGameController implements GameController {
     private readonly clockPolicy: ClockComparisonPolicy,
     private readonly idFactory: () => string,
     private readonly randomSide: () => ClockSide,
+    private readonly positionChecks: NonNullable<GameControllerOptions['positionChecks']>,
   ) {}
 
   initialize(setup?: GameControllerSetupV1): Promise<ControllerSnapshotV1> {
@@ -1493,9 +1554,11 @@ class IndexedGameController implements GameController {
   startGame(fence: ControllerFenceV1, modelSelection?: ModelSelection): Promise<ControllerSnapshotV1> {
     const operation = this.operationQueue.then(async () => {
       const checkpoint = this.checkpoint;
-      if (checkpoint === null || !sameFence(createFence(checkpoint), fence) || checkpoint.result.kind !== 'pending-adjudication' ||
-          checkpoint.result.reason !== 'dead-position' || checkpoint.clocks.activeSide !== null ||
-          this.adjudicationStatus(checkpoint).status !== 'setup-ready') return this.snapshot();
+      if (checkpoint === null || !sameFence(createFence(checkpoint), fence) || checkpoint.clocks.activeSide !== null) return this.snapshot();
+      const ready = this.positionChecks === 'lichess' ? checkpoint.result.kind === 'unresolved'
+        : checkpoint.result.kind === 'pending-adjudication' && checkpoint.result.reason === 'dead-position' &&
+          this.adjudicationStatus(checkpoint).status === 'setup-ready';
+      if (!ready) return this.snapshot();
       if (modelSelection !== undefined) {
         if (modelSelection.diagnostic !== 'passed-current-session') throw new GameControllerError('invalid-setup', 'A current-session diagnostic must pass before clocks start.');
         modelConfigurationIdentity(modelSelection);
@@ -1646,6 +1709,13 @@ class IndexedGameController implements GameController {
           );
         }
       }
+      const previousUndo = previousUndoCheckpoint(restoredBase);
+      const restoredExtensions = carriedAdjudicationExtensions(
+        restoredBase.extensions,
+        adjudicationExtension(restoredBase).data.candidates.filter(
+          (item) => item.status === 'accepted' && item.query.segmentId === context.checkpoint.segmentId,
+        ),
+      );
       const restoredCheckpoint: GameCheckpointV1 = {
         ...restoredBase,
         revision: context.checkpoint.revision + 1,
@@ -1669,12 +1739,10 @@ class IndexedGameController implements GameController {
             eventIds: [...restoredBase.archive.currentLine.eventIds, event.eventId],
           },
         },
-        extensions: carriedAdjudicationExtensions(
-          restoredBase.extensions,
-          adjudicationExtension(restoredBase).data.candidates.filter(
-            (item) => item.status === 'accepted' && item.query.segmentId === context.checkpoint.segmentId,
-          ),
-        ),
+        extensions: previousUndo === null ? restoredExtensions : {
+          ...withoutExtension(restoredExtensions, 'undo-points'),
+          [UNDO_BASELINE_EXTENSION]: { version: 1, data: jsonSafe(previousUndo) },
+        },
       };
       return {
         checkpoint: restoredCheckpoint,
@@ -2610,7 +2678,7 @@ class IndexedGameController implements GameController {
       });
       const nextLedger = recordPosition(priorLedger, transition.position);
       const endingFacts = observeEndingFacts(transition.position, nextLedger);
-      const san = algebraicNotation(position, transition.move, endingFacts, transition.isCapture);
+      const san = transition.san;
       const nextCheckpoint = {
         ...context.checkpoint,
         revision: context.checkpoint.revision + 1,
@@ -2664,14 +2732,15 @@ class IndexedGameController implements GameController {
         endingFacts,
         moveEvent.eventId,
         context.decisionTimeMs,
+        this.positionChecks === 'lichess',
       );
-      const result = finalResult ?? {
+      const result = finalResult ?? (this.positionChecks === 'lichess' ? { kind: 'unresolved' as const } : {
         kind: 'pending-adjudication' as const,
         reason: 'dead-position' as const,
         eventId: moveEvent.eventId,
         eventAtMs: context.decisionTimeMs,
         activeClockDeadlineMs: clockCandidate.reading.deadline.wallTimeMs,
-      };
+      });
       const rules = {
         ...context.checkpoint.rules,
         currentFen: transition.position.fen,
@@ -2714,7 +2783,7 @@ class IndexedGameController implements GameController {
             modelConfigurationIdentity(handoffData(context.checkpoint).queued!.selection) !== modelConfigurationIdentity(promotion)
             ? handoffData(context.checkpoint).queued : null }) };
       }
-      if (finalResult === null) {
+      if (finalResult === null && this.positionChecks === 'legacy-proof') {
         const query = deadnessQuery(finalCheckpoint);
         const candidateEvent = context.createEvent('deadness-candidate-created', context.decisionTimeMs, createFence(finalCheckpoint), {
           queryIdentity: query.queryIdentity,
@@ -2835,6 +2904,18 @@ class IndexedGameController implements GameController {
       requestGeneration: context.checkpoint.requestGeneration + 1,
       analysisGeneration: context.checkpoint.analysisGeneration + 1,
     };
+    if (this.positionChecks === 'lichess') {
+      return {
+        checkpoint: { ...nextBase,
+          extensions: lichessExtensions(nextBase),
+          clocks: pausedClockCheckpoint(context.checkpoint.clocks.timeControl, reading.remaining, context.decisionTimeMs),
+          result: { kind: 'final', winner: timeoutWinner(context.position, reading.activeSide === 'white' ? 'w' : 'b'),
+            reason: 'timeout', eventId: event.eventId, decidedAtMs: reading.deadline.wallTimeMs },
+          archive: { ...nextBase.archive, currentLine: { ...nextBase.archive.currentLine,
+            eventIds: [...nextBase.archive.currentLine.eventIds, event.eventId] } },
+        }, position: context.position, clockState: null, value: { kind: 'expired' },
+      };
+    }
     const query = timeoutQuery(nextBase, reading.activeSide);
     const timeoutEvent = context.createEvent('timeout-adjudication-candidate-created', reading.deadline.wallTimeMs, fence, {
       queryIdentity: query.queryIdentity,
@@ -3086,7 +3167,18 @@ class IndexedGameController implements GameController {
     if (existing !== null) {
       this.restore(existing.checkpoint, existing.events);
       let snapshot = this.snapshot();
-      if (existing.checkpoint.extensions[ADJUDICATION_EXTENSION] === undefined &&
+      if (this.positionChecks === 'lichess' && (existing.checkpoint.extensions['position-rules'] === undefined ||
+          existing.checkpoint.extensions[ADJUDICATION_EXTENSION] !== undefined)) {
+        const migrated = await this.commitMutation<IntentMutationValue>(snapshot.fence, context => {
+          const event = context.createEvent('position-rules-migrated', context.decisionTimeMs, snapshot.fence, { policy: 'lichess' });
+          return { checkpoint: { ...context.checkpoint,
+            archive: { ...context.checkpoint.archive, currentLine: { ...context.checkpoint.archive.currentLine,
+              eventIds: [...context.checkpoint.archive.currentLine.eventIds, event.eventId] } } },
+            position: context.position, clockState: context.clockState, value: { kind: 'accepted' } };
+        });
+        snapshot = migrated.snapshot;
+      }
+      if (this.positionChecks === 'legacy-proof' && existing.checkpoint.extensions[ADJUDICATION_EXTENSION] === undefined &&
           existing.checkpoint.result.kind === 'unresolved') {
         snapshot = await this.createRestoredPositionCandidate();
       }
@@ -3121,23 +3213,25 @@ class IndexedGameController implements GameController {
           startingFacts,
           eventId,
           decisionTimeMs,
+          this.positionChecks === 'lichess',
         );
-        const setupCandidateEventId = initialResult === null ? nextUniqueId(this.idFactory, usedIds) : null;
+        const needsProof = initialResult === null && this.positionChecks === 'legacy-proof';
+        const setupCandidateEventId = needsProof ? nextUniqueId(this.idFactory, usedIds) : null;
         const checkpointBase = makeCheckpoint(
           this.gameId,
           prepared,
           null,
           decisionTimeMs,
           eventId,
-          initialResult ?? {
+          initialResult ?? (this.positionChecks === 'lichess' ? { kind: 'unresolved' } : {
             kind: 'pending-adjudication',
             reason: 'dead-position',
             eventId: setupCandidateEventId as string,
             eventAtMs: decisionTimeMs,
             activeClockDeadlineMs: null,
-          },
+          }),
         );
-        const checkpoint = initialResult === null
+        const checkpoint = needsProof
           ? {
               ...checkpointBase,
               archive: { ...checkpointBase.archive, currentLine: {
@@ -3161,7 +3255,7 @@ class IndexedGameController implements GameController {
                 },
               }),
             }
-          : checkpointBase;
+          : this.positionChecks === 'lichess' ? { ...checkpointBase, extensions: lichessExtensions(checkpointBase) } : checkpointBase;
         const details: Record<string, unknown> = {
           humanSide: prepared.humanSide,
           startingFen: prepared.startingFen,
@@ -3181,7 +3275,7 @@ class IndexedGameController implements GameController {
           chunkIds: [],
         };
         const events = [event];
-        if (initialResult === null) {
+        if (needsProof) {
           const query = deadnessQuery(checkpoint);
           const candidateEvent: ArchiveEventV1 = {
             eventId: setupCandidateEventId as string,
@@ -3266,7 +3360,8 @@ class IndexedGameController implements GameController {
       version: checkpoint.rules.repetitionLedger.version,
       entries: checkpoint.rules.repetitionLedger.positions.map((entry) => ({ ...entry })),
     });
-    const verifiedCheckpoint = validateAcceptedAdjudicationEvidence(checkpoint);
+    const verifiedCheckpoint = this.positionChecks === 'lichess'
+      ? migrateLichessCheckpoint(checkpoint, position) : validateAcceptedAdjudicationEvidence(checkpoint);
     const adjudication = adjudicationExtension(verifiedCheckpoint);
     const abandonedRunning = adjudication.data.candidates.some((candidate) => candidate.status === 'running');
     const recoveredCheckpoint = abandonedRunning
@@ -3285,7 +3380,7 @@ class IndexedGameController implements GameController {
       : verifiedCheckpoint;
     this.checkpoint = structuredClone(recoveredCheckpoint);
     this.position = position;
-    this.clockState = createClockState(checkpoint);
+    this.clockState = createClockState(recoveredCheckpoint);
     this.restored = this.clockState !== null;
     const currentFence = createFence(recoveredCheckpoint);
     const currentSide = sideForCheckpoint(recoveredCheckpoint);
@@ -3339,6 +3434,7 @@ export function getOrCreateGameController(options: GameControllerOptions): GameC
     throw new GameControllerError('invalid-configuration', 'The game ID must be a nonempty string.');
   }
   assertClockPolicy(options.clockPolicy);
+  const positionChecks = options.positionChecks ?? 'lichess';
   const timeSource = options.timeSource ?? defaultTimeSource;
   const registryScope = options.registryScope ?? 'guest';
   if (typeof registryScope !== 'string' || registryScope.length === 0) {
@@ -3349,6 +3445,7 @@ export function getOrCreateGameController(options: GameControllerOptions): GameC
   if (existing !== undefined) {
     const configured = existing.configuration;
     if (
+      configured.positionChecks !== positionChecks ||
       configured.store !== options.store ||
       configured.timeSource !== timeSource ||
       !samePolicy(configured.clockPolicy, options.clockPolicy)
@@ -3367,10 +3464,12 @@ export function getOrCreateGameController(options: GameControllerOptions): GameC
     { ...options.clockPolicy },
     options.idFactory ?? defaultIdFactory,
     options.randomSide ?? defaultRandomSide,
+    positionChecks,
   );
   registry.set(registryKey, {
     controller,
     configuration: {
+      positionChecks,
       store: options.store,
       timeSource,
       clockPolicy: { ...options.clockPolicy },
