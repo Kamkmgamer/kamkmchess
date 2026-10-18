@@ -13,13 +13,16 @@ describe('landing integration with the playable workspace', () => {
     expect(markup).not.toContain('Preview options');
   });
 
-  it('shows a validated custom position without enabling opening replay', () => {
+  it('shows a finished custom position with the demo players and result', () => {
     const position = parsePosition('7k/6Q1/6K1/8/8/8/8/8 b - - 0 1');
     const markup = renderToStaticMarkup(<OpeningPreview setup={{ ...defaultSetup, humanColor: 'b', start: { kind: 'custom', position } }} onOptions={() => {}} />);
     expect(markup.match(/class="board-square"/g)).toHaveLength(64);
-    expect(markup).toContain('You play Black');
-    expect(markup).toContain('Black to move');
-    expect(markup).toContain('This position is checkmate.');
+    expect(markup).toContain('Stockfish 19');
+    expect(markup).toContain('GPT-6.9-Astra');
+    expect(markup).toContain('alt="Stockfish logo"');
+    expect(markup).toContain('alt="ChatGPT logo"');
+    expect(markup).toContain('Black at the bottom');
+    expect(markup).toContain('White wins by checkmate.');
     expect(markup).not.toContain('Next move');
   });
 });

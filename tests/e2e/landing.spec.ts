@@ -21,6 +21,10 @@ for (const [device, viewport] of [
     await page.goto('/');
     await expect(page.getByRole('heading', { level: 1 })).toContainText('Chess against a');
     await page.screenshot({ path: testInfo.outputPath(`homepage-${device}.png`) });
+    await page.locator('#opening-preview').getByRole('button', { name: 'Pause game', exact: true }).click();
+    await page.screenshot({ path: testInfo.outputPath(`demo-${device}.png`), fullPage: true });
+    await page.goto('/');
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
     await page.locator('.hero-introduction [data-slot="button"]').click();
     await expect(page.locator('.right-game-sidebar')).toBeVisible();
     await expect(page).toHaveURL(/\/$/);
@@ -44,13 +48,25 @@ for (const [device, viewport] of [
   });
 }
 
-test('the mobile replay stays local and navigation opens real game options', async ({ page, baseURL }) => {
+test('the mobile demo autoplays locally and navigation opens real game options', async ({ page, baseURL }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const providerCalls: string[] = [];
   page.on('request', request => { if (request.url().includes('/v1/')) providerCalls.push(request.url()); });
   await page.goto('/');
-  await page.getByRole('button', { name: 'Next move', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'White plays e4' })).toBeVisible();
+  const preview = page.locator('#opening-preview');
+  await expect(preview.getByAltText('Stockfish logo')).toBeVisible();
+  await expect(preview.getByAltText('ChatGPT logo')).toBeVisible();
+  await expect.poll(async () => Number((await preview.locator('.move-count').innerText()).split(' ')[0])).toBeGreaterThan(6);
+  await preview.getByRole('button', { name: 'Pause game', exact: true }).click();
+  const pausedCount = await preview.locator('.move-count').innerText();
+  await page.waitForTimeout(750);
+  await expect(preview.locator('.move-count')).toHaveText(pausedCount);
+  await preview.getByRole('button', { name: 'Resume game', exact: true }).click();
+  await expect(preview.locator('.move-count')).not.toHaveText(pausedCount);
+  await preview.getByRole('button', { name: 'Restart game', exact: true }).click();
+  await preview.getByRole('button', { name: 'Pause game', exact: true }).click();
+  expect(Number((await preview.locator('.move-count').innerText()).split(' ')[0])).toBeLessThan(3);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByRole('button', { name: 'Board options', exact: true }).click();
   await expect(page.getByRole('group', { name: 'Visual starting position board' })).toBeVisible();
   await page.getByLabel('Custom starting position (six-field FEN)').fill('4k3/8/8/8/8/8/8/4K2R w - - 0 1');

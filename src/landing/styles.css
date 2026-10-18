@@ -195,7 +195,9 @@ body { margin: 0; }
 .preview-player-identity > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player-piece { display: block; flex-shrink: 0; width: var(--space-3); height: var(--space-3); border-radius: var(--radius-inner); background: #202124; border: var(--line-hair) solid #fff; }
 .player-piece[data-side='w'] { background: #fff; border-color: #202124; }
-.preview-clock { font: var(--type-heading-sm); font-variant-numeric: tabular-nums; }
+.preview-player-logo { width: var(--space-8); height: var(--space-8); padding: var(--space-1); object-fit: contain; flex-shrink: 0; background: #fff; border-radius: var(--radius-inner); }
+.preview-player-side { display: flex; align-items: center; gap: var(--space-2); color: var(--text-2); font: var(--type-label-sm); }
+.preview-player-row[data-active] .preview-player-side { color: var(--text-1); font-weight: var(--weight-strong); }
 .chessboard { display: grid; grid-template-columns: repeat(8, 1fr); aspect-ratio: 1; overflow: hidden; border-radius: var(--radius-inner); }
 .board-square { position: relative; display: grid; place-items: center; aspect-ratio: 1; background: var(--surface-page); }
 .board-square[data-color='dark'] { background: color-mix(in oklch, var(--paper), var(--ink) 34%); color: var(--ink); }
@@ -212,7 +214,7 @@ body { margin: 0; }
 .move-count { color: var(--text-2); font: var(--type-label); font-variant-numeric: tabular-nums; }
 .move-buttons { display: flex; align-items: center; gap: var(--space-2); }
 .move-buttons > [data-slot='button']:last-child { flex: 1; }
-.opening-moves { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--space-2); margin-block: var(--space-4); padding: 0; list-style: none; }
+.opening-moves { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--space-2); min-height: var(--control); margin-block: var(--space-4); padding: 0; list-style: none; }
 .opening-moves li { display: flex; align-items: center; justify-content: center; gap: var(--space-1); min-height: var(--control); color: var(--text-2); font: var(--type-label); }
 .opening-moves .move-number { display: none; }
 .opening-moves [data-played] { color: var(--text-2); }

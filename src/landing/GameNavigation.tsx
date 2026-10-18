@@ -36,7 +36,7 @@ export function GameNavigation({ onOptions, onNavigate, onAppearance }: GameNavi
           <Icon icon={Home} size={24} /><span>Home</span>
         </a>
         <a className="sidebar-row" href="#opening-preview" aria-current={section === '#opening-preview' ? 'location' : undefined} onClick={onNavigate}>
-          <Icon icon={ChessKnight} size={24} /><span>Opening preview</span>
+          <Icon icon={ChessKnight} size={24} /><span>Watch a game</span>
         </a>
         <a className="sidebar-row" href="#the-idea" aria-current={section === '#the-idea' ? 'location' : undefined} onClick={onNavigate}>
           <Icon icon={Book} size={24} /><span>How it works</span>
