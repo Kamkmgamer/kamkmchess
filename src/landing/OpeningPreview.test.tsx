@@ -8,7 +8,9 @@ import { GameNavigation } from './GameNavigation';
 describe('landing integration with the playable workspace', () => {
   it('links the primary play action to the existing game', () => {
     const markup = renderToStaticMarkup(<GameNavigation onOptions={() => {}} onNavigate={() => {}} onAppearance={() => {}} />);
-    expect(markup).toMatch(/<a[^>]+href="\/play"[^>]*>[\s\S]*?Play against AI/);
+    expect(markup).toMatch(/<button[^>]*>[\s\S]*?AI opponent/);
+    expect(markup).not.toContain('Opponent label');
+    expect(markup).not.toContain('Preview options');
   });
 
   it('shows a validated custom position without enabling opening replay', () => {

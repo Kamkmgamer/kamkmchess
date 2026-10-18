@@ -9,7 +9,6 @@ async function openMode(page: Page, mode: string) {
   await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption(mode);
-  if (mode !== 'engine-ai') await page.getByRole('button', { name: 'Next', exact: true }).click();
 }
 
 async function prepareEngine(panel: Locator, engine = 'stockfish-lite', workers?: Set<Worker>) {
@@ -17,21 +16,20 @@ async function prepareEngine(panel: Locator, engine = 'stockfish-lite', workers?
   await panel.getByRole('combobox', { name: 'Thinking time per move' }).selectOption('1000');
   await expect(panel.getByText('Ready', { exact: true })).toBeVisible({ timeout: engine === 'stockfish-full' ? 30_000 : 12_000 });
   if (workers) await expect.poll(() => workers.size).toBe(0);
-  await panel.page().getByRole('button', { name: 'Next', exact: true }).click();
 }
 
 async function prepareAi(page: Page, side: 'White' | 'Black', modelId = `${side.toLowerCase()}-fixture`) {
-  await expect(page.getByRole('region', { name: 'AI model', exact: true })).toHaveAttribute('aria-busy', 'false');
-  if (await page.getByLabel('API key', { exact: true }).isVisible()) {
-    await page.getByLabel('API key', { exact: true }).fill('offline-test-key');
-    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  const panel = page.getByRole('region', { name: `${side} opponent setup`, exact: true });
+  await expect(panel.getByRole('region', { name: 'AI model', exact: true })).toHaveAttribute('aria-busy', 'false');
+  if (await panel.getByLabel('API key', { exact: true }).isVisible()) {
+    await panel.getByLabel('API key', { exact: true }).fill('offline-test-key');
+    await panel.getByRole('button', { name: 'Connect', exact: true }).click();
   }
-  await page.getByLabel('Available models').selectOption(modelId);
-  const consent = page.getByRole('button', { name: 'Allow', exact: true });
-  await expect(page.getByLabel('Available models').or(consent)).toBeVisible();
+  await panel.getByLabel('Available models').selectOption(modelId);
+  const consent = panel.getByRole('button', { name: 'Allow', exact: true });
+  await expect(panel.getByLabel('Available models').or(consent)).toBeVisible();
   if (await consent.isVisible()) await consent.click();
-  await expect(page.getByText('Ready', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(panel.getByText('Ready', { exact: true })).toBeVisible();
 }
 
 async function aiFixture(page: Page) {
@@ -56,12 +54,12 @@ async function aiFixture(page: Page) {
   return turns;
 }
 
-test('downloads Stockfish in the browser under production CSP and resumes from cache after reload', async ({ page }, testInfo) => {
+test('downloads Stockfish in the browser under production CSP and resumes from cache after reload', async ({ page, baseURL }, testInfo) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   const configuration = JSON.parse(readFileSync('vercel.json', 'utf8')) as { headers: { headers: { key: string; value: string }[] }[] };
   const csp = configuration.headers[0]!.headers.find(header => header.key === 'Content-Security-Policy')!.value;
-  await page.route('http://127.0.0.1:5175/play', async route => {
+  await page.route(`${baseURL}/play`, async route => {
     const response = await route.fetch();
     await route.fulfill({ response, headers: { ...response.headers(), 'Content-Security-Policy': csp } });
   });
@@ -131,13 +129,13 @@ test('two browser engines use Lite evaluation, release workers after setup and S
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await expect.poll(() => workers.size).toBe(0);
   await page.getByLabel('Game mode').selectOption('local');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(page.locator('.evaluation-bar')).toHaveCount(0);
   expect(workers.size).toBe(0);
 });
 
-test('a finished engine match releases its opponent workers and keeps only visible Lite evaluation', async ({ page }) => {
+test('a finished engine match releases its opponent workers and keeps the board full size with game settings open', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
   const workers = new Set<Worker>();
   page.on('worker', worker => {
     workers.add(worker);
@@ -154,15 +152,20 @@ test('a finished engine match releases its opponent workers and keeps only visib
   await expect(page.locator('.evaluation-bar')).toHaveAttribute('data-state', 'ready');
   await expect(page.locator('.evaluation-bar')).toHaveAttribute('data-engine', 'Stockfish 19 Lite');
   await expect.poll(() => workers.size).toBe(1);
+  const boardWidth = (await page.locator('cg-board').boundingBox())!.width;
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await expect.poll(() => workers.size).toBe(0);
+  await expect.poll(async () => (await page.locator('cg-board').boundingBox())!.width).toBeGreaterThanOrEqual(boardWidth - 1);
+  await page.screenshot({ path: testInfo.outputPath('finished-engine-board-with-drawer.png') });
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.locator('.evaluation-bar')).toHaveAttribute('data-state', 'ready');
+  await expect.poll(async () => (await page.locator('cg-board').boundingBox())!.width).toBeCloseTo(boardWidth, 0);
 });
 
 test('a browser engine plays an LLM with either seat independently configured', async ({ page }) => {
   const turns = await aiFixture(page);
   await openMode(page, 'engine-ai');
   await page.getByLabel('Engine plays').selectOption('black');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await prepareAi(page, 'White');
   await prepareEngine(page.getByRole('region', { name: 'Black engine', exact: true }));
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
@@ -196,11 +199,13 @@ test('two LLMs alternate with separate routing IDs and side-specific plans', asy
   expect(engineDownloads.every(url => url.includes('lite-single'))).toBe(true);
   await expect.poll(() => page.locator('.player-row img').evaluateAll(images => images.every(image =>
     image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true);
+  await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('light');
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.screenshot({ path: testInfo.outputPath('opponent-logos-desktop.png'), fullPage: true });
+  await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('dark');
   await page.getByRole('button', { name: 'Close', exact: true }).click();

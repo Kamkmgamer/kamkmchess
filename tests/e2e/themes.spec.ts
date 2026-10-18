@@ -78,7 +78,8 @@ test('theme choices persist through reload and both directions of navigation', a
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'grove');
   await expect(page.locator('html')).toHaveAttribute('data-appearance', 'dark');
-  await page.locator('.hero-introduction').getByRole('link', { name: 'Play against AI', exact: true }).click();
+  await page.goto('/play');
+  await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Theme', exact: true })).toHaveValue('grove');
   await expect(page.getByRole('combobox', { name: 'Appearance', exact: true })).toHaveValue('dark');
@@ -108,6 +109,7 @@ test('mobile appearance follows the system and synchronizes changes from another
   await page.screenshot({ path: testInfo.outputPath('ember-light-mobile.png'), fullPage: true });
   const other = await context.newPage();
   await other.goto('/play');
+  await other.getByRole('button', { name: 'New game', exact: true }).click();
   await other.getByRole('button', { name: 'Settings', exact: true }).click();
   await other.getByRole('combobox', { name: 'Theme', exact: true }).selectOption('iris');
   await other.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('dark');

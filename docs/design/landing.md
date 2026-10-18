@@ -162,3 +162,12 @@ Intersection observers pause the loop when the hero is offscreen or the foregrou
 The owner requested the original generated image instead of the video, a more prominent dither, and a fix for the gaps at the bottom. The active media is now the unchanged `public/images/hero-options/01-knight-vs-models.png` at 1672 × 941, requested with high fetch priority. The video import, element, ref and playback effect are removed from the active page. The video file and earlier poster remain available as project assets.
 
 The selected bottom gradient retains charcoal `#24242a`, with paint opacity increased from 0.65 to 0.92 and primary/secondary cell sizes increased to 4/6 px. Its 12-second animation, visibility pausing and reduced-motion fallback remain. The visible lower strip matched the media panel's 12 px bottom inset; the media now meets the hero's bottom edge while preserving its upper/side insets and rounded corners. The dither wrapper extends one pixel past the clipped media bounds, and animated layers overscan by 24 px vertically and 4 px horizontally, exceeding their 8 px travel so they cannot expose the lower edge during drift.
+
+
+## Functional right-hand game options
+
+AI opponent opens the right-hand options drawer on the homepage. The same drawer opens from New game on the play page. Its real form configures game mode, side, provider connections, model selection, clocks and a custom starting position. Starting from home saves the match before navigating to `/play`; closing the drawer preserves the current match. There is no separate New Game page or setup wizard. The play header's redundant AI opponent and Settings icons are removed; appearance and archive controls remain accessible through Settings inside the drawer.
+
+The redundant Preview options group, including Opponent label, Time control and Board setup, has been removed from the left navigation. The opening preview's Board options action also opens real game configuration.
+
+The right drawer collapses to a reopen button and resizes from 320 to 720 px by dragging its left edge or using arrow keys. Home and End choose the bounds, and Enter or a double-click resets 420 px. Width and collapsed state persist in `kamkmchess.game-options.v1`. On narrow screens the drawer fits within the viewport and uses modal focus management. The left navigation retains the homepage layout from PR #25.

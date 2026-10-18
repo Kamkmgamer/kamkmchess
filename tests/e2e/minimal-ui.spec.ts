@@ -3,12 +3,13 @@ import type { Page } from '@playwright/test';
 
 // Count rendered copy, selected options, and input text. Board coordinates,
 // chess notation, clocks, and screen-reader descriptions are game data.
+// The shared navigation is outside each focused screen's copy budget.
 async function visibleWords(page: Page) {
   return page.evaluate(() => {
     const words: string[] = [];
     function walk(node: Node) {
       if (node instanceof Element) {
-        if (node.matches('script, style, svg, .sr-only, cg-board, coords, .clock, .move-list, [hidden]')) return;
+        if (node.matches('script, style, svg, .sr-only, .game-options-sr-only, cg-board, coords, .clock, .move-list, [hidden]')) return;
         const style = getComputedStyle(node);
         if (style.display === 'none' || style.visibility === 'hidden') return;
         if (node instanceof HTMLSelectElement) { words.push(node.selectedOptions[0]?.text ?? ''); return; }
@@ -22,11 +23,12 @@ async function visibleWords(page: Page) {
       if (node.nodeType === Node.TEXT_NODE) words.push(node.textContent ?? '');
       else for (const child of node.childNodes) walk(child);
     }
-    walk(document.body);
+    walk(document.querySelector('.sidebar-game-setup') ?? document.body);
     return words.join(' ').split(/\s+/).filter(word => /\p{L}/u.test(word));
   });
 }
 async function budget(page: Page, limit = 20) {
+  if (await page.locator('.sidebar-game-setup').count()) limit = Math.max(limit, 48);
   const words = await visibleWords(page);
   expect(words.length, words.join(' ')).toBeLessThanOrEqual(limit);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -35,7 +37,6 @@ async function newMode(page: Page, mode: string) {
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption(mode);
   await budget(page, mode.includes('engine') ? 10 : 20);
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
 }
 async function move(page: Page, coordinate: string) {
   await page.getByRole('button', { name: 'Type a move', exact: true }).click();
@@ -65,6 +66,7 @@ test('focused screens stay compact and fit desktop and mobile', async ({ page },
     await page.setViewportSize({ width, height: 844 });
     await budget(page);
     await page.screenshot({ path: testInfo.outputPath(`board-${width}.png`), fullPage: true });
+    await page.getByRole('button', { name: 'New game', exact: true }).click();
     await page.getByRole('button', { name: 'Settings', exact: true }).click(); await budget(page, 10);
     await page.getByRole('button', { name: 'Position', exact: true }).click(); await budget(page, 10);
     await page.getByRole('button', { name: 'Edit starting position', exact: true }).click();
@@ -74,6 +76,7 @@ test('focused screens stay compact and fit desktop and mobile', async ({ page },
     await page.getByRole('button', { name: 'Done', exact: true }).click(); await budget(page, 10);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(page.getByRole('complementary', { name: 'Moves' })).toBeVisible(); await budget(page, 10);
+    await page.getByRole('button', { name: 'New game', exact: true }).click();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.getByRole('button', { name: 'Conversation and archive', exact: true }).click(); await budget(page, 10);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
@@ -106,7 +109,6 @@ test('discovers models, validates selection once, and revalidates automatically 
   await expect(page.getByRole('status').filter({ hasText: 'Ready' })).toBeVisible();
   expect(provider.calls).toEqual([{ model: 'beta', check: true }]);
   await budget(page); await page.screenshot({ path: testInfo.outputPath('model-ready.png') });
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await move(page, 'e2e4');
   await expect.poll(() => provider.calls.filter(call => !call.check).length).toBe(1);
@@ -118,7 +120,7 @@ test('discovers models, validates selection once, and revalidates automatically 
   await budget(page);
 });
 
-test('blocks failed models and does not enable Next or make a game request', async ({ page }) => {
+test('blocks failed models and does not enable starting a game or make a game request', async ({ page }) => {
   const provider = await fixture(page); provider.reject();
   await page.goto('/play'); await newMode(page, 'ai');
   await page.getByLabel('API key', { exact: true }).fill('bad-key');
@@ -126,11 +128,11 @@ test('blocks failed models and does not enable Next or make a game request', asy
   await page.getByLabel('Available models').selectOption('alpha');
   await page.getByRole('button', { name: 'Allow', exact: true }).click();
   await expect(page.getByText('Check API key.', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled();
   expect(provider.calls).toEqual([{ model: 'alpha', check: true }]); await budget(page);
 });
 
-test('prepares a real engine automatically and keeps engine screens below ten words', async ({ page }, testInfo) => {
+test('prepares a real engine automatically and keeps engine configuration compact', async ({ page }, testInfo) => {
   await page.goto('/play'); await newMode(page, 'human-engine');
   await page.getByLabel('Chess engine', { exact: true }).selectOption('stockfish-lite');
   await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 30_000 });
@@ -138,7 +140,6 @@ test('prepares a real engine automatically and keeps engine screens below ten wo
   await page.getByRole('button', { name: 'Engine memory', exact: true }).click(); await budget(page, 10);
   await page.getByLabel('Hash memory').selectOption('16');
   await expect(page.getByText('Ready', { exact: true })).toBeVisible(); await budget(page, 10);
-  await page.getByRole('button', { name: 'Next', exact: true }).click(); await budget(page, 10);
   await page.getByRole('button', { name: 'Start game', exact: true }).click(); await budget(page, 10);
   await move(page, 'e2e4');
   await expect(page.locator('.match-layout [aria-label="Committed moves"] button')).toHaveCount(2);

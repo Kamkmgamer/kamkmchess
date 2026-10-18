@@ -5,15 +5,17 @@ import { Icon, Bot, Close, ChessKnight, SidePanelOpen } from '../components/quar
 import { useQuartzPortal } from '../lib/quartz/portal';
 import { OpeningPreview } from './OpeningPreview';
 import { Questions } from './Questions';
-import { GameOptions } from './GameOptions';
 import { HeroDither } from './HeroDither';
 import { resolveHeroDitherVariant } from './hero-dither';
 import { GameNavigation, type OptionsFocus } from './GameNavigation';
-import { defaultSetup, defaultSetupDraft, type PreviewSetup } from './game-setup';
+import { defaultSetup } from './game-setup';
 import { useTheme } from '../use-theme';
 import { ThemeOptions } from './ThemeOptions';
+import { RightGameSidebar } from '../navigation/RightGameSidebar';
+import { HomeGameSetup } from './HomeGameSetup';
+import { readSidebarPreferences } from '../navigation/sidebar-preferences';
 
-type SidebarPanel = { kind: 'closed' } | { kind: 'navigation' } | { kind: 'options'; focus: OptionsFocus } | { kind: 'appearance' };
+type SidebarPanel = { kind: 'closed' } | { kind: 'navigation' } | { kind: 'appearance' };
 
 function Wordmark() {
   return (
@@ -26,18 +28,13 @@ function Wordmark() {
 
 export function App() {
   const theme = useTheme();
+  const [gameOptions, setGameOptions] = useState<{ open: boolean; focus: 'opponent' | 'time' | 'position' | null }>(() => ({ open: !readSidebarPreferences().collapsed, focus: null }));
   const [panel, setPanel] = useState<SidebarPanel>({ kind: 'closed' });
   const sidebarOpen = panel.kind !== 'closed';
-  const [setup, setSetup] = useState(defaultSetup);
-  const [draft, setDraft] = useState(defaultSetupDraft);
-  const [setupRevision, setSetupRevision] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
-  const previewRef = useRef<HTMLDivElement>(null);
   const ditherVariant = resolveHeroDitherVariant(typeof window === 'undefined' ? '' : window.location.search);
   const portal = useQuartzPortal();
-  const appliedFromDialog = useRef(false);
-  const panelFocusSelector = panel.kind === 'appearance' ? 'select'
-    : panel.kind === 'options' ? `[name="${panel.focus ?? 'modelId'}"]` : null;
+  const panelFocusSelector = panel.kind === 'appearance' ? 'select' : null;
 
   useEffect(() => {
     const media = window.matchMedia('(min-width: 1001px)');
@@ -53,41 +50,31 @@ export function App() {
     return () => cancelAnimationFrame(frame);
   }, [panelFocusSelector]);
 
-  function openOptions(focus: OptionsFocus = null) {
-    appliedFromDialog.current = false;
-    if (focus === 'fen' && draft.start.kind !== 'custom') setDraft({ ...draft, start: { kind: 'custom', fen: '' } });
-    setPanel({ kind: 'options', focus });
-  }
-
   function closeNavigation() {
     setPanel({ kind: 'closed' });
   }
 
+  function openGameOptions(focus: OptionsFocus = null) {
+    setPanel({ kind: 'closed' });
+    setGameOptions({ open: true, focus: focus === 'modelId' ? 'opponent' : focus === 'minutes' ? 'time' : focus === 'fen' ? 'position' : null });
+  }
+
   function openAppearance() {
-    appliedFromDialog.current = false;
     setPanel({ kind: 'appearance' });
   }
 
-  function applySetup(next: PreviewSetup) {
-    appliedFromDialog.current = sidebarOpen;
-    setSetup(next);
-    setSetupRevision((revision) => revision + 1);
-    setPanel({ kind: 'closed' });
-    // Wait for the updated board before moving focus; the modal restores it here too.
-    requestAnimationFrame(() => {
-      previewRef.current?.scrollIntoView({ block: 'start' });
-      previewRef.current?.focus({ preventScroll: true });
-    });
-  }
-
   return (
+    <>
+    <RightGameSidebar open={gameOptions.open} onOpenChange={open => setGameOptions(current => ({ ...current, open }))}>
+      {close => <HomeGameSetup onClose={close} focus={gameOptions.focus} />}
+    </RightGameSidebar>
     <Dialog.Root open={sidebarOpen} onOpenChange={(open) => { if (!open) closeNavigation(); }}>
       <a className="skip-link" href="#main">Skip to content</a>
       <aside className="game-sidebar" aria-label="Main sidebar">
         <Wordmark />
-        <GameNavigation onOptions={openOptions} onNavigate={closeNavigation} onAppearance={openAppearance} />
+        <GameNavigation onOptions={openGameOptions} onNavigate={closeNavigation} onAppearance={openAppearance} />
       </aside>
-      <Button className="mobile-menu-trigger" variant="secondary" size="icon-lg" aria-label="Open navigation" aria-haspopup="dialog" aria-expanded={panel.kind === 'navigation'} onClick={() => { appliedFromDialog.current = false; setPanel({ kind: 'navigation' }); }}>
+      <Button className="mobile-menu-trigger" variant="secondary" size="icon-lg" aria-label="Open navigation" aria-haspopup="dialog" aria-expanded={panel.kind === 'navigation'} onClick={() => { setPanel({ kind: 'navigation' }); }}>
         <Icon icon={SidePanelOpen} size={24} />
       </Button>
 
@@ -109,7 +96,7 @@ export function App() {
           <div className="hero-introduction page-width">
             <h1 id="hero-heading">Chess against a<br />different mind.</h1>
             <p>Play against AI models that choose their own moves.<br className="desktop-break" /> A familiar game, with a new kind of opponent.</p>
-            <Button size="lg" render={<a href="/play" />} nativeButton={false} role="link">Play against AI</Button>
+            <Button size="lg" onClick={() => openGameOptions('modelId')}>Play against AI</Button>
           </div>
         </section>
 
@@ -119,7 +106,7 @@ export function App() {
               <div className="idea-heading">
                 <h2 id="idea-heading">Choose your<br />AI opponent.</h2>
                 <p>Connect your provider or proxy, choose an available model, and start a match.</p>
-                <Button className="section-action" size="lg" render={<a href="/play" />} nativeButton={false} role="link"><Icon icon={Bot} size={24} />Choose AI model</Button>
+                <Button className="section-action" size="lg" onClick={() => openGameOptions('modelId')}><Icon icon={Bot} size={24} />Choose AI model</Button>
               </div>
               <figure className="opponent-study">
                 <img src="/images/model-opponents.jpg" alt="An ivory knight faces a lineup of black chess sculptures crowned with AI model marks." width={1672} height={941} loading="lazy" decoding="async" />
@@ -127,8 +114,8 @@ export function App() {
             </div>
           </section>
 
-          <div className="preview-focus-target" ref={previewRef} tabIndex={-1} aria-label="Board preview">
-            <OpeningPreview key={setupRevision} setup={setup} onOptions={() => openOptions()} />
+          <div className="preview-focus-target" tabIndex={-1} aria-label="Board preview">
+            <OpeningPreview setup={defaultSetup} onOptions={() => openGameOptions('fen')} />
           </div>
 
           <Questions />
@@ -139,7 +126,7 @@ export function App() {
                 <p>Built by two friends. Still taking shape.</p>
               </div>
               <div className="footer-actions">
-                <Button variant="secondary" size="lg" render={<a href="/play" />} nativeButton={false} role="link">Play against AI</Button>
+                <Button variant="secondary" size="lg" onClick={() => openGameOptions('modelId')}>Play against AI</Button>
                 <a href="#home">Back to the top</a>
               </div>
             </div>
@@ -154,18 +141,18 @@ export function App() {
       <Dialog.Portal {...(portal ? { container: portal } : {})}>
         <Dialog.Backdrop className="sidebar-backdrop" />
         {/* Each panel needs its own focus manager when replacing the mobile menu. */}
-        <Dialog.Popup key={panel.kind} ref={panelRef} className={`sidebar-panel${panel.kind === 'navigation' ? ' sidebar-panel-navigation' : ''}`} initialFocus={() => panelFocusSelector ? panelRef.current?.querySelector<HTMLElement>(panelFocusSelector) ?? true : true} finalFocus={() => appliedFromDialog.current ? previewRef.current : true}>
+        <Dialog.Popup key={panel.kind} ref={panelRef} className={`sidebar-panel${panel.kind === 'navigation' ? ' sidebar-panel-navigation' : ''}`} initialFocus={() => panelFocusSelector ? panelRef.current?.querySelector<HTMLElement>(panelFocusSelector) ?? true : true}>
           <div className="mobile-sidebar-heading">
-            <Dialog.Title>{panel.kind === 'navigation' ? 'kamkm chess' : panel.kind === 'appearance' ? 'Appearance' : 'Preview options'}</Dialog.Title>
+            <Dialog.Title>{panel.kind === 'navigation' ? 'kamkm chess' : 'Appearance'}</Dialog.Title>
             <Dialog.Close render={<Button variant="ghost" size="icon-lg" aria-label="Close menu" />}><Icon icon={Close} /></Dialog.Close>
           </div>
-          <Dialog.Description className="visually-hidden">{panel.kind === 'navigation' ? 'Explore chess, set up a game or find help.' : panel.kind === 'appearance' ? 'Choose a theme and light, dark or system appearance.' : 'Choose your side, clocks, opponent label and starting position for the board preview.'}</Dialog.Description>
+          <Dialog.Description className="visually-hidden">{panel.kind === 'navigation' ? 'Explore chess, set up a game or find help.' : 'Choose a theme and light, dark or system appearance.'}</Dialog.Description>
           {panel.kind === 'navigation'
-            ? <GameNavigation onOptions={openOptions} onNavigate={closeNavigation} onAppearance={openAppearance} />
-            : panel.kind === 'appearance' ? <ThemeOptions {...theme} />
-              : <GameOptions draft={draft} onDraftChange={setDraft} onApply={applySetup} />}
+            ? <GameNavigation onOptions={openGameOptions} onNavigate={closeNavigation} onAppearance={openAppearance} />
+            : <ThemeOptions {...theme} />}
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
+    </>
   );
 }

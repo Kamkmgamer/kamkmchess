@@ -53,7 +53,6 @@ async function configure(page: Page, side = 'white') {
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('ai');
   await page.getByLabel('Your side').selectOption(side);
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByLabel('Provider').selectOption('custom');
   await page.getByLabel('Base URL', { exact: true }).fill(endpoint);
   await page.getByRole('button', { name: 'Advanced connection settings', exact: true }).click();
@@ -64,7 +63,6 @@ async function configure(page: Page, side = 'white') {
   await page.getByLabel('Available models').selectOption('offline-fixture');
   await page.getByRole('button', { name: 'Allow', exact: true }).click();
   await expect(page.getByText('Ready', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
 }
 async function move(page: Page, coordinate: string) {
@@ -74,10 +72,13 @@ async function move(page: Page, coordinate: string) {
   await page.getByRole('button', { name: 'Play move', exact: true }).click();
 }
 async function selectModel(page: Page, model = 'offline-candidate') {
-  await page.getByLabel('Available models').selectOption(model);
+  const panel = page.getByRole('region', { name: 'AI model', exact: true });
+  await expect(panel).toHaveAttribute('aria-busy', 'false');
+  await panel.getByLabel('Available models').selectOption(model);
   await expect.poll(async () => await page.getByText('Ready', { exact: true }).isVisible() || await page.locator('.match-layout').isVisible()).toBe(true);
 }
 async function archivedText(page: Page) {
+  await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download match archive', exact: true }).click();
@@ -169,7 +170,7 @@ test('cancels premoves and keeps a reviewed position while the AI finishes', asy
   await page.getByRole('button', { name: 'Cancel premove' }).click();
   await expect(page.locator('square.current-premove:visible')).toHaveCount(0);
   await dragBoardMove(page, 'g1', 'f3');
-  await page.getByRole('link', { name: 'Kamkm Chess home' }).click();
+  await page.getByRole('button', { name: 'Flip board', exact: true }).focus();
   await page.keyboard.press('Home');
   await expect(page.getByRole('button', { name: 'Cancel premove' })).toHaveCount(0);
   release?.();
@@ -283,9 +284,7 @@ test('Undo keeps the discarded conversation and the same model can start another
   expect(JSON.stringify(fixture.modelCalls[1])).not.toContain('e4 e5');
   expect(JSON.stringify(fixture.modelCalls[1])).not.toContain('retained plan 1');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await selectModel(page, 'offline-fixture');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'White to move', exact: true })).toBeVisible();
 });
@@ -387,20 +386,18 @@ test('CLIProxyAPI discovers models, preserves consent cancellation, and plays', 
   await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('ai');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByLabel('API key', { exact: true }).fill('offline-key');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await page.getByLabel('Available models').selectOption('offline-fixture');
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(fixture.calls).toHaveLength(0);
-  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled();
   await page.getByLabel('Available models').selectOption('offline-fixture');
   await page.getByRole('button', { name: 'Allow', exact: true }).click();
   await expect(page.getByText('Ready', { exact: true })).toBeVisible();
   expect(fixture.calls).toHaveLength(1);
   await selectModel(page, 'another-model');
   expect(fixture.calls).toHaveLength(2);
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await move(page, 'e2e4'); await expect(movesOnBoard(page)).toHaveCount(2);
   await move(page, 'g1f3'); await expect(movesOnBoard(page)).toHaveCount(4);
@@ -454,7 +451,6 @@ test('a prefixed endpoint discovers models but blocks rejected credentials from 
   await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('ai');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByLabel('Base URL', { exact: true }).fill(`${apiEndpoint}/chat/completions`);
   await page.getByLabel('API key', { exact: true }).fill('offline-key');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
@@ -462,7 +458,7 @@ test('a prefixed endpoint discovers models but blocks rejected credentials from 
   await expect(page.locator('.disclosure-panel')).toContainText(`${apiEndpoint}/chat/completions`);
   await page.getByRole('button', { name: 'Allow', exact: true }).click();
   await expect(page.getByText('Check API key.', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled();
   expect(attempts).toBe(1);
 });
 
@@ -472,7 +468,6 @@ test('changing a saved destination requires its own key and consent', async ({ p
   const proxy = await provider(page, [], undefined, changed);
   await page.goto('/play'); await configure(page);
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByLabel('Available models')).toBeVisible();
   await page.getByRole('button', { name: 'Connection', exact: true }).click();
   await page.getByLabel('Provider').selectOption('cliproxy');

@@ -1,0 +1,17 @@
+.right-game-sidebar { box-sizing: border-box; position: fixed; inset: 0 0 0 auto; z-index: 60; display: flex; flex-direction: column; width: min(var(--game-options-width, 420px), calc(100% - 16px)); padding: 20px 24px; border-left: 1px solid var(--t3-border); background: var(--t3-canvas); color: var(--t3-text); font: 400 15px/1.5 'Inter Tight', system-ui, sans-serif; outline: none; }
+.game-options-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-shrink: 0; margin-bottom: 16px; }
+.right-game-sidebar .game-options-heading h2 { margin: 0; font: 600 20px/1.4 'Inter Tight', system-ui, sans-serif; letter-spacing: -.02em; }
+.game-options-body { flex: 1; min-height: 0; min-width: 0; margin-inline: -4px; padding: 4px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; scrollbar-color: var(--t3-border) var(--t3-canvas); container-type: inline-size; }
+.right-game-sidebar .icon-button, .game-options-reopen { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--t3-border); border-radius: 6px; background: var(--t3-surface); color: var(--t3-text); cursor: pointer; }
+.right-game-sidebar .game-options-tools { width: 100%; min-height: 44px; border: 1px solid var(--t3-border); border-radius: 6px; background: var(--t3-surface); color: var(--t3-text); font: inherit; }
+.game-options-reopen { position: fixed; top: 90px; right: 0; z-index: 30; border-radius: 6px 0 0 6px; }
+.game-options-resizer { position: absolute; inset: 0 auto 0 -4px; width: 8px; cursor: col-resize; touch-action: none; }
+.game-options-resizer::after { content: ''; position: absolute; inset: 0 3px; }
+.game-options-resizer:hover::after, .game-options-resizer:focus-visible::after { background: var(--t3-accent); }
+.game-options-resizer:focus-visible, .right-game-sidebar :is(button, input, select, textarea):focus-visible, .game-options-reopen:focus-visible { outline: 2px solid var(--t3-focus); outline-offset: 2px; }
+.game-options-sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.game-options-backdrop { position: fixed; inset: 0; z-index: 59; background: rgb(0 0 0 / .55); }
+@media (prefers-reduced-motion: no-preference) {
+  .right-game-sidebar { transition: translate 180ms cubic-bezier(.16, 1, .3, 1); }
+  .right-game-sidebar:is([data-starting-style], [data-ending-style]) { translate: 100% 0; }
+}

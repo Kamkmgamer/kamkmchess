@@ -26,10 +26,11 @@ function destinations(snapshot: ControllerSnapshotV1): Map<Key, Key[]> {
   return dests;
 }
 
-export function ChessBoard({ orientation, snapshot, disabled, onMove, view, premoveColor, allowPremove }: {
+export function ChessBoard({ orientation, snapshot, disabled, visible, onMove, view, premoveColor, allowPremove }: {
   readonly orientation: 'white' | 'black';
   readonly snapshot: ControllerSnapshotV1;
   readonly disabled: boolean;
+  readonly visible: boolean;
   readonly onMove: (move: Omit<CoordinateMove, 'promotion'>) => Promise<boolean>;
   readonly view: { readonly position: Position; readonly lastMove: { readonly from: string; readonly to: string } | null };
   readonly premoveColor: 'white' | 'black' | null;
@@ -127,6 +128,12 @@ export function ChessBoard({ orientation, snapshot, disabled, onMove, view, prem
     // Create once; subsequent effects update the stable board.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useLayoutEffect(() => {
+    // Focused tools hide the board. Rebuild its geometry when it returns so
+    // Chessground cannot retain the zero-width bounds measured while hidden.
+    if (visible) board.current?.redrawAll();
+  }, [visible]);
 
   useEffect(() => {
     // History, Undo, a new game, and match endings invalidate queued input.

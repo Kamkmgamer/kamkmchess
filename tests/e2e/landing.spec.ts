@@ -1,10 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page, baseURL }) => {
   const configuration = JSON.parse(readFileSync('vercel.json', 'utf8')) as { headers: { headers: { key: string; value: string }[] }[] };
   const csp = configuration.headers[0]!.headers.find(header => header.key === 'Content-Security-Policy')!.value;
-  await page.route(/http:\/\/127\.0\.0\.1:5175\/(?:play\/?)?$/, async route => {
+  await page.route(url => url.origin === new URL(baseURL!).origin && /^\/(?:play\/?)?$/.test(url.pathname), async route => {
     const response = await route.fetch();
     await route.fulfill({ response, headers: { ...response.headers(), 'Content-Security-Policy': csp } });
   });
@@ -22,12 +22,12 @@ for (const [device, viewport] of [
     await expect(page.getByRole('heading', { level: 1 })).toContainText('Chess against a');
     await page.screenshot({ path: testInfo.outputPath(`homepage-${device}.png`) });
     await page.locator('.hero-introduction [data-slot="button"]').click();
-    await expect(page).toHaveURL(/\/play$/, { timeout: 2000 });
-    await expect(page.locator('body')).not.toHaveClass(/quartz/);
-    await page.getByRole('button', { name: 'New game', exact: true }).click();
+    await expect(page.locator('.right-game-sidebar')).toBeVisible();
+    await expect(page).toHaveURL(/\/$/);
     await page.getByLabel('Game mode').selectOption('local');
-    await page.getByRole('button', { name: 'Next', exact: true }).click();
     await page.getByRole('button', { name: 'Start game', exact: true }).click();
+    await expect(page).toHaveURL(/\/play$/);
+    await expect(page.locator('body')).not.toHaveClass(/quartz/);
     for (const move of ['e2e4', 'e7e5']) {
       await page.getByRole('button', { name: 'Type a move', exact: true }).click();
       await page.getByLabel('Enter a move by coordinates', { exact: true }).fill(move);
@@ -44,7 +44,7 @@ for (const [device, viewport] of [
   });
 }
 
-test('the mobile preview stays local and navigation opens the full workspace', async ({ page }) => {
+test('the mobile replay stays local and navigation opens real game options', async ({ page, baseURL }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const providerCalls: string[] = [];
   page.on('request', request => { if (request.url().includes('/v1/')) providerCalls.push(request.url()); });
@@ -52,14 +52,15 @@ test('the mobile preview stays local and navigation opens the full workspace', a
   await page.getByRole('button', { name: 'Next move', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'White plays e4' })).toBeVisible();
   await page.getByRole('button', { name: 'Board options', exact: true }).click();
-  await page.getByLabel('Opponent label').fill('My model');
-  await page.getByRole('radio', { name: 'Black', exact: true }).click();
-  await page.getByRole('button', { name: 'Update board preview', exact: true }).click();
-  await expect(page.getByText('You play Black', { exact: true })).toBeVisible();
-  await expect(page).toHaveURL('http://127.0.0.1:5175/');
+  await expect(page.getByRole('group', { name: 'Visual starting position board' })).toBeVisible();
+  await page.getByLabel('Custom starting position (six-field FEN)').fill('4k3/8/8/8/8/8/8/4K2R w - - 0 1');
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page).toHaveURL(`${baseURL}/`);
   expect(providerCalls).toEqual([]);
   await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
-  await page.getByRole('dialog').getByRole('link', { name: 'Play against AI', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'AI opponent', exact: true }).click();
+  await page.getByLabel('Game mode').selectOption('local');
+  await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(page).toHaveURL(/\/play$/);
   await expect(page.getByRole('button', { name: 'New game', exact: true })).toBeVisible();
 });

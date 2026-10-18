@@ -24,7 +24,7 @@ export function useBoardHistory(snapshot: ControllerSnapshotV1, keyboardEnabled:
     if (!keyboardEnabled) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], [role="spinbutton"]')) return;
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"], [role="slider"], [role="spinbutton"], [role="dialog"]')) return;
       if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       select(event.key === 'Home' ? 0 : event.key === 'End' ? count : ply + (event.key === 'ArrowLeft' ? -1 : 1));

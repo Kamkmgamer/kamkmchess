@@ -111,7 +111,13 @@ export function PositionEditorBoard({ fen, flipped, onFlip, onChange, onError }:
     onClickCapture={event => { if (ignoreClick.current) { ignoreClick.current = false; event.stopPropagation(); event.preventDefault(); } }}
     onKeyDown={event => {
       ignoreClick.current = false;
-      if (event.key === 'Escape') { cancelDrag(); setSelected(null); chooseTool('move'); }
+      if (event.key === 'Escape') {
+        if (pending.current || selected || tool !== 'move') {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        cancelDrag(); setSelected(null); chooseTool('move');
+      }
     }}>
     <div className="editor-board-column">
       {pieces ? <div className={`editor-grid${flipped ? ' flipped' : ''}${tool === 'empty' ? ' erase-mode' : ''}`} ref={board} role="group" aria-label="Visual starting position board">

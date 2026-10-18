@@ -5,7 +5,6 @@ async function startLocal(page: Page, fen = '') {
   await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('local');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   if (fen) {
     await page.getByRole('button', { name: 'Custom starting position', exact: true }).click();
     await page.getByLabel('Custom starting position (six-field FEN)').fill(fen);
@@ -217,7 +216,7 @@ test('arrow keys review positions without changing live play or text entry', asy
     await page.getByRole('button', { name: 'Play move', exact: true }).click();
   }
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
-  await page.getByRole('link', { name: 'Kamkm Chess home' }).click();
+  await page.getByRole('button', { name: 'Flip board', exact: true }).focus();
   await page.keyboard.press('ArrowLeft');
   await expect(page.locator('.match-status')).toContainText('1/2');
   await expect.poll(() => squareKeys(page, 'square.last-move')).toEqual(['e2', 'e4']);
