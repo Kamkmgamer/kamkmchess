@@ -1,8 +1,8 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { App } from './ui/App';
+import { App } from './landing/App';
 import { QuartzPortalProvider } from './lib/quartz/portal';
-import './ui/styles.css';
+import './landing/styles.css';
 
 const root = document.getElementById('root');
 

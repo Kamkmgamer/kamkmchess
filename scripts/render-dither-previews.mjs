@@ -12,7 +12,7 @@ await mkdir(new URL('.scratch/', root), { recursive: true });
 const server = await createServer({ root: fileURLToPath(root), server: { middlewareMode: true }, appType: 'custom' });
 
 try {
-  const { heroDitherPresets } = await server.ssrLoadModule('/src/ui/hero-dither.ts');
+  const { heroDitherPresets } = await server.ssrLoadModule('/src/landing/hero-dither.ts');
   const variants = Object.entries(heroDitherPresets).map(([id, preset]) => ({ id, ...preset }));
   await writeFile(entry, [
     'import { paintGradient } from "../src/components/grim-dither-kit/gradient-paint";',
