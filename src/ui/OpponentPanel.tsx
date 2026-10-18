@@ -13,6 +13,7 @@ import type { CompatibilityEvidenceV1, DiagnosticResultV1, OpponentIdentityV1, O
 import type { ModelSelection } from '../controller/index.js';
 import type { ConnectionNamespace } from '../providers/connections/index.js';
 import { controllerRevisionForConfig } from './opponent-selection.js';
+import { OpponentLogo } from './OpponentBadge.js';
 
 interface OpponentPanelProps {
   readonly service: Promise<OpponentService>;
@@ -372,7 +373,7 @@ export function OpponentPanel({ service, connectionStore, onSelect, selected, id
       <p className="muted">{protocolLabels[profile.protocol]} · {endpoints?.generationUrl}</p>
       <button className="button secondary" type="button" onClick={() => void refreshCatalog()} disabled={busy}>Check model catalog</button>
       {catalog && <p className="muted">Catalog: {catalog.state}. {catalog.entries.length} entries; unavailable IDs and capability remain unverified.</p>}
-      {catalog?.entries.map((entry) => <button className="model-choice" type="button" key={entry.id} onClick={() => { setModelId(entry.id); invalidateSelection(); }} aria-pressed={modelId === entry.id}>{entry.id}</button>)}
+      {catalog?.entries.map((entry) => <button className="model-choice" type="button" key={entry.id} onClick={() => { setModelId(entry.id); invalidateSelection(); }} aria-label={entry.id} aria-pressed={modelId === entry.id}><OpponentLogo modelId={entry.id} /><span>{entry.id}</span></button>)}
       <label>Exact model routing ID<input value={modelId} onChange={(event) => { setModelId(event.target.value); invalidateSelection(); }} spellCheck={false} /></label>
       <p className="muted">The exact ID is preserved. Catalog listing does not establish chess compatibility.</p>
       <button className="button secondary" type="button" onClick={() => { setDisclosureOpen(true); void checkConsent(); }} disabled={busy}>Review request disclosure</button>
@@ -397,6 +398,6 @@ export function OpponentPanel({ service, connectionStore, onSelect, selected, id
       </>; })()}
     </div>}
     <p className="feedback-inline" role="status" aria-live="polite">{message}</p>
-    {selected && <p className="muted">Prepared opponent: {selected.modelRoutingId} via {selected.providerId}.</p>}
+    {selected && <p className="muted prepared-opponent"><OpponentLogo modelId={selected.modelRoutingId} /><span>Prepared opponent: {selected.modelRoutingId} via {selected.providerId}.</span></p>}
   </section>;
 }

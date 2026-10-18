@@ -88,6 +88,9 @@ sections.push(
   await readFile(new URL('docs/licenses/T3-Code-MIT.txt', root), 'utf8'),
   'Wikimedia standard chess pieces',
   'Artists: Cburnett and Rfc1394. Source: https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces/Standard. Extracted into individual SVG files from cm-chessboard@8.15.3/assets/pieces/standard.svg under Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0): https://creativecommons.org/licenses/by-sa/3.0/. Each image contains attribution, source and modification notices.',
+  await readFile(new URL('docs/licenses/opponent-logos.txt', root), 'utf8'),
+  await readFile(new URL('docs/licenses/LobeHub-Icons-MIT.txt', root), 'utf8'),
+  await readFile(new URL('docs/licenses/Stockfish-Website-MIT.txt', root), 'utf8'),
 );
 
 await copyFile(new URL('LICENSE', root), new URL('dist/LICENSE.txt', root));
