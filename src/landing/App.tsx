@@ -100,7 +100,7 @@ export function App() {
           <div className="hero-introduction page-width">
             <h1 id="hero-heading">Chess against a<br />different mind.</h1>
             <p>Play against AI models that choose their own moves.<br className="desktop-break" /> A familiar game, with a new kind of opponent.</p>
-            <Button size="lg" onClick={() => openOptions()}>Set up your game</Button>
+            <Button size="lg" render={<a href="/play" />} nativeButton={false} role="link">Play against AI</Button>
           </div>
         </section>
 
@@ -109,8 +109,8 @@ export function App() {
             <div className="idea-layout page-width">
               <div className="idea-heading">
                 <h2 id="idea-heading">Choose your<br />AI opponent.</h2>
-                <p>Face a language model that chooses its own moves. Choose a model for the preview, or open a full match from the sidebar.</p>
-                <Button className="section-action" size="lg" onClick={() => openOptions('modelId')}><Icon icon={Bot} size={24} />Choose AI model</Button>
+                <p>Connect your provider or proxy, choose an available model, and start a match.</p>
+                <Button className="section-action" size="lg" render={<a href="/play" />} nativeButton={false} role="link"><Icon icon={Bot} size={24} />Choose AI model</Button>
               </div>
               <figure className="opponent-study">
                 <img src="/images/model-opponents.jpg" alt="An ivory knight faces a lineup of black chess sculptures crowned with AI model marks." width={1672} height={941} loading="lazy" decoding="async" />
@@ -130,7 +130,7 @@ export function App() {
                 <p>Built by two friends. Still taking shape.</p>
               </div>
               <div className="footer-actions">
-                <Button variant="secondary" size="lg" onClick={() => openOptions()}>Set up your game</Button>
+                <Button variant="secondary" size="lg" render={<a href="/play" />} nativeButton={false} role="link">Play against AI</Button>
                 <a href="#home">Back to the top</a>
               </div>
             </div>
@@ -146,10 +146,10 @@ export function App() {
         <Dialog.Backdrop className="sidebar-backdrop" />
         <Dialog.Popup ref={panelRef} className={`sidebar-panel${panel.kind === 'navigation' ? ' sidebar-panel-navigation' : ''}`} {...(panel.kind === 'navigation' ? { 'data-surface': 'ink' } : {})} initialFocus={() => panel.kind === 'options' && panel.focus ? panelRef.current?.querySelector<HTMLElement>(`[name="${panel.focus}"]`) ?? true : true} finalFocus={() => appliedFromDialog.current ? previewRef.current : true}>
           <div className="mobile-sidebar-heading">
-            <Dialog.Title>{panel.kind === 'navigation' ? 'kamkm chess' : 'Game options'}</Dialog.Title>
+            <Dialog.Title>{panel.kind === 'navigation' ? 'kamkm chess' : 'Preview options'}</Dialog.Title>
             <Dialog.Close render={<Button variant="ghost" size="icon-lg" aria-label="Close menu" />}><Icon icon={Close} /></Dialog.Close>
           </div>
-          <Dialog.Description className="visually-hidden">{panel.kind === 'navigation' ? 'Explore chess, set up a game or find help.' : 'Choose your side, time control, model ID and starting position for the board preview.'}</Dialog.Description>
+          <Dialog.Description className="visually-hidden">{panel.kind === 'navigation' ? 'Explore chess, set up a game or find help.' : 'Choose your side, clocks, opponent label and starting position for the board preview.'}</Dialog.Description>
           {panel.kind === 'navigation'
             ? <GameNavigation onOptions={openOptions} onNavigate={closeNavigation} />
             : <GameOptions draft={draft} onDraftChange={setDraft} onApply={applySetup} />}

@@ -5,7 +5,7 @@ const questions = [
   {
     id: 'availability',
     question: 'Can I play a full game yet?',
-    answer: 'Yes. Open Play against AI from the sidebar to start a match. The board here is an opening preview.',
+    answer: 'Yes. Choose Play against AI to start a match. The board here is an opening preview.',
   },
   {
     id: 'engine',

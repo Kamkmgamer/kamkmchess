@@ -32,13 +32,13 @@ export function GameOptions({ draft, onDraftChange, onApply }: GameOptionsProps)
   return (
     <Form className="game-options-form" ref={formRef} pending={false} onSubmit={(event) => event.preventDefault()} onFormSubmit={apply}>
       <div className="options-introduction">
-        <h2>Game options</h2>
+        <h2>Preview options</h2>
       </div>
 
       <Field name="modelId">
-        <FieldLabel htmlFor={`${id}-model`}>Model ID <span className="optional-label">(optional)</span></FieldLabel>
+        <FieldLabel htmlFor={`${id}-model`}>Opponent label <span className="optional-label">(optional)</span></FieldLabel>
         <InputRoot size="lg" invalid={invalid('modelId')}>
-          <InputControl id={`${id}-model`} name="modelId" value={modelId} onValueChange={(value) => onDraftChange({ ...draft, modelId: value })} placeholder="Your model’s exact ID" autoComplete="off" aria-invalid={invalid('modelId') || undefined} aria-describedby={`${id}-status`} />
+          <InputControl id={`${id}-model`} name="modelId" value={modelId} onValueChange={(value) => onDraftChange({ ...draft, modelId: value })} placeholder="Your AI model" autoComplete="off" aria-invalid={invalid('modelId') || undefined} aria-describedby={`${id}-status`} />
         </InputRoot>
         <FieldError />
       </Field>

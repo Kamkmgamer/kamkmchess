@@ -29,7 +29,7 @@ export function GameNavigation({ onOptions, onNavigate }: GameNavigationProps) {
 
   return (
     <div className="sidebar-content">
-      <Button className="sidebar-play" size="lg" render={<a href="/play" />} nativeButton={false}>
+      <Button className="sidebar-play" size="lg" render={<a href="/play" />} nativeButton={false} role="link">
         <Icon icon={ChessKnight} size={24} /><span>Play against AI</span>
       </Button>
       <nav className="game-navigation" aria-label="Chess navigation">
@@ -46,12 +46,12 @@ export function GameNavigation({ onOptions, onNavigate }: GameNavigationProps) {
 
       <Collapsible className="sidebar-setup" defaultOpen>
         <CollapsibleTrigger className="sidebar-row sidebar-setup-trigger" caret={false}>
-          <Icon icon={Settings} size={20} /><span>Game setup</span><Icon className="sidebar-chevron" icon={ChevronDown} size={16} />
+          <Icon icon={Settings} size={20} /><span>Preview options</span><Icon className="sidebar-chevron" icon={ChevronDown} size={16} />
         </CollapsibleTrigger>
         <CollapsibleContent className="sidebar-submenu-viewport">
           <div className="sidebar-setup-controls">
             <Button className="sidebar-row" variant="ghost" size="lg" onClick={() => onOptions('modelId')}>
-              <Icon icon={Bot} size={20} /><span>AI opponent</span><Icon className="sidebar-forward" icon={ChevronRight} size={12} />
+              <Icon icon={Bot} size={20} /><span>Opponent label</span><Icon className="sidebar-forward" icon={ChevronRight} size={12} />
             </Button>
             <Button className="sidebar-row" variant="ghost" size="lg" onClick={() => onOptions('minutes')}>
               <Icon icon={Time} size={20} /><span>Time control</span><Icon className="sidebar-forward" icon={ChevronRight} size={12} />
@@ -75,7 +75,7 @@ export function GameNavigation({ onOptions, onNavigate }: GameNavigationProps) {
         <div className="sidebar-guest" aria-labelledby={`${id}-guest`}>
           <Icon icon={UserAvatar} size={32} />
           <div><span id={`${id}-guest`}>Guest player</span><p>Board preview</p></div>
-          <Button className="sidebar-guest-settings" variant="ghost" size="lg" aria-label="Game options" onClick={() => onOptions()}>
+          <Button className="sidebar-guest-settings" variant="ghost" size="lg" aria-label="Preview options" onClick={() => onOptions()}>
             <Icon icon={Settings} size={20} />
           </Button>
         </div>

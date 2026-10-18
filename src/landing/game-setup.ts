@@ -42,7 +42,7 @@ export function prepareSetup(draft: SetupDraft, random: () => number = Math.rand
     return { ok: false, field: 'increment', message: 'Increment must be zero or a positive number of seconds.' };
   }
   if (draft.modelId !== draft.modelId.trim()) {
-    return { ok: false, field: 'modelId', message: 'Remove the spaces before or after the model ID. Its spelling is otherwise kept exactly.' };
+    return { ok: false, field: 'modelId', message: 'Remove the spaces before or after the opponent label.' };
   }
 
   let start: PreviewSetup['start'] = { kind: 'standard' };
