@@ -3,7 +3,7 @@ import type { Locator, Page } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { Chess } from 'chess.js';
 
-const moves = (page: Page) => page.getByRole('list', { name: 'Committed moves' }).locator('li');
+const moves = (page: Page) => page.getByRole('table', { name: 'Committed moves' }).getByRole('button');
 
 async function openMode(page: Page, mode: string) {
   await page.goto('/');

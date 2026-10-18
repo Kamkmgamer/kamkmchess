@@ -70,8 +70,7 @@ test('every focused screen stays within its copy budget on desktop and mobile', 
     await page.getByRole('button', { name: 'Edit starting position', exact: true }).click(); await budget(page, 10);
     await page.getByRole('button', { name: 'Done', exact: true }).click(); await budget(page, 10);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
-    await page.getByRole('button', { name: 'Moves', exact: true }).click(); await budget(page, 10);
-    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(page.getByRole('complementary', { name: 'Moves' })).toBeVisible(); await budget(page, 10);
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.getByRole('button', { name: 'Conversation and archive', exact: true }).click(); await budget(page, 10);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
@@ -85,7 +84,7 @@ test('every focused screen stays within its copy budget on desktop and mobile', 
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await move(page, 'e2e4'); await budget(page);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
-  await expect(page.locator('.match-layout [aria-label="Committed moves"] li')).toHaveCount(0);
+  await expect(page.locator('.match-layout [aria-label="Committed moves"] button')).toHaveCount(0);
 });
 
 test('discovers models, validates selection once, and revalidates automatically after reload', async ({ page }, testInfo) => {
@@ -108,9 +107,9 @@ test('discovers models, validates selection once, and revalidates automatically 
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await move(page, 'e2e4');
   await expect.poll(() => provider.calls.filter(call => !call.check).length).toBe(1);
-  await expect(page.locator('.match-layout [aria-label="Committed moves"] li')).toHaveCount(2);
+  await expect(page.locator('.match-layout [aria-label="Committed moves"] button')).toHaveCount(2);
   await page.reload(); await move(page, 'g1f3');
-  await expect(page.locator('.match-layout [aria-label="Committed moves"] li')).toHaveCount(4);
+  await expect(page.locator('.match-layout [aria-label="Committed moves"] button')).toHaveCount(4);
   expect(provider.calls.filter(call => call.check)).toHaveLength(2);
   expect(provider.calls.every(call => call.model === 'beta')).toBe(true);
   await budget(page);
@@ -139,7 +138,7 @@ test('prepares a real engine automatically and keeps engine screens below ten wo
   await page.getByRole('button', { name: 'Next', exact: true }).click(); await budget(page, 10);
   await page.getByRole('button', { name: 'Start game', exact: true }).click(); await budget(page, 10);
   await move(page, 'e2e4');
-  await expect(page.locator('.match-layout [aria-label="Committed moves"] li')).toHaveCount(2);
+  await expect(page.locator('.match-layout [aria-label="Committed moves"] button')).toHaveCount(2);
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 }); await budget(page, 10);
     await page.screenshot({ path: testInfo.outputPath(`engine-${width}.png`), fullPage: true });
