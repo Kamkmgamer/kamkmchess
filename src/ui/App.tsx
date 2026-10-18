@@ -9,8 +9,8 @@ import type { ModelSelection } from '../controller/index.js';
 import { legalMoves, parsePosition } from '../rules/index.js';
 import type { CoordinateMove, Promotion, Square } from '../rules/index.js';
 import { isLocalBoardInputDisabled, parseCoordinateMove, startClassifiedLocalGame, submitBoardMove } from './board-input.js';
-import { editPositionFen, editorSideToMove, positionSetupError, readEditorPieces, setPositionSideToMove } from './position-editor.js';
-import type { EditorPiece } from './position-editor.js';
+import { editorSideToMove, positionSetupError, readEditorPieces, setPositionCastlingRight, setPositionEnPassantSquare, setPositionSideToMove } from './position-editor.js';
+import { PositionEditorBoard } from './PositionEditorBoard.js';
 import type { LocalGameSession, MatchComposition } from './match-composition.js';
 import { T3_PALETTES } from './t3-palettes.js';
 import { OpponentPanel } from './OpponentPanel.js';
@@ -41,15 +41,7 @@ const PROMOTIONS: readonly { value: Promotion; label: string }[] = [
   { value: 'b', label: 'Bishop' }, { value: 'n', label: 'Knight' },
 ];
 const STANDARD_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-const EDITOR_PIECES: readonly { value: EditorPiece; label: string; glyph: string }[] = [
-  { value: 'empty', label: 'Remove piece', glyph: '·' },
-  { value: 'wk', label: 'White king', glyph: '♔' }, { value: 'wq', label: 'White queen', glyph: '♕' },
-  { value: 'wr', label: 'White rook', glyph: '♖' }, { value: 'wb', label: 'White bishop', glyph: '♗' },
-  { value: 'wn', label: 'White knight', glyph: '♘' }, { value: 'wp', label: 'White pawn', glyph: '♙' },
-  { value: 'bk', label: 'Black king', glyph: '♚' }, { value: 'bq', label: 'Black queen', glyph: '♛' },
-  { value: 'br', label: 'Black rook', glyph: '♜' }, { value: 'bb', label: 'Black bishop', glyph: '♝' },
-  { value: 'bn', label: 'Black knight', glyph: '♞' }, { value: 'bp', label: 'Black pawn', glyph: '♟' },
-];
+const EN_PASSANT_SQUARES = ['-', ...'abcdefgh'.split('').flatMap(file => [`${file}3`, `${file}6`])];
 
 function formatClock(milliseconds: number): string {
   const total = Math.max(0, Math.ceil(milliseconds / 1_000));
@@ -85,7 +77,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [setupFen, setSetupFen] = useState('');
   const [setupMinutes, setSetupMinutes] = useState(15);
   const [setupIncrement, setSetupIncrement] = useState(10);
-  const [editorPiece, setEditorPiece] = useState<EditorPiece>('wp');
+  const [editorFlipped, setEditorFlipped] = useState(false);
   const [setupError, setSetupError] = useState('');
   const [working, setWorking] = useState(false);
   const [matchMode, setMatchMode] = useState<MatchMode>('local');
@@ -398,6 +390,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     setSetupStep(fen ? 'position' : 'mode');
     setSetupError('');
     setSetupFen(fen ?? STANDARD_FEN);
+    setEditorFlipped(false);
     setSetupOpen(true);
     window.setTimeout(() => document.getElementById('new-game-title')?.focus(), 0);
   };
@@ -707,7 +700,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         <IconButton icon="settings" label="Settings" onClick={() => openTool('settings')} />
         <button className="button primary" type="button" onClick={event => openSetup(event.currentTarget)} aria-label="New game">New</button></div>
     </header>}
-    {setupOpen && <section className="focus-page setup-panel" aria-label="New game">
+    {setupOpen && <section className={`focus-page setup-panel${setupStep === 'position' ? ' position-editor-page' : ''}`} aria-label="New game">
       <nav className="focus-nav" aria-label="Game setup"><IconButton icon="back" label="Back" onClick={previousSetup} disabled={setupStep === 'mode'} />
         <span className="setup-dots" aria-label={`Step ${setupStep}`}><i className={setupStep === 'mode' ? 'active' : ''} /><i className={setupStep === 'white' || setupStep === 'black' ? 'active' : ''} /><i className={setupStep === 'options' || setupStep === 'position' ? 'active' : ''} /></span>
         <IconButton icon="close" label="Close" onClick={closeSetup} /></nav>
@@ -726,29 +719,29 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
             onSelectionInvalidated={() => { if (singleOpponent) { setModelSelection(null); setOpponentIdentity(null); } else setAiSeats(current => ({ ...current, [setupSide]: null })); }}
             onSelect={(selection, identity) => { checkedIdentities.current.set(JSON.stringify(selection), identity); if (singleOpponent) { setModelSelection(selection); setOpponentIdentity(identity); } else setAiSeats(current => ({ ...current, [setupSide]: selection })); }} />}
         <div className="focus-footer"><IconButton icon="next" label="Next" disabled={!chosenSelection} onClick={nextSetup} /></div>
-      </> : <form onSubmit={createNewGame} className="connection-form">
+      </> : <form onSubmit={createNewGame} className={`connection-form${setupStep === 'position' ? ' position-editor-form' : ''}`}>
         {setupStep === 'options' ? <>
           <h2>Time</h2>
           <label>Minutes<input aria-label="Starting minutes" type="number" min="1" max="180" required value={setupMinutes} onChange={event => setSetupMinutes(Number(event.target.value))} /></label>
           <label>Increment<input aria-label="Increment seconds" type="number" min="0" max="600" required value={setupIncrement} onChange={event => setSetupIncrement(Number(event.target.value))} /></label>
           <div className="button-row"><button className="button primary" aria-label="Start game" disabled={working || !setupReady} type="submit">Play</button><IconButton icon="board" label="Custom starting position" onClick={() => setSetupStep('position')} /></div>
         </> : <>
-          <h2>Position</h2>
-          <label className="sr-label">FEN<textarea aria-label="Custom starting position (six-field FEN)" rows={3} value={setupFen} onChange={event => { setSetupFen(event.target.value); setSetupError(''); }} /></label>
-          <div className="editor-tools">
-            <label className="sr-label">Piece<select aria-label="Piece to place" value={editorPiece} onChange={event => setEditorPiece(event.target.value as EditorPiece)}>{EDITOR_PIECES.map(piece => <option key={piece.value} value={piece.value}>{piece.label}</option>)}</select></label>
-            <label className="sr-label">Turn<select aria-label="Side to move" value={editorSide} disabled={!editorPieces} onChange={event => { try { setSetupFen(setPositionSideToMove(setupFen || STANDARD_FEN, event.target.value as 'w' | 'b')); } catch { setSetupError('Check the position.'); } }}><option value="w">White</option><option value="b">Black</option></select></label>
+          <h2 id="new-game-title" tabIndex={-1}>Board editor</h2>
+          <div className="position-editor-layout">
+            <PositionEditorBoard fen={setupFen || STANDARD_FEN} flipped={editorFlipped} onFlip={() => setEditorFlipped(value => !value)}
+              onChange={fen => { setSetupFen(fen); setSetupError(''); }} onError={error => setSetupError(positionSetupError(error))} />
+            <aside className="editor-control-panel" aria-label="Position settings">
+              <label>To move<select aria-label="Side to move" disabled={!editorPieces} value={editorSide} onChange={event => { try { setSetupFen(setPositionSideToMove(setupFen || STANDARD_FEN, event.target.value as 'w' | 'b')); setSetupError(''); } catch (error) { setSetupError(positionSetupError(error)); } }}><option value="w">White to play</option><option value="b">Black to play</option></select></label>
+              <fieldset className="editor-castling-rights"><legend>Castling rights</legend>{(['K', 'Q', 'k', 'q'] as const).map(right => <label key={right}><input type="checkbox" aria-label={`${right === 'K' || right === 'Q' ? 'White' : 'Black'} ${right === 'K' || right === 'k' ? 'king' : 'queen'}-side castling`} checked={(setupFen.split(/\s+/)[2] ?? '-').includes(right)} onChange={event => { try { setSetupFen(setPositionCastlingRight(setupFen || STANDARD_FEN, right, event.target.checked)); setSetupError(''); } catch (error) { setSetupError(positionSetupError(error)); } }} />{right === 'K' || right === 'k' ? 'King-side' : 'Queen-side'} ({right === 'K' || right === 'Q' ? 'White' : 'Black'})</label>)}</fieldset>
+              <label>En passant<select aria-label="En passant target" value={setupFen.split(/\s+/)[3] ?? '-'} onChange={event => { try { setSetupFen(setPositionEnPassantSquare(setupFen || STANDARD_FEN, event.target.value as Square | '-')); setSetupError(''); } catch (error) { setSetupError(positionSetupError(error)); } }}>{EN_PASSANT_SQUARES.map(square => <option key={square} value={square}>{square === '-' ? 'None' : square}</option>)}</select></label>
+              <div className="editor-position-actions"><button className="button quiet" type="button" onClick={() => { setSetupFen(STANDARD_FEN); setSetupError(''); }}>Starting position</button>
+                <button className="button quiet" type="button" onClick={() => { setSetupFen('8/8/8/8/8/8/8/8 w - - 0 1'); setSetupError(''); }}>Clear board</button></div>
+              <div className="position-editor-footer">{setupError && <p role="alert">{conciseError(new Error(setupError))}</p>}<button className="button primary" type="button" onClick={() => setSetupStep('options')}>Done</button></div>
+            </aside>
+            <div className="editor-fen-field"><label htmlFor="editor-fen">FEN</label><div className="editor-fen-row"><textarea id="editor-fen" aria-label="Custom starting position (six-field FEN)" rows={2} value={setupFen} onChange={event => { setSetupFen(event.target.value); setSetupError(''); }} /><button className="button quiet" type="button" onClick={() => { if (navigator.clipboard) void navigator.clipboard.writeText(setupFen).catch(() => setSetupError('Select the FEN and copy it manually.')); else setSetupError('Select the FEN and copy it manually.'); }}>Copy</button></div></div>
           </div>
-          {editorPieces && <div className="editor-grid" role="group" aria-label="Visual starting position board">{Array.from({ length: 64 }, (_, index) => {
-            const square = ('abcdefgh'[index % 8] + String(8 - Math.floor(index / 8))) as Square;
-            const piece = editorPieces.find(item => item.square === square);
-            return <button className="editor-square" type="button" key={square} aria-label={`${square}, ${piece ? (piece.color === 'w' ? 'white ' : 'black ') + piece.type : 'empty'}`} onClick={() => { try { setSetupFen(editPositionFen(setupFen || STANDARD_FEN, square, editorPiece)); setSetupError(''); } catch { setSetupError('Check the position.'); } }}>
-              {piece && <img alt="" src={new URL(`./pieces/${piece.color}${piece.type}.svg`, import.meta.url).href} />}
-            </button>;
-          })}</div>}
-          <button className="button primary" type="button" onClick={() => setSetupStep('options')}>Done</button>
         </>}
-        {setupError && <p role="alert">{conciseError(new Error(setupError))}</p>}
+        {setupStep === 'options' && setupError && <p role="alert">{conciseError(new Error(setupError))}</p>}
       </form>}
     </section>}
     {tool && !setupOpen && <section className="focus-page" aria-label="Match tools">

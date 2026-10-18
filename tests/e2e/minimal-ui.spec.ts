@@ -59,7 +59,7 @@ async function fixture(page: Page, models = ['alpha', 'beta']) {
   return { calls, reject: () => { reject = true; } };
 }
 
-test('every focused screen stays within its copy budget on desktop and mobile', async ({ page }, testInfo) => {
+test('focused screens stay compact and fit desktop and mobile', async ({ page }, testInfo) => {
   await page.goto('/');
   for (const width of [1280, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
@@ -67,7 +67,10 @@ test('every focused screen stays within its copy budget on desktop and mobile', 
     await page.screenshot({ path: testInfo.outputPath(`board-${width}.png`), fullPage: true });
     await page.getByRole('button', { name: 'Settings', exact: true }).click(); await budget(page, 10);
     await page.getByRole('button', { name: 'Position', exact: true }).click(); await budget(page, 10);
-    await page.getByRole('button', { name: 'Edit starting position', exact: true }).click(); await budget(page, 10);
+    await page.getByRole('button', { name: 'Edit starting position', exact: true }).click();
+    await expect(page.getByRole('group', { name: 'Visual starting position board' })).toBeVisible();
+    await expect(page.getByRole('complementary', { name: 'Position settings' })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.getByRole('button', { name: 'Done', exact: true }).click(); await budget(page, 10);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     await expect(page.getByRole('complementary', { name: 'Moves' })).toBeVisible(); await budget(page, 10);
