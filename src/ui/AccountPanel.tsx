@@ -99,6 +99,7 @@ export function AccountPanel({ session, guestImport, onIdentityChanged, onOpenGa
       </div>}
     </>}
     {message && <p role="status">{message.startsWith('Selected guest games') ? 'Imported.' : 'Try again.'}</p>}
+    <a className="account-privacy-link" href="/privacy.html" target="_blank" rel="noreferrer">Privacy policy</a>
   </section>;
 }
 

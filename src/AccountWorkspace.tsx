@@ -231,7 +231,6 @@ export function AccountWorkspace(initialView: WorkspaceView) {
   }
 
   return <>
-    {!accountPage && <div className="account-launcher"><IconButton icon="account" label="Account and saved games" onClick={() => setAccountPage('account')} /></div>}
     {accountPage && <section className="focus-page account-workspace" aria-label="Account and saved games">
       <div className="panel-heading"><IconButton icon="back" label="Back" onClick={() => setAccountPage('account')} disabled={accountPage === 'account'} /><IconButton icon="close" label="Close account" onClick={() => setAccountPage(null)} /></div>
       {accountPage === 'account' ? session ? <AccountPanel session={session} guestImport={repositories} onIdentityChanged={() => setRevision(value => value + 1)} onOpenGames={() => { setGamePage(0); setAccountPage('games'); }} /> : <p>Loading…</p> : <>
@@ -252,7 +251,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
         {message && <p role="status">{busy ? 'Syncing…' : message.startsWith('Complete game') ? 'Synced.' : message.startsWith('Cloud history') ? 'Sync conflict. Choose continuation.' : message.startsWith('Account game opened') || message.startsWith('Guest workspace opened') || message.startsWith('The accepted cloud game') ? 'Opened.' : 'Sync failed. Retry.'}</p>}
       </>}
     </section>}
-    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} /></div>
+    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} onOpenAccount={() => setAccountPage('account')} /></div>
   </>;
 }
 

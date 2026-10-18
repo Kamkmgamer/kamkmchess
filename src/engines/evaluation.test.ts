@@ -20,22 +20,22 @@ describe('spectator engine selection', () => {
     expect(mock.analyze.mock.calls[0]?.[1]).toBe(position);
     evaluator.close();
   });
-  it('prefers a downloaded full engine and reuses its analysis worker', async () => {
+  it('uses Lite even when full Stockfish is downloaded and reuses its analysis worker', async () => {
     mock.downloaded.mockResolvedValue(true);
     const evaluator = new PositionEvaluator();
     await evaluator.evaluate(position, new AbortController().signal, vi.fn(), vi.fn());
     await evaluator.evaluate(position, new AbortController().signal, vi.fn(), vi.fn());
-    expect(mock.download.mock.calls.map(call => call[0])).toEqual(['stockfish-full', 'stockfish-full']);
+    expect(mock.download.mock.calls.map(call => call[0])).toEqual(['stockfish-lite', 'stockfish-lite']);
     expect(mock.close).not.toHaveBeenCalled();
     evaluator.close(); expect(mock.close).toHaveBeenCalledTimes(1);
   });
-  it('falls back to Lite after full-engine failure without retrying full on every move', async () => {
+  it('surfaces a Lite failure and retries Lite on the next evaluation', async () => {
     mock.downloaded.mockResolvedValue(true);
     mock.analyze.mockRejectedValueOnce(new Error('Out of memory'));
     const evaluator = new PositionEvaluator();
+    await expect(evaluator.evaluate(position, new AbortController().signal, vi.fn(), vi.fn())).rejects.toThrow('Out of memory');
     await evaluator.evaluate(position, new AbortController().signal, vi.fn(), vi.fn());
-    await evaluator.evaluate(position, new AbortController().signal, vi.fn(), vi.fn());
-    expect(mock.download.mock.calls.map(call => call[0])).toEqual(['stockfish-full', 'stockfish-lite', 'stockfish-lite']);
+    expect(mock.download.mock.calls.map(call => call[0])).toEqual(['stockfish-lite', 'stockfish-lite']);
     evaluator.close();
   });
   it('does not fall back or publish old scores after cancellation', async () => {

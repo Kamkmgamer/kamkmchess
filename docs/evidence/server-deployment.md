@@ -76,8 +76,23 @@ fields recursively, and requires history bindings to be completely local or
 complete model bindings. A fixture captured from the browser failed before the
 fix and passed afterwards, alongside malformed and credential-bearing cases.
 
-Clerk production DNS, TLS and mail verification passed. Production Google OAuth
-still requires an OAuth client in the Clerk dashboard. Native screen-reader
-acceptance, real model-provider acceptance, host-loss recovery from a separately
-scheduled offsite destination, and measured long-term storage capacity were not
-established by these checks.
+Clerk production DNS, TLS and mail verification passed. Google sign-in now uses
+the dedicated `Kamkm Chess production` web client in Google Cloud project
+`wise-reporter-479504-e5`, connected to the production Clerk instance. Its
+origin is `https://chess.khalil.mageed.net` and its callback is
+`https://clerk.chess.khalil.mageed.net/v1/oauth_callback`. Google requests only
+OpenID, email and basic profile scopes. A real Google login returned to the app
+and displayed the signed-in Account controls. Google now reports publishing
+status `In production` with an external audience, removing the test-user
+restriction.
+
+The owner-approved privacy policy is public at
+`https://chess.khalil.mageed.net/privacy.html` and is configured in Google and
+Clerk. Its HTML and stylesheet return 200, and its Account link opens a separate
+tab. The policy and link passed desktop and 320px mobile browser checks in light
+and dark appearances without horizontal overflow. Frontend lint, typechecking
+and the production build passed for this change.
+
+Native screen-reader acceptance, real model-provider acceptance, host-loss
+recovery from a separately scheduled offsite destination, and measured long-term
+storage capacity were not established by these checks.

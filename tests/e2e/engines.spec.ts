@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import type { Locator, Page } from '@playwright/test';
+import type { Locator, Page, Worker } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { Chess } from 'chess.js';
 
@@ -12,10 +12,11 @@ async function openMode(page: Page, mode: string) {
   if (mode !== 'engine-ai') await page.getByRole('button', { name: 'Next', exact: true }).click();
 }
 
-async function prepareEngine(panel: Locator, engine = 'stockfish-lite') {
+async function prepareEngine(panel: Locator, engine = 'stockfish-lite', workers?: Set<Worker>) {
   await panel.getByRole('combobox', { name: 'Chess engine', exact: true }).selectOption(engine);
   await panel.getByRole('combobox', { name: 'Thinking time per move' }).selectOption('1000');
-  await expect(panel.getByText('Ready', { exact: true })).toBeVisible();
+  await expect(panel.getByText('Ready', { exact: true })).toBeVisible({ timeout: engine === 'stockfish-full' ? 30_000 : 12_000 });
+  if (workers) await expect.poll(() => workers.size).toBe(0);
   await panel.page().getByRole('button', { name: 'Next', exact: true }).click();
 }
 
@@ -90,16 +91,22 @@ test('downloads Stockfish in the browser under production CSP and resumes from c
   expect(errors).toEqual([]);
 });
 
-test('two browser engines alternate, evaluate with downloaded full Stockfish, stop safely, and resume', async ({ page }, testInfo) => {
+test('two browser engines use Lite evaluation, release workers after setup and Stop, and resume', async ({ page }, testInfo) => {
+  const workers = new Set<Worker>();
+  page.on('worker', worker => {
+    workers.add(worker);
+    worker.on('close', () => workers.delete(worker));
+  });
   await openMode(page, 'engine-engine');
-  await prepareEngine(page.getByRole('region', { name: 'White engine', exact: true }), 'stockfish-full');
-  await prepareEngine(page.getByRole('region', { name: 'Black engine', exact: true }));
+  await prepareEngine(page.getByRole('region', { name: 'White engine', exact: true }), 'stockfish-full', workers);
+  await prepareEngine(page.getByRole('region', { name: 'Black engine', exact: true }), 'stockfish-lite', workers);
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect.poll(() => moves(page).count()).toBeGreaterThanOrEqual(3);
   await page.getByRole('button', { name: 'Stop generation', exact: true }).click();
   const bar = page.locator('.evaluation-bar');
   await expect(bar).toHaveAttribute('data-state', 'ready');
-  await expect(bar).toHaveAttribute('data-engine', 'Stockfish 19');
+  await expect(bar).toHaveAttribute('data-engine', 'Stockfish 19 Lite');
+  await expect.poll(() => workers.size).toBe(1);
   await page.getByRole('button', { name: 'First', exact: true }).click();
   await expect(bar).toHaveAttribute('data-state', 'ready');
   await expect(bar).toHaveAccessibleName(/White evaluation/);
@@ -119,6 +126,36 @@ test('two browser engines alternate, evaluate with downloaded full Stockfish, st
   await page.getByRole('button', { name: 'Retry engine turn', exact: true }).click();
   await expect.poll(() => moves(page).count()).toBeGreaterThan(count);
   await page.getByRole('button', { name: 'Stop generation', exact: true }).click();
+  await expect(bar).toHaveAttribute('data-state', 'ready');
+  await expect.poll(() => workers.size).toBe(1);
+  await page.getByRole('button', { name: 'New game', exact: true }).click();
+  await expect.poll(() => workers.size).toBe(0);
+  await page.getByLabel('Game mode').selectOption('local');
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await page.getByRole('button', { name: 'Start game', exact: true }).click();
+  await expect(page.locator('.evaluation-bar')).toHaveCount(0);
+  expect(workers.size).toBe(0);
+});
+
+test('a finished engine match releases its opponent workers and keeps only visible Lite evaluation', async ({ page }) => {
+  const workers = new Set<Worker>();
+  page.on('worker', worker => {
+    workers.add(worker);
+    worker.on('close', () => workers.delete(worker));
+  });
+  await openMode(page, 'engine-engine');
+  await prepareEngine(page.getByRole('region', { name: 'White engine', exact: true }), 'stockfish-lite', workers);
+  await prepareEngine(page.getByRole('region', { name: 'Black engine', exact: true }), 'stockfish-lite', workers);
+  await page.getByRole('button', { name: 'Custom starting position', exact: true }).click();
+  await page.getByLabel('Custom starting position (six-field FEN)').fill('7k/5Q2/6K1/8/8/8/8/8 w - - 0 1');
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('button', { name: 'Start game', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'White wins', exact: true })).toBeVisible();
+  await expect(page.locator('.evaluation-bar')).toHaveAttribute('data-state', 'ready');
+  await expect(page.locator('.evaluation-bar')).toHaveAttribute('data-engine', 'Stockfish 19 Lite');
+  await expect.poll(() => workers.size).toBe(1);
+  await page.getByRole('button', { name: 'New game', exact: true }).click();
+  await expect.poll(() => workers.size).toBe(0);
 });
 
 test('a browser engine plays an LLM with either seat independently configured', async ({ page }) => {

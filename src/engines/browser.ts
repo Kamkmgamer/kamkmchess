@@ -13,6 +13,7 @@ export const BROWSER_ENGINES = {
 interface EngineAssets { scriptUrl: string; wasmUrl: string; cached: boolean }
 const assets = new Map<BrowserEngineId, EngineAssets>();
 const workers = new Map<BrowserEngineId, BrowserUciEngine>();
+const searches = new Set<{ engineId: BrowserEngineId; controller: AbortController }>();
 
 export function supportsBrowserEngines(): boolean { return typeof Worker !== 'undefined' && typeof WebAssembly !== 'undefined'; }
 
@@ -167,11 +168,31 @@ export class BrowserUciEngine {
 
 export async function searchBrowserEngine(settings: BrowserEngineSettings, position: { startingFen: string; moves: readonly string[] }, signal?: AbortSignal,
   onProgress?: (progress: EngineProgress) => void): Promise<BrowserEngineResult> {
-  const source = await downloadBrowserEngine(settings.engineId, onProgress, signal);
-  let worker = workers.get(settings.engineId);
-  if (!worker || worker.stopped) { worker = new BrowserUciEngine(source); workers.set(settings.engineId, worker); }
-  onProgress?.({ phase: 'starting', loaded: 1, total: 1 });
-  return worker.search(settings, position, signal);
+  const request = { engineId: settings.engineId, controller: new AbortController() };
+  const abort = () => request.controller.abort();
+  if (signal?.aborted) abort();
+  signal?.addEventListener('abort', abort, { once: true });
+  searches.add(request);
+  try {
+    const source = await downloadBrowserEngine(settings.engineId, onProgress, request.controller.signal);
+    if (request.controller.signal.aborted) throw new DOMException('Engine stopped.', 'AbortError');
+    let worker = workers.get(settings.engineId);
+    if (!worker || worker.stopped) { worker = new BrowserUciEngine(source); workers.set(settings.engineId, worker); }
+    onProgress?.({ phase: 'starting', loaded: 1, total: 1 });
+    return await worker.search(settings, position, request.controller.signal);
+  } finally {
+    signal?.removeEventListener('abort', abort);
+    searches.delete(request);
+  }
 }
 
-export function stopBrowserEngines(): void { for (const worker of workers.values()) worker.close(); workers.clear(); }
+/** Retire opponent workers and pending starts that no longer belong to the current match. */
+export function stopUnusedBrowserEngines(keep: readonly BrowserEngineId[]): void {
+  for (const request of searches) if (!keep.includes(request.engineId)) request.controller.abort();
+  for (const [id, worker] of workers) {
+    if (keep.includes(id)) continue;
+    worker.close(); workers.delete(id);
+  }
+}
+
+export function stopBrowserEngines(): void { stopUnusedBrowserEngines([]); }

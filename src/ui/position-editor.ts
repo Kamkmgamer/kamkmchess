@@ -72,6 +72,21 @@ export function setPositionSideToMove(fen: string, side: 'w' | 'b'): string {
   return fields.join(' ');
 }
 
+export function setPositionCastlingRight(fen: string, right: 'K' | 'Q' | 'k' | 'q', enabled: boolean): string {
+  const fields = editorFields(fen);
+  const rights = new Set(fields[2] === '-' ? [] : fields[2]?.split('') ?? []);
+  if (enabled) rights.add(right);
+  else rights.delete(right);
+  fields[2] = ['K', 'Q', 'k', 'q'].filter((candidate) => rights.has(candidate)).join('') || '-';
+  return fields.join(' ');
+}
+
+export function setPositionEnPassantSquare(fen: string, square: Square | '-'): string {
+  const fields = editorFields(fen);
+  fields[3] = square;
+  return fields.join(' ');
+}
+
 export function editPositionFen(fen: string, square: Square, selected: EditorPiece): string {
   const fields = editorFields(fen);
   const pieces = new Map(readEditorPieces(fen).map((piece) => [piece.square, piece.color === 'w' ? piece.type.toUpperCase() : piece.type]));
@@ -98,4 +113,41 @@ export function editPositionFen(fen: string, square: Square, selected: EditorPie
   }).join('/');
   // Piece edits can invalidate castling/en-passant rights, so the visual editor clears them.
   return `${ranks} ${fields[1]} - - 0 1`;
+}
+
+export function movePositionPiece(fen: string, from: Square, to: Square): string {
+  const fields = editorFields(fen);
+  const pieces = new Map(readEditorPieces(fen).map((piece) => [piece.square, piece.color === 'w' ? piece.type.toUpperCase() : piece.type]));
+  const moving = pieces.get(from);
+  if (moving === undefined) throw new Error(`There is no piece on ${from}.`);
+  const captured = pieces.get(to);
+  pieces.delete(from);
+  pieces.set(to, moving);
+  const ranks = '87654321'.split('').map((rank) => {
+    let empty = 0;
+    let encoded = '';
+    for (const file of 'abcdefgh') {
+      const piece = pieces.get((file + rank) as Square);
+      if (piece === undefined) empty += 1;
+      else {
+        if (empty > 0) encoded += empty;
+        encoded += piece;
+        empty = 0;
+      }
+    }
+    return encoded + (empty > 0 ? empty : '');
+  }).join('/');
+  const movedColor = moving === moving.toUpperCase() ? 'w' : 'b';
+  const movingType = moving.toLowerCase();
+  const rights = (fields[2] ?? '-').split('').filter((right) => {
+    if (movingType === 'k' && (movedColor === 'w' ? right === 'K' || right === 'Q' : right === 'k' || right === 'q')) return false;
+    if (from === 'h1' && right === 'K' || to === 'h1' && captured !== undefined && right === 'K') return false;
+    if (from === 'a1' && right === 'Q' || to === 'a1' && captured !== undefined && right === 'Q') return false;
+    if (from === 'h8' && right === 'k' || to === 'h8' && captured !== undefined && right === 'k') return false;
+    if (from === 'a8' && right === 'q' || to === 'a8' && captured !== undefined && right === 'q') return false;
+    return right !== '-';
+  }).join('') || '-';
+  // Rearranging the board is not a played move. Keep the chosen side to move
+  // and clear en passant; the user can explicitly set it for the final position.
+  return `${ranks} ${fields[1]} ${rights} - 0 1`;
 }
