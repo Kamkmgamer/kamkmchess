@@ -49,14 +49,14 @@ test('paired move history scrolls, reviews, survives reload and Undo, and stacks
   expect(sidebar!.x).toBeGreaterThan(board!.x + board!.width);
   await page.screenshot({ path: testInfo.outputPath('sidebar-desktop.png'), fullPage: true });
 
-  await page.getByRole('complementary', { name: 'Moves' }).getByRole('button', { name: 'First', exact: true }).click();
+  await page.getByRole('button', { name: 'First', exact: true }).click();
   await expect(table.locator('[aria-current]')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeDisabled();
   await table.getByRole('button', { name: 'View move 2: e5', exact: true }).click();
   await expect(page.locator('.match-status')).toContainText('2/32');
   await expect(table.getByRole('button', { name: 'View move 2: e5', exact: true })).toHaveAttribute('aria-current', 'step');
   await expect.poll(() => selectedIsInScrollport(page)).toBe(true);
-  await page.getByRole('complementary', { name: 'Moves' }).getByRole('button', { name: 'Live', exact: true }).click();
+  await page.getByRole('button', { name: 'Live', exact: true }).click();
   await expect.poll(() => selectedIsInScrollport(page)).toBe(true);
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
   await page.reload();

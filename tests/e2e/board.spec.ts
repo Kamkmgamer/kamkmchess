@@ -241,7 +241,7 @@ test('arrow keys review positions without changing live play or text entry', asy
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'View move 1: e4', exact: true })).toHaveAttribute('aria-current', 'step');
   await expect.poll(() => squareKeys(page, 'square.last-move')).toEqual(['e2', 'e4']);
-  await page.getByRole('region', { name: 'Chess match board' }).getByRole('button', { name: 'Live', exact: true }).click();
+  await page.getByRole('button', { name: 'Live', exact: true }).click();
   await expect.poll(() => squareKeys(page, 'square.last-move')).toEqual(['e5', 'e7']);
 });
 

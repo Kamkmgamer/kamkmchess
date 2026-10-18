@@ -780,15 +780,9 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
             moves={snapshot.checkpoint.rules.moves.slice(0, history.ply).map(move => `${move.from}${move.to}${move.promotion ?? ''}`).join(' ')} />}
           <ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} />
         </div>
-        <nav className="history-controls" aria-label="Move history"><div className="button-row">
-          <IconButton icon="first" label="First" onClick={() => history.select(0)} disabled={history.ply === 0} aria-keyshortcuts="Home" />
-          <IconButton icon="back" label="Previous" onClick={() => history.select(history.ply - 1)} disabled={history.ply === 0} aria-keyshortcuts="ArrowLeft" />
-          <IconButton icon="next" label="Next" onClick={() => history.select(history.ply + 1)} disabled={!history.reviewing} aria-keyshortcuts="ArrowRight" />
-          <IconButton icon="last" label="Live" onClick={() => history.select(history.count)} disabled={!history.reviewing} aria-keyshortcuts="End" />
-          <IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />
-          <IconButton icon="undo" label="Undo" onClick={() => void undo()} disabled={working || !snapshot.checkpoint.rules.moves.length || snapshot.checkpoint.result.kind !== 'unresolved'} />
-          <IconButton icon="code" label="Type a move" disabled={disabled} onClick={() => openTool('move')} />
-        </div></nav>
+        <nav className="board-tools" aria-label="Board tools"><IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />
+          <IconButton icon="undo" label="Undo" onClick={() => void undo()} disabled={working || snapshot.readiness !== 'ready' || !snapshot.checkpoint.rules.moves.length || snapshot.checkpoint.result.kind !== 'unresolved'} />
+          <IconButton icon="code" label="Type a move" disabled={disabled} onClick={() => openTool('move')} /></nav>
         <div className="match-status" role="status" aria-description={generationDetail || feedback}>
           <h2 className="status-heading" aria-label={generationState === 'producing' ? isEngineSelection(activePlayer) ? 'Engine is choosing a move' : 'AI is choosing a move' : undefined}>{history.reviewing ? `${history.ply}/${history.count}` : generationState === 'stopped' ? 'Paused' : generationState === 'failed' ? conciseTurnError(new Error(generationDetail)) : generationState === 'producing' ? generationDetail === 'Checking connection…' ? 'Checking…' : 'Thinking…' : statusLabel(snapshot)}</h2>
           <div className="button-row">
