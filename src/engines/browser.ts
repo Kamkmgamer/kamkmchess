@@ -1,3 +1,6 @@
+import { parseUciEvaluation } from './uci-score.js';
+import type { EngineEvaluation } from './uci-score.js';
+
 export type BrowserEngineId = 'stockfish-lite' | 'stockfish-full';
 export interface BrowserEngineSettings { engineId: BrowserEngineId; hashMb: number; moveTimeMs: number }
 export interface EngineProgress { loaded: number; total: number; phase: 'downloading' | 'starting' }
@@ -26,7 +29,8 @@ async function engineCache(): Promise<Cache | null> {
 export async function isEngineDownloaded(id: BrowserEngineId): Promise<boolean> {
   if (assets.has(id)) return true;
   const cache = await engineCache();
-  return cache !== null && (await Promise.all(engineAssetUrls(id).map(url => cache.match(url)))).every(Boolean);
+  try { return cache !== null && (await Promise.all(engineAssetUrls(id).map(url => cache.match(url)))).every(Boolean); }
+  catch { return false; }
 }
 
 /** Only same-origin, version-pinned build assets become executable Workers. */
@@ -111,7 +115,7 @@ export class BrowserUciEngine {
     failure?.(new DOMException('Engine stopped.', 'AbortError'));
   }
 
-  private exchange(command: string, matches: (line: string) => boolean, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+  private exchange(command: string, matches: (line: string) => boolean, timeoutMs: number, signal?: AbortSignal, onLine?: (line: string) => void): Promise<string> {
     return new Promise((resolve, reject) => {
       if (this.closed || signal?.aborted) { reject(new DOMException('Engine stopped.', 'AbortError')); return; }
       const finish = (error: Error | null, line = '') => {
@@ -120,7 +124,7 @@ export class BrowserUciEngine {
       };
       const abort = () => finish(new DOMException('Engine stopped.', 'AbortError'));
       const timer = globalThis.setTimeout(() => finish(new Error('The browser engine took too long. Select Stockfish Lite or retry.')), timeoutMs);
-      this.listener = line => { if (matches(line)) finish(null, line); };
+      this.listener = line => { onLine?.(line); if (matches(line)) finish(null, line); };
       this.failure = error => finish(error);
       signal?.addEventListener('abort', abort, { once: true });
       this.worker.postMessage(command);
@@ -128,6 +132,14 @@ export class BrowserUciEngine {
   }
 
   async search(settings: BrowserEngineSettings, position: { startingFen: string; moves: readonly string[] }, signal?: AbortSignal): Promise<BrowserEngineResult> {
+    return this.run(settings, position, signal);
+  }
+
+  async analyze(settings: BrowserEngineSettings, position: { startingFen: string; moves: readonly string[] }, onEvaluation: (evaluation: EngineEvaluation) => void, signal?: AbortSignal): Promise<void> {
+    await this.run(settings, position, signal, onEvaluation);
+  }
+
+  private async run(settings: BrowserEngineSettings, position: { startingFen: string; moves: readonly string[] }, signal?: AbortSignal, onEvaluation?: (evaluation: EngineEvaluation) => void): Promise<BrowserEngineResult> {
     if (this.busy) throw new Error('This engine is still finishing another turn. Stop that turn and retry.');
     this.busy = true;
     const start = performance.now();
@@ -137,9 +149,15 @@ export class BrowserUciEngine {
       this.worker.postMessage('ucinewgame');
       await this.exchange('isready', line => line === 'readyok', 10_000, signal);
       this.worker.postMessage(`position fen ${position.startingFen}${position.moves.length ? ` moves ${position.moves.join(' ')}` : ''}`);
-      const best = await this.exchange(`go movetime ${settings.moveTimeMs}`, line => line.startsWith('bestmove '), settings.moveTimeMs + 10_000, signal);
+      const whiteToMove = (position.startingFen.split(' ')[1] === 'w') === (position.moves.length % 2 === 0);
+      let evaluated = false;
+      const best = await this.exchange(`go movetime ${settings.moveTimeMs}`, line => line.startsWith('bestmove '), settings.moveTimeMs + 10_000, signal, line => {
+        if (!onEvaluation) return;
+        const evaluation = parseUciEvaluation(line, whiteToMove);
+        if (evaluation) { evaluated = true; onEvaluation(evaluation); }
+      });
       const move = best.split(/\s+/)[1] ?? '';
-      if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move)) throw new Error('The engine returned no playable move. Retry this turn.');
+      if (onEvaluation ? !evaluated : !/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move)) throw new Error(onEvaluation ? 'The engine returned no evaluation. Retry analysis.' : 'The engine returned no playable move. Retry this turn.');
       return { move, engineName: this.name, elapsedMs: Math.round(performance.now() - start) };
     } finally { this.busy = false; }
   }

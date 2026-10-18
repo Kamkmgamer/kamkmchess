@@ -7,6 +7,7 @@ class FakeWorker {
   commands: string[] = [];
   terminated = false;
   respondToSearch = true;
+  searchLines = ['bestmove e2e4 ponder e7e5'];
   constructor(readonly url: string) { FakeWorker.instances.push(this); }
   emit(line: string) { this.onmessage?.(new MessageEvent('message', { data: line })); }
   postMessage(command: string) {
@@ -14,7 +15,7 @@ class FakeWorker {
     queueMicrotask(() => {
       if (command === 'uci') { this.emit('id name Stockfish fixture'); this.emit('uciok'); }
       if (command === 'isready') this.emit('readyok');
-      if (command.startsWith('go ') && this.respondToSearch) this.emit('bestmove e2e4 ponder e7e5');
+      if (command.startsWith('go ') && this.respondToSearch) this.searchLines.forEach(line => this.emit(line));
     });
   }
   terminate() { this.terminated = true; }
@@ -25,6 +26,21 @@ const position = { startingFen: '8/8/8/8/8/8/K7/7k w - - 0 1', moves: ['a2a3'] }
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); FakeWorker.instances = []; });
 
 describe('browser UCI workers', () => {
+  it('streams White-relative evaluations and accepts checkmate with no best move', async () => {
+    vi.stubGlobal('Worker', FakeWorker);
+    const { BrowserUciEngine } = await import('./browser.js');
+    const engine = new BrowserUciEngine({ scriptUrl: 'blob:script', wasmUrl: 'blob:wasm', cached: true });
+    const worker = FakeWorker.instances[0]!;
+    worker.searchLines = ['info depth 2 score cp 80', 'info depth 3 score cp 90 lowerbound', 'info depth 4 score mate 0', 'bestmove (none)'];
+    const publish = vi.fn();
+    await engine.analyze(settings, position, publish);
+    expect(publish.mock.calls.map(call => call[0])).toEqual([
+      { depth: 2, score: { kind: 'cp', value: -80 } },
+      { depth: 4, score: { kind: 'mate', value: 0, winner: 'white' } },
+    ]);
+    engine.close();
+  });
+
   it('handshakes before search, preserves repetition history, and reuses the same worker', async () => {
     vi.stubGlobal('Worker', FakeWorker);
     const { BrowserUciEngine } = await import('./browser.js');

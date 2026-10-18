@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ChessBoard } from './ChessBoard.js';
+import { EvaluationBar } from './EvaluationBar.js';
 import { useBoardHistory } from './use-board-history.js';
 import type { ControllerSnapshotV1 } from '../controller/index.js';
 import type { ModelSelection } from '../controller/index.js';
@@ -788,7 +789,11 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
           <time className={`clock ${activeSide === side ? 'running' : ''}`} aria-label={`${side} clock ${formatClock(clocks[`${side}Ms`])}`}>{formatClock(clocks[`${side}Ms`])}</time>
         </div>)}
         {snapshot.checkpoint.rules.moves.length > 0 && <ol className="sr-only" aria-label="Committed moves">{snapshot.checkpoint.rules.moves.map((move, index) => <li key={move.moveId}><button onClick={() => history.select(index + 1)} aria-label={`View move ${index + 1}: ${move.san}`} aria-current={history.ply === index + 1 ? 'step' : undefined}>{move.san}</button></li>)}</ol>}
-        <div className="playing-board"><ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} /></div>
+        <div className={`playing-board${spectator ? ' with-evaluation' : ''}`}>
+          {spectator && <EvaluationBar key={session.gameId} orientation={orientation} startingFen={snapshot.checkpoint.rules.startingFen}
+            moves={snapshot.checkpoint.rules.moves.slice(0, history.ply).map(move => `${move.from}${move.to}${move.promotion ?? ''}`).join(' ')} />}
+          <ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} />
+        </div>
         <nav className="history-controls" aria-label="Move history"><div className="button-row">
           <IconButton icon="first" label="First" onClick={() => history.select(0)} disabled={history.ply === 0} aria-keyshortcuts="Home" />
           <IconButton icon="back" label="Previous" onClick={() => history.select(history.ply - 1)} disabled={history.ply === 0} aria-keyshortcuts="ArrowLeft" />
