@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { Chess } from 'chess.js';
 import { applyCoordinateMove, legalMoves, parsePosition } from '../../rules/index.js';
 import { checkProofEvidence, createDeadnessQuery, createMatingReachabilityQuery, createTimeoutMatingQuery, runProofSearchPass, tryFastMatingWitness } from '../index.js';
 
@@ -11,6 +12,22 @@ const scope = {
 };
 
 describe('fast mating witness discovery', () => {
+  it('resolves the post-b5 and castled Ruy Lopez positions before exhaustive expansion', async () => {
+    const chess = new Chess();
+    const opening = 'e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O'.split(' ');
+    for (const [index, move] of opening.entries()) {
+      chess.move(move);
+      if (index !== 11 && index !== 15) continue;
+      const query = createDeadnessQuery({ ...scope, positionFen: chess.fen() });
+      const result = await runProofSearchPass(query, { timeBudgetMs: 3_000, maxDiscoveredStates: 1 });
+      expect(result.status).toBe('accepted');
+      if (result.status === 'accepted') {
+        expect(result.evidence.kind).toBe('mate-witness');
+        expect(checkProofEvidence(query, result.evidence)).toMatchObject({ status: 'accepted', conclusion: 'not-dead' });
+      }
+    }
+  }, 10_000);
+
   it('finds checked motif witnesses through the authoritative pass within 500 ms', async () => {
     const start = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
     const lines = [

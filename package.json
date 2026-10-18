@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "playwright test",
+    "benchmark:position-check": "node scripts/benchmark-position-check.mjs",
     "build": "pnpm run typecheck && vite build && node scripts/write-notices.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "check": "pnpm run lint && pnpm run test && pnpm run build"

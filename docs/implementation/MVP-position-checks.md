@@ -10,7 +10,7 @@ tryFastMatingWitness(query): Promise<FastMatingWitnessResult | null>
 
 The helper is exported from `src/proofs/index.ts`. Its optional second argument can set `timeBudgetMs` and an `AbortSignal`; normal callers can omit it. A non-null result has `status: 'accepted'`, a `mate-witness` evidence object, and the checker-derived conclusion. It checks all legal root moves for immediate mate, then tries short cooperative mating continuations and their suffixes. These include Fool's Mate, Scholar's Mate and checked motifs from knight-development, Italian, Sicilian and queen-pawn positions. Every proposal must replay legally from the actual position and pass the independent checker; no stored FEN grants a conclusion.
 
-If these proposals fail, a cooperative bounded beam search runs with maximum depth 12, beam width 16, 80,000 candidates and a 3,000 ms cap. Its score includes attacked squares around the defending king and approximate king escapes. Candidate selection preserves diversity across mating colors, initial moves and tactical states. These heuristics only order discovery. `runProofSearchPass` passes only its remaining time to this helper and discards positive results found after the overall pass deadline. Candidate transitions use mutable `chess.js` positions; the independent proof checker replays any proposed line through the authoritative rules. Position-check acceptance is sound, while generic discovery remains heuristic.
+If these proposals fail, cooperative search first tries one greedy continuation to depth 24, then diverse beams of width 16 and 64 to depth 12. All stages share the 80,000-candidate limit and 3,000 ms cap. Its score includes attacked squares around the defending king and approximate king escapes. Candidate selection preserves diversity across mating colors, initial moves and tactical states. These heuristics only order discovery. `runProofSearchPass` passes only its remaining time to this helper and discards positive results found after the overall pass deadline. Candidate transitions reuse a mutable `chess.js` position; the independent proof checker replays any proposed line through the authoritative rules. Position-check acceptance is sound, while generic discovery remains heuristic. See [position-check performance](position-check-performance.md) for the allocation fixes, Worker lifecycle and benchmark.
 
 ## Second-turn stall
 
@@ -22,7 +22,7 @@ Validation passed 454 tests across 40 files with `pnpm exec vitest run --maxWork
 
 ## Measured examples
 
-Local wall-clock measurements for checked global-deadness witnesses (the checker conclusion is `not-dead`):
+Historical local wall-clock measurements before the performance fixes for checked global-deadness witnesses (the checker conclusion is `not-dead`):
 
 | Position reached by | Result | Elapsed |
 | --- | --- | ---: |

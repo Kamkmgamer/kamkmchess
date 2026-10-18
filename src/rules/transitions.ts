@@ -100,7 +100,10 @@ export function applyCoordinateMove(position: Position, move: CoordinateMove): T
   }
 
   const engine = createChessPosition(position);
-  const legalMove = engine.moves({ verbose: true }).find(
+  // Only this piece can match the submitted coordinates. Verbose generation
+  // computes SAN and before/after FENs for each candidate, so avoid doing that
+  // work for every other piece during play and independent proof replay.
+  const legalMove = engine.moves({ square: move.from, verbose: true }).find(
     (candidate) =>
       candidate.from === move.from &&
       candidate.to === move.to &&

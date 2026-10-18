@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
+import { Chess } from 'chess.js';
 
 const endpoint = 'https://offline-chess.example/v1';
 
@@ -297,6 +298,8 @@ test('CLIProxyAPI connects with key and model, asks consent before requesting, a
 });
 
 test('a model playing White continues through knight and bishop development', async ({ page }) => {
+  const searchWorkers: string[] = [];
+  page.on('worker', (worker) => searchWorkers.push(worker.url()));
   const fixture = await provider(page, ['e2e4', 'g1f3', 'f1c4']);
   await page.goto('/');
   await configure(page, 'black');
@@ -307,6 +310,25 @@ test('a model playing White continues through knight and bishop development', as
   await expect(movesOnBoard(page)).toHaveCount(5);
   await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
   expect(fixture.modelCalls).toHaveLength(3);
+  expect(searchWorkers.filter((url) => url.includes('proof-search.worker'))).toHaveLength(1);
+});
+
+test('keeps one proof worker while playing through move 15', async ({ page }) => {
+  const chess = new Chess();
+  const coordinates = 'e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Nb8 d4 Nbd7 Nbd2 Bb7 Bc2 Re8 Nf1 Bf8 Ng3 g6 a4 c5'
+    .split(' ').map((san) => chess.move(san).lan);
+  const fixture = await provider(page, coordinates.filter((_, index) => index % 2 === 1));
+  const workers: string[] = [];
+  page.on('worker', (worker) => workers.push(worker.url()));
+  await page.goto('/');
+  await configure(page);
+  for (let ply = 0; ply < coordinates.length; ply += 2) {
+    await move(page, coordinates[ply]!);
+    await expect(movesOnBoard(page)).toHaveCount(ply + 2);
+  }
+  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+  expect(fixture.modelCalls).toHaveLength(15);
+  expect(workers.filter((url) => url.includes('proof-search.worker'))).toHaveLength(1);
 });
 
 test('CLIProxyAPI supports a prefixed endpoint and reports a failed check without starting play', async ({ page }) => {

@@ -1,4 +1,4 @@
-import { Chess, type Move, type Square } from 'chess.js';
+import { Chess } from 'chess.js';
 import {
   parsePosition,
   type Color,
@@ -15,15 +15,29 @@ import {
   type ProofQuery,
 } from '../index.js';
 import type { ProofSearchPassResult } from './types.js';
+import {
+  makeSearchMove,
+  searchAttacked,
+  searchBoard,
+  searchCoordinates,
+  searchKing,
+  searchMoves,
+  undoSearchMove,
+  type SearchMove,
+} from './chess-search.js';
 
 const FAST_MAX_DEPTH = 12;
+const GREEDY_MAX_DEPTH = 24;
 const FAST_BEAM_WIDTH = 16;
+const FALLBACK_BEAM_WIDTH = 64;
 const FAST_MAX_NODES = 80_000;
 const FAST_TIME_BUDGET_MS = 3_000;
+const YIELD_INTERVAL_MS = 8;
 
 interface Candidate {
-  readonly chess: Chess;
-  readonly moves: readonly CoordinateMove[];
+  readonly parentFen: string;
+  readonly parent: Candidate | null;
+  readonly lastMove: SearchMove | null;
   readonly score: number;
   readonly attacker: Color;
   readonly rootMove: string;
@@ -117,137 +131,126 @@ const CHECKED_MOTIF_LINES = [
 const OPENING_SEEDS = [...OPENING_LINES, ...CHECKED_MOTIF_LINES]
   .flatMap((line) => line.map((_, index) => line.slice(index)))
   .filter((seed, index, seeds) => seeds.findIndex((candidate) => candidate.join(' ') === seed.join(' ')) === index)
-  .sort((left, right) => left.length - right.length);
+  .sort((left, right) => left.length - right.length)
+  .map(parseMoves);
 
-function seedWitness(query: ProofQuery, root: Position): FastMatingWitnessResult | null {
+function seedWitness(
+  query: ProofQuery, chess: Chess, rootMoves: readonly SearchMove[], expired: () => boolean,
+): FastMatingWitnessResult | null {
+  const rootFen = chess.fen();
+  const sameMove = (raw: SearchMove, move: CoordinateMove) => {
+    const coordinates = searchCoordinates(raw);
+    return coordinates.from === move.from && coordinates.to === move.to && coordinates.promotion === move.promotion;
+  };
   for (const seed of OPENING_SEEDS) {
-    let chess: Chess;
-    try { chess = new Chess(root.fen); } catch { continue; }
+    if (expired()) return null;
+    const first = seed[0];
+    if (!first || !rootMoves.some((move) => sameMove(move, first))) continue;
+    chess.load(rootFen, { skipValidation: true });
     const path: CoordinateMove[] = [];
-    try {
-      for (const uci of seed) {
-        const move = parseMoves([uci])[0];
-        if (!move) break;
-        const played = chess.move({ from: move.from, to: move.to, ...(move.promotion ? { promotion: move.promotion } : {}) });
-        path.push(coordinateMove(played));
-        const color = isTargetMate(query, chess);
-        if (color) return acceptedResult(query, color, path);
+    for (const move of seed) {
+      if (expired()) return null;
+      const proposed = searchMoves(chess).find((candidate) => sameMove(candidate, move));
+      if (!proposed) break;
+      makeSearchMove(chess, proposed);
+      path.push(move);
+      const color = isTargetMate(query, chess);
+      if (color) {
+        const accepted = acceptedResult(query, color, path);
+        if (accepted) return accepted;
+        break;
       }
-    } catch { /* A seed only proposes a line; legal transition rules decide. */ }
+    }
   }
+  chess.load(rootFen, { skipValidation: true });
   return null;
 }
 
-function coordinateMove(move: Move): CoordinateMove {
-  return {
-    from: move.from as CoordinateMove['from'],
-    to: move.to as CoordinateMove['to'],
-    ...(move.promotion === undefined ? {} : { promotion: move.promotion as NonNullable<CoordinateMove['promotion']> }),
-  };
+function squareDistance(a: number, b: number): number {
+  return Math.max(Math.abs((a & 7) - (b & 7)), Math.abs((a >> 4) - (b >> 4)));
 }
 
-function squareDistance(a: string, b: string): number {
-  return Math.max(Math.abs(a.charCodeAt(0) - b.charCodeAt(0)), Math.abs(Number(a[1]) - Number(b[1])));
-}
-
-function squareOf(file: number, rank: number): Square {
-  return `${String.fromCharCode(97 + file)}${8 - rank}` as Square;
-}
-
-function attackPotential(chess: Chess, attacker: Color): number {
+function attackPotential(chess: Chess, attacker: Color, inCheck: boolean): { score: number; zoneAttacks: number } {
   const defender: Color = attacker === 'w' ? 'b' : 'w';
-  const board = chess.board();
-  let enemyKing: string | undefined;
-  let friendlyKing: string | undefined;
-  for (let rank = 0; rank < 8; rank += 1) for (let file = 0; file < 8; file += 1) {
-    const piece = board[rank]?.[file];
-    if (!piece) continue;
-    const square = squareOf(file, rank);
-    if (piece.type === 'k') {
-      if (piece.color === defender) enemyKing = square;
-      else friendlyKing = square;
-    }
-  }
-  if (!enemyKing || !friendlyKing) return -100;
-  const enemyFile = enemyKing.charCodeAt(0) - 'a'.charCodeAt(0);
-  const enemyRank = Number(enemyKing[1]) - 1;
+  const board = searchBoard(chess);
+  const enemyKing = searchKing(chess, defender);
+  const friendlyKing = searchKing(chess, attacker);
+  const enemyFile = enemyKing & 7;
+  const enemyRank = enemyKing >> 4;
   const enemyEdgeDistance = Math.min(enemyFile, 7 - enemyFile, enemyRank, 7 - enemyRank);
   let potential = (4 - enemyEdgeDistance) * 2.5;
   potential += (7 - squareDistance(friendlyKing, enemyKing)) * 1.5;
-  // Cooperative play can deliberately give the king fewer safe squares. Count
-  // attacks around its neighborhood rather than relying on piece proximity.
+  // Read the engine's numeric board without allocating piece/square snapshots
+  // for every candidate. Preserve the original heuristic and beam diversity.
   let kingZoneAttacks = 0;
   let safeKingEscapes = 0;
-  const enemyKingFile = enemyKing.charCodeAt(0) - 'a'.charCodeAt(0);
-  const enemyKingRank = Number(enemyKing[1]);
   for (let rankOffset = -1; rankOffset <= 1; rankOffset += 1) {
     for (let fileOffset = -1; fileOffset <= 1; fileOffset += 1) {
       if (rankOffset === 0 && fileOffset === 0) continue;
-      const file = enemyKingFile + fileOffset;
-      const rank = enemyKingRank + rankOffset;
-      if (file < 0 || file > 7 || rank < 1 || rank > 8) continue;
-      const square = squareOf(file, 8 - rank);
-      const controlled = chess.isAttacked(square, attacker);
+      const square = enemyKing + rankOffset * 16 + fileOffset;
+      if (square < 0 || (square & 0x88) !== 0) continue;
+      const controlled = searchAttacked(chess, square, attacker);
       if (controlled) kingZoneAttacks += 1;
-      const occupant = board[8 - rank]?.[file];
-      if (!controlled && occupant?.color !== defender) safeKingEscapes += 1;
+      if (!controlled && board[square]?.color !== defender) safeKingEscapes += 1;
     }
   }
   potential += kingZoneAttacks * 2.4;
   potential += (8 - safeKingEscapes) * 1.5;
   let strongest = 0;
   let secondStrongest = 0;
-  for (let rank = 0; rank < 8; rank += 1) for (let file = 0; file < 8; file += 1) {
-    const piece = board[rank]?.[file];
+  for (let square = 0; square < 128; square += 1) {
+    if ((square & 0x88) !== 0) { square += 7; continue; }
+    const piece = board[square];
     if (!piece || piece.color !== attacker || piece.type === 'k') continue;
     const value = piece.type === 'q' ? 1.8 : piece.type === 'r' ? 1.5 : piece.type === 'b' || piece.type === 'n' ? 1.2 : 0.8;
-    const pressure = (7 - squareDistance(squareOf(file, rank), enemyKing)) * value;
+    const pressure = (7 - squareDistance(square, enemyKing)) * value;
     if (pressure > strongest) { secondStrongest = strongest; strongest = pressure; }
     else if (pressure > secondStrongest) secondStrongest = pressure;
   }
   potential += strongest * 1.25 + secondStrongest * 0.35;
-  const checker = chess.turn() === 'w' ? 'b' : 'w';
-  if (chess.isCheck() && checker === attacker) potential += 24;
-  return potential;
+  if (inCheck && chess.turn() !== attacker) potential += 24;
+  return { score: potential, zoneAttacks: kingZoneAttacks };
 }
 
-function makeCandidate(chess: Chess, moves: readonly CoordinateMove[], targetColors: readonly Color[]): Candidate {
-  const scores = targetColors.map((color) => ({ color, score: attackPotential(chess, color) }));
-  scores.sort((left, right) => right.score - left.score);
-  const best = scores[0] ?? { color: 'w' as const, score: -100 };
-  const kingSquare = chess.board().flat().findIndex((piece) => piece?.type === 'k' && piece.color !== best.color);
-  const kingFile = kingSquare % 8;
-  const kingRank = 8 - Math.floor(kingSquare / 8);
-  let zoneAttacks = 0;
-  if (kingSquare >= 0) {
-    for (let rankOffset = -1; rankOffset <= 1; rankOffset += 1) {
-      for (let fileOffset = -1; fileOffset <= 1; fileOffset += 1) {
-        if (rankOffset === 0 && fileOffset === 0) continue;
-        const file = kingFile + fileOffset;
-        const rank = kingRank + rankOffset;
-        if (file < 0 || file > 7 || rank < 1 || rank > 8) continue;
-        if (chess.isAttacked(squareOf(file, 8 - rank), best.color)) zoneAttacks += 1;
-      }
-    }
+function makeCandidate(
+  chess: Chess, parent: Candidate | null, targetColors: readonly Color[],
+  parentFen: string, lastMove: SearchMove | null,
+): Candidate {
+  const inCheck = chess.isCheck();
+  let attacker: Color = targetColors[0] ?? 'w';
+  let best = attackPotential(chess, attacker, inCheck);
+  for (const color of targetColors.slice(1)) {
+    const potential = attackPotential(chess, color, inCheck);
+    if (potential.score > best.score) { best = potential; attacker = color; }
   }
-  const tacticalBand = `${chess.isCheck() ? 'check' : 'quiet'}:${Math.min(3, Math.floor(zoneAttacks / 2))}`;
-  const first = moves[0];
+  const tacticalBand = `${inCheck ? 'check' : 'quiet'}:${Math.min(3, Math.floor(best.zoneAttacks / 2))}`;
+  const first = parent?.lastMove ? null : lastMove && searchCoordinates(lastMove);
   return {
-    chess,
-    moves,
+    parentFen,
+    parent,
+    lastMove,
     score: best.score,
-    attacker: best.color,
-    rootMove: first ? `${first.from}${first.to}${first.promotion ?? ''}` : 'root',
+    attacker,
+    rootMove: first ? `${first.from}${first.to}${first.promotion ?? ''}` : parent?.rootMove ?? 'root',
     tacticalBand,
   };
 }
 
-function selectBeam(candidates: Candidate[], targetColors: readonly Color[]): Candidate[] {
-  candidates.sort((left, right) => right.score - left.score || left.moves.length - right.moves.length);
+function candidatePath(candidate: Candidate, finalMove: SearchMove): CoordinateMove[] {
+  const path = [searchCoordinates(finalMove)];
+  for (let parent: Candidate | null = candidate; parent?.lastMove; parent = parent.parent) {
+    path.push(searchCoordinates(parent.lastMove));
+  }
+  return path.reverse();
+}
+
+function selectBeam(candidates: Candidate[], targetColors: readonly Color[], beamWidth: number): Candidate[] {
+  candidates.sort((left, right) => right.score - left.score);
+  if (beamWidth === 1) return candidates.slice(0, 1);
   const selected: Candidate[] = [];
   const selectedSet = new Set<Candidate>();
   const addDiverse = (pool: readonly Candidate[], limit: number) => {
-    if (limit <= 0 || selected.length >= FAST_BEAM_WIDTH) return;
+    if (limit <= 0 || selected.length >= beamWidth) return;
     const signatures = new Set<string>();
     for (const item of pool) {
       const signature = `${item.rootMove}/${item.tacticalBand}`;
@@ -255,19 +258,19 @@ function selectBeam(candidates: Candidate[], targetColors: readonly Color[]): Ca
       signatures.add(signature);
       selected.push(item);
       selectedSet.add(item);
-      if (signatures.size >= limit || selected.length >= FAST_BEAM_WIDTH) break;
+      if (signatures.size >= limit || selected.length >= beamWidth) break;
     }
   };
 
   // Global deadness accepts either mating color. Reserve beam space for both
   // attackers so one easy pressure pattern cannot crowd out the other.
-  const perAttacker = Math.max(1, Math.ceil(FAST_BEAM_WIDTH / targetColors.length));
+  const perAttacker = Math.max(1, Math.ceil(beamWidth / targetColors.length));
   for (const attacker of targetColors) {
     addDiverse(candidates.filter((item) => item.attacker === attacker), perAttacker);
   }
-  addDiverse(candidates.filter((item) => !selectedSet.has(item)), FAST_BEAM_WIDTH - selected.length);
+  addDiverse(candidates.filter((item) => !selectedSet.has(item)), beamWidth - selected.length);
   for (const item of candidates) {
-    if (selected.length >= FAST_BEAM_WIDTH) break;
+    if (selected.length >= beamWidth) break;
     if (!selectedSet.has(item)) selected.push(item);
   }
   return selected;
@@ -290,53 +293,62 @@ export async function tryFastMatingWitness(
   const startedAt = now();
   const timeBudgetMs = Math.min(FAST_TIME_BUDGET_MS, options.timeBudgetMs ?? FAST_TIME_BUDGET_MS);
   // Check every root move for mate before spending the heuristic budget.
-  let rootMoves: readonly Move[];
-  try { rootMoves = rootChess.moves({ verbose: true }); } catch { return null; }
+  let rootMoves: readonly SearchMove[];
+  try { rootMoves = searchMoves(rootChess); } catch { return null; }
   for (const proposed of rootMoves) {
     if (options.signal?.aborted) return null;
     if (now() - startedAt >= timeBudgetMs) return null;
-    let move: Move;
-    try { move = rootChess.move(proposed); } catch { continue; }
+    makeSearchMove(rootChess, proposed);
     const color = isTargetMate(query, rootChess);
-    rootChess.undo();
-    if (color) return acceptedResult(query, color, [coordinateMove(move)]);
+    undoSearchMove(rootChess);
+    if (color) return acceptedResult(query, color, [searchCoordinates(proposed)]);
   }
 
-  const seed = seedWitness(query, root);
+  const expired = () => options.signal?.aborted === true || now() - startedAt >= timeBudgetMs;
+  const seed = seedWitness(query, rootChess, rootMoves, expired);
   if (seed) return seed;
+  if (expired()) return null;
 
   const colors = intendedColors(query);
-  let beam: Candidate[] = [makeCandidate(rootChess, [], colors)];
   const rootFen = rootChess.fen();
-  const visited = new Set<string>([rootFen.split(' ', 4).join(' ')]);
   let visitedCount = 0;
-  for (let depth = 0; depth < FAST_MAX_DEPTH && visitedCount < FAST_MAX_NODES; depth += 1) {
-    const next: Candidate[] = [];
-    for (const candidate of beam) {
-      for (const proposed of candidate.chess.moves({ verbose: true })) {
-        if (++visitedCount > FAST_MAX_NODES || now() - startedAt >= timeBudgetMs || options.signal?.aborted) return null;
-        let child: Chess;
-        try { child = new Chess(candidate.chess.fen()); } catch { continue; }
-        let move: Move;
-        try { move = child.move(proposed); } catch { continue; }
-        const path = [...candidate.moves, coordinateMove(move)];
-        const color = isTargetMate(query, child);
-        if (color) return acceptedResult(query, color, path);
-        const key = `${child.fen().split(' ', 4).join(' ')}|${depth + 1}`;
-        if (visited.has(key)) continue;
-        visited.add(key);
-        next.push(makeCandidate(child, path, colors));
-        if (visitedCount % 256 === 0) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
-          if (options.signal?.aborted || now() - startedAt >= timeBudgetMs) return null;
+  let lastYield = now();
+  // Most playable positions need only one promising cooperative continuation.
+  // Try narrow beams first, then retain the diverse search for harder roots.
+  for (const beamWidth of [1, FAST_BEAM_WIDTH, FALLBACK_BEAM_WIDTH]) {
+    // Hashes only prune discovery. A collision can miss a witness, never accept
+    // an invalid one; the independent checker still replays every accepted path.
+    rootChess.load(rootFen, { skipValidation: true });
+    let beam: Candidate[] = [makeCandidate(rootChess, null, colors, rootFen, null)];
+    const visited = new Set<string>([`${rootChess.hash()}|0`]);
+    const maxDepth = beamWidth === 1 ? GREEDY_MAX_DEPTH : FAST_MAX_DEPTH;
+    for (let depth = 0; depth < maxDepth && visitedCount < FAST_MAX_NODES; depth += 1) {
+      const next: Candidate[] = [];
+      for (const candidate of beam) {
+        rootChess.load(candidate.parentFen, { skipValidation: true });
+        if (candidate.lastMove) makeSearchMove(rootChess, candidate.lastMove);
+        // Serialize only beam parents, rather than every speculative child.
+        const parentFen = rootChess.fen();
+        for (const proposed of searchMoves(rootChess)) {
+          if (++visitedCount > FAST_MAX_NODES || now() - startedAt >= timeBudgetMs || options.signal?.aborted) return null;
+          makeSearchMove(rootChess, proposed);
+          const color = isTargetMate(query, rootChess);
+          if (color) return acceptedResult(query, color, candidatePath(candidate, proposed));
+          const key = `${rootChess.hash()}|${depth + 1}`;
+          if (!visited.has(key)) {
+            visited.add(key);
+            next.push(makeCandidate(rootChess, candidate, colors, parentFen, proposed));
+          }
+          undoSearchMove(rootChess);
+          if (now() - lastYield >= YIELD_INTERVAL_MS) {
+            await new Promise<void>((resolve) => setTimeout(resolve, 0));
+            if (options.signal?.aborted || now() - startedAt >= timeBudgetMs) return null;
+            lastYield = now();
+          }
         }
       }
-    }
-    beam = selectBeam(next, colors);
-    if (beam.length === 0) break;
-    if ((depth & 1) === 1 && now() - startedAt < timeBudgetMs) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      if (options.signal?.aborted) return null;
+      beam = selectBeam(next, colors, beamWidth);
+      if (beam.length === 0) break;
     }
   }
   return null;

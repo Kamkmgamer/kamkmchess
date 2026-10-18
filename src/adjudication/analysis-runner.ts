@@ -138,6 +138,7 @@ export function createAdjudicationAnalysisRunner(
   let storePromise: Promise<ProofSearchStoreV1> | null = options.store ? Promise.resolve(options.store) : null;
   const active = new Map<string, ActiveRequest>();
   const byScope = new Map<string, ActiveRequest>();
+  let idleWorker: ProofSearchWorkerPortV1 | null = null;
   let closed = false;
 
   const getStore = () => {
@@ -148,7 +149,21 @@ export function createAdjudicationAnalysisRunner(
   const settle = (request: ActiveRequest, result: ProofSearchPassResult) => {
     if (request.settled) return;
     request.settled = true;
-    request.worker.terminate();
+    if (result.status === 'accepted' && !closed && idleWorker === null) {
+      // Retain one successful worker so later moves reuse its loaded modules
+      // and optimized search code. Stop/errors always terminate the worker.
+      idleWorker = request.worker;
+      request.worker.onmessage = null;
+      const discardIdle = () => {
+        if (idleWorker !== request.worker) return;
+        idleWorker = null;
+        request.worker.terminate();
+      };
+      request.worker.onerror = discardIdle;
+      request.worker.onmessageerror = discardIdle;
+    } else {
+      request.worker.terminate();
+    }
     if (active.get(request.requestId) === request) active.delete(request.requestId);
     if (byScope.get(request.scope) === request) byScope.delete(request.scope);
     request.resolve(result);
@@ -182,7 +197,10 @@ export function createAdjudicationAnalysisRunner(
       if (priorScope) cancel(priorScope);
 
       let worker: ProofSearchWorkerPortV1;
-      try { worker = makeWorker(); } catch {
+      try {
+        worker = idleWorker ?? makeWorker();
+        idleWorker = null;
+      } catch {
         return Promise.resolve(nonResult('search-error', input.query.queryIdentity, maxDiscoveredStates, timeBudgetMs));
       }
 
@@ -266,6 +284,8 @@ export function createAdjudicationAnalysisRunner(
       if (closed) return;
       closed = true;
       for (const request of [...active.values()]) cancel(request);
+      idleWorker?.terminate();
+      idleWorker = null;
       if (!options.store) void storePromise?.then((store) => store.close()).catch(() => undefined);
     },
   };
