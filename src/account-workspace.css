@@ -11,7 +11,5 @@
 .account-settings button:disabled { opacity: .55; cursor: default; }
 @media (max-width: 620px) { .account-settings { padding-inline: 12px; } .account-settings input, .account-settings select { font-size: 16px; } }
 
-.account-launcher { position: absolute; top: 12px; left: max(4px, calc(50% - 450px)); z-index: 2; }
 .account-workspace { padding-inline: 20px; }
 .account-panel { padding: 0; }
-@media (max-width: 940px) { .account-launcher { position: fixed; top: auto; left: auto; bottom: 12px; right: 12px; background: var(--surface); border-radius: 8px; } }

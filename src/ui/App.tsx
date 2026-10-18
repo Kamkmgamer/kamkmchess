@@ -34,6 +34,7 @@ interface AppProps {
   readonly composition: MatchComposition;
   readonly initialSession: LocalGameSession;
   readonly initialSnapshot: ControllerSnapshotV1;
+  readonly onOpenAccount?: () => void;
 }
 const PROMOTIONS: readonly { value: Promotion; label: string }[] = [
   { value: 'q', label: 'Queen' }, { value: 'r', label: 'Rook' },
@@ -66,7 +67,7 @@ function statusLabel(snapshot: ControllerSnapshotV1): string {
   return (snapshot.position.sideToMove === 'w' ? 'White' : 'Black') + ' to move';
 }
 
-export function App({ composition, initialSession, initialSnapshot }: AppProps) {
+export function App({ composition, initialSession, initialSnapshot, onOpenAccount }: AppProps) {
   const [session, setSession] = useState(initialSession);
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [orientation, setOrientation] = useState<'white' | 'black'>('white');
@@ -701,7 +702,9 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   return <main className="workspace minimal-workspace">
     {!focusPage && <header className="topbar">
       <a className="wordmark" href="#board" aria-label="Kamkm Chess home">kamkm chess</a>
-      <div className="topbar-actions"><IconButton icon="settings" label="Settings" onClick={() => openTool('settings')} />
+      <div className="topbar-actions">
+        {onOpenAccount && <IconButton icon="account" label="Account and saved games" onClick={onOpenAccount} />}
+        <IconButton icon="settings" label="Settings" onClick={() => openTool('settings')} />
         <button className="button primary" type="button" onClick={event => openSetup(event.currentTarget)} aria-label="New game">New</button></div>
     </header>}
     {setupOpen && <section className="focus-page setup-panel" aria-label="New game">
