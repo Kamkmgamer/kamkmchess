@@ -1,8 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { parsePosition } from '../rules/index.js';
-import { editPositionFen, positionSetupError, readEditorPieces, setPositionSideToMove } from './position-editor.js';
+import { editPositionFen, movePositionPiece, positionSetupError, readEditorPieces, setPositionSideToMove } from './position-editor.js';
 
 describe('visual position editor', () => {
+  it('moves pieces freely without treating an edit as a played pawn move', () => {
+    const standard = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    const edited = movePositionPiece(standard, 'e2', 'e4');
+    expect(edited).toBe('rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1');
+    expect(parsePosition(edited).pieces).toContainEqual({ square: 'e4', color: 'w', type: 'p' });
+  });
+
+  it('removes stale castling rights when a rook is moved or replaced', () => {
+    const standard = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    expect(movePositionPiece(standard, 'h1', 'h3').split(' ')[2]).toBe('Qkq');
+    expect(movePositionPiece(standard, 'a1', 'a8').split(' ')[2]).toBe('Kk');
+  });
   it('identifies the field and square of an invalid custom FEN', () => {
     try {
       parsePosition('4k3/8/8/8/8/8/8/4KK2 w - - 0 1');
