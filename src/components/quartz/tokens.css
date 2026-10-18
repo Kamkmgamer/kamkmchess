@@ -1,0 +1,503 @@
+/* Quartz tokens. The one file to retune.
+
+   Palette: Frost. Cold navy ink on icy paper, cards on a cool fog canvas, and five cold kind tints. A kind shows as a word, never a fill.
+
+   Rules
+   - Hue names a kind of thing. Ink carries all text. Hue never colors text.
+   - Five kind slots, in this order: agent cyan (h195), key orchid (h320), run blue (h250), deploy violet (h290)
+     and model mint (h160). Two reserved status hues: warn amber (h68) and fail red (h26).
+   - Warm means warn or fail. Every warm hue on screen (red, orange, amber, yellow, h0 to h90) is trouble.
+     No kind, chart series, decoration or brand accent may take a warm hue, and the chassis has none.
+   - Components never name a hue. They read --accent-mark, --accent-field, --accent-wash and
+     --accent-line, which [data-kind] or [data-status] set on the nearest element.
+   - Every hue has six steps. mark: bar fills, chart fills, legend squares. field: the flat full-bleed
+     or inset field behind a section or product UI. wash: selection and focus in the app. line: a darker
+     step for chart lines, outlines and other 1-2px marks that must meet 3:1 (WCAG 1.4.11). tint and label:
+     the kind label, a soft ground and the dark word set on it.
+   - Text on a hue uses --accent-on-field on a field and --text-on-field on a mark, fixed dark in both
+     themes. Text on a wash is ink, because the wash flips with the theme. The kind label is the one
+     tinted text: --accent-label on --accent-tint.
+   - Floors, worked out on Quartz's color page (design.how/systems/quartz/foundations/color): ink on every field and wash is at
+     least 7.5:1, ink on every mark at least 5:1, every line step at least 3:1 on paper and on the grey
+     card, and every label at least 4.5:1 on its tint, in both themes. The dark theme points each line at
+     its mark. Fills are flat: no ring, no shadow.
+   - Everything is OKLCH and inside sRGB. Each component has one quiet grey frame line (--line-frame) with row rules inside it. The grey
+     field is a well for code and output, never a container. Nothing casts a shadow except overlays.
+
+   Format
+   - One declaration per line: --name: value; followed by a comment of the form job | used by.
+   - A line that starts with == opens a token group. Tools that list Quartz's tokens read both, so keep
+     them when you retune.
+
+   Scope: the tokens live on .quartz, not :root, so an app's own --space-* and --font-* on :root stay
+   as they are. Derived tokens are declared again on [data-surface] so an inverse section
+   recomputes them from its own ink and paper channels. */
+
+/* Fonts. Quartz is drawn in Quartz Sans (Normal width) and Quartz Mono, which are declared
+   on Quartz's own pages only and are not part of this theme. This file declares no @font-face, so each family
+   stack (--font-sans, --font-mono) renders its fallback: the platform's UI sans and monospace.
+   With a licence of your own, declare @font-face rules named "Quartz Sans"
+   and "Quartz Mono", and they take over. */
+
+.quartz {
+  /* == Ink and paper == */
+  --ink-c: 20% 0.024 262; /* the ink channel: cold navy graphite, 18.0:1 on --surface-page and 15.9:1 on --surface-card; every text and line is this at an alpha | all ink tokens */
+  --paper-c: 99.7% 0.001 250; /* the paper channel: an icy white | all paper tokens */
+  --grey-c: 95.6% 0.004 255; /* the grey field channel, cool like the ink | surface-card */
+  --canvas-c: 99.1% 0.002 250; /* the canvas channel: the cool fog behind cards and frames | surface-canvas */
+  --text-on-field-c: 20% 0.024 262; /* the fixed dark channel: text on hue and every shadow; never flips | text-on-field, elev-overlay */
+  --shadow-alpha: 0.20; /* overlay shadow strength; the dark theme raises it | elev-overlay */
+
+  /* == Category hues == */
+  --hue-1-mark: oklch(86% 0.120 195); /* agent cyan mark, 12.4:1 with --text-on-field | bar fill, chart fill, legend square */
+  --hue-1-field: oklch(92% 0.090 195); /* agent cyan field, 14.8:1 with --text-on-field | full-bleed section, product-line area */
+  --hue-1-wash: oklch(96.5% 0.040 195); /* agent cyan wash, 16.6:1 with --text-1 | selected row, focused panel */
+  --hue-1-line: oklch(60% 0.100 195); /* agent cyan line, 3.7:1 on --surface-page, 3.3:1 on --surface-card | chart line, outline */
+  --hue-1-tint: oklch(89% 0.050 195); /* agent cyan label ground, 13.3:1 with --text-on-field | kind label */
+  --hue-1-label: oklch(38% 0.062 195); /* agent cyan label word, 7.1:1 on --hue-1-tint | kind label */
+  --hue-2-mark: oklch(82% 0.080 320); /* key orchid mark, 10.1:1 with --text-on-field | bar fill, chart fill, legend square */
+  --hue-2-field: oklch(90% 0.060 320); /* key orchid field, 13.2:1 with --text-on-field | full-bleed section, product-line area */
+  --hue-2-wash: oklch(96% 0.030 320); /* key orchid wash, 16.0:1 with --text-1 | selected row, focused panel */
+  --hue-2-line: oklch(58% 0.075 320); /* key orchid line, 4.4:1 on --surface-page, 3.9:1 on --surface-card | chart line, outline */
+  --hue-2-tint: oklch(89% 0.050 320); /* key orchid label ground, 12.8:1 with --text-on-field | kind label */
+  --hue-2-label: oklch(38% 0.062 320); /* key orchid label word, 7.3:1 on --hue-2-tint | kind label */
+  --hue-3-mark: oklch(72% 0.100 250); /* run blue mark, 7.3:1 with --text-on-field | bar fill, chart fill, legend square */
+  --hue-3-field: oklch(82% 0.060 250); /* run blue field, 10.4:1 with --text-on-field | full-bleed section, product-line area */
+  --hue-3-wash: oklch(94.5% 0.020 250); /* run blue wash, 15.4:1 with --text-1 | selected row, focused panel */
+  --hue-3-line: oklch(52% 0.150 250); /* run blue line, 5.5:1 on --surface-page, 4.8:1 on --surface-card | chart line, outline */
+  --hue-3-tint: oklch(89% 0.050 250); /* run blue label ground, 13.1:1 with --text-on-field | kind label */
+  --hue-3-label: oklch(38% 0.062 250); /* run blue label word, 7.2:1 on --hue-3-tint | kind label */
+  --hue-4-mark: oklch(72% 0.110 290); /* deploy violet mark, 7.1:1 with --text-on-field | bar fill, chart fill, legend square */
+  --hue-4-field: oklch(83% 0.065 290); /* deploy violet field, 10.6:1 with --text-on-field | full-bleed section, product-line area */
+  --hue-4-wash: oklch(95% 0.025 290); /* deploy violet wash, 15.6:1 with --text-1 | selected row, focused panel */
+  --hue-4-line: oklch(54% 0.150 290); /* deploy violet line, 5.3:1 on --surface-page, 4.7:1 on --surface-card | chart line, outline */
+  --hue-4-tint: oklch(89% 0.050 290); /* deploy violet label ground, 12.9:1 with --text-on-field | kind label */
+  --hue-4-label: oklch(38% 0.062 290); /* deploy violet label word, 7.3:1 on --hue-4-tint | kind label */
+  --hue-5-mark: oklch(75% 0.100 160); /* model mark, 8.5:1 with --text-on-field | bar fill, chart fill, legend square */
+  --hue-5-field: oklch(90% 0.070 160); /* model field, 13.8:1 with --text-on-field | full-bleed section, product-line area */
+  --hue-5-wash: oklch(96% 0.035 160); /* model wash, 16.3:1 with --text-1 | selected row, focused panel */
+  --hue-5-line: oklch(52% 0.090 160); /* model line, 5.2:1 on --surface-page, 4.6:1 on --surface-card | chart line, outline */
+  --hue-5-tint: oklch(89% 0.050 160); /* model label ground, 13.3:1 with --text-on-field | kind label */
+  --hue-5-label: oklch(38% 0.062 160); /* model label word, 7.1:1 on --hue-5-tint | kind label */
+
+  /* == Reserved status hues == */
+  --warn-mark: oklch(80% 0.152 68); /* amber: degraded, slow, retrying; 9.4:1 with --text-on-field; warm, so never a kind | warn chip */
+  --warn-field: oklch(89% 0.056 68); /* warn field, 12.9:1 with --text-on-field | warn banner, warn toast */
+  --warn-wash: oklch(96% 0.028 68); /* warn wash, 16.1:1 with --text-1 | warn row */
+  --warn-line: oklch(62% 0.132 68); /* warn line, 3.7:1 on --surface-page, 3.3:1 on --surface-card | warn series, warn outline */
+  --fail-mark: oklch(65.2% 0.219 26); /* red: errored, crashed, 5xx; 5.1:1 with --text-on-field; warm, so never a kind | destructive button */
+  --fail-field: oklch(82% 0.055 26); /* fail field, 10.2:1 with --text-on-field | fail banner, fail toast */
+  --fail-wash: oklch(94.5% 0.027 26); /* fail wash, 15.3:1 with --text-1 | fail row, invalid field */
+  --fail-line: oklch(60% 0.236 26); /* fail line, 4.4:1 on --surface-page, 3.9:1 on --surface-card | fail series, fail outline */
+  --warn-text: oklch(49% 0.100 68); /* warn word, 6.4:1 on --surface-page, 5.6:1 on --surface-card | status word, warn text */
+  --fail-text: oklch(51% 0.180 26); /* fail word, 6.3:1 on --surface-page, 5.6:1 on --surface-card | status word, error text */
+
+  /* == Type families == */
+  --font-sans: "Quartz Sans", ui-sans-serif, system-ui, sans-serif; /* all UI and prose: Quartz Sans where declared, else the platform UI sans | every text role */
+  --font-mono: "Quartz Mono", ui-monospace, "SF Mono", Menlo, monospace; /* Quartz Mono where declared, else the platform monospace | ordinals, codes, IDs, code blocks */
+
+  /* == Type weights == */
+  --weight-body: 340; /* Regular | running text */
+  --weight-medium: 400; /* Medium | labels, buttons, headings, display */
+  --weight-strong: 500; /* Semibold | emphasis inside prose, code keywords */
+  --width-normal: normal; /* each face's own width; Quartz Sans's Normal file has no width axis, and a "wdth" value here would stretch the fallback sans | every role */
+  --features-data: "tnum", "zero", "ss04"; /* tabular figures, slashed zero, serif I; every duration, count and value | tables, labels, stats, data roles */
+  --features-id: "ss04"; /* serif I tells I, l and 1 apart | identifiers in sans */
+
+  /* == Type roles == */
+  --type-display-xl: 400 80px/80px var(--font-sans); /* marketing hero, line-height 1.0 | hero */
+  --type-display-lg: 400 60px/66px var(--font-sans); /* section heads, line-height 1.1 | marketing sections */
+  --type-display: 400 40px/44px var(--font-sans); /* mobile hero, page titles with stats | app page title, docs H1 */
+  --type-heading-lg: 400 32px/36px var(--font-sans); /* page titles | docs H1 on mobile, settings title */
+  --type-heading: 400 24px/28px var(--font-sans); /* panel and section titles | docs H2, dialog title */
+  --type-heading-sm: 400 20px/24px var(--font-sans); /* subsection titles | docs H3, card title */
+  --type-heading-xs: 400 16px/20px var(--font-sans); /* in-thread headings | response ## */
+  --type-body-lg: 340 16px/22px var(--font-sans); /* marketing and docs prose, line-height 1.4 | docs lede */
+  --type-body: 340 14px/20px var(--font-sans); /* app prose | descriptions, table text */
+  --type-body-sm: 380 13px/18px var(--font-sans); /* dense meta, a step heavier than body so meta on text-3 still reads | captions, helper text */
+  --type-button: 400 16px/20px var(--font-sans); /* default and large button label | button */
+  --type-label: 400 14px/16px var(--font-sans); /* controls and table cells | input, menu item, tab */
+  --type-label-sm: 400 12px/16px var(--font-sans); /* small tags, column heads | badge, table head */
+  --type-code: 400 13px/20px var(--font-mono); /* code blocks | code block, log line */
+  --type-code-sm: 400 12px/16px var(--font-mono); /* IDs, ordinals, paths in tables | inline code, kbd */
+  --type-tag: var(--type-code-sm); /* ids, methods, status codes and paths in a row or a code tag; the metrics of code-sm under its own name so the two cannot drift | row id, code tag, key tail */
+  --type-code-display: 400 32px/36px var(--font-mono); /* a code a person reads aloud or types on another device | CLI device code, recovery code */
+  --type-code-touch: 400 16px/22px var(--font-mono); /* code typed into a field on touch; 16px so iOS WebKit does not zoom on focus (trap/touch-input-zoom) | terminal input, code inputs below 640px */
+  --type-stat-xl: 400 48px/52px var(--font-sans); /* marketing stat numerals, tabular figures, plain sans | stat size xl */
+  --type-stat-lg: 400 40px/44px var(--font-sans); /* hero stat in the app, tabular figures | stat size lg */
+  --type-stat: 400 32px/36px var(--font-sans); /* app stat numerals, tabular figures | stat, metric */
+  --type-state-word: 400 14px/16px var(--font-sans); /* status words, the label role in sentence case | status word */
+  --tracking-display: -0.025em; /* display sizes | display-xl, display-lg, display */
+  --tracking-heading: -0.015em; /* heading sizes | heading-lg, heading, heading-sm */
+  --tracking-body: -0.01em; /* 16px text: body-lg and button | body-lg, button */
+  --tracking-text: 0em; /* 14px and below, where negative tracking closes the counters | body, body-sm, label, label-sm */
+
+  /* == Space == */
+  --space-0-5: 2px; /* optical nudge | tag inner gap */
+  --space-1: 4px; /* icon to label inside tags | tag, badge */
+  --space-2: 8px; /* control inner gap, button arrow gap | button, input */
+  --space-3: 12px; /* control padding, table cell padding | input, table */
+  --space-4: 16px; /* card padding, mobile gutter, button padding | card, button */
+  --space-5: 20px; /* grid gap in the app | grid */
+  --space-6: 24px; /* section padding in the app, desktop gutter | panel, docs */
+  --space-8: 32px; /* between app sections | docs sections */
+  --space-10: 40px; /* marketing block gap | marketing */
+  --space-15: 60px; /* marketing sub-section gap | marketing */
+  --space-20: 80px; /* marketing section gap | marketing */
+  --space-30: 120px; /* hero top padding | hero */
+
+  /* == Layout == */
+  --container: 1120px; /* marketing and docs content width | page container */
+  --sidebar: 248px; /* app and docs sidebar width | sidebar */
+  --toc: 200px; /* docs on-this-page column | docs layout */
+  --topbar: 56px; /* app and docs top bar height | top bar */
+  --gutter: 24px; /* page gutter at desktop | page */
+  --gutter-sm: 16px; /* page gutter on phones | page */
+  --control-xs: 24px; /* the action in a 40px header, 8px from its edges | button xs, chip xs, segmented xs, filter bar xs */
+  --control-sm: 28px; /* small control height, the sm of every control | button sm, chip, segmented sm, field sm, tag input */
+  --control: 32px; /* default control height, wider than tall: 16px of padding a side | button, input, select, slider thumb */
+  --tag: 20px; /* a tag's height: the smallest box that holds a 12px label, a count or a key cap | badge, code tag, kbd, ink slot sm, sidebar count */
+  --control-lg: 44px; /* large control and touch target | button lg */
+  --overlay-sm: 400px; /* small dialog and confirm width | dialog sm, alert dialog */
+  --overlay: 480px; /* default dialog, sheet and drawer content width | dialog, sheet, drawer */
+  --overlay-lg: 640px; /* wide dialog for forms and previews | dialog lg */
+  --popover: 288px; /* popover and picker panel width | popover, mode picker */
+  --toast-width: 384px; /* toast stack width from 640px up; full width below | toaster */
+  --popover-sm: 256px; /* a short info panel opened from an info button | popover info */
+  --tooltip-max: 256px; /* tooltip line length before it wraps | tooltip, chart tooltip */
+  --hint-width: 420px; /* widest a full-text hint grows; still capped at the viewport less the phone gutters | truncate hint */
+  --menu-min: 192px; /* narrowest a menu opens, so short labels still give a usable target row | dropdown menu, filter bar menu, attachment row */
+  --popup-max: 320px; /* tallest a list popup grows before it scrolls | select, combobox, command list, prompt-input menu, chart data table */
+  --menu-width: 320px; /* width the @ and / list opens at beside the caret; narrower on a phone | prompt-input menu */
+  --field-max-height: calc(var(--control-lg) * 4); /* tallest a wrapping chips field grows, four touch rows, before it scrolls | combobox chips */
+  --row-sm: 32px; /* compact row, for dense data | table size sm */
+  --row: 40px; /* default row, one line | table, item */
+  --row-lg: 56px; /* a row with a second line | table size lg, item with a description */
+  --label-column: 160px; /* widest a description-list label column grows before it wraps | data list */
+  --measure: 68ch; /* long-form reading measure | prose */
+  --tab-max: 220px; /* widest a document tab grows before its title truncates | tabs document variant */
+  --sidebar-icon: calc(var(--control) + var(--space-4)); /* collapsed sidebar width: one control plus 8px a side | sidebar icon mode */
+  --attachment-media: 40px; /* the media square in an attachment row; size sm uses 32px, --row-sm | attachment */
+  --attachment-max: 256px; /* widest an attachment chip in the composer grows before its name truncates | prompt-input attachment */
+  --grab-size: 40px; /* length of a sheet's grab bar | sheet */
+  --fade-edge: 24px; /* the mask fade at the clipped edge of a sideways scroller | suggestions scroll */
+  --fade-line-end: 16px; /* the mask fade at the end of one line of text that overflows, in place of an ellipsis | segmented control label */
+  --measure-hint: 60ch; /* a description under a title, a page lede or a field's hint, shorter than prose | field description, section description, page header description */
+  --measure-short: 48ch; /* an empty state's title and line, set top-left in the body | empty state */
+  --page-header-max: 720px; /* widest a page header's title block grows beside its actions | page header */
+  --search-min: 200px; /* narrowest the filter bar's search gets before the filters wrap under it | filter bar */
+  --search-max: 320px; /* widest the filter bar's search grows once the bar has room | filter bar */
+  --crumb-floor: 8ch; /* shortest the page crumb truncates to before the trail folds another crumb | breadcrumb trail */
+  --log-level: 5ch; /* the level column, as wide as the longest level word | log viewer */
+  --status-column: 128px; /* a right-aligned status column, wide enough for the status "Waiting on you" | table, tool call, timeline */
+  --timeline-name: 200px; /* the widest the name column of a timeline gets from 576px; narrower frames give it 40%, and never less than --timeline-name-min | timeline */
+  --timeline-name-min: 120px; /* the least the name column of a timeline keeps, so a label never shrinks to a stub | timeline */
+  --timeline-label-min: 10ch; /* the least a span name keeps before its figure is hidden, so a name never shrinks to a stub | timeline */
+  --time-column: 12ch; /* a column of relative times, wide enough for the first paint's date ("Sep 30, 2025") so the swap to "3m ago" never moves it | relative time column */
+  --stat-placeholder: 4ch; /* the loading bar standing in for a stat's value, about four digits | stat */
+  --tool-detail-min: 6ch; /* the least of a tool call's detail kept before its status wraps to a second line | tool call */
+  --line-box: 1lh; /* one line of the text it sits in; lh resolves where it is read | prose rhythm, stat, status, toast mark, date picker field, prompt input, tool call output */
+  --skeleton-text: 0.7em; /* a text skeleton bar, about the cap height of the text it stands for | skeleton text */
+  --code-inline: 0.9em; /* inline code, a step under the text around it so mono does not look larger | code */
+
+  /* == Radius == */
+  --radius-0: 0px; /* a straight edge: the shared edges of cells in a strip, bitmap pixels | frame-shared inner edges, switch thumb */
+  --radius-inner: 4px; /* a box inside a control or a row: the selected segment, badges, chips, row fills, a menu item | segment thumb, badge, chip, menu item */
+  --radius-soft: 6px; /* a control: buttons, fields, the segmented track, code tags | button, input, select, segmented control */
+  --radius-frame: 10px; /* a component's outer edge and every overlay | card, table, dialog, popover, menu, toast */
+  --radius-full: 999px; /* round means a person: avatars and the presence mark, plus the radio so it never reads as a checkbox | avatar, presence, radio */
+
+  /* == Lines == */
+  --line-hair: 1px; /* dividers, rings | separator, ring */
+  --line-accent: 2px; /* the 2px accent stroke | active tab underline, progress connector, table resize handle, chart line */
+  --line-focus: 2px; /* focus outline width | every focusable */
+  --focus-offset: 2px; /* focus outline offset | every focusable */
+  --line-frame-alpha: 0.14; /* the ink alpha of a frame's edge: a quiet grey line, so a screen of frames reads light | line-frame */
+  --mark-size: 8px; /* the legend square and the menu radio dot | chart legend, radio item */
+  --ring-cutout: 2px; /* the gap ring that cuts an overlapping avatar out of the surface | avatar group */
+  --chart-dash: 6 4; /* stroke-dasharray for a comparison or projected series | chart */
+  --chart-axis-gap: 8px; /* gap between a tick label and the plot; chart.tsx reads it into its layout | chart */
+
+  /* == Motion == */
+  --dur-press: 60ms; /* press feedback | button */
+  --dur-fast: 120ms; /* hover: color, wash and edge changes on every interactive element, and a menu, popover or tooltip leaving, on --ease-step | button, row, link, chip, menu */
+  --dur-base: 160ms; /* menus, popovers, selects, tooltips and toasts in, opacity only; they leave on the shorter --dur-fast | menu, popover, toast */
+  --dur-slow: 180ms; /* dialogs and sheets: opacity, plus --sheet-shift for a sheet | dialog, sheet */
+  --dur-spin: 800ms; /* one turn of a pending ring (--ease-spin) | spinner, button, input, progress ring, send button */
+  --dur-run: 1000ms; /* one turn of the running status arc (animate-run) | status arc */
+  --dur-slide: 1200ms; /* one pass of the indeterminate progress segment (animate-slide) | progress bar */
+  --ease-spin: linear; /* the pending ring turns smoothly | animate-spin */
+  --thumb-lift: 0%; /* how much ink the selected segment takes beyond paper; the dark theme raises it | surface-thumb */
+  --thumb-ring-alpha: 0; /* the ink alpha of the selected segment's 1px ring; the dark theme raises it | elev-thumb */
+  --skeleton-step: 0%; /* how much ink the skeleton fill takes beyond the grey field; the dark theme raises it | skeleton */
+  --dur-skeleton-delay: 150ms; /* wait before a skeleton shows, so fast loads never flash one | skeleton swap */
+  --dur-skeleton-hold: 400ms; /* shortest time a shown skeleton stays, so it never blinks | skeleton swap */
+  --toast-read-base: 3000ms; /* reading time every toast gets | toast */
+  --toast-read-char: 60ms; /* reading time per character of title and description | toast */
+  --toast-read-action: 3000ms; /* extra time when the toast carries an action | toast */
+  --toast-read-min: 4000ms; /* shortest a toast stays | toast */
+  --toast-read-max: 12000ms; /* longest a toast stays before it waits for the person | toast */
+  --scale-press: 0.98; /* the scale a pressed button or chip settles at | button, chip */
+  --ease-step: cubic-bezier(0.2, 0, 0, 1); /* the standard curve for every state change: hover, press, chip toggle, row select, tab switch | every interactive element */
+  --sheet-shift: 8px; /* how far a sheet travels from its edge as it appears | sheet */
+
+  /* == Layers == */
+  --z-raised: 10; /* a part lifted over its siblings inside one component | sticky table, data grid and dialog header and footer, focused tab, segment or grouped button, resize handles, item actions, avatar badge, select scroll arrows, code editor gutter, message time, conversation scroll button, attachment link */
+  --z-above: 20; /* a part that sits over a raised part | dialog close over its sticky header, resizable value label, attachment actions over its link, condensed page header */
+  --z-cover: 30; /* a layer over every part of its component | nested dialog dim, focused attachment link */
+  --z-drop: 40; /* a layer over a whole component while a file is dragged over it, or a bar floating over the page; under every overlay | attachment drop zone, bulk action bar */
+  --z-overlay: 50; /* every portalled layer; one layer, so the one opened last sits on top by DOM order | dialog, sheet, popover, menu, select, combobox, tooltip, toast, chart tooltip, mobile sidebar, skip link */
+
+  /* == Code == */
+  --code-string-alpha: 0.80; /* the alpha of ink in a string; the dark theme lowers it so strings part from plain code | code */
+  --code-comment-alpha: 0.66; /* the alpha of ink in a comment; --code-comment is 5.3:1 on --surface-card in both themes | code */
+}
+
+/* Derived tokens. Declared on every element that changes a channel, so they recompute there. */
+.quartz, .quartz [data-surface] {
+  /* == Surface == */
+  --ink: oklch(var(--ink-c)); /* solid ink | primary text, primary button */
+  --paper: oklch(var(--paper-c)); /* solid paper | page background */
+  --surface-canvas: oklch(var(--canvas-c)); /* the cool fog an app sits on, behind its cards and frames | app background, docs preview */
+  --surface-page: var(--paper); /* paper: the ground of every card, frame and panel | card, table, dialog */
+  --surface-card: oklch(var(--grey-c)); /* the well: the grey field inside a frame for code, logs, shell output and read-only values; never a container | well, code block, log body */
+  --surface-frame: color-mix(in oklch, var(--surface-card) 55%, var(--paper)); /* a panel's outer frame: lighter than the well, so a page of panels stays bright | panel, overlay shell */
+  --surface-raised: var(--paper); /* a container inside a grey card | table inside card, menu */
+  --surface-hover: oklch(var(--ink-c) / 0.05); /* row and item hover | row, menu item, ghost button */
+  --surface-selected: oklch(var(--ink-c) / 0.09); /* selected row with no kind, one step past hover | table, data table, tree */
+  --surface-pressed: oklch(var(--ink-c) / 0.08); /* active press | row, ghost button */
+  --surface-inverse: var(--ink); /* a pressed chip or highlighted item on the page's own channels; whole panels use data-surface="inverse" | chip, segmented control */
+  --surface-tile: oklch(var(--ink-c) / 0.08); /* a media square behind an image or file icon, ink at 8% | attachment media */
+  --surface-overlay: oklch(var(--ink-c) / 0.24); /* dialog backdrop | dialog, sheet */
+
+  /* == Text == */
+  --text-1: var(--ink); /* primary text, and the only text on marks and fields | everything */
+  --text-2: oklch(var(--ink-c) / 0.80); /* secondary text, 9.6:1 on --surface-page, 8.9:1 on --surface-card | descriptions, meta */
+  --text-3: oklch(var(--ink-c) / 0.66); /* tertiary text, 5.8:1 on --surface-page, 5.5:1 on --surface-card, the floor for readable text | timestamps, captions */
+  --text-disabled: oklch(var(--ink-c) / 0.40); /* disabled controls only, never required text | disabled */
+  --text-inverse: var(--paper); /* text on inverse surfaces | primary button, tooltip */
+  --text-on-field: oklch(var(--text-on-field-c)); /* text on any hue field or mark; fixed dark in both themes | field section, icon chip */
+
+  /* == Border == */
+  --border-hair: oklch(var(--ink-c) / 0.08); /* a divider where fields cannot separate | table rows, default border */
+  --border-faint: oklch(var(--ink-c) / 0.05); /* a divider inside a grey card | card rows */
+  --border-strong: oklch(var(--ink-c) / 0.12); /* the strongest hairline | input hover, outline button */
+  --border-control: oklch(var(--ink-c) / 0.50); /* the edge of an empty control, 3.4:1 on --surface-page, 3.3:1 on --surface-card (WCAG 1.4.11) | checkbox, radio, switch */
+  --border-focus: var(--ink); /* focus outline, always ink | every focusable */
+  --line-frame: oklch(var(--ink-c) / var(--line-frame-alpha)); /* the one outer edge of a component, 1px, a quiet grey | frame, overlay edge, open row rules */
+  --line-row: oklch(var(--ink-c) / 0.08); /* the rule between rows and under a header, 1px; decorative, since rows also differ by content and space | rule-row, rule-col */
+  --line-control: oklch(var(--ink-c) / 0.16); /* the quiet edge of a field, a secondary button and a chip; the label and placeholder identify the control, so it stays light | input, select, secondary button, chip, kbd */
+  --line-control-hover: oklch(var(--ink-c) / 0.32); /* that edge under the pointer or while open | input, select, secondary button */
+  --scrollbar-thumb: oklch(var(--ink-c) / 0.20); /* scrollbar thumb at rest | scroll area, scrollbar-color */
+
+  /* == Elevation == */
+  --surface-thumb: color-mix(in oklch, var(--paper), oklch(var(--ink-c)) var(--thumb-lift)); /* the selected segment: paper on the grey track in light, paper mixed with ink in dark so it reads lighter than the track | segmented control */
+  --focus-halo: 0 0 0 3px oklch(var(--ink-c) / 0.08); /* a field with the cursor: a soft ink halo around its ink edge, eased in | input, select, combobox, date picker, OTP, code editor, composer */
+  --elev-control: 0 1px 2px -1px oklch(var(--text-on-field-c) / calc(var(--shadow-alpha) * 0.6)); /* the lift under a paper control, so a button or field sits on the page instead of being drawn on it | secondary button, input, select, chip */
+  --elev-none: 0 0 0 0 transparent; /* no lift, for a control that sits flat: disabled and read-only fields | field, select, checkbox, radio, switch, otp */
+  --elev-thumb: 0 0 0 1px oklch(var(--ink-c) / var(--thumb-ring-alpha)), 0 1px 2px oklch(var(--text-on-field-c) / calc(var(--shadow-alpha) * 0.5)); /* the selected segment lifted off its grey track; in dark a 1px ring joins the shadow | segmented control */
+  --elev-overlay: 0 0 0 1px var(--line-frame), 0 12px 24px -12px oklch(var(--text-on-field-c) / var(--shadow-alpha)); /* the overlay's edge plus one short shadow | menu, popover, select, dialog, sheet */
+
+  /* == Accent slot == */
+  --accent-mark: var(--ink); /* default when no kind is set | icon chip, bar fill */
+  --accent-field: var(--surface-card); /* default field | section field */
+  --accent-wash: var(--surface-selected); /* default selection wash, distinct from hover | selected row */
+  --accent-tint: var(--surface-selected); /* default label ground, neutral | kind label */
+  --accent-label: var(--text-1); /* default label word, ink | kind label */
+  --accent-line: var(--ink); /* default chart line and outline; a kind sets its line step | line chart, sparkline, radar, bar outline */
+  --accent-on-field: var(--text-1); /* text on the accent field: ink by default, dark on a hue in both themes | field section, banner */
+
+  /* == Button == */
+  --button-primary: var(--ink); /* dark on light, light on dark | primary button */
+  /* The key: a button as a lit object, one light from the top, layered on one element. body is the fill, lit-to-shade;
+     body-hover fades in over it (::before) as the light turns up; edge stacks the top lip, the bottom base, a hairline
+     inner rim, the outer ring and two short drops; edge-press sinks it; sheen (::after) is the soft dome on the top half
+     and a 1px glint along the top edge. */
+  --key-primary-body: linear-gradient(180deg, color-mix(in oklch, var(--ink) 84%, white), color-mix(in oklch, var(--ink) 94%, black)); /* ink lit from the top | primary button */
+  --key-primary-body-hover: linear-gradient(180deg, color-mix(in oklch, var(--ink) 76%, white), color-mix(in oklch, var(--ink) 90%, white)); /* the light turned up | primary hover */
+  --key-primary-edge: inset 0 2px 0 -1px oklch(1 0 0 / 0.2), inset 0 -2px 0 -1px oklch(0 0 0 / 0.3), inset 0 0 0 1px color-mix(in oklch, var(--ink) 88%, black), 0 1px 1px oklch(var(--text-on-field-c) / calc(var(--shadow-alpha) * 1.1)), 0 2px 5px -2px oklch(var(--text-on-field-c) / calc(var(--shadow-alpha) * 1.5)); /* ring drawn inside (the same box as a secondary or a field), the lip and base just inside it, two drops | primary button */
+  --key-primary-edge-press: inset 0 0 0 1px color-mix(in oklch, var(--ink) 88%, black), inset 0 1px 2px oklch(0 0 0 / 0.42); /* pushed in: the lift becomes an inner shadow | primary active */
+  --key-primary-sheen: linear-gradient(90deg, transparent 14%, oklch(1 0 0 / 0.42) 50%, transparent 86%) top / 100% 1px no-repeat, linear-gradient(180deg, oklch(1 0 0 / 0.1), oklch(1 0 0 / 0) 55%); /* glint line and top dome | primary button */
+  --key-secondary-body: var(--paper); /* flat paper, the same surface as a field, so a secondary button and an input beside it read as one family | secondary button */
+  --key-secondary-body-hover: oklch(var(--ink-c) / 0.03); /* a faint wash fading in over the paper on hover | secondary button */
+  --key-secondary-edge: var(--elev-control); /* the same one-pixel lift as a field; the key-secondary utility adds the ring from --frame-color | secondary button */
+  --key-secondary-edge-press: inset 0 1px 2px oklch(var(--ink-c) / 0.12); /* pushed in; the utility adds the ring | secondary active */
+  --key-secondary-sheen: none; /* no sheen: secondary stays as quiet as a field | secondary button */
+  --button-primary-hover: oklch(var(--ink-c) / 0.86); /* primary hover | primary button */
+  --button-secondary: oklch(var(--grey-c)); /* the grey field button | secondary button */
+  --button-secondary-hover: color-mix(in oklch, oklch(var(--grey-c)), oklch(var(--ink-c)) 7%); /* secondary hover on the page: the grey button a step darker, so hover shows | secondary button */
+  --button-ghost: transparent; /* ghost rest on paper | ghost button */
+  --button-ghost-hover: oklch(var(--ink-c) / 0.05); /* ghost hover | ghost button */
+  --surface-disabled: color-mix(in oklch, var(--paper), var(--ink) 8%); /* an opaque disabled fill, so the track behind a disabled thumb does not show through | slider thumb */
+  --ring-thumb: 0 0 0 2px var(--paper); /* the paper gap around a slider thumb, so it reads over the filled track | slider */
+
+  /* == Chart == */
+  --chart-ink-2: oklch(var(--ink-c) / 0.66); /* second ink series, 5.8:1 on --surface-page | multi-series chart without kinds */
+  --cell-quiet: oklch(var(--ink-c) / 0.07); /* an empty or zero cell in a heat strip or calendar grid | heatmap, status bar */
+
+  /* == Motion == */
+  --surface-skeleton: color-mix(in oklch, oklch(var(--grey-c)), oklch(var(--ink-c)) var(--skeleton-step)); /* the skeleton fill: the grey field, one step stronger in the dark theme | skeleton box */
+  --stale-opacity: 0.6; /* content that is reloading, still shown and still readable, 5:1 of ink at 60% | skeleton swap region while it reloads */
+  --dim-opacity: 0.4; /* content set aside while something else is the point: a muted legend entry, a dimmed series, a tool row in shell mode, a disabled thumbnail, a disabled primary key | chart legend, chart series, prompt input, attachment */
+
+
+  /* == Code == */
+  --code-text: var(--ink); /* identifiers, punctuation | code */
+  --code-string: oklch(var(--ink-c) / var(--code-string-alpha)); /* strings | code */
+  --code-comment: oklch(var(--ink-c) / var(--code-comment-alpha)); /* comments | code */
+  --code-prompt: oklch(var(--ink-c) / 0.40); /* the $ in shell snippets | snippet */
+}
+
+/* Kind map. The product maps its kinds to the five slots here, and only here. Kinds without a row
+   (projects, workspaces) stay ink. Traces belong to runs;
+   tools belong to agents.
+   Each row is an @scope, so when kinds nest the nearest data-kind wins by scope proximity, not by the
+   order of these rows. `:scope [data-surface]` keeps the kind on a surface inside it, which the derived
+   block would otherwise reset. Status rows come last, so data-status beats data-kind on one element.
+   aria-invalid="true" sets the fail slot the same way data-status="fail" does, so an invalid control
+   reads --accent-wash and --accent-mark without naming the fail hue. A field box (Input, the combobox
+   field and chips, the time field) holding an invalid control takes the slot too, because the box, not the
+   bare control, paints the field. */
+@scope (.quartz [data-kind="agent"]) { :scope[data-kind], :scope [data-surface] { --accent-mark: var(--hue-1-mark); --accent-field: var(--hue-1-field); --accent-wash: var(--hue-1-wash); --accent-line: var(--hue-1-line); --accent-tint: var(--hue-1-tint); --accent-label: var(--hue-1-label); --accent-on-field: var(--text-on-field); } }
+@scope (.quartz [data-kind="key"]) { :scope[data-kind], :scope [data-surface] { --accent-mark: var(--hue-2-mark); --accent-field: var(--hue-2-field); --accent-wash: var(--hue-2-wash); --accent-line: var(--hue-2-line); --accent-tint: var(--hue-2-tint); --accent-label: var(--hue-2-label); --accent-on-field: var(--text-on-field); } }
+@scope (.quartz [data-kind="run"]) { :scope[data-kind], :scope [data-surface] { --accent-mark: var(--hue-3-mark); --accent-field: var(--hue-3-field); --accent-wash: var(--hue-3-wash); --accent-line: var(--hue-3-line); --accent-tint: var(--hue-3-tint); --accent-label: var(--hue-3-label); --accent-on-field: var(--text-on-field); } }
+@scope (.quartz [data-kind="deploy"]) { :scope[data-kind], :scope [data-surface] { --accent-mark: var(--hue-4-mark); --accent-field: var(--hue-4-field); --accent-wash: var(--hue-4-wash); --accent-line: var(--hue-4-line); --accent-tint: var(--hue-4-tint); --accent-label: var(--hue-4-label); --accent-on-field: var(--text-on-field); } }
+@scope (.quartz [data-kind="model"]) { :scope[data-kind], :scope [data-surface] { --accent-mark: var(--hue-5-mark); --accent-field: var(--hue-5-field); --accent-wash: var(--hue-5-wash); --accent-line: var(--hue-5-line); --accent-tint: var(--hue-5-tint); --accent-label: var(--hue-5-label); --accent-on-field: var(--text-on-field); } }
+@scope (.quartz [data-status="warn"]) { :scope[data-status], :scope [data-surface] { --accent-mark: var(--warn-mark); --accent-field: var(--warn-field); --accent-wash: var(--warn-wash); --accent-line: var(--warn-line); --accent-tint: var(--warn-field); --accent-label: var(--text-on-field); --accent-on-field: var(--text-on-field); } }
+@scope (.quartz [data-status="fail"]) { :scope[data-status], :scope [data-surface] { --accent-mark: var(--fail-mark); --accent-field: var(--fail-field); --accent-wash: var(--fail-wash); --accent-line: var(--fail-line); --accent-tint: var(--fail-field); --accent-label: var(--text-on-field); --accent-on-field: var(--text-on-field); } }
+@scope (.quartz :is([aria-invalid="true"], :is([data-slot="input"], [data-slot="combobox-input-group"], [data-slot="combobox-chips"], [data-slot="time-field"]):has([data-control]:is([aria-invalid="true"], [data-invalid])))) { :scope, :scope [data-surface] { --accent-mark: var(--fail-mark); --accent-field: var(--fail-field); --accent-wash: var(--fail-wash); --accent-line: var(--fail-line); --accent-tint: var(--fail-field); --accent-label: var(--text-on-field); --accent-on-field: var(--text-on-field); } }
+
+/* Surfaces. data-surface names what an element is painted as, and the derived tokens recompute on it.
+   - card: a grey well; secondary fills and inline code inside it flip to paper. No Quartz component sets it: Card is a paper frame
+     with no surface, so nothing inside a Card flips, and a skeleton, an avatar or a time in it reads as on the page.
+   - raised: a paper container inside a card, such as a menu or a command list. It declares no flip of its
+     own, so the derived block resets the card flip and fields inside read grey again.
+   - overlay: a dialog, sheet or popover panel on paper. Like raised, it resets the card flip; components
+     also use it as a hook for in-data-[surface=overlay] styling.
+   - paper and ink: always light and always dark, whatever the theme.
+   - inverse: the opposite of the page. Ink on a light page, paper in the dark theme and inside an ink
+     section. Tooltips, the chart tooltip and the bulk action bar use it. Toasts are paper with a frame and an overlay shadow, not inverse.
+   - page: the page's own channels, as a marker for in-data-[surface=page] styling. */
+.quartz [data-surface="card"] { --surface-raised: var(--paper); --button-secondary: var(--paper); --button-secondary-hover: color-mix(in oklch, oklch(var(--paper-c)), oklch(var(--ink-c)) 4%); }
+/* An overlay popup that renders inside a card, a portal that was not lifted out or a menu in a story, would
+   inherit the card flip and paint its secondary fills paper on a paper panel. These slots reset those tokens to the
+   page's own values, whether or not the popup was portalled. Fields are paper everywhere, so they need no flip. */
+.quartz [data-surface="card"] :is([data-slot="popover-content"], [data-slot="popover-info-content"], [data-slot="dropdown-menu-content"], [data-slot="dropdown-menu-sub-content"], [data-slot="select-content"], [data-slot="combobox-content"], [data-slot="filter-bar-select-content"], [data-slot="date-picker-popup"], [data-slot="time-field-popup"], [data-slot="table-row-actions-content"], [data-slot="dialog-content"], [data-slot="sheet-content"]) {
+  --surface-raised: var(--paper); --button-secondary: oklch(var(--grey-c));
+  --button-secondary-hover: color-mix(in oklch, oklch(var(--grey-c)), oklch(var(--ink-c)) 7%);
+}
+
+/* Dark theme. Ink and paper swap channels: deep navy paper on a darker canvas, near-white ink. Marks and fields keep their
+   values, so text on them stays --text-on-field; washes become deep tints of the same hue and lines take
+   the marks, which clear 3:1 on the dark page and the dark card. [data-surface="ink"] is the same swap
+   for one always-dark section, and [data-surface="paper"] swaps back inside it.
+   The theme comes from .quartz[data-theme="dark"] or from an ancestor, [data-theme="dark"] or .dark as most apps
+   set it on <html>; .quartz[data-theme="light"] opts out of a dark ancestor. The ancestor sits in :where(), so
+   each selector weighs the same as its .quartz[data-theme="dark"] twin and the paper block below still wins.
+   color-scheme follows each block, so native scrollbars, date fields and autofill match the surface.
+   [data-surface="inverse"] takes the dark channels on a light page and the light channels in the dark
+   theme or inside ink, so it is always the opposite of what surrounds it. The second block is more
+   specific than the first, which is how the inverse flips back.
+   Dark-only notes. fail-wash drops from chroma 0.080 to 0.060 so red on graphite stops shouting, ink on it
+   is still 13:1. skeleton-step mixes 8% ink into the skeleton fill, 1.5:1 on the dark page where the grey field alone gave 1.1:1. code-string and
+   code-comment sit further from code-text than the light pair: against the dark card the three steps are
+   1.8:1 and 2.8:1 apart, close to the light theme's 1.8:1 and 2.9:1, and the comment is 5.3:1 on its field.
+   Keep this block free of semicolons in comments, lib/tokens.ts reads it with a regex. */
+.quartz[data-theme="dark"], .quartz [data-surface="ink"], .quartz [data-surface="inverse"],
+:where([data-theme="dark"], .dark) .quartz:not([data-theme="light"]),
+:where([data-theme="dark"], .dark) .quartz:not([data-theme="light"]) [data-surface="paper"] [data-surface="inverse"],
+.quartz[data-theme="dark"] [data-surface="paper"] [data-surface="inverse"], .quartz [data-surface="ink"] [data-surface="paper"] [data-surface="inverse"] {
+  color-scheme: dark;
+  --ink-c: 96.5% 0.006 250;
+  --paper-c: 18.5% 0.016 262;
+  --grey-c: 23.5% 0.018 262;
+  --canvas-c: 15% 0.014 262;
+  --hue-1-wash: oklch(31% 0.060 195);
+  --hue-2-wash: oklch(31% 0.050 320);
+  --hue-3-wash: oklch(31% 0.080 250);
+  --hue-4-wash: oklch(31% 0.090 290);
+  --hue-5-wash: oklch(31% 0.055 160);
+  --hue-1-tint: oklch(30% 0.045 195);
+  --hue-1-label: oklch(88% 0.055 195);
+  --hue-2-tint: oklch(30% 0.045 320);
+  --hue-2-label: oklch(88% 0.055 320);
+  --hue-3-tint: oklch(30% 0.045 250);
+  --hue-3-label: oklch(88% 0.055 250);
+  --hue-4-tint: oklch(30% 0.045 290);
+  --hue-4-label: oklch(88% 0.055 290);
+  --hue-5-tint: oklch(30% 0.045 160);
+  --hue-5-label: oklch(88% 0.055 160);
+  --warn-text: oklch(80% 0.130 68);
+  --fail-text: oklch(76% 0.140 26);
+  --warn-wash: oklch(31% 0.055 68);
+  --fail-wash: oklch(29% 0.060 26);
+  --skeleton-step: 8%;
+  --code-string-alpha: 0.72;
+  --code-comment-alpha: 0.54;
+  --hue-1-line: var(--hue-1-mark);
+  --hue-2-line: var(--hue-2-mark);
+  --hue-3-line: var(--hue-3-mark);
+  --hue-4-line: var(--hue-4-mark);
+  --hue-5-line: var(--hue-5-mark);
+  --warn-line: var(--warn-mark);
+  --fail-line: var(--fail-mark);
+  --button-ghost: oklch(var(--ink-c) / 0.10); /* white at 10% on ink */
+  --button-ghost-hover: oklch(var(--ink-c) / 0.16);
+  --surface-pressed: oklch(var(--ink-c) / 0.28); /* white at 28% on ink, above the 16% hover so a press reads darker than hover */
+  --shadow-alpha: 0.6; /* a shadow on ink needs more weight to read */
+  --line-frame-alpha: 0.20;
+  --thumb-lift: 20%;
+  --thumb-ring-alpha: 0.16;
+}
+:where([data-theme="dark"], .dark) .quartz:not([data-theme="light"]) [data-surface="paper"],
+:where([data-theme="dark"], .dark) .quartz:not([data-theme="light"]) [data-surface="inverse"],
+.quartz[data-theme="dark"] [data-surface="paper"], .quartz [data-surface="ink"] [data-surface="paper"],
+.quartz[data-theme="dark"] [data-surface="inverse"], .quartz [data-surface="ink"] [data-surface="inverse"] {
+  color-scheme: light;
+  --ink-c: 20% 0.024 262;
+  --paper-c: 99.7% 0.001 250;
+  --grey-c: 95.6% 0.004 255;
+  --canvas-c: 99.1% 0.002 250;
+  --hue-1-wash: oklch(96.5% 0.040 195);
+  --hue-2-wash: oklch(96% 0.030 320);
+  --hue-3-wash: oklch(94.5% 0.020 250);
+  --hue-4-wash: oklch(95% 0.025 290);
+  --hue-5-wash: oklch(96% 0.035 160);
+  --hue-1-tint: oklch(92% 0.070 195);
+  --hue-1-label: oklch(38% 0.075 195);
+  --hue-2-tint: oklch(92% 0.045 320);
+  --hue-2-label: oklch(38% 0.055 320);
+  --hue-3-tint: oklch(92% 0.035 250);
+  --hue-3-label: oklch(38% 0.120 250);
+  --hue-4-tint: oklch(92% 0.045 290);
+  --hue-4-label: oklch(38% 0.120 290);
+  --hue-5-tint: oklch(92% 0.050 160);
+  --hue-5-label: oklch(38% 0.080 160);
+  --warn-text: oklch(49% 0.100 68);
+  --fail-text: oklch(51% 0.180 26);
+  --warn-wash: oklch(96% 0.028 68);
+  --fail-wash: oklch(94.5% 0.027 26);
+  --hue-1-line: oklch(60% 0.100 195);
+  --hue-2-line: oklch(58% 0.075 320);
+  --hue-3-line: oklch(52% 0.150 250);
+  --hue-4-line: oklch(54% 0.150 290);
+  --hue-5-line: oklch(52% 0.090 160);
+  --warn-line: oklch(62% 0.132 68);
+  --fail-line: oklch(60% 0.236 26);
+  --shadow-alpha: 0.20;
+  --skeleton-step: 0%;
+  --code-string-alpha: 0.80;
+  --code-comment-alpha: 0.66;
+  --button-ghost: transparent;
+  --button-ghost-hover: oklch(var(--ink-c) / 0.05);
+  --surface-pressed: oklch(var(--ink-c) / 0.08);
+  --line-frame-alpha: 0.14;
+  --thumb-lift: 0%;
+  --thumb-ring-alpha: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .quartz { --dur-base: 0ms; --dur-slow: 0ms; --sheet-shift: 0px }
+}
+/* A wrapper that sets data-force-reduced-motion (styles.css) gets the same values. */
+.quartz [data-force-reduced-motion] { --dur-base: 0ms; --dur-slow: 0ms; --sheet-shift: 0px }

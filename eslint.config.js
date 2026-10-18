@@ -20,4 +20,13 @@ export default defineConfig([
     files: ['*.{js,ts}', 'scripts/**/*.mjs', 'tests/**/*.ts'],
     languageOptions: { globals: globals.node },
   },
+  {
+    // Quartz's registry deliberately exports icon definitions and variant helpers.
+    files: ['src/components/quartz/icon.tsx', 'src/components/quartz/ui/button.tsx', 'src/components/quartz/ui/field.tsx', 'src/components/quartz/ui/input/parts.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
+  {
+    files: ['src/components/quartz/ui/field.tsx'],
+    rules: { '@typescript-eslint/no-unused-vars': ['error', { varsIgnorePattern: '^_' }] },
+  },
 ]);

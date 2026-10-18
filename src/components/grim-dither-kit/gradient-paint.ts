@@ -1,0 +1,76 @@
+// Extracted unchanged from ripgrim's DitherGradient to share its exact painter.
+import { rgb } from "./palette"
+import { BAYER4, fillOf, type PixelColor } from "./pixel"
+
+// Backing-resolution caps — a background wash never needs more cells than this.
+const MAX_COLS = 960
+const MAX_ROWS = 600
+
+export type GradientDirection = "up" | "down" | "left" | "right"
+
+type PaintSpec = {
+  from: PixelColor
+  to: PixelColor | "transparent"
+  direction: GradientDirection
+  cell: number
+  opacity: number
+}
+
+/**
+ * Paint the ordered-dither ramp onto a low-res backing canvas sized from the
+ * wrapper's box. Static — one paint per prop/size change, no animation loop,
+ * so it's free to use as a page-wide background.
+ */
+export function paintGradient(
+  canvas: HTMLCanvasElement,
+  bloomCanvas: HTMLCanvasElement | null,
+  width: number,
+  height: number,
+  spec: PaintSpec
+): void {
+  const ctx = canvas.getContext("2d")
+  if (!ctx || width <= 0 || height <= 0) return
+  const cols = Math.min(MAX_COLS, Math.max(4, Math.round(width / spec.cell)))
+  const rows = Math.min(MAX_ROWS, Math.max(4, Math.round(height / spec.cell)))
+  canvas.width = cols
+  canvas.height = rows
+
+  const fromFill = fillOf(spec.from)
+  const toFill = spec.to === "transparent" ? null : fillOf(spec.to)
+  const o = spec.opacity
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      // t runs 0 at the `from` edge → 1 at the `to` edge.
+      const t =
+        spec.direction === "up"
+          ? 1 - (y + 0.5) / rows
+          : spec.direction === "down"
+            ? (y + 0.5) / rows
+            : spec.direction === "left"
+              ? 1 - (x + 0.5) / cols
+              : (x + 0.5) / cols
+      const density = 1 - t
+      const lit = density > BAYER4[y & 3]![x & 3]!
+      if (toFill) {
+        // Two-tone: every cell is painted, the dither decides which colour.
+        ctx.fillStyle = rgb(lit ? fromFill : toFill, 1, o)
+        ctx.fillRect(x, y, 1, 1)
+      } else {
+        // Dissolve to transparent: lit cells carry the ramp, off cells keep a
+        // faint tint that also fades out, so the falloff reads smooth.
+        const alpha = (lit ? 0.35 + 0.65 * density : 0.12 * density) * o
+        if (alpha <= 0.004) continue
+        ctx.fillStyle = rgb(fromFill, 1, alpha)
+        ctx.fillRect(x, y, 1, 1)
+      }
+    }
+  }
+
+  const bloomCtx = bloomCanvas?.getContext("2d") ?? null
+  if (bloomCanvas && bloomCtx) {
+    bloomCanvas.width = cols
+    bloomCanvas.height = rows
+    bloomCtx.drawImage(canvas, 0, 0)
+  }
+}

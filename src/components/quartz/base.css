@@ -1,0 +1,72 @@
+/* Scoped base for Quartz. Replaces Tailwind preflight inside .quartz only; imported before the utilities. */
+
+.quartz {
+  min-height: 100dvh;
+  background: var(--surface-canvas);
+  color: var(--text-1);
+  font: var(--type-body);
+  font-variation-settings: var(--width-normal);
+  letter-spacing: var(--tracking-text);
+  text-wrap: pretty;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* Light here; tokens.css sets dark on the dark theme and ink surfaces, and light again on paper inside them. */
+  color-scheme: light;
+}
+/* The reset sits in the base layer, beside Tailwind's own preflight, so a project's layered utilities (mx-auto,
+   px-4) beat it, and Quartz's unlayered ones still do. What must win over a page's own rules stays out of the layer:
+   the scope element, prose links, the selection colour, the focus ring and the iOS zoom guard. */
+@layer base {
+  .quartz :where(*, ::before, ::after) { box-sizing: border-box; border: 0 solid var(--line-row); margin: 0; padding: 0; }
+  .quartz :where(h1, h2, h3, h4, h5, h6, p, figure, blockquote, dl, dd, pre) { margin: 0; font: inherit; }
+  .quartz :where(ul, ol) { list-style: none; }
+  .quartz :where(a) { color: inherit; text-decoration: inherit; }
+  .quartz :where(button, input, select, textarea) { font: inherit; letter-spacing: inherit; color: inherit; background: transparent; }
+  .quartz :where(button, [role="button"]) { cursor: pointer; }
+  .quartz :where(button:disabled, [aria-disabled="true"]) { cursor: not-allowed; }
+  /* max-width: 100% shrinks an SVG layer with no width of its own (a 0x0 overflow-visible overlay) to nothing,
+     so an SVG marked overflow-visible skips it. Any other SVG layer that must overflow its box takes max-w-none. */
+  .quartz :where(img, video, canvas, svg:not(.overflow-visible, [overflow="visible"])) { display: block; max-width: 100%; }
+  .quartz :where(svg.overflow-visible, svg[overflow="visible"]) { display: block; }
+  .quartz :where(table) { border-collapse: collapse; }
+  .quartz :where(code, kbd, samp, pre) { font-family: var(--font-mono); }
+  /* Every duration, count and value lines up: tabular figures in table cells and time and data elements. */
+  .quartz :where(td, th, time, data, output) { font-variant-numeric: tabular-nums; }
+  /* Every interactive element declares its transition, so no control cuts while its neighbour tweens.
+     Hover is 120ms (--dur-fast) on the standard curve; a press answers in 60ms (--dur-press). Components override at will. */
+  .quartz :where(a, button, summary, input, select, textarea, label, [role="button"], [role="tab"], [role="menuitem"], [role="option"], [role="switch"], [role="checkbox"], [role="radio"]) {
+    transition-property: color, background-color, border-color, outline-color, text-decoration-color, box-shadow, opacity;
+    transition-duration: var(--dur-fast);
+    transition-timing-function: var(--ease-step);
+  }
+  .quartz :where(a, button, [role="button"]):where(:active) { transition-duration: var(--dur-press); }
+}
+/* Prose links (inside [data-prose]) are underlined at rest: 1px at a 4px offset in text-3, darkening to ink
+   on hover. Their focus ring hugs the text with the soft corner and 2px of side padding. */
+.quartz :where([data-prose]) a:where(:not([data-slot])) {
+  text-decoration: underline 1px var(--text-3);
+  text-underline-offset: 4px;
+  border-radius: var(--radius-soft);
+  padding-inline: 2px;
+  margin-inline: -2px;
+}
+@media (hover: hover) { .quartz :where([data-prose]) a:where(:not([data-slot])):hover { text-decoration-color: var(--ink); color: var(--text-1); } }
+.quartz ::selection { background: var(--hue-3-field); color: var(--text-on-field); }
+/* The ring's colour is set at rest, so an element that transitions outline-color never fades its ring in from
+   the text colour. */
+.quartz :where(*, ::before, ::after) { outline-color: var(--border-focus); }
+/* Focus is always a --line-focus outline in --border-focus, --focus-offset out: one treatment for every element.
+   Two classes of specificity beat an app's global a:focus-visible. Where the ring must sit elsewhere, the focus-ring
+   and focus-ring-inset utilities (styles.css) draw the same ring. */
+.quartz :where(*):is(:focus-visible, [data-force-focus-visible]) { outline: var(--line-focus) solid var(--border-focus); outline-offset: var(--focus-offset); }
+/* A bare control inside a box ([data-control]) draws no ring: the box turns its edge ink with has-[[data-control]:focus],
+   so the icons and units in the box sit inside the ring (trap/field-affix-focus). */
+.quartz :where([data-control]):is(:focus-visible, [data-force-focus-visible]) { outline: none; }
+
+/* iOS WebKit zooms the page when a field under 16px takes focus. On a coarse pointer every text field is at
+   least 16px, whatever its type role says. Two classes of specificity beat a type-* utility on the field. */
+@media (pointer: coarse) {
+  .quartz input:not([type="checkbox"], [type="radio"], [type="range"], [type="button"], [type="submit"], [type="file"], [type="color"]),
+  .quartz textarea,
+  .quartz select { font-size: max(16px, 1em); }
+}

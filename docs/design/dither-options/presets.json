@@ -1,0 +1,59 @@
+{
+  "source": "public/images/knight-vs-models-hero.jpg",
+  "width": 1672,
+  "height": 942,
+  "method": "Vendored dither-kit algorithms and live hero presets; one frozen frame.",
+  "variants": [
+    {
+      "id": "fine",
+      "label": "Fine grain",
+      "description": "Fine Floyd–Steinberg grain with four grey tones. The lightest treatment.",
+      "cell": 3,
+      "opacity": 0.58,
+      "levels": [
+        0,
+        72,
+        156,
+        244
+      ],
+      "file": "fine.png"
+    },
+    {
+      "id": "ordered",
+      "label": "Ordered grid",
+      "description": "A regular Bayer pattern with crisp, geometric texture.",
+      "cell": 3,
+      "opacity": 0.76,
+      "levels": [
+        0,
+        244
+      ],
+      "file": "ordered.png"
+    },
+    {
+      "id": "atkinson",
+      "label": "Classic Atkinson",
+      "description": "Chunkier two-tone pixels with deeper blacks and a retro computer feel.",
+      "cell": 5,
+      "opacity": 0.84,
+      "levels": [
+        0,
+        244
+      ],
+      "file": "atkinson.png"
+    },
+    {
+      "id": "print",
+      "label": "Soft print",
+      "description": "Jarvis–Judice–Ninke diffusion with three tones for a softer printed image.",
+      "cell": 3,
+      "opacity": 0.82,
+      "levels": [
+        0,
+        100,
+        244
+      ],
+      "file": "print.png"
+    }
+  ]
+}

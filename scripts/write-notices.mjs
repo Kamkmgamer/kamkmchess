@@ -43,7 +43,11 @@ const sections = [
   'Third-party code notices',
   'Generated from pnpm-lock.yaml and the installed production packages.',
   'Original application code is MIT licensed. See LICENSE.txt.',
-  'No third-party artwork is distributed in this foundation build.',
+  'The hero uses the original knight-versus-models image generated for kamkm chess. Its animated gradient overlay uses DitherGradient by ripgrim from Boring-Software-Inc/dither-kit, revision 1e7faee9aa252e499651e6736ed65f7a07d9a6bd, declared MIT in the upstream package manifests. Source: https://github.com/Boring-Software-Inc/dither-kit. Chess and interface icons are Font Awesome Free SVGs (CC BY 4.0); its JavaScript code is MIT licensed. AI brand names and marks depicted in the artwork remain trademarks of their owners.',
+  'Quartz design system source, copyright (c) 2026 Arlan Marat, is included under the MIT license below.',
+  'The earlier image-dithering core remains vendored from github.com/jvgomg/ditherkit by James Greenaway under the MIT license below; the hero no longer imports it.',
+  (await readFile(new URL('src/components/dither-kit/LICENSE', root), 'utf8')),
+  await readFile(new URL('docs/design/QUARTZ-LICENSE.txt', root), 'utf8'),
 ];
 const inventory = [];
 
