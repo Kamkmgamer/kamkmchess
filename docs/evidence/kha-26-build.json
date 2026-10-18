@@ -1,0 +1,63 @@
+{
+  "ticket": "KHA-26",
+  "date": "2026-10-16",
+  "implementation_commit": "e3d591843dd8dfbd165c496dc21c766ad4431075",
+  "node": "24.22.0",
+  "npm": "11.19.1",
+  "os": "Windows-11-10.0.26300-SP0",
+  "package_lock_sha256": "7c1177cc7448d339f241f63030678eccb7cb2a89dabb53075af079841ee8992e",
+  "clean_install_exit_code": 0,
+  "clean_check_exit_code": 0,
+  "product_test_count": 0,
+  "production_files_equal_across_two_checkouts": true,
+  "files": [
+    {
+      "path": "_headers",
+      "bytes": 336,
+      "sha256": "01d00fe3ab6cf75ef6214f11e5d294734e23961382b58115ec7c080e1885d65b"
+    },
+    {
+      "path": "_redirects",
+      "bytes": 19,
+      "sha256": "6036983e5fc00f0169c9e939b1816ed771eee00e27f2fcc517b819041460b9ef"
+    },
+    {
+      "path": "assets/index-CE2xj8Mp.js",
+      "bytes": 219192,
+      "sha256": "729ec9148ca84b456d8bd35e4e8f4af91fdb06a32c2404587920055dbc0ffd86"
+    },
+    {
+      "path": "assets/index-Dn1Kj2XK.css",
+      "bytes": 562,
+      "sha256": "84935c1fa75bb6ef1afb3f6862aadeb681ad506f1dca201490dacef620c5283f"
+    },
+    {
+      "path": "DEPENDENCY_INVENTORY.json",
+      "bytes": 32735,
+      "sha256": "27ccefd3759528f9852981c76d38422fd03c89a09d9ea155565442c10dc42aa6"
+    },
+    {
+      "path": "index.html",
+      "bytes": 496,
+      "sha256": "4651fb5226b77250c542ce82ca8e098b2b035154d6dc660db0b3e175776bac51"
+    },
+    {
+      "path": "LICENSE.txt",
+      "bytes": 1080,
+      "sha256": "4ccc7c5ac9ebaa24233e3115dda4541b5d7d5d254f8e027a3fc442807d56e50c"
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.txt",
+      "bytes": 3646,
+      "sha256": "3450b698e46f9027a26cfc418636ac1b9850a640da49914c266e41cd46003fd6"
+    }
+  ],
+  "unrun": [
+    "rendered-browser smoke check",
+    "all six native browser/AT targets",
+    "deployed Cloudflare HTTPS/CSP/routes",
+    "live providers/cache/cost",
+    "hosted accounts/sync/backups"
+  ],
+  "acceptance_status": "OPS-01 and OPS-05 remain not_run for their full required coverage"
+}

@@ -74,6 +74,23 @@ export interface ProtocolTextRecord {
 export interface ProtocolHistory {
   instructions: string;
   records: readonly ProtocolTextRecord[];
+  /** Number of leading records that belong to the stable retained-history prefix. */
+  cachePrefixRecordCount?: number;
+  /** Optional tokenizer count for instructions plus the stable retained-history prefix. */
+  cachePrefixTokenCount?: number;
+}
+
+export interface ProtocolCacheOptions {
+  /** OpenAI Chat/Responses prompt-cache affinity. Only pass for a selected supported model. */
+  promptCacheKey?: string;
+  /** OpenAI prompt-cache retention. Only pass when supported by the selected model and route. */
+  promptCacheRetention?: 'in_memory' | '24h';
+  /** OpenRouter Chat session affinity. Only pass for a selected OpenRouter Chat route. */
+  openRouterSessionId?: string;
+  /** Anthropic ephemeral prompt caching minimum from the selected model's provider metadata. */
+  anthropicCacheMinimumTokens?: number;
+  /** Anthropic ephemeral prompt caching, explicitly enabled for a supported model. */
+  anthropicEphemeral?: boolean;
 }
 
 export interface ProtocolGenerationConfig {
@@ -81,6 +98,7 @@ export interface ProtocolGenerationConfig {
   maxOutputTokens: number;
   temperature?: number;
   topP?: number;
+  cache?: ProtocolCacheOptions;
 }
 
 export interface EncodedProtocolRequest {

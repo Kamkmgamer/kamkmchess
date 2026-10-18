@@ -37,7 +37,7 @@ describe('proof search Worker runtime (ADJ-03/05/08)', () => {
     const run = vi.fn(runProofSearchPass);
     const worker = harness(run);
     worker.send({ type: 'start', requestId: 'start-1', query, maxDiscoveredStates: 1, timeBudgetMs: 300 });
-    await Promise.resolve();
+    await vi.waitFor(() => expect(worker.replies).toHaveLength(1));
     expect(run).toHaveBeenLastCalledWith(query, { maxDiscoveredStates: 1, timeBudgetMs: 300, signal: expect.any(AbortSignal) });
     expect(worker.replies[0]).toMatchObject({ type: 'result', requestId: 'start-1', result: { status: 'non-result', reason: 'state-budget' } });
 

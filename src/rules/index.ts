@@ -1,7 +1,8 @@
 export { applyCoordinateMove, IllegalMoveError, legalMoves } from './transitions.js';
 export type { Transition } from './transitions.js';
 export { parsePosition, PositionValidationError } from './position.js';
-export { observeEndingFacts } from './endings.js';
+export { isSquareAttackedInFen } from './chess-adapter.js';
+export { observeEndingFacts, timeoutWinner } from './endings.js';
 export type { EndingFacts, ObservedEnding } from './endings.js';
 export {
   createRepetitionLedger,

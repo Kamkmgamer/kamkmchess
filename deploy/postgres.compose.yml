@@ -1,0 +1,49 @@
+name: kamkmchess
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file: postgres.env
+    networks:
+      default:
+        aliases:
+          - chess-db.agent.soft-magic.com
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./tls:/tls:ro
+      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+      - ./bin:/opt/kamkmchess:ro
+      - ./backups:/backups
+      - ./backup.env:/run/secrets/backup.env:ro
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/tls/server.crt
+      - -c
+      - ssl_key_file=/tls/server.key
+      - -c
+      - ssl_min_protocol_version=TLSv1.2
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - max_connections=60
+      - -c
+      - shared_buffers=128MB
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pgdata:

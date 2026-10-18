@@ -16,7 +16,7 @@ try {
   const variants = Object.entries(heroDitherPresets).map(([id, preset]) => ({ id, ...preset }));
   await writeFile(entry, [
     'import { paintGradient } from "../src/components/grim-dither-kit/gradient-paint";',
-    'import { heroDitherPresets } from "../src/ui/hero-dither";',
+    'import { heroDitherPresets } from "../src/landing/hero-dither";',
     'const checks = [];',
     'for (const scene of document.querySelectorAll("[data-preset]")) {',
     '  if (!(scene instanceof HTMLElement)) continue;',

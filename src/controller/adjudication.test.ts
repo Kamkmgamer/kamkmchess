@@ -34,7 +34,7 @@ async function playableFixture(gameId: string) {
   let monotonic = 0;
   let id = 0;
   const store = await openGameStore({ databaseName: gameId, factory: new IDBFactory(), now: () => wall });
-  const controller = getOrCreateGameController({
+  const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
     gameId, store, clockPolicy: { maxReferenceDivergenceMs: 5 },
     timeSource: { sample: (at = wall) => ({ monotonicMs: monotonic, wallTimeMs: at }) },
     idFactory: () => `${gameId}-${++id}`,
@@ -111,7 +111,7 @@ describe('original adjudication event ordering', () => {
     const timeSource = { sample: (at = now) => ({ monotonicMs: now - 1000, wallTimeMs: at }) };
     const options = { gameId, store, timeSource, clockPolicy: { maxReferenceDivergenceMs: 5 },
       idFactory: () => `${gameId}-${++id}` };
-    const original = getOrCreateGameController(options);
+    const original = getOrCreateGameController({ ...options, positionChecks: 'legacy-proof' });
     try {
       const initial = await original.initialize({
         humanSide: 'white', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
@@ -132,7 +132,7 @@ describe('original adjudication event ordering', () => {
       });
       vi.resetModules();
       const restoredModule = await import('./index.js');
-      const controller = restoredModule.getOrCreateGameController(options);
+      const controller = restoredModule.getOrCreateGameController({ ...options, positionChecks: 'legacy-proof' });
       await controller.initialize();
       expect(controller.snapshot().checkpoint.result).toMatchObject({ kind: 'pending-adjudication', reason: 'dead-position' });
       await controller.reconcile();

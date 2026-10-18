@@ -1,9 +1,16 @@
 .scratch/
+experiments/
+research/
 __pycache__/
 node_modules/
 /dist/
+/public/engines/
 /coverage/
+/test-results/
+/playwright-report/
 .vercel/
+/deploy/*.env
+/deploy/tls/
 *.tsbuildinfo
 *.zip
 *.log

@@ -13,6 +13,7 @@ export {
 export type {
   EncodedProtocolRequest,
   ProtocolContent,
+  ProtocolCacheOptions,
   ProtocolGenerationConfig,
   ProtocolHistory,
   ProtocolRawEvent,

@@ -1,4 +1,4 @@
-export type ConnectionProvider = 'openai' | 'openrouter' | 'anthropic' | 'custom';
+export type ConnectionProvider = 'openai' | 'openrouter' | 'anthropic' | 'cliproxy' | 'custom';
 export type ConnectionProtocol = 'chat-completions' | 'responses' | 'messages';
 export type CatalogPagination = 'none' | 'after' | 'after_id';
 
@@ -128,6 +128,8 @@ export type ConnectionErrorCode =
   | 'invalid-model-id'
   | 'credential-required'
   | 'credential-destination-mismatch'
+  | 'unsupported-cache-option'
+  | 'invalid-request-body'
   | 'credential-store-unavailable'
   | 'credential-write-failed'
   | 'credential-invalid'

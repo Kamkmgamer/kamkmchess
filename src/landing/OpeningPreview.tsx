@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { createChessPosition } from '../rules/chess-adapter';
+import { Chess } from 'chess.js';
 import { Button } from '../components/quartz/ui/button';
 import { Icon, ChevronLeft, ChevronRight, Renew, Settings } from '../components/quartz/icon';
 import { openingFrames, openingMoves } from './opening';
@@ -8,7 +8,7 @@ import { formatSetupClock, type PreviewSetup } from './game-setup';
 
 export function OpeningPreview({ setup, onOptions }: { setup: PreviewSetup; onOptions: () => void }) {
   const [position, setPosition] = useState(0);
-  const customGame = useMemo(() => setup.start.kind === 'custom' ? createChessPosition(setup.start.position) : null, [setup.start]);
+  const customGame = useMemo(() => setup.start.kind === 'custom' ? new Chess(setup.start.position.fen) : null, [setup.start]);
   const frame = customGame ? {
     board: customGame.board(), move: null, turn: customGame.turn(),
     note: customGame.isCheckmate() ? 'This position is checkmate. You can keep editing the setup.' : customGame.isStalemate() ? 'This position is stalemate. You can keep editing the setup.' : 'Your custom starting position is shown with your chosen side at the bottom. No clocks have started.',
@@ -68,7 +68,7 @@ export function OpeningPreview({ setup, onOptions }: { setup: PreviewSetup; onOp
                 </div>
               </div>
             </>}
-            <p className="preview-disclosure">Board preview only. Full AI matches are in development.</p>
+            <p className="preview-disclosure">Opening preview. Choose Play against AI for a full match.</p>
           </div>
         </div>
       </div>

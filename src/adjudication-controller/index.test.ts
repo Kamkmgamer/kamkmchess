@@ -17,7 +17,7 @@ const model: ModelSelection = {
 async function fixture(gameId: string) {
   const store = await openGameStore({ databaseName: gameId, factory: new IDBFactory(), now: () => 1000 });
   let id = 0;
-  const controller = getOrCreateGameController({
+  const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
     gameId, store, clockPolicy: { maxReferenceDivergenceMs: 10 },
     timeSource: { sample: (at = 1000) => ({ monotonicMs: 100, wallTimeMs: at }) },
     idFactory: () => `${gameId}-${++id}`,
@@ -30,6 +30,33 @@ async function fixture(gameId: string) {
 }
 
 describe('controller and analysis composition', () => {
+  it('surfaces execution failure after returning the check to a retryable state', async () => {
+    const { controller, store } = await fixture('analysis-composition-worker-recovery');
+    let unavailable = true;
+    const runner: AdjudicationAnalysisRunnerV1 = {
+      continueAnalysis: vi.fn<AdjudicationAnalysisRunnerV1['continueAnalysis']>(async ({ query }) => {
+        if (!unavailable) return runProofSearchPass(query);
+        unavailable = false;
+        return {
+          status: 'non-result', reason: 'search-error', queryIdentity: query.queryIdentity,
+          checkpoint: null, checkpointDisposition: 'fresh',
+          pass: { maxDiscoveredStates: 10000, timeBudgetMs: 5000, discoveredStateCount: 0,
+            processedEdgeCount: 0, expandedStateCount: 0, totalDiscoveredStateCount: 0,
+            totalDiscoveredEdgeCount: 0, elapsedMs: 0 },
+        };
+      }),
+      stopAnalysis: vi.fn(() => true), close: vi.fn(),
+    };
+    const analysis = createControllerAnalysis(controller, runner);
+    try {
+      await expect(analysis.continueAnalysis(controller.snapshot().fence)).rejects.toThrow('The position check could not run');
+      expect(controller.snapshot().adjudication.status).toBe('queued');
+      expect(controller.snapshot().checkpoint.result.kind).toBe('pending-adjudication');
+      const recovered = await analysis.continueAnalysis(controller.snapshot().fence);
+      expect(recovered.checkpoint.result).toMatchObject({ kind: 'final', winner: 'draw', reason: 'dead-position' });
+    } finally { await analysis.close(); store.close(); }
+  });
+
   it('ADJ-06 routes an explicitly authorized checked closure into the saved final latch', async () => {
     const { controller, store } = await fixture('analysis-composition-final');
     const runner: AdjudicationAnalysisRunnerV1 = {

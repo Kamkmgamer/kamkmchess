@@ -44,6 +44,15 @@ export function encodeChatCompletionsRequest(
   config: ProtocolGenerationConfig,
 ): EncodedProtocolRequest {
   validateGenerationConfig(config);
+  if (
+    config.cache?.openRouterSessionId !== undefined &&
+    (config.cache.promptCacheKey !== undefined ||
+      config.cache.promptCacheRetention !== undefined)
+  ) {
+    throw new TypeError(
+      'OpenRouter session affinity cannot be combined with OpenAI prompt-cache options.',
+    );
+  }
   const messages: Array<Record<string, unknown>> = [
     { role: 'system', content: history.instructions },
     ...history.records.map((record) => ({
@@ -64,6 +73,15 @@ export function encodeChatCompletionsRequest(
   }
   if (config.topP !== undefined) {
     body.top_p = config.topP;
+  }
+  if (config.cache?.promptCacheKey !== undefined) {
+    body.prompt_cache_key = config.cache.promptCacheKey;
+  }
+  if (config.cache?.promptCacheRetention !== undefined) {
+    body.prompt_cache_retention = config.cache.promptCacheRetention;
+  }
+  if (config.cache?.openRouterSessionId !== undefined) {
+    body.session_id = config.cache.openRouterSessionId;
   }
 
   return {

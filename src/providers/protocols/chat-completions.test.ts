@@ -333,6 +333,36 @@ describe('Chat Completions protocol decoder', () => {
     expect(request.body).not.toHaveProperty('tools');
     expect(request.body).not.toHaveProperty('previous_response_id');
   });
+
+  it('[CST-01] keeps OpenAI prompt caching and OpenRouter session affinity on separate routes', () => {
+    const history = { instructions: 'Rules', records: [] };
+    const config = { model: 'selected-model', maxOutputTokens: 20 };
+
+    const openAi = encodeChatCompletionsRequest(history, {
+      ...config,
+      cache: { promptCacheKey: 'cache-key', promptCacheRetention: '24h' },
+    });
+    const openRouter = encodeChatCompletionsRequest(history, {
+      ...config,
+      cache: { openRouterSessionId: 'session-id' },
+    });
+
+    expect(openAi.body).toMatchObject({
+      prompt_cache_key: 'cache-key',
+      prompt_cache_retention: '24h',
+    });
+    expect(openAi.body).not.toHaveProperty('session_id');
+    expect(openRouter.body).toHaveProperty('session_id', 'session-id');
+    expect(openRouter.body).not.toHaveProperty('prompt_cache_key');
+    expect(() => encodeChatCompletionsRequest(history, {
+      ...config,
+      cache: { promptCacheKey: 'cache-key', openRouterSessionId: 'session-id' },
+    })).toThrow(/cannot be combined/);
+    expect(() => encodeChatCompletionsRequest(history, {
+      ...config,
+      cache: { promptCacheRetention: '24h', openRouterSessionId: 'session-id' },
+    })).toThrow(/cannot be combined/);
+  });
 });
 
 function decodeChat(...data: string[]) {

@@ -5,17 +5,17 @@ const questions = [
   {
     id: 'availability',
     question: 'Can I play a full game yet?',
-    answer: 'Not yet. You can explore the opening preview while we build the full match experience.',
+    answer: 'Yes. Open Play against AI from the sidebar to start a match. The board here is an opening preview.',
   },
   {
     id: 'engine',
     question: 'Is this a traditional chess engine?',
-    answer: 'No. A language model will choose the moves. The chess rules still apply, but the opponent is a different kind of program.',
+    answer: 'A language model chooses its own moves. You can also choose a browser engine in the game setup.',
   },
   {
     id: 'models',
     question: 'Which model can I play against?',
-    answer: 'The plan is to use the models available through your own provider or connected proxy. Model availability will depend on your connection.',
+    answer: 'Connect your provider or proxy in the game, then choose an available model from its list.',
   },
 ];
 

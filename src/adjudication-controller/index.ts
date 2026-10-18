@@ -56,12 +56,16 @@ export function createControllerAnalysis(
           query: work.query,
         });
         if (closed || active !== work) return controller.snapshot();
-        return await controller.acceptAdjudicationResult({
+        const settled = await controller.acceptAdjudicationResult({
           requestId: work.requestId,
           fence: work.fence,
           query: work.query,
           result,
         });
+        if (result.status === 'non-result' && result.reason === 'search-error') {
+          throw new Error('The position check could not run. Make sure the app server is running, then try again.');
+        }
+        return settled;
       } finally {
         if (active === work) active = null;
       }

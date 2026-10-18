@@ -1,5 +1,7 @@
 export { checkProofEvidence } from './checker.js';
 export { runProofSearchPass } from './search/search.js';
+export { tryFastMatingWitness } from './search/fast-witness.js';
+export type { FastMatingWitnessResult } from './search/fast-witness.js';
 export { validateProofSearchCheckpoint } from './search/checkpoint.js';
 export { createProofSearchWorker } from './search/worker.js';
 export {

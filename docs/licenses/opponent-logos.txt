@@ -1,0 +1,15 @@
+Opponent logos
+
+AI logos from LobeHub Icons at commit 8a1b2821bb768c484fe8da20c5e1838b6bf551a9.
+Source: https://github.com/lobehub/lobe-icons/tree/8a1b2821bb768c484fe8da20c5e1838b6bf551a9/packages/static-svg/icons
+Distributed under the MIT license reproduced below. Brand marks remain the property of their respective owners.
+
+Stockfish icon by Klein Maetschke, from the official Stockfish website at commit 113cb2b80a13ac93790cfc3310e7cf08dac67bf0.
+Source: https://raw.githubusercontent.com/official-stockfish/stockfish-web/113cb2b80a13ac93790cfc3310e7cf08dac67bf0/static/images/logo/icon_128x128%402x.webp
+Website license reproduced below.
+
+Leela Chess Zero logo, from the official Leela Chess Zero website at commit a99d59c497bf6a81151d0d97b06a67d7f6c5722c.
+Source: https://raw.githubusercontent.com/LeelaChessZero/lczero.org/a99d59c497bf6a81151d0d97b06a67d7f6c5722c/static/images/logo.svg
+The upstream website does not declare an artwork license. Included unchanged to identify Leela Chess Zero; all rights remain with its owners.
+
+All logos are used to identify opponents. No endorsement is implied.

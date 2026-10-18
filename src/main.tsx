@@ -1,19 +1,4 @@
-import { StrictMode } from 'react';
-import { createRoot } from 'react-dom/client';
-import { App } from './landing/App';
-import { QuartzPortalProvider } from './lib/quartz/portal';
-import './landing/styles.css';
-
-const root = document.getElementById('root');
-
-if (!root) {
-  throw new Error('The application root is missing.');
-}
-
-createRoot(root).render(
-  <StrictMode>
-    <QuartzPortalProvider>
-      <App />
-    </QuartzPortalProvider>
-  </StrictMode>,
-);
+// Separate entry chunks keep Quartz's reset and landing styles out of gameplay.
+void (window.location.pathname === '/'
+  ? import('./landing-entry.js')
+  : import('./game-entry.js'));

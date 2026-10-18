@@ -37,7 +37,9 @@ func TestClerkSessionVerificationAcceptsClerkClaimExtras(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	token := signedToken(t, priv, `{"alg":"RS256","kid":"key-1","typ":"JWT"}`, fmt.Sprintf(`{"iss":"https://clerk.example","sub":"user_abc","sid":"sess_123","aud":["chess-api"],"azp":"https://app.example","exp":%d,"iat":%d,"v":2,"sts":"active","fva":[0,0],"metadata":{"tier":"free"}}`, now.Add(time.Hour).Unix(), now.Unix()))
+	// Clerk's browser SDK includes client attestation and original issued-at
+	// metadata in otherwise ordinary signed session-token headers.
+	token := signedToken(t, priv, `{"alg":"RS256","kid":"key-1","typ":"JWT","cat":"cl_fixture","oiat":1800000000}`, fmt.Sprintf(`{"iss":"https://clerk.example","sub":"user_abc","sid":"sess_123","aud":["chess-api"],"azp":"https://app.example","exp":%d,"iat":%d,"v":2,"sts":"active","fva":[0,0],"metadata":{"tier":"free"}}`, now.Add(time.Hour).Unix(), now.Unix()))
 	claims, err := v.Verify(context.Background(), token, "https://app.example")
 	if err != nil {
 		t.Fatalf("valid Clerk session with documented extra claims rejected: %v", err)
@@ -94,6 +96,19 @@ func TestClerkSessionVerificationRejectsWrongIdentityAndDuplicateClaims(t *testi
 	upperHeader := signedToken(t, priv, `{"ALG":"RS256","kid":"key-1"}`, fmt.Sprintf(`{"iss":"https://clerk.example","sub":"user_abc","sid":"sess_123","aud":"chess-api","azp":"https://app.example","exp":%d}`, now.Add(time.Hour).Unix()))
 	if _, err := v.Verify(context.Background(), upperHeader, "https://app.example"); err == nil {
 		t.Fatal("case-variant JWT algorithm field accepted")
+	}
+	for _, header := range []string{
+		`{"alg":"RS256","kid":"key-1","cat":12}`,
+		`{"alg":"RS256","kid":"key-1","oiat":"1800000000"}`,
+		`{"alg":"RS256","kid":"key-1","cat":"first","cat":"second"}`,
+		`{"alg":"RS256","kid":"key-1","CAT":"cl_fixture"}`,
+		`{"alg":"RS256","kid":"key-1","crit":["unhandled"]}`,
+		`{"alg":"RS256","kid":"key-1","jku":"https://attacker.example/keys"}`,
+	} {
+		token := signedToken(t, priv, header, `{`+base+`}`)
+		if _, err := v.Verify(context.Background(), token, "https://app.example"); err == nil {
+			t.Fatalf("unsupported or malformed header accepted: %s", header)
+		}
 	}
 }
 

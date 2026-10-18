@@ -18,6 +18,11 @@ describe('connection route evidence scope', () => {
     expect(route.statement).toContain('remain unverified');
   });
 
+  it('CON-06 applies the same conditional route scope to the CLIProxyAPI loopback preset', async () => {
+    const profile = await createConnectionProfile({ id: 'cliproxy', name: 'CLIProxyAPI', provider: 'cliproxy' });
+    expect(classifyConnectionRoute(profile)).toMatchObject({ kind: 'loopback-http', evidence: 'conditional-research-only' });
+  });
+
   it('CON-06 labels LAN and public HTTP destinations unverified', async () => {
     const lan = await createConnectionProfile({
       id: 'lan',

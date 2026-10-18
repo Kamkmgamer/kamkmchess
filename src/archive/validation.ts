@@ -236,11 +236,21 @@ function readRules(value: unknown): RulesCheckpointV1 {
 function readHistorySegment(value: unknown, path: string): HistorySegmentV1 {
   const segment = readRecord(value, path);
   exactKeys(segment, ['segmentId', 'providerId', 'modelRoutingId', 'connectionRevision', 'startedAtMs', 'messageIds'], path);
+  const providerId = nullableString(segment.providerId, `${path}.providerId`);
+  const modelRoutingId = nullableString(segment.modelRoutingId, `${path}.modelRoutingId`);
+  const connectionRevision = nullableNumber(segment.connectionRevision, `${path}.connectionRevision`);
+  if ((providerId === null || modelRoutingId === null || connectionRevision === null) &&
+      !(providerId === null && modelRoutingId === null && connectionRevision === null)) {
+    fail(`${path} must identify a complete model selection or a local game.`);
+  }
+  if (connectionRevision !== null && (!Number.isSafeInteger(connectionRevision) || connectionRevision < 0)) {
+    fail(`${path}.connectionRevision must be a nonnegative safe integer.`);
+  }
   return {
     segmentId: nonEmptyString(segment.segmentId, `${path}.segmentId`),
-    providerId: stringValue(segment.providerId, `${path}.providerId`),
-    modelRoutingId: stringValue(segment.modelRoutingId, `${path}.modelRoutingId`),
-    connectionRevision: nonNegativeIntegerValue(segment.connectionRevision, `${path}.connectionRevision`),
+    providerId,
+    modelRoutingId,
+    connectionRevision,
     startedAtMs: numberValue(segment.startedAtMs, `${path}.startedAtMs`),
     messageIds: readStringArray(segment.messageIds, `${path}.messageIds`),
   };

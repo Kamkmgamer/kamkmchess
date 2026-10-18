@@ -97,6 +97,8 @@ export interface ProofSearchPassOptionsV1 {
   readonly timeBudgetMs?: number;
   readonly checkpoint?: unknown;
   readonly signal?: AbortSignal;
+  /** Skip positive witness discovery when explicitly requesting graph exploration. */
+  readonly fastWitness?: boolean;
 }
 
 export type ProofSearchCheckpointValidation =

@@ -42,12 +42,15 @@ for (const project of dependencyTree) collect(project.dependencies);
 const sections = [
   'Third-party code notices',
   'Generated from pnpm-lock.yaml and the installed production packages.',
-  'Original application code is MIT licensed. See LICENSE.txt.',
-  'The hero uses the original knight-versus-models image generated for kamkm chess. Its animated gradient overlay uses DitherGradient by ripgrim from Boring-Software-Inc/dither-kit, revision 1e7faee9aa252e499651e6736ed65f7a07d9a6bd, declared MIT in the upstream package manifests. Source: https://github.com/Boring-Software-Inc/dither-kit. Chess and interface icons are Font Awesome Free SVGs (CC BY 4.0); its JavaScript code is MIT licensed. AI brand names and marks depicted in the artwork remain trademarks of their owners.',
+  'Copyright (c) 2026 kamkmchess contributors. Original application code is licensed under the GNU General Public License, version 3 or, at your option, any later version (GPL-3.0-or-later). See LICENSE.txt for the full terms and warranty disclaimer.',
+  'The combined browser application includes Chessground, chessops and Stockfish under their GPL terms. Third-party code and artwork retain their own licenses. Corresponding source: https://github.com/Kamkmgamer/kamkmchess. Distributors must provide the exact corresponding source for their deployed version, including dependency source and build instructions.',
+  'The Wikimedia standard chess pieces by Cburnett and Rfc1394 are distributed under CC BY-SA 3.0, extracted into individual SVG files from the cm-chessboard standard sprite. Source and license notices are embedded in each image.',
+  'The landing artwork was generated for kamkm chess. Chess and interface icons are Font Awesome Free SVGs (CC BY 4.0); its JavaScript code is MIT licensed. AI brand names and marks depicted in the artwork remain trademarks of their owners.',
+  'The animated landing overlay uses DitherGradient by ripgrim from Boring-Software-Inc/dither-kit, revision 1e7faee9aa252e499651e6736ed65f7a07d9a6bd, declared MIT in upstream package manifests. Source: https://github.com/Boring-Software-Inc/dither-kit. Provenance: src/components/grim-dither-kit/UPSTREAM.md.',
   'Quartz design system source, copyright (c) 2026 Arlan Marat, is included under the MIT license below.',
-  'The earlier image-dithering core remains vendored from github.com/jvgomg/ditherkit by James Greenaway under the MIT license below; the hero no longer imports it.',
-  (await readFile(new URL('src/components/dither-kit/LICENSE', root), 'utf8')),
   await readFile(new URL('docs/design/QUARTZ-LICENSE.txt', root), 'utf8'),
+  'The earlier image-dithering core remains vendored from github.com/jvgomg/ditherkit by James Greenaway; the hero no longer imports it.',
+  await readFile(new URL('src/components/dither-kit/LICENSE', root), 'utf8'),
 ];
 const inventory = [];
 
@@ -59,8 +62,20 @@ for (const metadata of packages.values()) {
   }
 
   const files = await readdir(directory);
-  const licenseFile = files.find((file) => /^license(?:\.(?:txt|md))?$/i.test(file));
-  if (!licenseFile) {
+  const licenseFile = files.find((file) => /^(?:licen[sc]e|copying)(?:-MIT)?(?:\.(?:txt|md))?$/i.test(file));
+  // This exact release distributes its complete BSD terms in README.md.
+  const readmeLicense = manifest.name === 'glob-to-regexp' && manifest.version === '0.4.1'
+    ? (await readFile(join(directory, 'README.md'), 'utf8')).match(/^## License\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]?.trim()
+    : undefined;
+  // toggle-selection 1.0.6 omits LICENSE from its npm archive. Retain the
+  // upstream MIT notice, Git blob 4a7395ee831dc1617bf5195dcb353c5bbd89afcd.
+  const upstreamLicenseFile = manifest.name === 'toggle-selection' && manifest.version === '1.0.6'
+    ? 'toggle-selection-MIT.txt'
+    : manifest.name === 'input-otp' && manifest.version === '1.4.2' ? 'input-otp-MIT.txt' : undefined;
+  const upstreamLicense = upstreamLicenseFile
+    ? await readFile(new URL(`docs/licenses/${upstreamLicenseFile}`, root), 'utf8') : undefined;
+  const licenseText = licenseFile ? await readFile(join(directory, licenseFile), 'utf8') : readmeLicense ?? upstreamLicense;
+  if (!licenseText) {
     throw new Error(`Review the missing license text for ${manifest.name}`);
   }
 
@@ -74,9 +89,22 @@ for (const metadata of packages.values()) {
   sections.push(
     `${manifest.name}@${manifest.version} (${manifest.license ?? 'license not declared'})`,
     `Source: ${manifest.homepage ?? manifest.repository?.url ?? `https://www.npmjs.com/package/${manifest.name}/v/${manifest.version}`}`,
-    await readFile(join(directory, licenseFile), 'utf8'),
+    licenseText,
   );
 }
+
+sections.push(
+  'Previously published kamkmchess code: retained MIT notice. Earlier grants remain valid; the current project is GPL-3.0-or-later.',
+  await readFile(new URL('docs/licenses/kamkmchess-MIT.txt', root), 'utf8'),
+  'T3 Code theme palette data',
+  'Palette values extracted from packages/shared/src/themePalettes.ts at commit 9503155da67add4fbd7fbc51c99ec19a0c8c4a2c (SHA-256 82385050b8b691ff280efc0e93ea9dd8a4bbfd64a4c50cf8536b5c15d1e74479).',
+  await readFile(new URL('docs/licenses/T3-Code-MIT.txt', root), 'utf8'),
+  'Wikimedia standard chess pieces',
+  'Artists: Cburnett and Rfc1394. Source: https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces/Standard. Extracted into individual SVG files from cm-chessboard@8.15.3/assets/pieces/standard.svg under Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0): https://creativecommons.org/licenses/by-sa/3.0/. Each image contains attribution, source and modification notices.',
+  await readFile(new URL('docs/licenses/opponent-logos.txt', root), 'utf8'),
+  await readFile(new URL('docs/licenses/LobeHub-Icons-MIT.txt', root), 'utf8'),
+  await readFile(new URL('docs/licenses/Stockfish-Website-MIT.txt', root), 'utf8'),
+);
 
 await copyFile(new URL('LICENSE', root), new URL('dist/LICENSE.txt', root));
 await writeFile(new URL('dist/THIRD_PARTY_NOTICES.txt', root), `${sections.join('\n\n')}\n`);

@@ -29,7 +29,7 @@ export function GameNavigation({ onOptions, onNavigate }: GameNavigationProps) {
 
   return (
     <div className="sidebar-content">
-      <Button className="sidebar-play" size="lg" onClick={() => onOptions()}>
+      <Button className="sidebar-play" size="lg" render={<a href="/play" />} nativeButton={false}>
         <Icon icon={ChessKnight} size={24} /><span>Play against AI</span>
       </Button>
       <nav className="game-navigation" aria-label="Chess navigation">

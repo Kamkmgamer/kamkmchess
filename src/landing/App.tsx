@@ -109,7 +109,7 @@ export function App() {
             <div className="idea-layout page-width">
               <div className="idea-heading">
                 <h2 id="idea-heading">Choose your<br />AI opponent.</h2>
-                <p>We’re building chess against language models, each choosing its own moves. Choose a model for your board preview.</p>
+                <p>Face a language model that chooses its own moves. Choose a model for the preview, or open a full match from the sidebar.</p>
                 <Button className="section-action" size="lg" onClick={() => openOptions('modelId')}><Icon icon={Bot} size={24} />Choose AI model</Button>
               </div>
               <figure className="opponent-study">

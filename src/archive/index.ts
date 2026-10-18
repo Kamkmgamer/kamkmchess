@@ -11,6 +11,7 @@ import type { ArchiveChunkV1, ArchiveEventV1, GameCheckpointV1 } from '../storag
 
 export type { ArchiveChunkExportV1, ArchiveSnapshotV1, GameArchiveExportV1 } from './types';
 export { ArchiveError } from './codec';
+export { sha256Hex } from './codec';
 export {
   assertArchiveReferenceIntegrity,
   readArchiveChunk,

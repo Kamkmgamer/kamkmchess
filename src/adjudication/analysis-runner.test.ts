@@ -43,6 +43,77 @@ function workerRequest(worker: FakeWorker) {
 }
 
 describe('bounded adjudication analysis runner', () => {
+  it('reuses a successful worker for the next position and still fences stale replies', async () => {
+    const worker = new FakeWorker();
+    const createWorker = vi.fn(() => worker);
+    const runner = createAdjudicationAnalysisRunner({ createWorker, store: memoryStore().store });
+    const firstQuery = createDeadnessQuery({ ...query, positionFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' });
+    const nextQuery = createDeadnessQuery({ ...query, positionRevision: '4', positionFen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1' });
+    const firstResult = await runProofSearchPass(firstQuery);
+    const nextResult = await runProofSearchPass(nextQuery);
+    const first = runner.continueAnalysis({ requestId: 'first', namespace, query: firstQuery });
+    await vi.waitFor(() => expect(worker.posted).toHaveLength(1));
+    worker.reply({ type: 'result', requestId: 'first', result: firstResult });
+    await expect(first).resolves.toMatchObject({ status: 'accepted', conclusion: 'not-dead' });
+    expect(worker.terminated).toBe(false);
+
+    const next = runner.continueAnalysis({ requestId: 'next', namespace, query: nextQuery });
+    await vi.waitFor(() => expect(worker.posted).toHaveLength(2));
+    expect(createWorker).toHaveBeenCalledTimes(1);
+    worker.reply({ type: 'result', requestId: 'first', result: firstResult });
+    worker.reply({ type: 'result', requestId: 'next', result: nextResult });
+    await expect(next).resolves.toMatchObject({ status: 'accepted', queryIdentity: nextQuery.queryIdentity });
+    runner.close();
+    expect(worker.terminated).toBe(true);
+  });
+
+  it.each(['stop', 'error', 'messageerror'] as const)('discards a reused worker on %s', async (failure) => {
+    const worker = new FakeWorker();
+    const replacement = new FakeWorker();
+    const createWorker = vi.fn().mockReturnValueOnce(worker).mockReturnValueOnce(replacement);
+    const runner = createAdjudicationAnalysisRunner({ createWorker, store: memoryStore().store });
+    const playable = createDeadnessQuery({ ...query, positionFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' });
+    const result = await runProofSearchPass(playable);
+    const first = runner.continueAnalysis({ requestId: 'first', namespace, query: playable });
+    await vi.waitFor(() => expect(worker.posted).toHaveLength(1));
+    worker.reply({ type: 'result', requestId: 'first', result });
+    await first;
+    const second = runner.continueAnalysis({ requestId: 'second', namespace, query: playable });
+    await vi.waitFor(() => expect(worker.posted).toHaveLength(2));
+    expect(createWorker).toHaveBeenCalledTimes(1);
+    if (failure === 'stop') runner.stopAnalysis('second');
+    else if (failure === 'error') worker.onerror?.(new Event('error'));
+    else worker.onmessageerror?.({} as MessageEvent<unknown>);
+    await expect(second).resolves.toMatchObject({ status: 'non-result', reason: failure === 'stop' ? 'cancelled' : 'search-error' });
+    expect(worker.terminated).toBe(true);
+    const third = runner.continueAnalysis({ requestId: 'third', namespace, query: playable });
+    await vi.waitFor(() => expect(replacement.posted).toHaveLength(1));
+    expect(createWorker).toHaveBeenCalledTimes(2);
+    runner.close();
+    await expect(third).resolves.toMatchObject({ status: 'non-result', reason: 'cancelled' });
+    expect(replacement.terminated).toBe(true);
+  });
+
+  it('discards an idle worker that reports an error', async () => {
+    const worker = new FakeWorker();
+    const replacement = new FakeWorker();
+    const createWorker = vi.fn().mockReturnValueOnce(worker).mockReturnValueOnce(replacement);
+    const runner = createAdjudicationAnalysisRunner({ createWorker, store: memoryStore().store });
+    const playable = createDeadnessQuery({ ...query, positionFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1' });
+    const result = await runProofSearchPass(playable);
+    const first = runner.continueAnalysis({ requestId: 'first', namespace, query: playable });
+    await vi.waitFor(() => expect(worker.posted).toHaveLength(1));
+    worker.reply({ type: 'result', requestId: 'first', result });
+    await first;
+    worker.onerror?.(new Event('error'));
+    expect(worker.terminated).toBe(true);
+    const next = runner.continueAnalysis({ requestId: 'next', namespace, query: playable });
+    await vi.waitFor(() => expect(replacement.posted).toHaveLength(1));
+    expect(createWorker).toHaveBeenCalledTimes(2);
+    runner.close();
+    await next;
+  });
+
   it('starts one bounded pass and persists its resumable non-result', async () => {
     const worker = new FakeWorker();
     const { store, saved } = memoryStore();
@@ -130,6 +201,7 @@ describe('bounded adjudication analysis runner', () => {
     expect(accepted.status).toBe('accepted');
     worker.reply({ type: 'result', requestId: 'checked', result: accepted });
     await expect(pending).resolves.toMatchObject({ status: 'accepted', conclusion: 'dead' });
+    runner.close();
     expect(worker.terminated).toBe(true);
   });
 

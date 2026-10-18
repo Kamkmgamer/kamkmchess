@@ -33,7 +33,9 @@ function freezeLedger(entries: readonly RepetitionOccurrence[]): RepetitionLedge
 
 export function repetitionIdentity(position: Position): string {
   const engine = createChessPosition(position);
-  const hasLegalEnPassant = engine.moves({ verbose: true }).some((move) => move.isEnPassant());
+  const context = engine.ctx();
+  const hasLegalEnPassant = engine.epSquare !== undefined && [...engine.board.pieces(engine.turn, 'pawn')]
+    .some(square => engine.dests(square, context).has(engine.epSquare!));
   return [
     position.placement,
     position.sideToMove,

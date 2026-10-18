@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createConnectionProfile, createFirstRequestDisclosure } from '../../../src/providers/connections';
+import {
+  createConnectionProfile,
+  createFirstRequestDisclosure,
+  hasCurrentDisclosureConsent,
+  recordDisclosureChoice,
+  reviseConnectionProfile,
+} from '../../../src/providers/connections';
 
 describe('first-request disclosure', () => {
   it('CON-07 supplies provider rules, consequences, quota use and the configured destination', async () => {
@@ -45,5 +51,24 @@ describe('first-request disclosure', () => {
     expect(view.catalogUrl).toBe('https://catalog.example.test/v2/models');
     expect(view.notices.join(' ')).toContain('https://catalog.example.test/v2/models');
     expect(view.notices.join(' ')).toContain('authentication');
+  });
+
+  it('CON-07 discloses CLIProxyAPI endpoint operator control without implying affiliation or route certification', async () => {
+    const profile = await createConnectionProfile({ id: 'local-cli', name: 'CLIProxyAPI', provider: 'cliproxy' });
+    const view = createFirstRequestDisclosure(profile);
+    const consent = recordDisclosureChoice(profile, { decision: 'accepted', recordedAtMs: 10 });
+
+    expect(view.destinationUrl).toBe('http://127.0.0.1:8317/v1/chat/completions');
+    expect(view.body).toContain('directly from your browser');
+    expect(view.body).toContain('endpoint operator controls account access, logging, retention, and billing');
+    expect(view.body).toContain('endpoint operator');
+    expect(view.body).not.toContain('OpenAI');
+    expect(view.body).not.toContain('CLIProxyAPI is operated');
+    expect(view.links).toEqual([]);
+    expect(view.notices.join(' ')).toContain('remain unverified');
+    expect(hasCurrentDisclosureConsent(profile, consent)).toBe(true);
+
+    const moved = await reviseConnectionProfile(profile, { baseUrl: 'http://127.0.0.1:8318' });
+    expect(hasCurrentDisclosureConsent(moved, consent)).toBe(false);
   });
 });

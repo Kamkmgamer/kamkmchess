@@ -13,24 +13,28 @@ const DEFAULT_BASE_URLS = {
   openai: 'https://api.openai.com/v1',
   openrouter: 'https://openrouter.ai/api/v1',
   anthropic: 'https://api.anthropic.com/v1',
+  cliproxy: 'http://127.0.0.1:8317/v1',
 } as const;
 
 const DEFAULT_PROTOCOLS = {
   openai: 'responses',
   openrouter: 'chat-completions',
   anthropic: 'messages',
+  cliproxy: 'chat-completions',
 } as const satisfies Record<Exclude<ConnectionProvider, 'custom'>, ConnectionProtocol>;
 
 const DEFAULT_AUTH = {
   openai: { kind: 'bearer' },
   openrouter: { kind: 'bearer' },
   anthropic: { kind: 'api-key-header', headerName: 'x-api-key' },
+  cliproxy: { kind: 'bearer' },
 } as const satisfies Record<Exclude<ConnectionProvider, 'custom'>, ConnectionAuth>;
 
 const DEFAULT_CATALOG_PAGINATION = {
   openai: 'after',
   openrouter: 'none',
   anthropic: 'after_id',
+  cliproxy: 'none',
 } as const satisfies Record<Exclude<ConnectionProvider, 'custom'>, CatalogPagination>;
 
 const ROUTES: Record<ConnectionProtocol, string> = {
@@ -160,7 +164,9 @@ export async function createConnectionProfile(
   } else {
     protocol = input.protocol ?? DEFAULT_PROTOCOLS[input.provider];
     auth = input.auth ?? DEFAULT_AUTH[input.provider];
-    baseUrlInput = input.baseUrl ?? DEFAULT_BASE_URLS[input.provider];
+    baseUrlInput = input.provider === 'cliproxy'
+      ? normalizeCliProxyBaseUrl(input.baseUrl ?? DEFAULT_BASE_URLS.cliproxy)
+      : input.baseUrl ?? DEFAULT_BASE_URLS[input.provider];
   }
   auth = normalizeAuth(auth);
   const baseUrl = validateEndpointUrl(baseUrlInput);
@@ -328,7 +334,17 @@ function isCredentialLikeName(input: string): boolean {
 }
 
 function isProvider(value: unknown): value is ConnectionProvider {
-  return value === 'openai' || value === 'openrouter' || value === 'anthropic' || value === 'custom';
+  return value === 'openai' || value === 'openrouter' || value === 'anthropic' || value === 'cliproxy' || value === 'custom';
+}
+
+function normalizeCliProxyBaseUrl(input: string): string {
+  try {
+    const url = new URL(input);
+    if (url.pathname === '/' || url.pathname === '') url.pathname = '/v1';
+    return url.toString();
+  } catch {
+    return input;
+  }
 }
 
 function isProtocol(value: unknown): value is ConnectionProtocol {

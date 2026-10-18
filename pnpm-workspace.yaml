@@ -1,0 +1,5 @@
+allowBuilds:
+  browser-tabs-lock: false
+  core-js: false
+# These reviewed postinstall scripts only print funding banners. Neither is
+# needed to build the application or the optional Clerk browser client.
