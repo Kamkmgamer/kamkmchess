@@ -100,7 +100,7 @@ test('two browser engines alternate, evaluate with downloaded full Stockfish, st
   const bar = page.locator('.evaluation-bar');
   await expect(bar).toHaveAttribute('data-state', 'ready');
   await expect(bar).toHaveAttribute('data-engine', 'Stockfish 19');
-  await page.getByRole('button', { name: 'First', exact: true }).click();
+  await page.getByRole('region', { name: 'Chess match board' }).getByRole('button', { name: 'First', exact: true }).click();
   await expect(bar).toHaveAttribute('data-state', 'ready');
   await expect(bar).toHaveAccessibleName(/White evaluation/);
   await page.getByRole('button', { name: 'Flip board', exact: true }).click();
@@ -113,7 +113,7 @@ test('two browser engines alternate, evaluate with downloaded full Stockfish, st
   const boardBounds = await page.locator('.board-host').boundingBox();
   const barBounds = await bar.boundingBox();
   expect(Math.abs(boardBounds!.height - barBounds!.height)).toBeLessThan(2);
-  await page.getByRole('button', { name: 'Live', exact: true }).click();
+  await page.getByRole('region', { name: 'Chess match board' }).getByRole('button', { name: 'Live', exact: true }).click();
   const count = await moves(page).count();
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Retry engine turn', exact: true }).click();

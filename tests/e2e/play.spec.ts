@@ -176,7 +176,7 @@ test('cancels premoves and keeps a reviewed position while the AI finishes', asy
   await expect(movesOnBoard(page)).toHaveCount(2);
   await expect(page.locator('.match-status')).toContainText('0/2');
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeDisabled();
-  await page.getByRole('button', { name: 'Live', exact: true }).click();
+  await page.getByRole('region', { name: 'Chess match board' }).getByRole('button', { name: 'Live', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
 });
 
