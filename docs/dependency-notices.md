@@ -1,6 +1,6 @@
 # Dependency and asset inventory
 
-Inventory for [Establish the React/TypeScript application and build checks](https://linear.app/kamkm/issue/KHA-26/establish-the-reacttypescript-application-and-build-checks), updated 2026-10-18. `package.json` pins direct versions and `pnpm-lock.yaml` locks the complete graph, including platform-specific optional build packages. Original application code is MIT licensed under [LICENSE](../LICENSE).
+Inventory for [Establish the React/TypeScript application and build checks](https://linear.app/kamkm/issue/KHA-26/establish-the-reacttypescript-application-and-build-checks), updated 2026-10-18. `package.json` pins direct versions and `pnpm-lock.yaml` locks the complete graph, including platform-specific optional build packages. The project, including original application code, is licensed under [GPL-3.0-or-later](../LICENSE). The owner adopted this license on 2026-10-18. Earlier MIT grants remain valid, and the [previous MIT notice](licenses/kamkmchess-MIT.txt) is retained in the source and generated distribution notices.
 
 ## Distributed runtime code
 
@@ -49,7 +49,7 @@ TypeScript 6.0.3 stays within typescript-eslint 8.71.2's declared `>=4.8.4 <6.1.
 
 ## Artwork and later dependencies
 
-This build uses Chessground, chessops and system fonts. The owner authorized replacing cm-chessboard with Chessground on 2026-10-18, superseding the original board choice and GPL exclusion for this dependency. The combined browser application is distributed under GPL-3.0-or-later; original application code remains independently available under MIT. Ship exact corresponding source from https://github.com/Kamkmgamer/kamkmchess for the deployed version and the generated Chessground license notice. The disposable prototype's application code is not included; the extracted theme values are identified below.
+This build uses Chessground, chessops and system fonts. The owner authorized replacing cm-chessboard with Chessground on 2026-10-18, superseding the original board choice and GPL exclusion for this dependency. The project and combined browser application are distributed under GPL-3.0-or-later. Ship exact corresponding source from https://github.com/Kamkmgamer/kamkmchess for the deployed version and the generated dependency license notices. The disposable prototype's application code is not included; the extracted theme values are identified below.
 
 The chessops **0.15.1**, chess.js **1.4.0** (legacy offline proof tools), and @lichess-org/chessground **10.4.2** dependencies are pinned. The board uses the existing Wikimedia Commons standard pieces by Cburnett and Rfc1394 under CC BY-SA 3.0. Individual images in `src/ui/pieces/` were extracted from cm-chessboard **8.15.3**'s standard sprite, retained as `standard.svg` with its original attribution. Each extracted image records the source, license and extraction. The generated THIRD_PARTY_NOTICES.txt repeats this attribution and license. The separately licensed NonCommercial Staunty sprite is not used.
 

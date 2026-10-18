@@ -49,7 +49,7 @@ a secret, and it exits non-zero when a blocker is present. It checks:
 
 | Area | What is actually verified |
 | --- | --- |
-| Distribution | `dist/` exists; `LICENSE.txt`, `THIRD_PARTY_NOTICES.txt` and `DEPENDENCY_INVENTORY.json` are present; the notices carry the MIT and CC BY-SA credits; the dependency inventory has no copyleft or NonCommercial entry |
+| Distribution | `dist/` exists; `LICENSE.txt`, `THIRD_PARTY_NOTICES.txt` and `DEPENDENCY_INVENTORY.json` are present; the notices retain MIT and CC BY-SA credits. The GPL project permits the reviewed chessops 0.15.1, Chessground 10.4.2 and Stockfish 19.0.1 licenses. Other copyleft dependencies, version or license changes, and NonCommercial entries require review or removal. |
 | Bundle secrets | Every distributable text file is scanned for credential shapes (private keys, provider keys, GitHub/AWS/Slack/Google tokens, JWTs, PostgreSQL connection strings) and for server-only configuration names |
 | Deployment | `vercel.json` CSP permits public HTTPS provider routes, forbids cleartext to non-loopback hosts, forbids `unsafe-inline`/`unsafe-eval` in `script-src`, keeps `worker-src 'self'`; `/v1/*` is routed to the Go function; every route in `backend/httpapi/api.go` is covered; Clerk callback routes exist |
 | Server boundary | No Go file references a model provider key or provider host; every API handler resolves a verified owner from context |

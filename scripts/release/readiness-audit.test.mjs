@@ -149,7 +149,38 @@ test('missing distribution notices block a release', async () => {
   );
 });
 
-test('a copyleft or noncommercial dependency blocks a release', async () => {
+test('reviewed pinned GPL chess dependencies are allowed in the GPL project', async () => {
+  const root = await makeTree({
+    ...minimalTree,
+    'dist/DEPENDENCY_INVENTORY.json': JSON.stringify({
+      lockfileVersion: '9.0',
+      packages: [
+        { path: 'chessops', version: '0.15.1', license: 'GPL-3.0-or-later' },
+        { path: '@lichess-org/chessground', version: '10.4.2', license: 'GPL-3.0-or-later' },
+        { path: 'stockfish', version: '19.0.1', license: 'GPL-3.0' },
+      ],
+    }),
+  });
+  const report = await auditRepository(root);
+  assert.equal(findingFor(report.findings, 'license-excluded'), undefined);
+});
+
+test('a changed version or license of a reviewed GPL dependency still requires review', async () => {
+  const root = await makeTree({
+    ...minimalTree,
+    'dist/DEPENDENCY_INVENTORY.json': JSON.stringify({
+      lockfileVersion: '9.0',
+      packages: [
+        { path: 'stockfish', version: '20.0.0', license: 'GPL-3.0' },
+        { path: 'chessops', version: '0.15.1', license: 'AGPL-3.0-or-later' },
+      ],
+    }),
+  });
+  const report = await auditRepository(root);
+  assert.equal(report.findings.filter((finding) => finding.code === 'license-excluded').length, 2);
+});
+
+test('an unreviewed copyleft or noncommercial dependency blocks a release', async () => {
   const root = await makeTree({
     ...minimalTree,
     'dist/DEPENDENCY_INVENTORY.json': JSON.stringify({

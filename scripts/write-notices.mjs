@@ -42,8 +42,8 @@ for (const project of dependencyTree) collect(project.dependencies);
 const sections = [
   'Third-party code notices',
   'Generated from pnpm-lock.yaml and the installed production packages.',
-  'Original application code is MIT licensed. See LICENSE.txt.',
-  'The combined browser application includes Chessground and chessops under GPL-3.0-or-later. Original application code remains available under MIT; see LICENSE.txt. Corresponding source: https://github.com/Kamkmgamer/kamkmchess. Distributors must provide the exact corresponding source for their deployed version.',
+  'Copyright (c) 2026 kamkmchess contributors. Original application code is licensed under the GNU General Public License, version 3 or, at your option, any later version (GPL-3.0-or-later). See LICENSE.txt for the full terms and warranty disclaimer.',
+  'The combined browser application includes Chessground, chessops and Stockfish under their GPL terms. Third-party code and artwork retain their own licenses. Corresponding source: https://github.com/Kamkmgamer/kamkmchess. Distributors must provide the exact corresponding source for their deployed version, including dependency source and build instructions.',
   'The Wikimedia standard chess pieces by Cburnett and Rfc1394 are distributed under CC BY-SA 3.0, extracted into individual SVG files from the cm-chessboard standard sprite. Source and license notices are embedded in each image.',
 ];
 const inventory = [];
@@ -81,6 +81,8 @@ for (const metadata of packages.values()) {
 }
 
 sections.push(
+  'Previously published kamkmchess code: retained MIT notice. Earlier grants remain valid; the current project is GPL-3.0-or-later.',
+  await readFile(new URL('docs/licenses/kamkmchess-MIT.txt', root), 'utf8'),
   'T3 Code theme palette data',
   'Palette values extracted from packages/shared/src/themePalettes.ts at commit 9503155da67add4fbd7fbc51c99ec19a0c8c4a2c (SHA-256 82385050b8b691ff280efc0e93ea9dd8a4bbfd64a4c50cf8536b5c15d1e74479).',
   await readFile(new URL('docs/licenses/T3-Code-MIT.txt', root), 'utf8'),

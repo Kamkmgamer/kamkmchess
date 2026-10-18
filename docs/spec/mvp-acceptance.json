@@ -2046,7 +2046,7 @@
       "methods": [
         "review"
       ],
-      "required_behavior": "Pin actual dependencies/assets and review changes from researched chess.js 1.4.0/cm-chessboard 8.15.3. MIT original code, required BSD/MIT notices and separate CC BY-SA standard-art credits/source/modification notices. Exclude optional NonCommercial pieces and research-only GPL dependencies.",
+      "required_behavior": "Pin actual dependencies/assets and review changes. The owner's 2026-10-18 amendment licenses the project under GPL-3.0-or-later and permits pinned chessops 0.15.1, Chessground 10.4.2 and Stockfish 19.0.1. Provide exact corresponding source and build instructions for distributed GPL code, retain required BSD/MIT notices and separate CC BY-SA standard-art credits/source/modification notices. Exclude optional NonCommercial pieces and unreviewed research-only dependencies.",
       "evidence_needed": [
         "Distribution dependency/asset/license inventory",
         "Bundle/source/notices audit and art attribution"

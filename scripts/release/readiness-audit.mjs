@@ -50,6 +50,14 @@ const SERVER_ONLY_NAMES = [
 /** Direct AI provider hosts the browser is allowed to reach, for CSP review. */
 const PROVIDER_HOSTS = ['api.openai.com', 'openrouter.ai', 'api.anthropic.com'];
 
+// Reviewed for this GPL-3.0-or-later project. New versions or license changes
+// still need a distribution review, as do other copyleft dependencies.
+const REVIEWED_GPL_DEPENDENCIES = new Map([
+  ['chessops@0.15.1', 'GPL-3.0-or-later'],
+  ['@lichess-org/chessground@10.4.2', 'GPL-3.0-or-later'],
+  ['stockfish@19.0.1', 'GPL-3.0'],
+]);
+
 /** Synthetic secret shapes. No real credential is ever written into this file. */
 const SECRET_PATTERNS = [
   { id: 'private-key', pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
@@ -239,7 +247,7 @@ async function auditDistribution(root, findings) {
       findings.push(finding(
         SEVERITY.BLOCKER,
         'license-credit-missing',
-        'Third-party notices do not carry the required MIT original-code notice and CC BY-SA art credit.',
+        'Third-party notices do not carry the required retained MIT notices and CC BY-SA art credit.',
         'dist/THIRD_PARTY_NOTICES.txt',
         'scripts/write-notices.mjs generates these sections; fix the generator, not the artifact.',
       ));
@@ -263,8 +271,9 @@ async function auditDistribution(root, findings) {
         const license = String(entry?.license ?? '');
         if (!license) {
           findings.push(finding(SEVERITY.WARNING, 'license-undeclared', `${entry?.path ?? 'a package'} declares no license.`, 'dist/DEPENDENCY_INVENTORY.json', 'Review the license before distribution.'));
-        } else if (/\b(AGPL|GPL|NonCommercial|Non-Commercial|SSPL)\b/i.test(license)) {
-          findings.push(finding(SEVERITY.BLOCKER, 'license-excluded', `${entry?.path} is ${license}, which the distribution excludes.`, 'dist/DEPENDENCY_INVENTORY.json', 'Remove the dependency from production or obtain a compatible license.'));
+        } else if (/\b(AGPL|GPL|NonCommercial|Non-Commercial|SSPL)\b/i.test(license) &&
+          REVIEWED_GPL_DEPENDENCIES.get(`${entry?.path}@${entry?.version}`) !== license) {
+          findings.push(finding(SEVERITY.BLOCKER, 'license-excluded', `${entry?.path} is ${license}, which is excluded or has not been reviewed for this GPL distribution.`, 'dist/DEPENDENCY_INVENTORY.json', 'Remove the dependency from production or review its exact version and license for compatibility.'));
         }
       }
     }

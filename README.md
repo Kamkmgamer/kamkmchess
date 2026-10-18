@@ -4,7 +4,7 @@ Chess against AI models that choose their own moves. The Classic workspace suppo
 
 **New game** also supports human versus engine, engine versus engine, engine versus AI, and AI versus AI. Choose each opponent independently. Stockfish Lite and full Stockfish download with one click and run directly in your browser, with hardware-based recommendations, cached downloads, and adjustable thinking time. Leela's browser integration is marked **Coming soon**. See [browser engine setup and implementation](docs/browser-engines.md).
 
-The board uses Lichess's [Chessground](https://github.com/lichess-org/chessground) for animated moves, square-wide mouse and touch dragging, legal destinations, and previous-move highlights. The combined browser application includes GPL-3.0-or-later code; original application code remains available under MIT. See [dependency and artwork notices](docs/dependency-notices.md). Distributions must include the exact corresponding source, available in this repository, along with the generated license notices.
+The board uses Lichess's [Chessground](https://github.com/lichess-org/chessground) for animated moves, square-wide mouse and touch dragging, legal destinations, and previous-move highlights. The project is licensed under GPL-3.0-or-later, including its original application code. See [dependency and artwork notices](docs/dependency-notices.md). Distributions must include the exact corresponding source, available in this repository, along with the generated license notices.
 
 Use Left/Right to review earlier or later moves, Home for the starting position, and End or **Live** to return to play. Moves in the list are clickable. Reviewing history leaves the live game and clocks running. During an AI turn, drag or click your piece to queue one premove. It plays only if legal after the reply; Escape, right-click, and **Cancel premove** clear it. Entering history or starting another game also clears queued input.
 
@@ -89,4 +89,8 @@ Vercel's CSP permits direct HTTPS and loopback provider connections while keepin
 
 Exact position checks run in a Worker and only accept independently checked evidence. Common openings resolve quickly. A difficult position can remain saved with adjudication pending and a continuously running clock; Continue and Stop analysis are explicit actions. A search cutoff never invents a result.
 
-Run `pnpm install --frozen-lockfile` after checkout. Use exact package versions and review changes to `pnpm-lock.yaml`. Recheck notices and bundle contents when dependencies or assets change. Original code is [MIT licensed](LICENSE); third-party code and artwork retain their own licenses. Research and experiment dependencies are separate from the production root package.
+Run `pnpm install --frozen-lockfile` after checkout. Use exact package versions and review changes to `pnpm-lock.yaml`. Recheck notices and bundle contents when dependencies or assets change. Research and experiment dependencies are separate from the production root package.
+
+Copyright (c) 2026 kamkmchess contributors. This project is free software under the [GNU General Public License](LICENSE), version 3 or, at your option, any later version (`GPL-3.0-or-later`). It comes without any warranty, including implied warranties of merchantability or fitness for a particular purpose. The owner adopted this license on 2026-10-18.
+
+Third-party code and artwork retain their own licenses and attribution. The [previous MIT notice](docs/licenses/kamkmchess-MIT.txt) is retained for previously published kamkmchess code; earlier MIT grants remain valid. The current project and its combined browser distribution use GPL-3.0-or-later.
