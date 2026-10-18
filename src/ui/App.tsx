@@ -12,6 +12,7 @@ import type { EditorPiece } from './position-editor.js';
 import type { LocalGameSession, MatchComposition } from './match-composition.js';
 import { T3_PALETTES } from './t3-palettes.js';
 import { OpponentPanel } from './OpponentPanel.js';
+import { OpponentBadge } from './OpponentBadge.js';
 import { EnginePanel } from './EnginePanel.js';
 import { composePlayers, MATCH_MODES, seatKinds } from './match-modes.js';
 import type { MatchMode } from './match-modes.js';
@@ -736,8 +737,8 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
       <div className="match-layout">
         <section className="board-column" id="board" aria-label="Chess match board">
           <div className={'player-row ' + (snapshot.position.sideToMove === 'b' && activeSide === 'black' ? 'active' : '')}>
-            <span className="player-badge dark-piece" aria-hidden="true">B</span>
-            <div className="player-name"><strong>Black</strong><span>{playerLabel('black')}</span></div>
+            <OpponentBadge player={players.black} side="black" />
+            <div className="player-name"><strong>Black</strong><span title={playerLabel('black')}>{playerLabel('black')}</span></div>
             <time className={'clock ' + (activeSide === 'black' ? 'running' : '')}
               dateTime={'PT' + Math.max(0, Math.ceil(clocks.blackMs / 1_000)) + 'S'}
               aria-label={'Black clock ' + formatClock(clocks.blackMs)}>{formatClock(clocks.blackMs)}</time>
@@ -745,8 +746,8 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
           <ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} view={history}
             premoveColor={premoveColor} allowPremove={allowPremove} />
           <div className={'player-row ' + (snapshot.position.sideToMove === 'w' && activeSide === 'white' ? 'active' : '')}>
-            <span className="player-badge light-piece" aria-hidden="true">W</span>
-            <div className="player-name"><strong>White</strong><span>{playerLabel('white')}</span></div>
+            <OpponentBadge player={players.white} side="white" />
+            <div className="player-name"><strong>White</strong><span title={playerLabel('white')}>{playerLabel('white')}</span></div>
             <time className={'clock ' + (activeSide === 'white' ? 'running' : '')}
               dateTime={'PT' + Math.max(0, Math.ceil(clocks.whiteMs / 1_000)) + 'S'}
               aria-label={'White clock ' + formatClock(clocks.whiteMs)}>{formatClock(clocks.whiteMs)}</time>

@@ -18,10 +18,10 @@ async function prepareEngine(panel: Locator, engine = 'stockfish-lite') {
   await expect(panel.getByText('Engine ready for this match.', { exact: true })).toBeVisible();
 }
 
-async function prepareAi(page: Page, side: 'White' | 'Black') {
+async function prepareAi(page: Page, side: 'White' | 'Black', modelId = `${side.toLowerCase()}-fixture`) {
   const panel = page.locator('.match-seat').filter({ has: page.getByRole('heading', { name: `${side} AI model`, exact: true }) });
   await panel.getByLabel('Proxy API key').fill('offline-test-key');
-  await panel.getByLabel('Model ID', { exact: true }).fill(`${side.toLowerCase()}-fixture`);
+  await panel.getByLabel('Model ID', { exact: true }).fill(modelId);
   await panel.getByRole('button', { name: 'Connect and use model' }).click();
   const consent = panel.getByRole('button', { name: 'Accept and check model' });
   await expect(consent).toBeVisible(); await consent.click();
@@ -69,11 +69,14 @@ test('downloads Stockfish in the browser under production CSP and resumes from c
   await page.screenshot({ path: testInfo.outputPath('engine-mobile.png'), fullPage: true });
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
+  await expect(page.locator('.player-row').getByRole('img', { name: 'Stockfish logo' })).toBeVisible();
+  await expect(page.locator('.player-row .light-piece')).toHaveText('W');
   await page.getByLabel('Enter a move by coordinates').fill('e2e4');
   await page.getByRole('button', { name: 'Play move', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Engine is choosing a move' })).toBeVisible();
   await page.route('**/engines/**', route => route.abort('connectionrefused'));
   await page.reload();
+  await expect(page.locator('.player-row').getByRole('img', { name: 'Stockfish logo' })).toBeVisible();
   await page.getByRole('button', { name: 'Resume engine turn', exact: true }).click();
   await expect(moves(page)).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
@@ -102,19 +105,39 @@ test('a browser engine plays an LLM with either seat independently configured', 
   await prepareEngine(page.getByRole('region', { name: 'Black engine', exact: true }));
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect.poll(() => moves(page).count()).toBeGreaterThanOrEqual(4);
+  await expect(page.locator('.player-row').getByRole('img', { name: 'Stockfish logo' })).toBeVisible();
+  await expect(page.locator('.player-row').getByRole('img', { name: 'AI opponent', exact: true })).toBeVisible();
   expect(turns.length).toBeGreaterThanOrEqual(2);
   expect(turns.every(turn => turn.model === 'white-fixture' && turn.side === 'white')).toBe(true);
   await page.getByRole('button', { name: 'Stop generation', exact: true }).click();
 });
 
-test('two LLMs alternate with separate routing IDs and side-specific plans', async ({ page }) => {
+test('two LLMs alternate with separate routing IDs and side-specific plans', async ({ page }, testInfo) => {
   const turns = await aiFixture(page);
   await openMode(page, 'ai-ai');
-  await prepareAi(page, 'White'); await prepareAi(page, 'Black');
+  await prepareAi(page, 'White', 'openai/gpt-5-codex'); await prepareAi(page, 'Black', 'anthropic/claude-sonnet-4.6');
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect.poll(() => moves(page).count()).toBeGreaterThanOrEqual(4);
-  expect(turns.slice(0, 4).map(turn => turn.model)).toEqual(['white-fixture', 'black-fixture', 'white-fixture', 'black-fixture']);
-  expect(turns[2]?.thinking).toMatchObject({ plan: 'Plan from white-fixture' });
-  expect(turns[3]?.thinking).toMatchObject({ plan: 'Plan from black-fixture' });
+  await expect(page.locator('.player-row').getByRole('img', { name: 'ChatGPT logo' })).toBeVisible();
+  await expect(page.locator('.player-row').getByRole('img', { name: 'Claude logo' })).toBeVisible();
+  expect(turns.slice(0, 4).map(turn => turn.model)).toEqual(['openai/gpt-5-codex', 'anthropic/claude-sonnet-4.6', 'openai/gpt-5-codex', 'anthropic/claude-sonnet-4.6']);
+  expect(turns[2]?.thinking).toMatchObject({ plan: 'Plan from openai/gpt-5-codex' });
+  expect(turns[3]?.thinking).toMatchObject({ plan: 'Plan from anthropic/claude-sonnet-4.6' });
   await page.getByRole('button', { name: 'Stop generation', exact: true }).click();
+  await expect.poll(() => page.locator('.player-row img').evaluateAll(images => images.every(image =>
+    image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true);
+  await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('light');
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.screenshot({ path: testInfo.outputPath('opponent-logos-desktop.png'), fullPage: true });
+  await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('dark');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({ path: testInfo.outputPath('opponent-logos-mobile-dark.png'), fullPage: true });
+  await page.setViewportSize({ width: 320, height: 700 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  for (const badge of await page.locator('.player-row .opponent-logo').all()) {
+    expect((await badge.boundingBox())?.width).toBe(30);
+  }
+  await page.reload();
+  await expect(page.locator('.player-row').getByRole('img', { name: 'ChatGPT logo' })).toBeVisible();
+  await expect(page.locator('.player-row').getByRole('img', { name: 'Claude logo' })).toBeVisible();
 });

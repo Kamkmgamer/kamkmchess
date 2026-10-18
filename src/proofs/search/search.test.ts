@@ -88,9 +88,23 @@ describe('cooperative proof search', () => {
       positionFen: '7k/8/8/NNNNN3/8/NNNNNNNN/8/KNNNNNNN w - - 0 1',
     });
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 0);
+    // Force fast discovery to yield before it can find a witness, regardless
+    // of host speed, then deliver cancellation at that yield.
+    let elapsedMs = 0;
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => elapsedMs++);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
-    const result = await runProofSearchPass(query, { signal: controller.signal });
+    let result;
+    try {
+      setTimeout(() => controller.abort(), 0);
+      const pending = runProofSearchPass(query, { signal: controller.signal });
+      expect(controller.signal.aborted).toBe(false);
+      await vi.runAllTimersAsync();
+      result = await pending;
+    } finally {
+      vi.useRealTimers();
+      clock.mockRestore();
+    }
 
     expect(result).toMatchObject({ status: 'non-result', reason: 'cancelled', checkpoint: { frontier: expect.any(Array) } });
     if (result.status !== 'non-result' || result.checkpoint === null) throw new Error('Cancellation must preserve progress.');

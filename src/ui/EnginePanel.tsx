@@ -3,6 +3,7 @@ import type { ModelSelection } from '../controller/index.js';
 import { createEngineSelection, engineSettings, recommendEngine } from '../engines/local.js';
 import { BROWSER_ENGINES, downloadBrowserEngine, isEngineDownloaded, searchBrowserEngine, supportsBrowserEngines } from '../engines/browser.js';
 import type { BrowserEngineId, BrowserEngineSettings, EngineProgress } from '../engines/browser.js';
+import { OpponentLogo } from './OpponentBadge.js';
 
 interface Props {
   readonly label: string;
@@ -44,7 +45,7 @@ export function EnginePanel({ label, selected, onSelect }: Props) {
     finally { if (abort.current === controller) { setBusy(false); setProgress(null); abort.current = null; } }
   }
   return <section className="engine-setup" aria-label={label}>
-    <div className="panel-heading"><h3>{label}</h3><span className="muted">Runs in your browser</span></div>
+    <div className="panel-heading"><h3 className="opponent-heading"><OpponentLogo modelId={settings.engineId} />{label}</h3><span className="muted">Runs in your browser</span></div>
     <p className="muted">Recommended for this device: {BROWSER_ENGINES[recommendation.engineId].name}. {computer.logicalCores} logical CPU cores reported{computer.memoryGb === null ? '; memory information is unavailable' : `; about ${computer.memoryGb} GB memory reported`}. Recommendations are estimates; the engine checks itself before play.</p>
     <div className="setup-form">
       <label>Chess engine<select value={settings.engineId} disabled={busy || !capable} onChange={event => changeSettings({ ...settings, engineId: event.target.value as BrowserEngineId })}>
