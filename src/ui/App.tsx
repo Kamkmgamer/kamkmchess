@@ -13,6 +13,7 @@ import { editorSideToMove, positionSetupError, readEditorPieces, setPositionCast
 import { PositionEditorBoard } from './PositionEditorBoard.js';
 import type { LocalGameSession, MatchComposition } from './match-composition.js';
 import { T3_PALETTES } from './t3-palettes.js';
+import { useTheme } from '../use-theme.js';
 import { OpponentPanel } from './OpponentPanel.js';
 import { OpponentBadge } from './OpponentBadge.js';
 import { EnginePanel } from './EnginePanel.js';
@@ -28,7 +29,6 @@ import { getGenerationJournal } from '../integration/generation-runner.js';
 import type { GenerationJournalV1 } from '../integration/generation-runner.js';
 import type { HandoffSnapshotV1, OpponentIdentityV1 } from '../opponents/index.js';
 
-type Appearance = 'light' | 'dark' | 'system';
 type PromotionMove = Omit<CoordinateMove, 'promotion'>;
 interface AppProps {
   readonly composition: MatchComposition;
@@ -63,9 +63,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [session, setSession] = useState(initialSession);
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [orientation, setOrientation] = useState<'white' | 'black'>('white');
-  const [theme, setTheme] = useState('t3-chat');
-  const [appearance, setAppearance] = useState<Appearance>('system');
-  const [systemDark, setSystemDark] = useState(false);
+  const { theme, setTheme, appearance, setAppearance } = useTheme();
   const [coordinate, setCoordinate] = useState('');
   const [coordinateError, setCoordinateError] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -152,13 +150,6 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     return () => { current = false; };
   }, [composition, session.gameId, journalRefresh]);
   useEffect(() => {
-    const media = window.matchMedia('(prefers-color-scheme: dark)');
-    const update = () => setSystemDark(media.matches);
-    update();
-    media.addEventListener('change', update);
-    return () => media.removeEventListener('change', update);
-  }, []);
-  useEffect(() => {
     let stopped = false;
     let timer = 0;
     let reconciling = false;
@@ -180,30 +171,6 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     timer = window.setTimeout(() => void tick(), 1_000);
     return () => { stopped = true; window.clearTimeout(timer); };
   }, [session.controller]);
-  useEffect(() => {
-    const palette = (T3_PALETTES.find((item) => item.id === theme) ?? T3_PALETTES[1]) as {
-      colors: Record<string, string>;
-      variants?: Partial<Record<'dark' | 'light', Record<string, string>>>;
-    };
-    const resolved = appearance === 'system' ? (systemDark ? 'dark' : 'light') : appearance;
-    const colors = palette.variants?.[resolved] ?? palette.colors;
-    const root = document.documentElement;
-    for (const [key, value] of Object.entries(colors)) {
-      root.style.setProperty('--t3-' + key.replace(/[A-Z]/g, (letter) => '-' + letter.toLowerCase()), value);
-    }
-    const aliases: Record<string, string> = {
-      paper: 'canvas', surface: 'surface', ink: 'text', dim: 'textMuted', rule: 'border', green: 'accent',
-      soft: 'secondary', focus: 'focus', warning: 'warningForeground', 'warning-bg': 'warningSurface',
-      error: 'errorForeground', 'error-bg': 'errorSurface',
-    };
-    for (const [alias, role] of Object.entries(aliases)) {
-      const value = colors[role];
-      if (value !== undefined) root.style.setProperty('--' + alias, value);
-    }
-    root.dataset.theme = theme;
-    root.dataset.appearance = resolved;
-    root.style.colorScheme = resolved;
-  }, [appearance, systemDark, theme]);
 
   useEffect(() => {
     const current = session.controller.snapshot();
@@ -760,7 +727,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       <div className="panel-heading"><h2>{tool === 'move' ? 'Move' : tool.charAt(0).toUpperCase() + tool.slice(1)}</h2><IconButton icon="close" label="Close" onClick={() => setTool(null)} /></div>
       {tool === 'settings' && <div className="connection-form">
         <label>Theme<select value={theme} onChange={event => setTheme(event.target.value)}>{T3_PALETTES.map(palette => <option key={palette.id} value={palette.id}>{palette.label}</option>)}</select></label>
-        <label>Appearance<select value={appearance} onChange={event => setAppearance(event.target.value as Appearance)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+        <label>Appearance<select value={appearance} onChange={event => setAppearance(event.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
         <div className="button-row"><IconButton icon="board" label="Position" onClick={() => openTool('position')} /><IconButton icon="archive" label="Conversation and archive" onClick={() => openTool('archive')} /><IconButton icon="download" label="Download match archive" onClick={() => {
           const url = URL.createObjectURL(new Blob([JSON.stringify({ checkpoint: snapshot.checkpoint, conversation: generationJournal }, null, 2)], { type: 'application/json' }));
           const link = document.createElement('a'); link.href = url; link.download = `chess-${session.gameId}.json`; link.click(); URL.revokeObjectURL(url);

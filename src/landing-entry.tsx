@@ -6,7 +6,6 @@ import './landing/styles.css';
 
 const root = document.getElementById('root');
 document.body.classList.add('quartz');
-document.body.dataset.theme = 'dark';
 
 if (!root) {
   throw new Error('The application root is missing.');

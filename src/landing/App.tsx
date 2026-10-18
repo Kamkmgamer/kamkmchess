@@ -10,8 +10,10 @@ import { HeroDither } from './HeroDither';
 import { resolveHeroDitherVariant } from './hero-dither';
 import { GameNavigation, type OptionsFocus } from './GameNavigation';
 import { defaultSetup, defaultSetupDraft, type PreviewSetup } from './game-setup';
+import { useTheme } from '../use-theme';
+import { ThemeOptions } from './ThemeOptions';
 
-type SidebarPanel = { kind: 'closed' } | { kind: 'navigation' } | { kind: 'options'; focus: OptionsFocus };
+type SidebarPanel = { kind: 'closed' } | { kind: 'navigation' } | { kind: 'options'; focus: OptionsFocus } | { kind: 'appearance' };
 
 function Wordmark() {
   return (
@@ -23,6 +25,7 @@ function Wordmark() {
 }
 
 export function App() {
+  const theme = useTheme();
   const [panel, setPanel] = useState<SidebarPanel>({ kind: 'closed' });
   const sidebarOpen = panel.kind !== 'closed';
   const [setup, setSetup] = useState(defaultSetup);
@@ -33,6 +36,8 @@ export function App() {
   const ditherVariant = resolveHeroDitherVariant(typeof window === 'undefined' ? '' : window.location.search);
   const portal = useQuartzPortal();
   const appliedFromDialog = useRef(false);
+  const panelFocusSelector = panel.kind === 'appearance' ? 'select'
+    : panel.kind === 'options' ? `[name="${panel.focus ?? 'modelId'}"]` : null;
 
   useEffect(() => {
     const media = window.matchMedia('(min-width: 1001px)');
@@ -42,12 +47,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (panel.kind !== 'options') return;
-    // The mobile menu and options share a popup, so moving between them needs new focus.
-    const field = panel.focus ?? 'modelId';
-    const frame = requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>(`[name="${field}"]`)?.focus());
+    // The mobile menu and settings share a popup, so changing panels needs new focus.
+    if (!panelFocusSelector) return;
+    const frame = requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>(panelFocusSelector)?.focus());
     return () => cancelAnimationFrame(frame);
-  }, [panel]);
+  }, [panelFocusSelector]);
 
   function openOptions(focus: OptionsFocus = null) {
     appliedFromDialog.current = false;
@@ -57,6 +61,11 @@ export function App() {
 
   function closeNavigation() {
     setPanel({ kind: 'closed' });
+  }
+
+  function openAppearance() {
+    appliedFromDialog.current = false;
+    setPanel({ kind: 'appearance' });
   }
 
   function applySetup(next: PreviewSetup) {
@@ -74,9 +83,9 @@ export function App() {
   return (
     <Dialog.Root open={sidebarOpen} onOpenChange={(open) => { if (!open) closeNavigation(); }}>
       <a className="skip-link" href="#main">Skip to content</a>
-      <aside className="game-sidebar" data-surface="ink" aria-label="Main sidebar">
+      <aside className="game-sidebar" aria-label="Main sidebar">
         <Wordmark />
-        <GameNavigation onOptions={openOptions} onNavigate={closeNavigation} />
+        <GameNavigation onOptions={openOptions} onNavigate={closeNavigation} onAppearance={openAppearance} />
       </aside>
       <Button className="mobile-menu-trigger" variant="secondary" size="icon-lg" aria-label="Open navigation" aria-haspopup="dialog" aria-expanded={panel.kind === 'navigation'} onClick={() => { appliedFromDialog.current = false; setPanel({ kind: 'navigation' }); }}>
         <Icon icon={SidePanelOpen} size={24} />
@@ -85,7 +94,7 @@ export function App() {
       <main id="main" className="site-main">
         {/* The home anchor stays in document flow while the hero sticks. */}
         <div id="home" className="hero-anchor" />
-        <section className="hero" data-surface="ink" aria-labelledby="hero-heading">
+        <section className="hero" aria-labelledby="hero-heading">
           <div className="hero-media" aria-hidden="true">
             <img
               src="/images/hero-options/01-knight-vs-models.png"
@@ -104,7 +113,7 @@ export function App() {
           </div>
         </section>
 
-        <div className="page-sections" data-surface="ink">
+        <div className="page-sections">
           <section id="the-idea" className="idea-section" aria-labelledby="idea-heading">
             <div className="idea-layout page-width">
               <div className="idea-heading">
@@ -144,15 +153,17 @@ export function App() {
 
       <Dialog.Portal {...(portal ? { container: portal } : {})}>
         <Dialog.Backdrop className="sidebar-backdrop" />
-        <Dialog.Popup ref={panelRef} className={`sidebar-panel${panel.kind === 'navigation' ? ' sidebar-panel-navigation' : ''}`} {...(panel.kind === 'navigation' ? { 'data-surface': 'ink' } : {})} initialFocus={() => panel.kind === 'options' && panel.focus ? panelRef.current?.querySelector<HTMLElement>(`[name="${panel.focus}"]`) ?? true : true} finalFocus={() => appliedFromDialog.current ? previewRef.current : true}>
+        {/* Each panel needs its own focus manager when replacing the mobile menu. */}
+        <Dialog.Popup key={panel.kind} ref={panelRef} className={`sidebar-panel${panel.kind === 'navigation' ? ' sidebar-panel-navigation' : ''}`} initialFocus={() => panelFocusSelector ? panelRef.current?.querySelector<HTMLElement>(panelFocusSelector) ?? true : true} finalFocus={() => appliedFromDialog.current ? previewRef.current : true}>
           <div className="mobile-sidebar-heading">
-            <Dialog.Title>{panel.kind === 'navigation' ? 'kamkm chess' : 'Preview options'}</Dialog.Title>
+            <Dialog.Title>{panel.kind === 'navigation' ? 'kamkm chess' : panel.kind === 'appearance' ? 'Appearance' : 'Preview options'}</Dialog.Title>
             <Dialog.Close render={<Button variant="ghost" size="icon-lg" aria-label="Close menu" />}><Icon icon={Close} /></Dialog.Close>
           </div>
-          <Dialog.Description className="visually-hidden">{panel.kind === 'navigation' ? 'Explore chess, set up a game or find help.' : 'Choose your side, clocks, opponent label and starting position for the board preview.'}</Dialog.Description>
+          <Dialog.Description className="visually-hidden">{panel.kind === 'navigation' ? 'Explore chess, set up a game or find help.' : panel.kind === 'appearance' ? 'Choose a theme and light, dark or system appearance.' : 'Choose your side, clocks, opponent label and starting position for the board preview.'}</Dialog.Description>
           {panel.kind === 'navigation'
-            ? <GameNavigation onOptions={openOptions} onNavigate={closeNavigation} />
-            : <GameOptions draft={draft} onDraftChange={setDraft} onApply={applySetup} />}
+            ? <GameNavigation onOptions={openOptions} onNavigate={closeNavigation} onAppearance={openAppearance} />
+            : panel.kind === 'appearance' ? <ThemeOptions {...theme} />
+              : <GameOptions draft={draft} onDraftChange={setDraft} onApply={applySetup} />}
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

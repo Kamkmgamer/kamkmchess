@@ -21,9 +21,9 @@
 html { scroll-behavior: smooth; }
 body { margin: 0; }
 .quartz { background: var(--surface-page); font: var(--type-body-lg); }
-/* Page-owned roles keep the registry untouched and make light text substantial
-   enough on black. Serif is reserved for display, sans for reading and controls. */
-.quartz {
+/* Page-owned roles connect Quartz to the same palette used by the game.
+   Serif is reserved for display, sans for reading and controls. */
+.quartz[data-theme] {
   --font-sans: 'Inter Tight', ui-sans-serif, system-ui, sans-serif;
   --font-display: 'Instrument Serif', Georgia, 'Times New Roman', serif;
   --type-display-xl: 400 80px/80px var(--font-display);
@@ -44,26 +44,33 @@ body { margin: 0; }
   --type-button: 500 16px/22px var(--font-sans);
   --sidebar: 256px;
   --golden-ratio: 1.61803398875;
-  --brand-primary: #cfbb86;
-  --brand-deep: #1a1a1a;
-  --brand-icon: #cdc9be;
-  --brand-accent: #cfbb86;
-  --brand-focus: #e3d1a2;
-  --brand-primary-hover: #e3d1a2;
-  --brand-on-primary: #15130e;
-  --brand-surface: #171717;
-  --nav-ground: #111111;
-  --nav-rest: #222222;
-  --nav-hover: #303030;
-  --nav-current: #353025;
-}
-.quartz[data-theme='dark'], .quartz [data-surface='ink'] {
-  --paper-c: 0% 0 0;
-  --ink-c: 100% 0 0;
-  --grey-c: 21% 0 0;
-  --canvas-c: 17% 0 0;
-  --surface-card: var(--brand-surface);
-  --border-focus: var(--brand-focus);
+  --paper: var(--t3-canvas);
+  --ink: var(--t3-text);
+  --surface-page: var(--t3-canvas);
+  --surface-canvas: var(--t3-canvas);
+  --surface-card: var(--t3-surface);
+  --surface-raised: var(--t3-surface-overlay);
+  --surface-hover: var(--t3-toolbar-control-hover);
+  --surface-selected: var(--t3-sidebar-row-selected);
+  --surface-overlay: rgb(0 0 0 / 0.55);
+  --line-frame: var(--t3-border);
+  --line-row: var(--t3-border);
+  --border-control: color-mix(in srgb, var(--t3-text) 55%, var(--t3-canvas));
+  --border-focus: var(--t3-focus);
+  --brand-primary: var(--t3-accent);
+  --brand-icon: var(--t3-icon-muted);
+  --brand-accent: var(--t3-accent);
+  --brand-focus: var(--t3-focus);
+  --brand-primary-hover: var(--t3-message-action-hover);
+  --brand-on-primary: var(--t3-accent-foreground);
+  --nav-ground: var(--t3-sidebar);
+  --nav-rest: var(--t3-sidebar-control-surface);
+  --nav-hover: var(--t3-sidebar-row-hover);
+  --nav-current: var(--t3-sidebar-row-selected);
+  --fail-text: var(--t3-error-foreground);
+  --fail-wash: var(--t3-error-surface);
+  --fail-line: var(--t3-error);
+  color-scheme: inherit;
 }
 /* Recompute solid secondary inks and control edges on each surface, including
    the board's light scope. Running paragraphs use the primary ink below. */
@@ -98,7 +105,7 @@ body { margin: 0; }
 .quartz .sidebar-row[aria-current='location'] { color: var(--text-1); background: var(--nav-current); font-weight: var(--weight-strong); }
 .sidebar-row[aria-current='location']::before { content: ''; position: absolute; inset-block: var(--space-3); inset-inline-start: 0; width: var(--space-1); background: var(--brand-accent); border-radius: var(--radius-inner); }
 .sidebar-row[aria-current='location'] > svg:first-child { color: var(--brand-accent); }
-.sidebar-setup { flex-shrink: 0; padding: var(--space-1); background: var(--brand-surface); border: var(--line-hair) solid var(--line-frame); border-radius: var(--radius-soft); }
+.sidebar-setup { flex-shrink: 0; padding: var(--space-1); background: var(--surface-card); border: var(--line-hair) solid var(--line-frame); border-radius: var(--radius-soft); }
 .quartz .sidebar-setup-trigger { min-height: var(--control-lg); padding: var(--space-2); font-weight: var(--weight-strong); }
 .sidebar-chevron, .sidebar-forward { margin-left: auto; flex-shrink: 0; color: var(--brand-icon); }
 .sidebar-chevron { transition: transform var(--dur-base) var(--ease-step); }
@@ -129,19 +136,23 @@ body { margin: 0; }
 .optional-label { color: var(--text-2); }
 .quartz .connection-note { color: var(--text-2); }
 .quartz .game-options-form [data-slot='form-status'] { font: var(--type-body-lg); line-height: 1.5; }
+.theme-options { display: grid; gap: var(--space-6); }
+.theme-options label { display: grid; gap: var(--space-3); font: var(--type-label); }
+.theme-options select { width: 100%; min-height: var(--control-lg); padding: var(--space-3); border: var(--line-hair) solid var(--line-control); border-radius: var(--radius-soft); background: var(--surface-card); color: var(--text-1); font: var(--type-body); }
+.theme-options select:focus-visible { outline: var(--line-focus) solid var(--border-focus); outline-offset: var(--space-0-5); }
 
 /* Equal outer padding centers the rounded media panel on all four sides. */
 .hero { position: relative; min-height: 100svh; isolation: isolate; display: grid; overflow: hidden; padding: var(--hero-panel-inset); background: var(--surface-page); color: var(--text-1); --hero-panel-inset: var(--space-6); --hero-panel-radius: calc(var(--radius-frame) * 2); }
 .hero-media { position: absolute; inset: var(--hero-panel-inset); z-index: -1; overflow: hidden; border-radius: var(--hero-panel-radius); }
 /* A neutral photo scrim keeps the upper artwork visible and resolves to black
    below the controls; the separate black dither adds texture without gray fill. */
-.hero-media::after { position: absolute; content: ''; inset: 0; z-index: 1; background: linear-gradient(180deg, rgb(0 0 0 / 0.18) 0%, rgb(0 0 0 / 0.4) 35%, rgb(0 0 0 / 0.64) 60%, var(--paper) 100%); } /* taste-skill-ignore: the requested neutral photo scrim is the permitted gradient exception. */
+.hero-media::after { position: absolute; content: ''; inset: 0; z-index: 1; background: linear-gradient(180deg, rgb(0 0 0 / 0.18) 0%, rgb(0 0 0 / 0.4) 35%, rgb(0 0 0 / 0.64) 60%, #000 100%); } /* taste-skill-ignore: the requested neutral photo scrim is the permitted gradient exception. */
 .hero-media img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center; }
 .hero-dither { position: absolute; inset: -1px; z-index: 2; pointer-events: none; }
 .hero-dither-pattern { position: absolute; inset: 0; }
 .hero-dither-pattern-secondary { opacity: 0; }
 .quartz .mobile-menu-trigger { display: none; position: fixed; inset-block-start: var(--space-6); inset-inline-start: var(--space-6); z-index: var(--z-raised); }
-.hero-introduction { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: var(--space-6); padding-block: var(--space-20); }
+.hero-introduction { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: var(--space-6); padding-block: var(--space-20); color: #fff; }
 .hero h1 { max-width: var(--page-header-max); }
 .hero-introduction > p { max-width: var(--overlay-lg); }
 .hero-introduction > [data-slot='button'] { margin-top: var(--space-2); }
@@ -182,8 +193,8 @@ body { margin: 0; }
 .preview-player-row { display: flex; justify-content: space-between; align-items: center; gap: var(--space-4); padding-block: var(--space-3); }
 .preview-player-identity { display: flex; align-items: center; gap: var(--space-3); min-width: 0; font: var(--type-label); }
 .preview-player-identity > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.player-piece { display: block; flex-shrink: 0; width: var(--space-3); height: var(--space-3); border-radius: var(--radius-inner); background: var(--paper); border: var(--line-hair) solid var(--ink); }
-.player-piece[data-side='w'] { background: var(--ink); }
+.player-piece { display: block; flex-shrink: 0; width: var(--space-3); height: var(--space-3); border-radius: var(--radius-inner); background: #202124; border: var(--line-hair) solid #fff; }
+.player-piece[data-side='w'] { background: #fff; border-color: #202124; }
 .preview-clock { font: var(--type-heading-sm); font-variant-numeric: tabular-nums; }
 .chessboard { display: grid; grid-template-columns: repeat(8, 1fr); aspect-ratio: 1; overflow: hidden; border-radius: var(--radius-inner); }
 .board-square { position: relative; display: grid; place-items: center; aspect-ratio: 1; background: var(--surface-page); }

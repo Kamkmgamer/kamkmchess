@@ -1,6 +1,6 @@
 # kamkm chess
 
-The homepage introduces the game with the original knight-versus-models artwork, animated black dither, a responsive sidebar and an interactive opening preview. Choose **Play against AI** to open the existing playable workspace at `/play`. Landing and gameplay load separate styles and entry chunks. See [landing design notes](docs/design/landing.md) for the artwork, Quartz components and preview scope.
+The homepage introduces the game with the original knight-versus-models artwork, animated black dither, a responsive sidebar and an interactive opening preview. Choose **Play against AI** to open the existing playable workspace at `/play`. Landing and gameplay share six themes and a saved light, dark or system appearance. Choose Appearance from the landing navigation or the game settings. They load separate styles and entry chunks. See [landing design notes](docs/design/landing.md) for the artwork, Quartz components and preview scope.
 
 Chess against AI models that choose their own moves. The Classic workspace supports local two-player games and browser-direct AI opponents, with device-local saves, continuous clocks, automatic connection checks, compact chess requests, complete conversation archives, Undo, and request recovery. Optional account storage remains disabled until its deployment is configured and verified.
 

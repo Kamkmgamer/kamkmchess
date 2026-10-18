@@ -11,6 +11,7 @@ export type OptionsFocus = 'modelId' | 'minutes' | 'fen' | null;
 type GameNavigationProps = {
   onOptions: (focus?: OptionsFocus) => void;
   onNavigate: () => void;
+  onAppearance: () => void;
 };
 
 function subscribeToSection(onChange: () => void) {
@@ -23,7 +24,7 @@ function currentSection() {
 }
 
 /** One navigation tree for the fixed rail and the mobile drawer. */
-export function GameNavigation({ onOptions, onNavigate }: GameNavigationProps) {
+export function GameNavigation({ onOptions, onNavigate, onAppearance }: GameNavigationProps) {
   const id = useId();
   const section = useSyncExternalStore(subscribeToSection, currentSection, () => '#home');
 
@@ -64,6 +65,9 @@ export function GameNavigation({ onOptions, onNavigate }: GameNavigationProps) {
       </Collapsible>
 
       <div className="sidebar-bottom">
+        <Button className="sidebar-row" variant="ghost" size="lg" aria-haspopup="dialog" onClick={onAppearance}>
+          <Icon icon={Settings} size={20} /><span>Appearance</span>
+        </Button>
         <nav className="sidebar-utilities" aria-label="About and help">
           <a className="sidebar-row" href="#questions" aria-current={section === '#questions' ? 'location' : undefined} onClick={onNavigate}>
             <Icon icon={Information} size={20} /><span>Help</span>
