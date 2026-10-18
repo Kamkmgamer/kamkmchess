@@ -163,13 +163,21 @@ textarea:focus-visible, summary:focus-visible {
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .panel-heading h2 { font-size: 14px; font-weight: 600; margin: 0; }
 .count { font-variant-numeric: tabular-nums; color: var(--dim); font-size: 12px; }
-.move-list { max-height: 210px; overflow: auto; list-style: none; padding: 0; margin: 10px 0 0; display: grid; grid-template-columns: repeat(2, 1fr); }
-.move-list li { display: flex; gap: 8px; padding: 5px 8px; font-variant-numeric: tabular-nums; }
-.move-list li:nth-child(4n + 1), .move-list li:nth-child(4n + 2) { background: var(--soft); }
-.move-list li span { width: 22px; color: var(--dim); }
-.move-list li button { border: 0; border-radius: 3px; padding: 0 5px; background: transparent; color: inherit; font-weight: 600; cursor: pointer; }
-.move-list li button:hover { background: var(--rule); }
-.move-list li button[aria-current="step"] { background: var(--green); color: var(--paper); }
+/* The move table keeps full-move numbers and both sides aligned while scrolling. */
+.moves-sidebar { min-width: 0; display: flex; flex-direction: column; margin-top: 58px; height: calc(var(--board-size) + 6px); min-height: 250px; background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; overflow: hidden; }
+.moves-heading { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--rule); }
+.moves-heading h2 { margin: 0; font-size: 14px; font-weight: 600; }
+.move-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.move-list { width: 100%; table-layout: fixed; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.move-number-column { width: 44px; }
+.move-list tbody th { padding: 0 6px 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 12px; font-weight: 400; text-align: left; }
+.move-list td { padding: 0; }
+.move-list tbody tr:nth-child(odd) { background: var(--soft); }
+.move-list button { display: block; width: 100%; min-height: 40px; border: 0; border-radius: 3px; padding: 8px 10px; background: transparent; color: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.move-list button:hover { background: var(--rule); }
+.move-list button:focus-visible { outline-offset: -3px; }
+.move-list button[aria-current="step"] { background: var(--green); color: var(--paper); }
+.moves-sidebar .history-controls { padding: 6px 8px; border-top: 1px solid var(--rule); }
 .history-controls { padding-top: 8px; }
 .history-controls p { margin: 4px 0 0; }
 .fen-value { overflow-wrap: anywhere; font-family: ui-monospace, "SF Mono", Consolas, monospace; font-size: 12px; }
@@ -274,4 +282,75 @@ textarea:focus-visible, summary:focus-visible {
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+}
+
+/* Focused screens share the board's existing palette and controls. */
+[hidden] { display: none !important; }
+.minimal-workspace { --board-size: min(680px, max(320px, calc(100dvh - 320px)), calc(100vw - 360px)); max-width: 1100px; padding-inline: 24px; }
+.minimal-workspace .topbar { border: 0; max-width: calc(var(--board-size) + 304px); margin: 0 auto 6px; }
+.minimal-workspace .match-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; max-width: calc(var(--board-size) + 304px); margin-inline: auto; }
+.minimal-workspace .board-column { display: flex; flex-direction: column; }
+.minimal-workspace .player-row.black { order: 0; }
+.minimal-workspace .playing-board { order: 1; }
+.minimal-workspace .player-row.white { order: 2; }
+.minimal-workspace .board-tools { order: 3; display: flex; justify-content: center; gap: 8px; margin-top: 8px; padding: 0; }
+.minimal-workspace .match-status { order: 4; }
+.minimal-workspace .error-message, .minimal-workspace .promotion-panel { order: 5; }
+.minimal-workspace .player-name { overflow: hidden; }
+.minimal-workspace .player-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.icon-button { width: 42px; height: 42px; flex: 0 0 42px; display: inline-grid; place-items: center; padding: 0; }
+.icon-button svg { display: block; }
+.minimal-workspace .history-controls .button-row { width: 100%; display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; }
+.match-status { display: flex; align-items: center; justify-content: space-between; min-height: 44px; gap: 12px; padding-inline: 8px; }
+.match-status > span { font-size: 13px; font-weight: 600; }
+.focus-page { max-width: 420px; margin: clamp(16px, 8dvh, 80px) auto 32px; padding: 0; border: 0; background: transparent; }
+.focus-page h2 { font-size: 22px; font-weight: 600; letter-spacing: -.02em; margin-block: 24px; }
+.focus-page .panel-heading h2 { margin-block: 12px 24px; }
+.focus-page .connection-form { display: flex; flex-direction: column; gap: 20px; }
+.focus-page .connection-form label, .focus-page .opponent-fields { display: flex; flex-direction: column; gap: 8px; }
+.focus-page .opponent-fields { padding: 0; margin: 0; border: 0; gap: 20px; min-width: 0; }
+.focus-page input, .focus-page select, .focus-page textarea { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); font: inherit; color: var(--ink); }
+.focus-page textarea { resize: vertical; font-family: ui-monospace, monospace; font-size: 12px; }
+.focus-page .sr-label { font-size: 0; gap: 0; }
+.focus-page .sr-label input, .focus-page .sr-label select, .focus-page .sr-label textarea { font-size: 14px; }
+.focus-page .connection-form > .button.primary { align-self: flex-start; }
+.focus-page .engine-setup { margin: 0; }
+.focus-page .feedback-inline { margin-block: 16px; min-height: 21px; overflow-wrap: anywhere; }
+.focus-page .disclosure-panel { padding: 0; background: transparent; border: 0; }
+.focus-page .disclosure-panel code { overflow-wrap: anywhere; font-size: 12px; }
+.focus-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
+.setup-dots { display: flex; gap: 8px; }
+.setup-dots i { width: 5px; height: 5px; background: var(--rule); border-radius: 50%; }
+.setup-dots i.active { background: var(--ink); }
+.focus-footer { display: flex; justify-content: flex-end; margin-top: 24px; }
+.seat-indicator { display: block; margin-block: 12px; }
+.editor-grid { width: 100%; max-width: none; }
+.editor-square img { width: 90%; height: 90%; object-fit: contain; }
+.archive-page { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; min-height: 120px; font: inherit; }
+.focus-page .fen-value { overflow-wrap: anywhere; }
+.board-inspection.sr-only:focus-within { clip: auto; margin: 0; position: static; width: auto; height: auto; clip-path: none; overflow: visible; white-space: normal; }
+input, textarea { caret-color: var(--green); }
+* { scrollbar-color: var(--rule) var(--paper); scrollbar-width: thin; }
+@media (max-width: 620px) {
+  .minimal-workspace { padding: 0 12px 20px; }
+  .minimal-workspace .match-layout { max-width: 100%; }
+  .minimal-workspace .topbar { gap: 8px; min-height: 58px; }
+  .minimal-workspace .topbar-actions { gap: 4px; }
+  .focus-page { margin-top: 20px; padding-inline: 8px; }
+  .focus-page input, .focus-page select, .focus-page textarea, .focus-page .sr-label select, .focus-page .sr-label textarea { font-size: 16px; }
+  .minimal-workspace .history-controls .icon-button { width: 36px; flex-basis: 36px; }
+}
+
+.status-heading { font-size: 13px; font-weight: 600; margin: 0; }
+
+.focus-page .opponent-panel { border: 0; background: transparent; margin-top: 0; padding: 0; }
+.minimal-workspace .topbar-actions { width: auto; margin-left: auto; flex-wrap: nowrap; }
+.minimal-workspace .topbar { flex-wrap: nowrap; }
+
+.focus-page .connection-form { align-items: stretch; }
+
+@media (max-width: 760px) {
+  .minimal-workspace .match-layout { grid-template-columns: minmax(0, 1fr); max-width: 640px; gap: 16px; }
+  .minimal-workspace .topbar { max-width: 640px; }
+  .moves-sidebar { height: 260px; margin-top: 0; }
 }

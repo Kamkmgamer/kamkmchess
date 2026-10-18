@@ -59,7 +59,7 @@ describe('opponent badges', () => {
   });
 
   it('preserves local human color badges', () => {
-    expect(renderToStaticMarkup(createElement(OpponentBadge, { side: 'white', player: { kind: 'human' } }))).toContain('>W</span>');
-    expect(renderToStaticMarkup(createElement(OpponentBadge, { side: 'black', player: { kind: 'human' } }))).toContain('>B</span>');
+    expect(renderToStaticMarkup(createElement(OpponentBadge, { side: 'white', player: { kind: 'human' } }))).toContain('class="player-badge light-piece"');
+    expect(renderToStaticMarkup(createElement(OpponentBadge, { side: 'black', player: { kind: 'human' } }))).toContain('class="player-badge dark-piece"');
   });
 });

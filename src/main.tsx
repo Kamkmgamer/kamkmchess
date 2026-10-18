@@ -24,5 +24,5 @@ void composition.openActiveGame().then(async (session) => {
   );
 }).catch((error: unknown) => {
   const message = error instanceof Error ? error.message : 'The local chess game could not be opened.';
-  rootView.render(<main role="alert"><h1>Chess could not start</h1><p>{message}</p></main>);
+  rootView.render(<main className="focus-page" role="alert" aria-description={message}><h1>Couldn’t open chess</h1><button onClick={() => window.location.reload()}>Reload</button></main>);
 });

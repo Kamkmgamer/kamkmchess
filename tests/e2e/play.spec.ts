@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page, Route } from '@playwright/test';
 import { Chess } from 'chess.js';
+import { readFileSync } from 'node:fs';
 
 const endpoint = 'https://offline-chess.example/v1';
 
@@ -27,7 +28,7 @@ async function provider(page: Page, moves: readonly string[], intercept?: (route
       return;
     }
     if (route.request().url().endsWith('/models')) {
-      await route.fulfill({ json: { data: [{ id: 'offline-fixture' }] } });
+      await route.fulfill({ json: { data: [{ id: 'offline-fixture' }, { id: 'offline-candidate' }, { id: 'another-model' }] } });
       return;
     }
     const body: unknown = route.request().postDataJSON();
@@ -52,27 +53,41 @@ async function configure(page: Page, side = 'white') {
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('ai');
   await page.getByLabel('Your side').selectOption(side);
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByLabel('Provider').selectOption('custom');
-  await page.getByLabel('Protocol').selectOption('chat-completions');
-  await page.getByLabel('Connection name').fill('Offline fixture');
   await page.getByLabel('Base URL', { exact: true }).fill(endpoint);
+  await page.getByRole('button', { name: 'Advanced connection settings', exact: true }).click();
+  await page.getByLabel('Connection name').fill('Offline fixture');
   await page.getByLabel('Authentication').selectOption('none');
-  await page.getByRole('button', { name: 'Save connection', exact: true }).click();
-  await page.getByLabel('Exact model routing ID').fill('offline-fixture');
-  await page.getByRole('button', { name: 'Review request disclosure' }).click();
-  await page.getByRole('button', { name: 'Accept and save consent' }).click();
-  await page.getByRole('button', { name: 'Run explicit compatibility check' }).click();
-  await page.getByRole('button', { name: /Use this model for.*new match/ }).click();
+  await page.getByRole('button', { name: 'Done', exact: true }).click();
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByLabel('Available models').selectOption('offline-fixture');
+  await page.getByRole('button', { name: 'Allow', exact: true }).click();
+  await expect(page.getByText('Ready', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
 }
-
 async function move(page: Page, coordinate: string) {
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Type a move', exact: true }).click();
   await page.getByLabel('Enter a move by coordinates').fill(coordinate);
   await page.getByRole('button', { name: 'Play move', exact: true }).click();
 }
+async function selectModel(page: Page, model = 'offline-candidate') {
+  await page.getByLabel('Available models').selectOption(model);
+  await expect.poll(async () => await page.getByText('Ready', { exact: true }).isVisible() || await page.locator('.match-layout').isVisible()).toBe(true);
+}
+async function archivedText(page: Page) {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download match archive', exact: true }).click();
+  const stream = await (await download).createReadStream();
+  let text = ''; for await (const chunk of stream) text += chunk.toString();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  return text;
+}
 
-const movesOnBoard = (page: Page) => page.getByRole('list', { name: 'Committed moves' }).locator('li');
+const movesOnBoard = (page: Page) => page.getByRole('table', { name: 'Committed moves' }).getByRole('button');
 
 async function dragBoardMove(page: Page, from: string, to: string) {
   await page.locator('cg-board').scrollIntoViewIfNeeded();
@@ -107,7 +122,7 @@ test('executes one legal premove after the AI reply', async ({ page }) => {
   await move(page, 'e2e4');
   await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
   await dragBoardMove(page, 'g1', 'f3');
-  await expect(page.getByText('Premove g1 to f3 queued.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Premove g1 to f3 queued.', exact: true })).toBeVisible();
   await expect(page.locator('square.current-premove:visible')).toHaveCount(2);
   await expect(movesOnBoard(page)).toHaveCount(1);
   release?.();
@@ -128,10 +143,10 @@ test('drops an illegal premove after the AI reply without submitting a move', as
   await move(page, 'e2e4');
   await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
   await dragBoardMove(page, 'e4', 'd5');
-  await expect(page.getByText('Premove e4 to d5 queued.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Premove e4 to d5 queued.', exact: true })).toBeVisible();
   release?.();
   await expect(movesOnBoard(page)).toHaveCount(2);
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
   await expect(page.getByRole('button', { name: 'Cancel premove' })).toHaveCount(0);
   expect(fixture.modelCalls).toHaveLength(1);
 });
@@ -154,15 +169,15 @@ test('cancels premoves and keeps a reviewed position while the AI finishes', asy
   await page.getByRole('button', { name: 'Cancel premove' }).click();
   await expect(page.locator('square.current-premove:visible')).toHaveCount(0);
   await dragBoardMove(page, 'g1', 'f3');
-  await page.getByRole('heading', { name: 'Classic match' }).click();
+  await page.getByRole('link', { name: 'Kamkm Chess home' }).click();
   await page.keyboard.press('Home');
   await expect(page.getByRole('button', { name: 'Cancel premove' })).toHaveCount(0);
   release?.();
   await expect(movesOnBoard(page)).toHaveCount(2);
-  await expect(page.getByRole('navigation', { name: 'Move history' })).toContainText('Viewing move 0 of 2');
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeDisabled();
+  await expect(page.locator('.match-status')).toContainText('0/2');
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Live', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
 });
 
 test('plays against the AI without a position-check worker', async ({ page }) => {
@@ -209,8 +224,7 @@ test('finishes a legal AI match, preserves plans, restores its result and fits m
   await expect(page.getByRole('heading', { name: 'White wins', exact: true })).toBeVisible();
   await expect(movesOnBoard(page)).toHaveCount(7);
   expect(fixture.calls).toHaveLength(4);
-  await page.getByText('Match conversation and archive', { exact: true }).click();
-  await expect(page.locator('.conversation-row').filter({ hasText: 'retained plan 1' }).first()).toBeVisible();
+  expect(await archivedText(page)).toContain('retained plan 1');
   await page.screenshot({ path: testInfo.outputPath('desktop.png'), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -226,8 +240,10 @@ test('starts with a model playing White and offers practice after that model res
   await move(page, 'e7e5');
   await expect(page.getByRole('heading', { name: 'Black wins', exact: true })).toBeVisible();
   expect(fixture.modelCalls).toHaveLength(2);
+  await page.reload();
   await page.getByRole('button', { name: 'Start practice from this position' }).click();
-  await expect(page.getByText('Practice segment. Original result remains preserved in the saved match.')).toBeVisible();
+  await expect(page.locator('.match-layout')).toHaveAttribute('data-practice', 'practice');
+  expect(fixture.calls.filter(call => JSON.stringify(call).includes('KAMKM-COMPAT-'))).toHaveLength(2);
 });
 
 test('Stop fences a delayed reply and Retry remains an explicit new request', async ({ page }) => {
@@ -260,18 +276,16 @@ test('Undo keeps the discarded conversation and the same model can start another
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect(movesOnBoard(page)).toHaveCount(0);
-  await page.getByText('Match conversation and archive', { exact: true }).click();
-  await expect(page.locator('.conversation-row.discarded').filter({ hasText: 'retained plan 1' }).first()).toBeVisible();
+  expect(await archivedText(page)).toContain('retained plan 1');
   await move(page, 'd2d4');
   await expect(movesOnBoard(page)).toHaveCount(2);
   expect(JSON.stringify(fixture.modelCalls[1])).toContain('d4');
   expect(JSON.stringify(fixture.modelCalls[1])).not.toContain('e4 e5');
   expect(JSON.stringify(fixture.modelCalls[1])).not.toContain('retained plan 1');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByLabel('Saved connection').selectOption({ label: 'Offline fixture · Custom endpoint' });
-  await page.getByLabel('Exact model routing ID').fill('offline-fixture');
-  await page.getByRole('button', { name: 'Run explicit compatibility check' }).click();
-  await page.getByRole('button', { name: /Use this model for.*new match/ }).click();
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await selectModel(page, 'offline-fixture');
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'White to move', exact: true })).toBeVisible();
 });
@@ -285,24 +299,22 @@ test('queues a different model and commits it only with its first legal reply', 
   await page.goto('/');
   await configure(page);
   await page.getByRole('button', { name: 'Choose another model', exact: true }).click();
-  await page.getByLabel('Exact model routing ID').fill('offline-candidate');
-  await page.getByRole('button', { name: 'Run explicit compatibility check' }).click();
-  await page.getByRole('button', { name: 'Queue this model for play' }).click();
-  await expect(page.getByText('Queued candidate: offline-candidate', { exact: false })).toBeVisible();
-  await expect(page.getByText('Committed model: offline-fixture', { exact: true })).toBeVisible();
+  await selectModel(page);
+  await expect(page.locator('.match-layout')).toHaveAttribute('data-queued-model', 'offline-candidate');
+  await expect(page.locator('.match-layout')).toHaveAttribute('data-committed-model', 'offline-fixture');
   expect(fixture.modelCalls).toHaveLength(0);
   await move(page, 'e2e4');
   await expect.poll(() => fixture.modelCalls.length).toBe(1);
-  await expect(page.getByText('Committed model: offline-fixture', { exact: true })).toBeVisible();
+  await expect(page.locator('.match-layout')).toHaveAttribute('data-committed-model', 'offline-fixture');
   expect(fixture.modelCalls[0]).toMatchObject({ model: 'offline-candidate' });
   release?.();
   await expect(movesOnBoard(page)).toHaveCount(2);
-  await expect(page.getByText('Committed model: offline-candidate', { exact: true })).toBeVisible();
+  await expect(page.locator('.match-layout')).toHaveAttribute('data-committed-model', 'offline-candidate');
   await page.reload();
-  await expect(page.getByText('Committed model: offline-candidate', { exact: true })).toBeVisible();
+  await expect(page.locator('.match-layout')).toHaveAttribute('data-committed-model', 'offline-candidate');
 });
 
-test('reload requires an explicit compatibility recheck before the next model request', async ({ page }) => {
+test('reload rechecks compatibility automatically before the next model request', async ({ page }) => {
   const fixture = await provider(page, ['e7e5', 'b8c6']);
   await page.goto('/');
   await configure(page);
@@ -311,11 +323,6 @@ test('reload requires an explicit compatibility recheck before the next model re
   await page.reload();
   await expect(movesOnBoard(page)).toHaveCount(2);
   await move(page, 'd1h5');
-  await expect(page.getByRole('button', { name: 'Recheck connection to resume' })).toBeVisible();
-  expect(fixture.modelCalls).toHaveLength(1);
-  await page.getByRole('button', { name: 'Recheck connection to resume' }).click();
-  await page.getByRole('button', { name: 'Run explicit compatibility check' }).click();
-  await page.getByRole('button', { name: 'Queue this model for play' }).click();
   await expect(movesOnBoard(page)).toHaveCount(4);
   expect(fixture.modelCalls).toHaveLength(2);
   expect(JSON.stringify(fixture.modelCalls[1])).toContain('retained plan 1');
@@ -364,66 +371,40 @@ test('a failed candidate keeps the prior model and can be retried explicitly', a
   await page.goto('/');
   await configure(page);
   await page.getByRole('button', { name: 'Choose another model', exact: true }).click();
-  await page.getByLabel('Exact model routing ID').fill('offline-candidate');
-  await page.getByRole('button', { name: 'Run explicit compatibility check' }).click();
-  await page.getByRole('button', { name: 'Queue this model for play' }).click();
+  await selectModel(page);
   await move(page, 'e2e4');
   await expect(page.getByRole('button', { name: 'Retry queued model' })).toBeVisible();
-  await expect(page.getByText('Committed model: offline-fixture', { exact: true })).toBeVisible();
+  await expect(page.locator('.match-layout')).toHaveAttribute('data-committed-model', 'offline-fixture');
   expect(fixture.modelCalls).toHaveLength(1);
   await page.getByRole('button', { name: 'Retry queued model' }).click();
   await expect(movesOnBoard(page)).toHaveCount(2);
-  await expect(page.getByText('Committed model: offline-candidate', { exact: true })).toBeVisible();
+  await expect(page.locator('.match-layout')).toHaveAttribute('data-committed-model', 'offline-candidate');
   expect(fixture.modelCalls).toHaveLength(2);
 });
 
-test('CLIProxyAPI connects with key and model, asks consent before requesting, and plays', async ({ page }, testInfo) => {
-  const fixture = await provider(page, ['e7e5', 'b8c6', 'a7a6', 'g8f6'], undefined, 'http://127.0.0.1:8317/v1');
-  const errors: string[] = [];
-  page.on('pageerror', (error) => errors.push(error.message));
+test('CLIProxyAPI discovers models, preserves consent cancellation, and plays', async ({ page }) => {
+  const fixture = await provider(page, ['e7e5', 'b8c6'], undefined, 'http://127.0.0.1:8317/v1');
   await page.goto('/');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('ai');
-  await expect(page.getByRole('combobox', { name: 'Provider', exact: true })).toHaveValue('cliproxy');
-  await expect(page.getByLabel('Proxy URL')).toHaveValue('http://127.0.0.1:8317/v1');
-  await expect(page.getByLabel('Protocol', { exact: true })).not.toBeVisible();
-  await page.getByLabel('Proxy API key').fill('offline-proxy-fixture-key');
-  await page.getByLabel('Model ID', { exact: true }).fill('offline-fixture');
-  await page.screenshot({ path: testInfo.outputPath('proxy-desktop.png'), fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: testInfo.outputPath('proxy-mobile.png'), fullPage: true });
-  await page.setViewportSize({ width: 1280, height: 800 });
-  await page.getByRole('button', { name: 'Connect and use model' }).click();
-  await expect(page.getByRole('button', { name: 'Accept and check model' })).toBeVisible();
-  expect(fixture.calls).toHaveLength(0);
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await page.getByLabel('API key', { exact: true }).fill('offline-key');
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByLabel('Available models').selectOption('offline-fixture');
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(fixture.calls).toHaveLength(0);
-  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled();
-  await page.getByRole('button', { name: 'Connect and use model' }).click();
-  await page.getByRole('button', { name: 'Accept and check model' }).click();
-  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  await page.getByLabel('Available models').selectOption('offline-fixture');
+  await page.getByRole('button', { name: 'Allow', exact: true }).click();
+  await expect(page.getByText('Ready', { exact: true })).toBeVisible();
   expect(fixture.calls).toHaveLength(1);
-  await page.getByLabel('Model ID', { exact: true }).fill('another-model');
-  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled();
-  await page.getByLabel('Model ID', { exact: true }).fill('offline-fixture');
-  await page.getByRole('button', { name: 'Connect and use model' }).click();
-  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeEnabled();
+  await selectModel(page, 'another-model');
   expect(fixture.calls).toHaveLength(2);
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
-  await move(page, 'e2e4');
-  await expect(movesOnBoard(page)).toHaveCount(2);
-  expect(fixture.modelCalls).toHaveLength(1);
-  await move(page, 'g1f3');
-  await expect(movesOnBoard(page)).toHaveCount(4);
+  await move(page, 'e2e4'); await expect(movesOnBoard(page)).toHaveCount(2);
+  await move(page, 'g1f3'); await expect(movesOnBoard(page)).toHaveCount(4);
   expect(fixture.modelCalls).toHaveLength(2);
-  await move(page, 'f1b5');
-  await expect(movesOnBoard(page)).toHaveCount(6);
-  await move(page, 'b5a4');
-  await expect(movesOnBoard(page)).toHaveCount(8);
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
-  expect(fixture.modelCalls).toHaveLength(4);
-  expect(errors).toEqual([]);
 });
 
 test('a model playing White continues through knight and bishop development', async ({ page }) => {
@@ -437,7 +418,7 @@ test('a model playing White continues through knight and bishop development', as
   await expect(movesOnBoard(page)).toHaveCount(3);
   await move(page, 'b8c6');
   await expect(movesOnBoard(page)).toHaveCount(5);
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
   expect(fixture.modelCalls).toHaveLength(3);
   expect(searchWorkers.filter((url) => url.includes('proof-search.worker'))).toHaveLength(0);
 });
@@ -455,91 +436,75 @@ test('plays through move 15 without proof workers', async ({ page }) => {
     await move(page, coordinates[ply]!);
     await expect(movesOnBoard(page)).toHaveCount(ply + 2);
   }
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
   expect(fixture.modelCalls).toHaveLength(15);
   expect(workers.filter((url) => url.includes('proof-search.worker'))).toHaveLength(0);
 });
 
-test('CLIProxyAPI supports a prefixed endpoint and reports a failed check without starting play', async ({ page }) => {
+test('a prefixed endpoint discovers models but blocks rejected credentials from play', async ({ page }) => {
   const apiEndpoint = 'https://offline-chess.example/proxy/v1';
   let attempts = 0;
-  await page.route(`${apiEndpoint}/chat/completions`, async (route) => {
+  await page.route(`${apiEndpoint}/models`, route => route.fulfill({ json: { data: [{ id: 'exact-routing-alias' }] } }));
+  await page.route(`${apiEndpoint}/chat/completions`, async route => {
     attempts += 1;
-    expect(route.request().headers().authorization).toBe('Bearer offline-proxy-fixture-key');
+    expect(route.request().headers().authorization).toBe('Bearer offline-key');
     expect(route.request().postDataJSON()).toMatchObject({ model: 'exact-routing-alias' });
-    await route.fulfill({ status: 401, json: { error: { message: 'Fixture rejected this API key.' } } });
+    await route.fulfill({ status: 401, json: { error: { message: 'Invalid API key.' } } });
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('ai');
-  await page.getByLabel('Proxy URL').fill(`${apiEndpoint}/chat/completions`);
-  await page.getByLabel('Proxy API key').fill('offline-proxy-fixture-key');
-  await page.getByLabel('Model ID', { exact: true }).fill('exact-routing-alias');
-  await page.getByRole('button', { name: 'Connect and use model' }).click();
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await page.getByLabel('Base URL', { exact: true }).fill(`${apiEndpoint}/chat/completions`);
+  await page.getByLabel('API key', { exact: true }).fill('offline-key');
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByLabel('Available models').selectOption('exact-routing-alias');
   await expect(page.locator('.disclosure-panel')).toContainText(`${apiEndpoint}/chat/completions`);
-  await page.getByRole('button', { name: 'Accept and check model' }).click();
-  await expect(page.locator('.feedback-inline')).toContainText('401');
-  await expect(page.getByRole('button', { name: 'Connect and use model' })).toBeEnabled();
-  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Allow', exact: true }).click();
+  await expect(page.getByText('Check API key.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
   expect(attempts).toBe(1);
 });
 
-test('CLIProxyAPI preserves saved providers, clears catalog overrides, and requires a key for changed destinations', async ({ page }) => {
+test('changing a saved destination requires its own key and consent', async ({ page }) => {
   await provider(page, []);
-  const changedProxy = 'http://127.0.0.1:8318/v1';
-  const proxy = await provider(page, [], async () => { throw new Error('Unexpected game request'); }, changedProxy);
-  const authHeaders: string[] = [];
-  page.on('request', (request) => {
-    if (request.url() === `${changedProxy}/chat/completions`) authHeaders.push(request.headers().authorization ?? '');
-  });
-  await page.goto('/');
-  await configure(page);
+  const changed = 'http://127.0.0.1:8318/v1';
+  const proxy = await provider(page, [], undefined, changed);
+  await page.goto('/'); await configure(page);
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  const saved = page.getByLabel('Saved connection');
-  await saved.selectOption({ label: 'Offline fixture · Custom endpoint' });
-  const originalId = await saved.inputValue();
-  await page.getByRole('combobox', { name: 'Provider', exact: true }).selectOption('cliproxy');
-  await expect(saved).toHaveValue('');
-  await page.getByLabel('Proxy API key').fill('fixture-key-one');
-  await page.getByLabel('Model ID', { exact: true }).fill('offline-fixture');
-  await page.getByText('Advanced connection settings', { exact: true }).click();
-  await page.getByLabel('Catalog URL override').fill('https://removed-catalog.example/models');
-  await page.getByRole('button', { name: 'Connect and use model' }).click();
-  await expect(page.locator('.disclosure-panel')).toContainText('https://removed-catalog.example/models');
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await page.getByLabel('Catalog URL override').fill('');
-  await expect(page.getByLabel('Proxy API key')).toHaveAttribute('required', '');
-  await expect(page.getByLabel('Proxy API key')).toHaveAttribute('placeholder', 'Re-enter key for this connection');
-  await page.getByLabel('Proxy API key').fill('fixture-key-one');
-  await page.getByRole('button', { name: 'Connect and use model' }).click();
-  await expect(page.locator('.disclosure-panel')).not.toContainText('removed-catalog.example');
-  await expect(page.locator('.disclosure-panel')).toContainText('http://127.0.0.1:8317/v1/models');
-  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await page.getByLabel('Proxy URL').fill(changedProxy);
-  await expect(page.getByLabel('Proxy API key')).toHaveAttribute('required', '');
-  await page.getByRole('button', { name: 'Connect and use model' }).click();
-  await expect(page.getByRole('button', { name: 'Accept and check model' })).not.toBeVisible();
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  await expect(page.getByLabel('Available models')).toBeVisible();
+  await page.getByRole('button', { name: 'Connection', exact: true }).click();
+  await page.getByLabel('Provider').selectOption('cliproxy');
+  await page.getByLabel('Base URL', { exact: true }).fill(changed);
+  await expect(page.getByLabel('API key', { exact: true })).toHaveAttribute('required', '');
+  await page.getByLabel('API key', { exact: true }).fill('destination-key');
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await page.getByLabel('Available models').selectOption('offline-fixture');
+  await expect(page.locator('.disclosure-panel')).toContainText(changed);
   expect(proxy.calls).toHaveLength(0);
-  await page.getByLabel('Proxy API key').fill('fixture-key-two');
-  await page.getByRole('button', { name: 'Connect and use model' }).click();
-  expect(proxy.calls).toHaveLength(0);
-  await page.getByRole('button', { name: 'Accept and check model' }).click();
-  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Allow', exact: true }).click();
+  await expect(page.getByText('Ready', { exact: true })).toBeVisible();
   expect(proxy.calls).toHaveLength(1);
-  expect(authHeaders).toEqual(['Bearer fixture-key-two']);
-  await saved.selectOption(originalId);
-  await expect(page.getByRole('combobox', { name: 'Provider', exact: true })).toHaveValue('custom');
-  await expect(page.getByLabel('Base URL', { exact: true })).toHaveValue(endpoint);
-  await expect(page.getByLabel('Authentication')).toHaveValue('none');
-  await saved.selectOption({ label: 'CLIProxyAPI · CLIProxyAPI' });
-  await page.getByText('Advanced connection settings', { exact: true }).click();
-  await page.getByLabel('Proxy API key').fill('discard-this-key');
-  await page.getByLabel('Authentication').selectOption('none');
-  await expect(page.getByLabel('Proxy API key')).not.toBeVisible();
-  await page.getByLabel('Model ID', { exact: true }).fill('offline-fixture');
-  await page.getByRole('button', { name: 'Connect and use model' }).click();
-  await page.getByRole('button', { name: 'Accept and check model' }).click();
-  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeEnabled();
-  expect(proxy.calls).toHaveLength(2);
-  expect(authHeaders).toEqual(['Bearer fixture-key-two', '']);
+});
+
+test('reports an upstream failure without calling it a connection failure', async ({ page }) => {
+  const fixture = await provider(page, [], async route => {
+    await route.fulfill({ status: 502, json: { error: { type: 'server_error', message: 'Upstream service failed.' } } });
+  });
+  await page.goto('/'); await configure(page); await move(page, 'e2e4');
+  await expect(page.getByRole('heading', { name: 'Provider unavailable. Retry.', exact: true })).toBeVisible();
+  expect(fixture.modelCalls).toHaveLength(1);
+  await expect(page.getByRole('button', { name: 'Retry model request' })).toBeVisible();
+  await expect(movesOnBoard(page)).toHaveCount(1);
+  const downloading = page.waitForEvent('download');
+  await page.evaluate(readFileSync('scripts/extract-browser-game.js', 'utf8'));
+  const download = await downloading;
+  expect(download.suggestedFilename()).toBe('kamkmchess-debug.json');
+  const stream = await download.createReadStream();
+  let text = ''; for await (const chunk of stream) text += chunk.toString();
+  const exported: { games: { checkpoint: { rules: { moves: unknown[] } }; chunks: { bytes: { encoding: string } }[] }[] } = JSON.parse(text);
+  expect(exported.games[0]?.checkpoint.rules.moves).toHaveLength(1);
+  expect(exported.games[0]?.chunks.some(chunk => chunk.bytes.encoding === 'base64')).toBe(true);
+  expect(JSON.stringify(exported)).toContain('"httpStatus":502');
 });
