@@ -42,8 +42,9 @@ for (const project of dependencyTree) collect(project.dependencies);
 const sections = [
   'Third-party code notices',
   'Generated from pnpm-lock.yaml and the installed production packages.',
-  'Original application code is MIT licensed. See LICENSE.txt.',
-  'The Wikimedia standard chess-piece sprite by Cburnett is distributed unmodified under CC BY-SA 3.0. Its source and license notice are embedded in the sprite.',
+  'Copyright (c) 2026 kamkmchess contributors. Original application code is licensed under the GNU General Public License, version 3 or, at your option, any later version (GPL-3.0-or-later). See LICENSE.txt for the full terms and warranty disclaimer.',
+  'The combined browser application includes Chessground, chessops and Stockfish under their GPL terms. Third-party code and artwork retain their own licenses. Corresponding source: https://github.com/Kamkmgamer/kamkmchess. Distributors must provide the exact corresponding source for their deployed version, including dependency source and build instructions.',
+  'The Wikimedia standard chess pieces by Cburnett and Rfc1394 are distributed under CC BY-SA 3.0, extracted into individual SVG files from the cm-chessboard standard sprite. Source and license notices are embedded in each image.',
 ];
 const inventory = [];
 
@@ -55,8 +56,13 @@ for (const metadata of packages.values()) {
   }
 
   const files = await readdir(directory);
-  const licenseFile = files.find((file) => /^license(?:\.(?:txt|md))?$/i.test(file));
-  if (!licenseFile) {
+  const licenseFile = files.find((file) => /^(?:licen[sc]e|copying)(?:\.(?:txt|md))?$/i.test(file));
+  // This exact release distributes its complete BSD terms in README.md.
+  const readmeLicense = manifest.name === 'glob-to-regexp' && manifest.version === '0.4.1'
+    ? (await readFile(join(directory, 'README.md'), 'utf8')).match(/^## License\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]?.trim()
+    : undefined;
+  const licenseText = licenseFile ? await readFile(join(directory, licenseFile), 'utf8') : readmeLicense;
+  if (!licenseText) {
     throw new Error(`Review the missing license text for ${manifest.name}`);
   }
 
@@ -70,16 +76,18 @@ for (const metadata of packages.values()) {
   sections.push(
     `${manifest.name}@${manifest.version} (${manifest.license ?? 'license not declared'})`,
     `Source: ${manifest.homepage ?? manifest.repository?.url ?? `https://www.npmjs.com/package/${manifest.name}/v/${manifest.version}`}`,
-    await readFile(join(directory, licenseFile), 'utf8'),
+    licenseText,
   );
 }
 
 sections.push(
+  'Previously published kamkmchess code: retained MIT notice. Earlier grants remain valid; the current project is GPL-3.0-or-later.',
+  await readFile(new URL('docs/licenses/kamkmchess-MIT.txt', root), 'utf8'),
   'T3 Code theme palette data',
   'Palette values extracted from packages/shared/src/themePalettes.ts at commit 9503155da67add4fbd7fbc51c99ec19a0c8c4a2c (SHA-256 82385050b8b691ff280efc0e93ea9dd8a4bbfd64a4c50cf8536b5c15d1e74479).',
   await readFile(new URL('docs/licenses/T3-Code-MIT.txt', root), 'utf8'),
   'Wikimedia standard chess pieces',
-  'Artist: Cburnett. Source: https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces/Standard. Distributed unmodified from cm-chessboard@8.15.3/assets/pieces/standard.svg under Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0): https://creativecommons.org/licenses/by-sa/3.0/. The sprite contains its full attribution and license header.',
+  'Artists: Cburnett and Rfc1394. Source: https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces/Standard. Extracted into individual SVG files from cm-chessboard@8.15.3/assets/pieces/standard.svg under Creative Commons Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0): https://creativecommons.org/licenses/by-sa/3.0/. Each image contains attribution, source and modification notices.',
 );
 
 await copyFile(new URL('LICENSE', root), new URL('dist/LICENSE.txt', root));

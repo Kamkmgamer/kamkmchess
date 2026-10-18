@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Chessboard, COLOR, INPUT_EVENT_TYPE, PIECES_FILE_TYPE } from 'cm-chessboard';
-import spriteUrl from 'cm-chessboard/assets/pieces/standard.svg?url';
-import 'cm-chessboard/assets/chessboard.css';
+import { ChessBoard } from './ChessBoard.js';
+import { useBoardHistory } from './use-board-history.js';
 import type { ControllerSnapshotV1 } from '../controller/index.js';
-import { runProofSearchPass } from '../proofs/index.js';
+import type { ModelSelection } from '../controller/index.js';
 import { legalMoves, parsePosition } from '../rules/index.js';
 import type { CoordinateMove, Promotion, Square } from '../rules/index.js';
 import { isLocalBoardInputDisabled, parseCoordinateMove, startClassifiedLocalGame, submitBoardMove } from './board-input.js';
@@ -12,6 +11,17 @@ import { editPositionFen, editorSideToMove, positionSetupError, readEditorPieces
 import type { EditorPiece } from './position-editor.js';
 import type { LocalGameSession, MatchComposition } from './match-composition.js';
 import { T3_PALETTES } from './t3-palettes.js';
+import { OpponentPanel } from './OpponentPanel.js';
+import { EnginePanel } from './EnginePanel.js';
+import { composePlayers, MATCH_MODES, seatKinds } from './match-modes.js';
+import type { MatchMode } from './match-modes.js';
+import { isEngineSelection, runEngineTurn } from '../engines/local.js';
+import { BROWSER_ENGINES } from '../engines/browser.js';
+import { engineSettings } from '../engines/local.js';
+import { matchesOpponentSelection } from './opponent-selection.js';
+import { getGenerationJournal } from '../integration/generation-runner.js';
+import type { GenerationJournalV1 } from '../integration/generation-runner.js';
+import type { HandoffSnapshotV1, OpponentIdentityV1 } from '../opponents/index.js';
 
 type Appearance = 'light' | 'dark' | 'system';
 type PromotionMove = Omit<CoordinateMove, 'promotion'>;
@@ -39,97 +49,6 @@ function formatClock(milliseconds: number): string {
   const total = Math.max(0, Math.ceil(milliseconds / 1_000));
   return Math.floor(total / 60) + ':' + (total % 60).toString().padStart(2, '0');
 }
-function squareDescription(snapshot: ControllerSnapshotV1, square: Square): string {
-  const piece = snapshot.position.pieces.find((item) => item.square === square);
-  if (!piece) return square + ', empty';
-  const names: Record<string, string> = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
-  return square + ', ' + (piece.color === 'w' ? 'White ' : 'Black ') + names[piece.type];
-}
-
-function ChessBoard({ fen, orientation, snapshot, disabled, onMove }: {
-  readonly fen: string;
-  readonly orientation: 'white' | 'black';
-  readonly snapshot: ControllerSnapshotV1;
-  readonly disabled: boolean;
-  readonly onMove: (move: PromotionMove) => void;
-}) {
-  const [keyboardOrigin, setKeyboardOrigin] = useState<{ square: Square; fen: string } | null>(null);
-  const host = useRef<HTMLDivElement>(null);
-  const board = useRef<Chessboard | null>(null);
-  const onMoveRef = useRef(onMove);
-  useEffect(() => { onMoveRef.current = onMove; }, [onMove]);
-  useEffect(() => {
-    if (!host.current) return undefined;
-    const instance = new Chessboard(host.current, {
-      position: fen,
-      orientation: orientation === 'white' ? COLOR.white : COLOR.black,
-      assetsUrl: '',
-      style: {
-        cssClass: 'green', borderType: 'frame', showCoordinates: true, animationDuration: 140,
-        pieces: { type: PIECES_FILE_TYPE.svgSprite, file: spriteUrl, tileSize: 40 },
-      },
-    });
-    board.current = instance;
-    return () => {
-      instance.disableMoveInput();
-      instance.destroy();
-      board.current = null;
-    };
-    // The board is a stable widget. State changes are applied by the effects below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-  useEffect(() => { void board.current?.setPosition(fen, false); }, [fen]);
-  useEffect(() => {
-    if (board.current) void board.current.setOrientation(orientation === 'white' ? COLOR.white : COLOR.black, false);
-  }, [orientation]);
-  useEffect(() => {
-    if (!board.current) return;
-    if (disabled) board.current.disableMoveInput();
-    else board.current.enableMoveInput((event) => {
-      if (event.type === INPUT_EVENT_TYPE.moveInputStarted) {
-        const piece = event.squareFrom ? snapshot.position.pieces.find((item) => item.square === event.squareFrom) : undefined;
-        return piece?.color === snapshot.position.sideToMove;
-      }
-      if (event.type === INPUT_EVENT_TYPE.validateMoveInput && event.squareFrom && event.squareTo) {
-        onMoveRef.current({ from: event.squareFrom as Square, to: event.squareTo as Square });
-      }
-      return false;
-    });
-  }, [disabled, snapshot.position]);
-  return (
-    <div className="board-frame">
-      <div className="board-host" ref={host} role="img" aria-label="Chessboard. Use the coordinate move controls or inspect a square." />
-      <details className="board-inspection">
-        <summary>Inspect or move with the keyboard</summary>
-        <p>Choose a square to inspect it. Choose a piece of the side to move, then its destination to play a move.</p>
-        <div className="square-grid">
-          {Array.from({ length: 64 }, (_, index) => {
-            const square = ('abcdefgh'[index % 8] + String(8 - Math.floor(index / 8))) as Square;
-            return <button className="square-inspect" key={square} type="button"
-              aria-label={squareDescription(snapshot, square)} aria-pressed={keyboardOrigin?.square === square && keyboardOrigin.fen === snapshot.position.fen}
-              onClick={() => {
-                const node = document.getElementById('board-announcement');
-                if (node) node.textContent = squareDescription(snapshot, square);
-                if (disabled) return;
-                const piece = snapshot.position.pieces.find((item) => item.square === square);
-                if (keyboardOrigin === null || keyboardOrigin.fen !== snapshot.position.fen) {
-                  if (piece?.color === snapshot.position.sideToMove) setKeyboardOrigin({ square, fen: snapshot.position.fen });
-                  return;
-                }
-                if (piece?.color === snapshot.position.sideToMove) setKeyboardOrigin({ square, fen: snapshot.position.fen });
-                else {
-                  onMove({ from: keyboardOrigin.square, to: square });
-                  setKeyboardOrigin(null);
-                }
-              }}>{square}</button>;
-          })}
-        </div>
-        <p id="board-announcement" className="sr-only" aria-live="polite" />
-      </details>
-    </div>
-  );
-}
-
 function statusLabel(snapshot: ControllerSnapshotV1): string {
   if (snapshot.readiness === 'restore-recovery-pending') return 'Restoring saved game';
   if (snapshot.readiness === 'expiry-persistence-pending') return 'Saving clock result';
@@ -142,11 +61,17 @@ function statusLabel(snapshot: ControllerSnapshotV1): string {
   return (snapshot.position.sideToMove === 'w' ? 'White' : 'Black') + ' to move';
 }
 
-function MoveRows({ snapshot }: { readonly snapshot: ControllerSnapshotV1 }) {
+function MoveRows({ snapshot, selectedPly, onSelect }: {
+  readonly snapshot: ControllerSnapshotV1;
+  readonly selectedPly: number;
+  readonly onSelect: (ply: number) => void;
+}) {
   const moves = snapshot.checkpoint.rules.moves;
   if (!moves.length) return <p className="muted">Moves appear here after they are committed.</p>;
   return <ol className="move-list" aria-label="Committed moves">{moves.map((move, index) =>
-    <li key={move.moveId}><span>{Math.floor(index / 2) + 1}.</span><strong>{move.san}</strong></li>)}</ol>;
+    <li key={move.moveId}><span>{Math.floor(index / 2) + 1}.</span><button type="button"
+      aria-current={selectedPly === index + 1 ? 'step' : undefined}
+      aria-label={`View move ${index + 1}: ${move.san}`} onClick={() => onSelect(index + 1)}>{move.san}</button></li>)}</ol>;
 }
 
 export function App({ composition, initialSession, initialSnapshot }: AppProps) {
@@ -166,12 +91,64 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   const [editorPiece, setEditorPiece] = useState<EditorPiece>('wp');
   const [setupError, setSetupError] = useState('');
   const [working, setWorking] = useState(false);
+  const [matchMode, setMatchMode] = useState<MatchMode>('local');
+  const [engineSide, setEngineSide] = useState<'white' | 'black'>('white');
+  const [engineSeats, setEngineSeats] = useState<Record<'white' | 'black', ModelSelection | null>>({ white: null, black: null });
+  const [aiSeats, setAiSeats] = useState<Record<'white' | 'black', ModelSelection | null>>({ white: null, black: null });
+  const checkedIdentities = useRef(new Map<string, OpponentIdentityV1>());
+  const [humanSide, setHumanSide] = useState<'white' | 'black' | 'random'>('white');
+  const [modelSelection, setModelSelection] = useState<ModelSelection | null>(null);
+  const [opponentIdentity, setOpponentIdentity] = useState<OpponentIdentityV1 | null>(null);
+  const [handoff, setHandoff] = useState<HandoffSnapshotV1>({ committed: null, queued: null, producing: null });
+  const [autoGeneration, setAutoGeneration] = useState(!initialSession.restored);
+  const [generationAttempt, setGenerationAttempt] = useState(0);
+  const [generationState, setGenerationState] = useState<'idle' | 'producing' | 'failed' | 'stopped'>('idle');
+  const [generationDetail, setGenerationDetail] = useState('');
+  const [generationJournal, setGenerationJournal] = useState<GenerationJournalV1 | null>(null);
+  const [journalRefresh, setJournalRefresh] = useState(0);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const history = useBoardHistory(snapshot, !setupOpen && !promotion && !recoveryOpen);
+  const [usageLabel, setUsageLabel] = useState('Unknown until provider usage is returned.');
+  const generationController = useRef<AbortController | null>(null);
+  const generationFenceKey = useRef('');
+  const sessionRef = useRef(session);
   const setupReturnFocus = useRef<HTMLElement | null>(null);
+  const setupKinds = seatKinds(matchMode, 'white', engineSide);
+  const setupSelections: Record<'white' | 'black', ModelSelection | null> = matchMode === 'ai' ? { white: null, black: modelSelection }
+    : matchMode === 'human-engine' ? { white: null, black: engineSeats.black }
+      : { white: setupKinds.white === 'engine' ? engineSeats.white : aiSeats.white,
+        black: setupKinds.black === 'engine' ? engineSeats.black : aiSeats.black };
+  const setupReady = matchMode === 'local' || (matchMode === 'ai' || matchMode === 'human-engine'
+    ? setupSelections.black !== null : setupSelections.white !== null && setupSelections.black !== null);
   const refresh = useCallback((next: ControllerSnapshotV1) => {
     setSnapshot(next);
     if (next.checkpoint.result.kind === 'final') setFeedback(statusLabel(next));
   }, []);
+  useEffect(() => { sessionRef.current = session; }, [session]);
+  useEffect(() => () => {
+    generationController.current?.abort();
+    generationController.current = null;
+  }, [session.gameId]);
   useEffect(() => session.controller.subscribe(refresh), [refresh, session.controller]);
+  useEffect(() => {
+    let current = true;
+    let unsubscribe: (() => void) | undefined;
+    void composition.opponentService.then((service) => {
+      if (!current) return;
+      setHandoff(service.getSnapshot());
+      unsubscribe = service.subscribe(setHandoff);
+    });
+    return () => { current = false; unsubscribe?.(); };
+  }, [composition]);
+  useEffect(() => {
+    let current = true;
+    void composition.readSavedGame(session.gameId).then((saved) => {
+      if (current) setGenerationJournal(saved ? getGenerationJournal(saved) : null);
+    }).catch((error: unknown) => {
+      if (current) setGenerationDetail(error instanceof Error ? error.message : 'Saved archive status is unavailable.');
+    });
+    return () => { current = false; };
+  }, [composition, session.gameId, journalRefresh]);
   useEffect(() => {
     const media = window.matchMedia('(prefers-color-scheme: dark)');
     const update = () => setSystemDark(media.matches);
@@ -226,19 +203,178 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
     root.style.colorScheme = resolved;
   }, [appearance, systemDark, theme]);
 
+  useEffect(() => {
+    const current = session.controller.snapshot();
+    if (current.checkpoint.result.kind !== 'unresolved' || current.checkpoint.clocks.activeSide !== null) return;
+    const players = current.checkpoint.selections.players;
+    const selection = players.white.kind === 'model' ? players.white : players.black.kind === 'model' ? players.black : undefined;
+    if (selection && selection.diagnostic !== 'passed-current-session') return;
+    if (Object.values(players).some(player => player.kind === 'model' && player.diagnostic !== 'passed-current-session')) return;
+    void startClassifiedLocalGame(session.controller, current).then(refresh).catch(error => {
+      setFeedback(error instanceof Error ? error.message : 'The game could not start.');
+    });
+  }, [session, refresh, snapshot.checkpoint.result.kind, snapshot.checkpoint.clocks.activeSide]);
+
+  const generationSide = snapshot.position.sideToMove === 'w' ? 'white' : 'black';
+  const generationSelection = snapshot.checkpoint.selections.players[generationSide];
+  const queuedGenerationSelection = snapshot.modelHandoff.queued?.selection;
+  const queuedGenerationIdentity = queuedGenerationSelection
+    ? [queuedGenerationSelection.connectionId, queuedGenerationSelection.configurationRevision,
+      queuedGenerationSelection.modelRoutingId, queuedGenerationSelection.protocol].join('/')
+    : '';
+  const generationResultKind = snapshot.checkpoint.result.kind;
+  const generationReadiness = snapshot.readiness;
+  const generationClockStatus = snapshot.clockReading?.status;
+  const generationKey = [snapshot.checkpoint.gameId, snapshot.checkpoint.segmentId,
+    snapshot.checkpoint.positionRevision, generationSide,
+    snapshot.fence.modelConfigurationIdentity ?? '',
+    generationSelection.kind === 'model' ? generationSelection.connectionId : '',
+    generationSelection.kind === 'model' ? generationSelection.modelRoutingId : '',
+    queuedGenerationIdentity].join('/');
+  useEffect(() => {
+    if (!autoGeneration || generationController.current !== null || generationSelection.kind !== 'model' ||
+      generationResultKind !== 'unresolved' || generationReadiness !== 'ready' ||
+      generationClockStatus !== 'running') return;
+    const selection = generationSelection;
+    const queuedSelection = queuedGenerationSelection ?? selection;
+    const queuedIdentityAtStart = queuedGenerationIdentity;
+    const key = generationKey;
+    if (generationFenceKey.current === key) return;
+    // Deferring the start lets React StrictMode's setup/cleanup probe cancel a
+    // not-yet-started run without leaving a controller or fence locked.
+    let cancelled = false;
+    let abort: AbortController | null = null;
+    const timer = window.setTimeout(() => {
+      if (cancelled || generationFenceKey.current === key) return;
+      generationFenceKey.current = key;
+      abort = new AbortController();
+      generationController.current = abort;
+      setGenerationState('producing');
+      setGenerationDetail('The model is choosing a move. Its clock keeps running.');
+      void (async () => {
+        let service: Awaited<typeof composition.opponentService> | null = null;
+        let continueAutomatically = false;
+        try {
+          if (isEngineSelection(queuedSelection)) {
+            setGenerationDetail('The local chess engine is choosing a move. Its clock keeps running.');
+            const accepted = await runEngineTurn(session.controller, abort!.signal);
+            if (sessionRef.current.gameId !== session.gameId) return;
+            setGenerationState(accepted ? 'idle' : 'failed');
+            setGenerationDetail(accepted ? 'Engine move saved locally.' : 'Engine move was not accepted. Check the match status and retry.');
+            setJournalRefresh(revision => revision + 1);
+            return;
+          }
+          const identities = [...checkedIdentities.current.values(), opponentIdentity, handoff.producing, handoff.queued?.identity, handoff.committed];
+          const identity = identities.find((candidate) => matchesOpponentSelection(candidate, queuedSelection)) ??
+            identities.find((candidate) => matchesOpponentSelection(candidate, selection)) ?? null;
+          if (!identity) {
+            throw new Error('The current-session compatibility check does not match this model. Select and diagnose it again.');
+          }
+          const store = await composition.connectionStore;
+          const profile = await store.getProfile(composition.namespace, queuedSelection.connectionId);
+          if (!profile) throw new Error('The model connection was removed. Choose Retry after restoring it or start a new game.');
+          if (profile.configRevision !== identity.configRevision || profile.protocol !== identity.protocol) {
+            throw new Error('The model connection changed after its compatibility check. Diagnose it again before continuing.');
+          }
+          service = await composition.opponentService;
+          service.setProducingSelection(identity);
+          const result = await composition.runModelTurn(session, (requested) => {
+            const expected = identities.find((candidate) => matchesOpponentSelection(candidate, requested));
+            return expected?.configRevision ?? '';
+          }, abort!.signal);
+          if (sessionRef.current.gameId !== session.gameId) return;
+          if (result.kind !== 'not-started') {
+            setUsageLabel(`Provider usage: ${result.usage.status}. Cost: unknown unless a measured rate record is available.`);
+          }
+          setJournalRefresh((revision) => revision + 1);
+          if (result.kind === 'completed' && result.dispatch === 'accepted') {
+            const currentHandoff = session.controller.snapshot().modelHandoff;
+            const latest = currentHandoff.committed;
+            const committedIdentity = latest
+              ? identities.find((candidate) => matchesOpponentSelection(candidate, latest)) ?? null : null;
+            if (latest && committedIdentity && currentHandoff.queued?.state !== 'failed') {
+              service.setCommittedSelection(committedIdentity);
+              service.recoverCandidate('resume-prior');
+              setModelSelection(latest);
+              setOpponentIdentity(committedIdentity);
+            }
+            if (result.recovery) {
+              continueAutomatically = result.recovery.kind === 'automatic';
+              setGenerationState(continueAutomatically ? 'idle' : 'failed');
+              setGenerationDetail(result.recovery.detail);
+              setFeedback(result.recovery.detail);
+              if (!continueAutomatically) setAutoGeneration(false);
+            } else {
+              setGenerationState('idle');
+              setGenerationDetail(result.persistence === 'saved-locally'
+                ? `Model reply saved locally via ${latest?.modelRoutingId ?? queuedSelection.modelRoutingId}.`
+                : `Model reply accepted via ${latest?.modelRoutingId ?? queuedSelection.modelRoutingId}; archive status: ${result.persistence}.`);
+              setFeedback('Model reply saved. The controller is checking the resulting match state.');
+            }
+          } else if (result.kind === 'interrupted' || result.kind === 'capacity-rejected') {
+            setGenerationState(abort!.signal.aborted ? 'stopped' : 'failed');
+            setGenerationDetail(result.kind === 'interrupted'
+              ? result.detail ?? `Generation ${result.reason}. The clock continued.`
+              : result.capacity.status === 'rejected' && result.capacity.reason === 'capacity-unverifiable'
+                ? 'The request token capacity could not be verified for this model.'
+                : 'The chess position request exceeds the configured request limit. Choose another model or start a new game.');
+          } else {
+            setGenerationState('failed');
+            setGenerationDetail(result.kind === 'not-started' ? statusLabel(result.snapshot) : 'The model reply was not accepted. Use Retry or Switch.');
+          }
+        } catch (error) {
+          if (sessionRef.current.gameId === session.gameId) {
+            setGenerationState('failed');
+            setGenerationDetail(error instanceof Error ? error.message : 'The model request failed. The clock continued.');
+          }
+        } finally {
+          service?.producingReplySettled();
+          if (generationController.current === abort) generationController.current = null;
+          if (sessionRef.current.gameId === session.gameId && abort?.signal.aborted) setGenerationState('stopped');
+          if (sessionRef.current.gameId === session.gameId) {
+            const latest = session.controller.snapshot();
+            const latestQueued = latest.modelHandoff.queued?.selection;
+            const latestQueuedIdentity = latestQueued
+              ? [latestQueued.connectionId, latestQueued.configurationRevision,
+                latestQueued.modelRoutingId, latestQueued.protocol].join('/')
+              : '';
+            if (continueAutomatically && !abort?.signal.aborted) {
+              generationFenceKey.current = '';
+              setGenerationAttempt((attempt) => attempt + 1);
+            } else if (latest.checkpoint.positionRevision !== snapshot.checkpoint.positionRevision ||
+              latestQueuedIdentity !== queuedIdentityAtStart) {
+              setGenerationAttempt((attempt) => attempt + 1);
+            }
+          }
+        }
+      })();
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  // Generation is fenced to game/position/model identity. Stream and clock snapshots
+  // are display updates and must not clean up a request that is already in flight.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoGeneration, composition, generationAttempt, generationKey, generationResultKind,
+    generationReadiness, generationClockStatus, opponentIdentity?.configRevision, session]);
+
   const submitMove = useCallback(async (move: CoordinateMove) => {
     setWorking(true);
     setFeedback('Move submitted. Waiting for the saved position.');
     try {
       const result = await submitBoardMove(session.controller, session.controller.snapshot(), move);
       refresh(result.snapshot);
+      if (result.kind === 'accepted') setJournalRefresh((revision) => revision + 1);
       if (result.kind === 'rejected') {
         setFeedback(result.reason === 'illegal-move' ? 'That move is not legal. Choose a legal destination.' : 'The position changed before that move was accepted.');
       } else if (result.kind === 'expired') setFeedback('The active clock expired. The controller is checking the result.');
       else if (result.kind === 'clock-reconciliation-required') setFeedback('The clock needs review before play can continue.');
       else setFeedback('Move saved.');
+      return result.kind === 'accepted';
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'The move could not be saved.');
+      return false;
     } finally { setWorking(false); }
   }, [refresh, session.controller]);
 
@@ -259,7 +395,9 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
     if (hasPromotions) {
       setPromotion(move);
       setFeedback('Choose a piece for promotion from ' + move.from + ' to ' + move.to + '.');
-    } else void submitMove(move);
+      return Promise.resolve(false);
+    }
+    return submitMove(move);
   }, [snapshot.position, submitMove]);
 
   const selectPromotion = (piece: Promotion) => {
@@ -287,36 +425,80 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
     setCoordinate('');
   };
 
-  const runPositionCheck = async () => {
-    setWorking(true);
-    try {
-      const work = await session.controller.continueAdjudication(session.controller.snapshot().fence);
-      if (!work) {
-        setFeedback('There is no pending position check to continue.');
+  const revalidateSavedOpponent = async (selection: ModelSelection, identity: OpponentIdentityV1) => {
+    const saved = snapshot.checkpoint.selections.players.white.kind === 'model' && snapshot.checkpoint.selections.players.black.kind === 'model'
+      ? snapshot.checkpoint.selections.players[sideKey]
+      : snapshot.checkpoint.selections.players.white.kind === 'model'
+      ? snapshot.checkpoint.selections.players.white
+      : snapshot.checkpoint.selections.players.black.kind === 'model'
+        ? snapshot.checkpoint.selections.players.black : snapshot.checkpoint.selections.players[sideKey];
+    if (saved.kind !== 'model' || !matchesOpponentSelection(identity, selection)) {
+      setFeedback('Select a model and complete its current-session compatibility check first.');
+      return;
+    }
+    if (!final) {
+      try {
+        const result = await session.controller.dispatch({
+          schemaVersion: 1, kind: 'queue-model-selection',
+          fence: session.controller.snapshot().fence, candidate: selection,
+        });
+        refresh(result.snapshot);
+        if (result.kind !== 'accepted') {
+          throw new Error('The game changed before the model could be queued. Check the match status and choose the model again.');
+        }
+        const sameAsSaved = saved.kind === 'model' && saved.connectionId === selection.connectionId &&
+          saved.modelRoutingId === selection.modelRoutingId && saved.protocol === selection.protocol &&
+          saved.configurationRevision === selection.configurationRevision;
+        if (sameAsSaved) {
+          const service = await composition.opponentService;
+          service.setCommittedSelection(identity);
+          service.recoverCandidate('resume-prior');
+        }
+      } catch (error) {
+        setFeedback(error instanceof Error ? error.message : 'The model selection could not be queued.');
         return;
       }
-      setFeedback('Checking this position. The clocks remain active.');
-      const result = await runProofSearchPass(work.query, {
-        checkpoint: work.searchCheckpoint ?? undefined, maxDiscoveredStates: 10_000, timeBudgetMs: 750,
-      });
-      const next = await session.controller.acceptAdjudicationResult({
-        requestId: work.requestId, fence: work.fence, query: work.query, result,
-      });
-      const playable = await startClassifiedLocalGame(session.controller, next);
-      refresh(playable);
-      setFeedback(playable.checkpoint.result.kind === 'pending-adjudication'
-        ? playable.adjudication.status === 'setup-ready'
-          ? 'Starting position classified. The local game clock is running.'
-          : 'The position remains pending. Continue the check to search another bounded pass.'
-        : statusLabel(playable));
+    }
+    setModelSelection(selection);
+    checkedIdentities.current.set(JSON.stringify(selection), identity);
+    setOpponentIdentity(identity);
+    setRecoveryOpen(false);
+    if (!final) setAutoGeneration(true);
+    setGenerationState('idle');
+    setGenerationDetail('Compatibility checked for this session. A different model becomes committed after its first interpretable reply.');
+  };
+
+  const beginPractice = async () => {
+    const savedModel = snapshot.checkpoint.selections.players.white.kind === 'model'
+      ? snapshot.checkpoint.selections.players.white
+      : snapshot.checkpoint.selections.players.black.kind === 'model'
+        ? snapshot.checkpoint.selections.players.black : null;
+    if (!savedModel || !opponentIdentity || !modelSelection || savedModel.connectionId !== modelSelection.connectionId ||
+      savedModel.modelRoutingId !== modelSelection.modelRoutingId || savedModel.configurationRevision !== modelSelection.configurationRevision) {
+      setRecoveryOpen(true);
+      setFeedback('Run a current-session compatibility check for the saved model before starting practice.');
+      return;
+    }
+    setWorking(true);
+    try {
+      const practiced = await session.controller.beginPractice(snapshot.fence, modelSelection);
+      refresh(practiced);
+      setJournalRefresh((revision) => revision + 1);
+      setAutoGeneration(true);
+      setGenerationState('idle');
+      setFeedback('Practice started in a separate saved segment. The original result remains in match history.');
     } catch (error) {
-      setFeedback(error instanceof Error ? error.message : 'The position check could not be saved.');
+      setFeedback(error instanceof Error ? error.message : 'Practice could not be started.');
     } finally { setWorking(false); }
   };
 
   const createNewGame = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSetupError('');
+    let configuredPlayers;
+    try {
+      configuredPlayers = composePlayers(matchMode, humanSide, engineSide, setupSelections);
+    } catch (error) { setSetupError(error instanceof Error ? error.message : 'Check both opponents before starting.'); return; }
     let startingFen: string | undefined;
     if (setupFen.trim()) {
       try { startingFen = parsePosition(setupFen.trim()).fen; }
@@ -328,6 +510,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
     setWorking(true);
     try {
       const nextSession = await composition.startNewLocalGame({
+        players: configuredPlayers,
         ...(startingFen === undefined ? {} : { startingFen }),
         startingTimeMinutes: setupMinutes, incrementSeconds: setupIncrement,
       });
@@ -338,7 +521,22 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
       setOrientation('white');
       setCoordinate('');
       setPromotion(null);
-      setFeedback('New local game created. Classify its starting position before the clock starts.');
+      setAutoGeneration(true);
+      setGenerationState('idle');
+      setGenerationDetail('');
+      setJournalRefresh((revision) => revision + 1);
+      setRecoveryOpen(false);
+      const started = await startClassifiedLocalGame(nextSession.controller, nextSession.controller.snapshot());
+      refresh(started);
+      setOrientation(started.checkpoint.selections.players.white.kind === 'model' && started.checkpoint.selections.players.black.kind === 'human' ? 'black' : 'white');
+      if (matchMode === 'ai' && opponentIdentity) {
+        const service = await composition.opponentService;
+        service.setCommittedSelection(opponentIdentity);
+        service.recoverCandidate('resume-prior');
+      }
+      setFeedback(started.checkpoint.clocks.activeSide === null
+        ? 'New game saved. ' + statusLabel(started) + '.'
+        : 'New game saved locally. The match clock is running.');
     } catch (error) {
       setSetupError(error instanceof Error ? error.message : 'The new game could not be saved.');
     } finally { setWorking(false); }
@@ -348,10 +546,70 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
     try {
       const next = await session.controller.undo(snapshot.fence);
       refresh(next);
+      setJournalRefresh((revision) => revision + 1);
       setFeedback('Previous committed move restored. Clock time was not refunded.');
     } catch (error) {
       setFeedback(error instanceof Error ? error.message : 'Undo is unavailable.');
     } finally { setWorking(false); }
+  };
+
+  const retryModelTurn = () => {
+    generationFenceKey.current = '';
+    setGenerationState('idle');
+    setGenerationDetail('Retry requested. The controller will issue one request; the clock keeps running.');
+    setAutoGeneration(true);
+    setGenerationAttempt((value) => value + 1);
+  };
+
+  const recoverQueuedModel = async (action: 'retry' | 'resume') => {
+    setWorking(true);
+    try {
+      const current = session.controller.snapshot();
+      const next = action === 'retry'
+        ? await session.controller.retryModelSelection(current.fence)
+        : await session.controller.resumePriorModel(current.fence);
+      refresh(next);
+      generationFenceKey.current = '';
+      setGenerationState('idle');
+      setGenerationDetail(action === 'retry' ? 'Queued model retry authorized for one turn.' : 'Returned to the previously committed model.');
+      setAutoGeneration(true);
+      setGenerationAttempt((attempt) => attempt + 1);
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'Model recovery could not be saved.');
+    } finally { setWorking(false); }
+  };
+
+  const cancelQueuedModel = async () => {
+    setWorking(true);
+    try {
+      const current = session.controller.snapshot();
+      const next = await session.controller.cancelModelSelection(current.fence);
+      refresh(next);
+      const service = await composition.opponentService;
+      service.recoverCandidate('resume-prior');
+      generationFenceKey.current = '';
+      setAutoGeneration(true);
+      setGenerationAttempt((attempt) => attempt + 1);
+      setFeedback('Queued model selection cancelled. The committed opponent remains active.');
+    } catch (error) {
+      setFeedback(error instanceof Error ? error.message : 'The queued model could not be cancelled.');
+    } finally { setWorking(false); }
+  };
+
+  const stopModelTurn = async () => {
+    setAutoGeneration(false);
+    try {
+      const stopped = await session.controller.dispatch({
+        schemaVersion: 1, kind: 'stop-model-turn', fence: session.controller.snapshot().fence,
+      });
+      generationController.current?.abort();
+      refresh(stopped.snapshot);
+      setJournalRefresh((revision) => revision + 1);
+      setGenerationState('stopped');
+      setGenerationDetail('Generation stopped. The clock kept running and late replies are fenced.');
+    } catch (error) {
+      setGenerationDetail(error instanceof Error ? error.message : 'The model turn could not be stopped.');
+    }
   };
 
   const clocks = snapshot.clockReading?.remaining ?? {
@@ -360,8 +618,25 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   };
   const activeSide = snapshot.checkpoint.clocks.activeSide;
   const final = snapshot.checkpoint.result.kind === 'final';
-  const pendingSetup = snapshot.checkpoint.result.kind === 'pending-adjudication' && activeSide === null;
-  const disabled = isLocalBoardInputDisabled(snapshot, working);
+  const sideKey = snapshot.position.sideToMove === 'w' ? 'white' : 'black';
+  const activePlayer = snapshot.checkpoint.selections.players[sideKey];
+  const isModelTurn = activePlayer.kind === 'model';
+  const disabled = history.reviewing || promotion !== null || isLocalBoardInputDisabled(snapshot, working || isModelTurn || generationState === 'producing');
+  const players = snapshot.checkpoint.selections.players;
+  const spectator = players.white.kind === 'model' && players.black.kind === 'model';
+  const usesLlm = Object.values(players).some(player => player.kind === 'model' && !isEngineSelection(player));
+  const engineTurn = isEngineSelection(activePlayer);
+  const recoverySelection = spectator ? activePlayer : players.white.kind === 'model' ? players.white : players.black;
+  const humanColor = players.white.kind === 'human' && players.black.kind === 'model' ? 'white'
+    : players.black.kind === 'human' && players.white.kind === 'model' ? 'black' : null;
+  const premoveColor = !history.reviewing && !final && !setupOpen && !promotion &&
+    snapshot.readiness === 'ready' && snapshot.clockReading?.status === 'running' ? humanColor : null;
+  const allowPremove = premoveColor !== null && isModelTurn && !working;
+  const playerLabel = (side: 'white' | 'black') => {
+    const player = snapshot.checkpoint.selections.players[side];
+    return isEngineSelection(player) ? `${BROWSER_ENGINES[engineSettings(player).engineId].name} · browser engine`
+      : player.kind === 'model' ? `${player.modelRoutingId} · AI` : 'Local player';
+  };
   let editorPieces: ReturnType<typeof readEditorPieces> | null = null;
   let editorSide: 'w' | 'b' = 'w';
   try {
@@ -389,12 +664,41 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
       </header>
 
       {setupOpen && <section className="setup-panel" aria-labelledby="new-game-title">
-        <div className="panel-heading"><div><h2 id="new-game-title" tabIndex={-1}>Start a local game</h2>
-          <p>Two people, one board. The game is saved on this device.</p></div>
+        <div className="panel-heading"><div><h2 id="new-game-title" tabIndex={-1}>New match</h2>
+          <p>Play or watch a match. Engines calculate chess moves in your browser; AI models choose moves through your connected provider.</p></div>
           <button className="button quiet" type="button" onClick={closeSetup}>Close</button></div>
-        <form className="setup-form" onSubmit={createNewGame}>
+        <div className="setup-form">
+          <label>Game mode<select value={matchMode} onChange={(event) => { setMatchMode(event.target.value as MatchMode); setSetupError(''); }}>
+            {MATCH_MODES.map(mode => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+          </select></label>
+          {(matchMode === 'ai' || matchMode === 'human-engine') && <label>Your side<select value={humanSide} onChange={(event) => setHumanSide(event.target.value as typeof humanSide)}>
+            <option value="white">White</option><option value="black">Black</option><option value="random">Random</option>
+          </select></label>}
+          {matchMode === 'engine-ai' && <label>Engine plays<select value={engineSide} onChange={event => setEngineSide(event.target.value as typeof engineSide)}><option value="white">White</option><option value="black">Black</option></select></label>}
           <label>Starting minutes<input type="number" min="1" max="180" value={setupMinutes} onChange={(event) => setSetupMinutes(Number(event.target.value))} required /></label>
           <label>Increment seconds<input type="number" min="0" max="600" value={setupIncrement} onChange={(event) => setSetupIncrement(Number(event.target.value))} required /></label>
+        </div>
+          {matchMode === 'ai' && <OpponentPanel
+            service={composition.opponentService} connectionStore={composition.connectionStore}
+            onSelect={(selection, identity) => { setModelSelection(selection); setOpponentIdentity(identity); checkedIdentities.current.set(JSON.stringify(selection), identity); }} selected={modelSelection}
+            onSelectionInvalidated={() => { setModelSelection(null); setOpponentIdentity(null); }}
+            namespace={composition.namespace} idPrefix="new-opponent" selectLabel="Use this model for the new match"
+          />}
+          {matchMode === 'human-engine' && <EnginePanel key="human-engine" label="Your engine opponent" selected={engineSeats.black} onSelect={selection => setEngineSeats(current => ({ ...current, black: selection }))} />}
+          {(matchMode === 'engine-engine' || matchMode === 'engine-ai' || matchMode === 'ai-ai') && <>
+            <p className="muted">Both sides play automatically. You can stop a turn, review moves and resume the match. LLM turns may use provider quota.</p>
+            {(['white', 'black'] as const).map(side => <div className="match-seat" key={`${matchMode}-${engineSide}-${side}`}>
+              {seatKinds(matchMode, 'white', engineSide)[side] === 'engine'
+                ? <EnginePanel label={`${side === 'white' ? 'White' : 'Black'} engine`} selected={engineSeats[side]} onSelect={selection => setEngineSeats(current => ({ ...current, [side]: selection }))} />
+                : <><h3>{side === 'white' ? 'White' : 'Black'} AI model</h3><OpponentPanel
+                  service={composition.opponentService} connectionStore={composition.connectionStore} namespace={composition.namespace}
+                  idPrefix={`new-${side}-ai`} selectLabel={`Use this model for ${side === 'white' ? 'White' : 'Black'}`} selected={aiSeats[side]}
+                  onSelect={(selection, identity) => { setAiSeats(current => ({ ...current, [side]: selection })); checkedIdentities.current.set(JSON.stringify(selection), identity); }}
+                  onSelectionInvalidated={() => setAiSeats(current => ({ ...current, [side]: null }))}
+                /></>}
+            </div>)}
+          </>}
+        <form className="setup-form" onSubmit={createNewGame}>
           <label className="fen-field">Custom starting position (six-field FEN)
             <textarea rows={2} value={setupFen} onChange={(event) => { setSetupFen(event.target.value); setSetupError(''); }} placeholder="Leave blank for the standard position" />
           </label>
@@ -424,7 +728,8 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
             </div> : <p className="error-message">Enter a valid FEN before using the visual editor.</p>}
           </fieldset>
            {setupError && <p id="setup-position-error" className="error-message" role="alert">{setupError}</p>}
-          <button className="button primary" disabled={working} type="submit">Create game</button>
+          {!setupReady && <p className="muted">Prepare each opponent above to start this match.</p>}
+          <button className="button primary" disabled={working || !setupReady} type="submit">Start game</button>
         </form>
       </section>}
 
@@ -432,19 +737,31 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
         <section className="board-column" id="board" aria-label="Chess match board">
           <div className={'player-row ' + (snapshot.position.sideToMove === 'b' && activeSide === 'black' ? 'active' : '')}>
             <span className="player-badge dark-piece" aria-hidden="true">B</span>
-            <div className="player-name"><strong>Black</strong><span>Local player</span></div>
+            <div className="player-name"><strong>Black</strong><span>{playerLabel('black')}</span></div>
             <time className={'clock ' + (activeSide === 'black' ? 'running' : '')}
               dateTime={'PT' + Math.max(0, Math.ceil(clocks.blackMs / 1_000)) + 'S'}
               aria-label={'Black clock ' + formatClock(clocks.blackMs)}>{formatClock(clocks.blackMs)}</time>
           </div>
-          <ChessBoard fen={snapshot.position.fen} orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} />
+          <ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} view={history}
+            premoveColor={premoveColor} allowPremove={allowPremove} />
           <div className={'player-row ' + (snapshot.position.sideToMove === 'w' && activeSide === 'white' ? 'active' : '')}>
             <span className="player-badge light-piece" aria-hidden="true">W</span>
-            <div className="player-name"><strong>White</strong><span>Local player</span></div>
+            <div className="player-name"><strong>White</strong><span>{playerLabel('white')}</span></div>
             <time className={'clock ' + (activeSide === 'white' ? 'running' : '')}
               dateTime={'PT' + Math.max(0, Math.ceil(clocks.whiteMs / 1_000)) + 'S'}
               aria-label={'White clock ' + formatClock(clocks.whiteMs)}>{formatClock(clocks.whiteMs)}</time>
           </div>
+          <nav className="history-controls" aria-label="Move history">
+            <div className="button-row">
+              <button className="button quiet" type="button" onClick={() => history.select(0)} disabled={history.ply === 0} aria-keyshortcuts="Home">First</button>
+              <button className="button quiet" type="button" onClick={() => history.select(history.ply - 1)} disabled={history.ply === 0} aria-keyshortcuts="ArrowLeft">Previous</button>
+              <button className="button quiet" type="button" onClick={() => history.select(history.ply + 1)} disabled={!history.reviewing} aria-keyshortcuts="ArrowRight">Next</button>
+              <button className="button quiet" type="button" onClick={() => history.select(history.count)} disabled={!history.reviewing} aria-keyshortcuts="End">Live</button>
+            </div>
+            <p className="muted" aria-live="polite">{history.reviewing
+              ? `Viewing move ${history.ply} of ${history.count}. The live game continues.`
+              : 'Live position. Use the left and right arrow keys to review moves.'}</p>
+          </nav>
           {promotion && <section className="promotion-panel" aria-labelledby="promotion-title">
             <h2 id="promotion-title">Choose a promotion piece</h2>
             <p>From {promotion.from} to {promotion.to}. Your clock continues while you choose.</p>
@@ -471,28 +788,52 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
 
         <aside className="details-panel" aria-label="Match details">
           <section className="status-block" aria-labelledby="match-status-title">
-            <h2 id="match-status-title">{statusLabel(snapshot)}</h2>
+            <h2 id="match-status-title">{generationState === 'producing' ? engineTurn ? 'Engine is choosing a move' : 'AI is choosing a move' : statusLabel(snapshot)}</h2>
+            {spectator && <p className="muted">Watching {playerLabel('white')} versus {playerLabel('black')}.</p>}
             <p>{final && snapshot.checkpoint.result.kind === 'final'
               ? 'Final result recorded: ' + snapshot.checkpoint.result.reason.replaceAll('-', ' ') + '.'
-              : pendingSetup ? 'The controller is classifying this starting position before play can begin.'
-                : snapshot.checkpoint.result.kind === 'pending-adjudication'
-                  ? 'The result is unresolved during an exact position check. The active clock keeps running.'
-                  : snapshot.clockReading?.status === 'expired'
+              : snapshot.clockReading?.status === 'expired'
                     ? 'A clock has expired. Its result must be reconciled by the controller.'
-                    : 'Moves and clocks are committed by the local game controller.'}</p>
-            {(pendingSetup || snapshot.checkpoint.result.kind === 'pending-adjudication') &&
-              <button className="button primary" type="button" onClick={() => void runPositionCheck()} disabled={working}>
-                {working ? 'Checking position…' : 'Continue position check'}
-              </button>}
+                    : 'Moves and clocks are committed by the local game controller. The active clock continues during requests and recovery.'}</p>
+            <p className="muted">Save status: saved on this device after each accepted controller transaction.</p>
+            {isModelTurn && !autoGeneration && snapshot.checkpoint.result.kind === 'unresolved' &&
+              <button className="button primary" type="button" onClick={() => {
+                if (engineTurn || opponentIdentity) retryModelTurn(); else setRecoveryOpen((open) => !open);
+              }}>{engineTurn ? 'Resume engine turn' : opponentIdentity ? 'Resume model turn' : 'Recheck connection to resume'}</button>}
+            {final && snapshot.checkpoint.result.kind === 'final' && snapshot.checkpoint.result.winner !== 'draw' &&
+              !spectator && !Object.values(players).some(isEngineSelection) && (players.white.kind === 'model' || players.black.kind === 'model') &&
+              <button className="button secondary" type="button" onClick={() => void beginPractice()} disabled={working}>Start practice from this position</button>}
+            {generationState === 'producing' && <button className="button secondary" type="button" onClick={() => void stopModelTurn()}>Stop generation</button>}
+            {!final && snapshot.modelHandoff.committed && snapshot.checkpoint.result.kind === 'unresolved' && (!spectator || !autoGeneration) &&
+              <button className="button secondary" type="button" onClick={() => setRecoveryOpen((open) => !open)}>{isEngineSelection(recoverySelection) ? 'Choose another engine' : 'Choose another model'}</button>}
+            {(generationState === 'failed' || generationState === 'stopped') && isModelTurn && <div className="recovery-actions">
+              <p className="error-message" role="status">{generationDetail}</p>
+              {snapshot.modelHandoff.queued?.state === 'failed'
+                ? <button className="button primary" type="button" onClick={() => void recoverQueuedModel('retry')} disabled={working}>Retry queued model</button>
+                : <button className="button primary" type="button" onClick={retryModelTurn}>{engineTurn ? 'Retry engine turn' : 'Retry model request'}</button>}
+              {snapshot.modelHandoff.queued?.state === 'failed' && <button className="button secondary" type="button" onClick={() => void recoverQueuedModel('resume')} disabled={working}>Resume previous model</button>}
+              <button className="button secondary" type="button" onClick={(event) => {
+                event.currentTarget.focus();
+                setRecoveryOpen((open) => !open);
+              }}>{engineTurn ? 'Engine setup' : 'Choose another model'}</button>
+            </div>}
+            {generationDetail && generationState !== 'failed' && generationState !== 'stopped' && <p className="muted">{generationDetail}</p>}
+            <p className="muted">{usesLlm ? usageLabel : 'Engine moves run on your device. No provider usage.'}</p>
+            {snapshot.modelHandoff.committed && <p className="muted">{isEngineSelection(snapshot.modelHandoff.committed) ? 'Engine' : 'Committed model'}: {isEngineSelection(snapshot.modelHandoff.committed) ? BROWSER_ENGINES[engineSettings(snapshot.modelHandoff.committed).engineId].name : snapshot.modelHandoff.committed.modelRoutingId}</p>}
+            {snapshot.modelHandoff.producing && <p className="muted">Producing with: {snapshot.modelHandoff.producing.modelRoutingId}</p>}
+            {snapshot.modelHandoff.queued && <p className="muted">Queued candidate: {snapshot.modelHandoff.queued.selection.modelRoutingId} · {snapshot.modelHandoff.queued.state}</p>}
+            {snapshot.modelHandoff.queued && snapshot.modelHandoff.queued.state !== 'failed' &&
+              <button className="button quiet" type="button" onClick={() => void cancelQueuedModel()} disabled={working}>Cancel queued model</button>}
+
           </section>
           <section className="detail-section" aria-labelledby="moves-title">
             <div className="panel-heading"><h2 id="moves-title">Moves</h2><span className="count">{snapshot.checkpoint.rules.moves.length}</span></div>
-            <MoveRows snapshot={snapshot} />
+            <MoveRows snapshot={snapshot} selectedPly={history.ply} onSelect={history.select} />
           </section>
           <section className="detail-section" aria-labelledby="position-title">
             <div className="panel-heading"><h2 id="position-title">Position</h2></div>
-            <p className="fen-value">{snapshot.position.fen}</p>
-            <p className="muted">Standard chess · White and Black take turns locally</p>
+            <p className="fen-value">{history.position.fen}</p>
+            <p className="muted">Standard chess · White: {playerLabel('white')} · Black: {playerLabel('black')}</p>
           </section>
           <section className="detail-section" aria-labelledby="editor-title">
             <div className="panel-heading"><h2 id="editor-title">Position editor</h2></div>
@@ -502,9 +843,32 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
           <section className="detail-section">
             <div className="panel-heading"><h2>Match tools</h2></div>
             <p>Undo restores the committed position without refunding clock time. New games keep this result in saved history.</p>
-            <p className="muted">Practice after a model loss is unavailable in this two-human local game.</p>
+            <p className="muted">Archive: {generationJournal?.retainedEvents.length ?? 0} current-line events, {generationJournal?.discardedEvents.length ?? 0} discarded events.</p>
+            <details className="conversation-details"><summary>Match conversation and archive</summary>
+              {generationJournal?.retainedMessages.map((message) => <article key={message.messageId} className="conversation-row">
+                <strong>{message.role}</strong><pre>{message.content}</pre>
+              </article>)}
+              {generationJournal?.discardedMessages.map((message) => <article key={message.messageId} className="conversation-row discarded">
+                <strong>Discarded {message.role} after Undo</strong><pre>{message.content}</pre>
+              </article>)}
+              {!generationJournal?.retainedMessages.length && <p className="muted">No model conversation has been archived yet.</p>}
+            </details>
+            {snapshot.checkpoint.practice.mode === 'practice' && <p className="muted">Practice segment. Original result remains preserved in the saved match.</p>}
             <button className="button secondary" type="button" onClick={(event) => openSetup(event.currentTarget)}>New local game</button>
           </section>
+          {recoveryOpen && isEngineSelection(recoverySelection) && <EnginePanel key={`recovery-${sideKey}`} label="Engine setup" selected={recoverySelection} onSelect={selection => {
+            if (!selection) return;
+            void session.controller.queueModelSelection(session.controller.snapshot().fence, selection).then(next => {
+              refresh(next); setRecoveryOpen(false); generationFenceKey.current = ''; setGenerationState('idle'); setAutoGeneration(true); setGenerationAttempt(attempt => attempt + 1);
+            }).catch(error => setFeedback(error instanceof Error ? error.message : 'The engine could not be changed.'));
+          }} />}
+          {recoveryOpen && !isEngineSelection(recoverySelection) && <OpponentPanel
+            service={composition.opponentService} connectionStore={composition.connectionStore}
+            namespace={composition.namespace} idPrefix="recovery-opponent" selectLabel="Queue this model for play"
+            selected={recoverySelection.kind === 'model' && !isEngineSelection(recoverySelection) ? recoverySelection : modelSelection}
+            onSelect={revalidateSavedOpponent}
+            onClose={() => setRecoveryOpen(false)}
+          />}
         </aside>
       </div>
       <p className="feedback" role="status" aria-live="polite">{feedback}</p>

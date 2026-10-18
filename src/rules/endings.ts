@@ -14,6 +14,7 @@ export interface EndingFacts {
   readonly hasLegalMoves: boolean;
   readonly checkmate: boolean;
   readonly stalemate: boolean;
+  readonly insufficientMaterial: boolean;
   readonly repetitionCount: string;
   readonly thirdRepetition: boolean;
   readonly hundredHalfmoves: boolean;
@@ -23,8 +24,9 @@ export interface EndingFacts {
 
 export function observeEndingFacts(position: Position, ledger: RepetitionLedger): EndingFacts {
   const engine = createChessPosition(position);
-  const inCheck = engine.isCheck();
-  const hasLegalMoves = engine.moves().length > 0;
+  const context = engine.ctx();
+  const inCheck = context.checkers.nonEmpty();
+  const hasLegalMoves = engine.hasDests(context);
   const checkmate = inCheck && !hasLegalMoves;
   const stalemate = !inCheck && !hasLegalMoves;
   const currentOccurrences = repetitionCount(ledger, position);
@@ -42,10 +44,37 @@ export function observeEndingFacts(position: Position, ledger: RepetitionLedger)
     hasLegalMoves,
     checkmate,
     stalemate,
+    insufficientMaterial: engine.isInsufficientMaterial(),
     repetitionCount: currentOccurrences,
     thirdRepetition,
     hundredHalfmoves,
     deadness: 'not-assessed',
     ending,
   });
+}
+
+/** Lichess timeout policy: material, then a bounded one-ply forced-outcome check. */
+export function timeoutWinner(position: Position, expiredColor: 'w' | 'b'): 'white' | 'black' | 'draw' {
+  const engine = createChessPosition(position);
+  const opponent = expiredColor === 'w' ? 'black' : 'white';
+  if (engine.hasInsufficientMaterial(opponent)) return 'draw';
+  // A timeout is assessed on the flagging player's turn.
+  if (engine.turn !== (expiredColor === 'w' ? 'white' : 'black')) return opponent;
+  let hasMoves = false;
+  for (const [from, destinations] of engine.allDests()) {
+    for (const to of destinations) {
+      const roles = engine.board.get(from)?.role === 'pawn' && (to < 8 || to >= 56)
+        ? ['queen', 'rook', 'bishop', 'knight'] as const : [undefined];
+      for (const promotion of roles) {
+        hasMoves = true;
+        const next = engine.clone();
+        next.play({ from, to, ...(promotion === undefined ? {} : { promotion }) });
+        const context = next.ctx();
+        const outcome = next.outcome(context);
+        if (outcome?.winner === opponent) return opponent;
+        if (!outcome && !next.hasInsufficientMaterial(opponent)) return opponent;
+      }
+    }
+  }
+  return hasMoves ? 'draw' : opponent;
 }

@@ -141,7 +141,7 @@ async function createHarness(gameId: string): Promise<Harness> {
   const harness: Harness = {
     gameId,
     store,
-    controller: getOrCreateGameController({
+    controller: getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId,
       store,
       timeSource: {

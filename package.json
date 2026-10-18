@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Browser chess against independently choosing AI models.",
-  "license": "MIT",
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "engines": {
     "node": ">=24.22.0 <25",
@@ -11,23 +11,29 @@
   },
   "packageManager": "pnpm@12.14.0",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
+    "dev": "node scripts/prepare-engines.mjs && vite --host 127.0.0.1",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.node.json",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
-    "build": "pnpm run typecheck && vite build && node scripts/write-notices.mjs",
+    "test:browser": "playwright test",
+    "benchmark:position-check": "node scripts/benchmark-position-check.mjs",
+    "build": "pnpm run typecheck && node scripts/prepare-engines.mjs && vite build && node scripts/write-notices.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "check": "pnpm run lint && pnpm run test && pnpm run build"
   },
   "dependencies": {
+    "@clerk/clerk-js": "6.39.1",
+    "@lichess-org/chessground": "10.4.2",
     "chess.js": "1.4.0",
-    "cm-chessboard": "8.15.3",
+    "chessops": "0.15.1",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "stockfish": "19.0.1"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@playwright/test": "1.64.1",
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",

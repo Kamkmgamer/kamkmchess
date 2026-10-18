@@ -82,7 +82,7 @@ describe('cooperative proof search', () => {
     expect(restarted).toMatchObject({ status: 'non-result', reason: 'state-budget', checkpointDisposition: 'resumed' });
   });
 
-  it('honors cancellation between successor batches and returns a resumable non-result', async () => {
+  it('honors cancellation during fast discovery and returns a resumable non-result', async () => {
     const query = createDeadnessQuery({
       ...scope,
       positionFen: '7k/8/8/NNNNN3/8/NNNNNNNN/8/KNNNNNNN w - - 0 1',
@@ -95,7 +95,7 @@ describe('cooperative proof search', () => {
     expect(result).toMatchObject({ status: 'non-result', reason: 'cancelled', checkpoint: { frontier: expect.any(Array) } });
     if (result.status !== 'non-result' || result.checkpoint === null) throw new Error('Cancellation must preserve progress.');
     expect(validateProofSearchCheckpoint(result.checkpoint).status).toBe('valid');
-    expect(result.pass.processedEdgeCount).toBeGreaterThan(0);
+    expect(result.pass.processedEdgeCount).toBe(0);
     expect(result.pass.processedEdgeCount).toBeLessThan(1000);
   });
 
@@ -183,7 +183,7 @@ describe('cooperative proof search', () => {
       positionFen: '6k1/5ppp/8/3pP3/8/8/8/1K2R3 b - - 1 2',
     });
 
-    const result = await runProofSearchPass(query, { maxDiscoveredStates: 32, timeBudgetMs: 10_000 });
+    const result = await runProofSearchPass(query, { maxDiscoveredStates: 32, timeBudgetMs: 10_000, fastWitness: false });
 
     expect(result.status).toBe('non-result');
     if (result.status !== 'non-result' || result.checkpoint === null) {
@@ -198,6 +198,7 @@ describe('cooperative proof search', () => {
       checkpoint: result.checkpoint,
       maxDiscoveredStates: 1,
       timeBudgetMs: 10_000,
+      fastWitness: false,
     })).toMatchObject({ status: 'non-result', checkpointDisposition: 'resumed' });
   });
 
@@ -250,22 +251,46 @@ describe('cooperative proof search', () => {
     }
   }, 30_000);
 
-  it('[ADJ-05] keeps the researched five-second solver-unknown position unresolved', async () => {
+  it('[ADJ-05] preserves resumable progress when the five-second graph budget expires', async () => {
     const query = createMatingReachabilityQuery({
       ...scope,
       positionFen: 'kb6/b1p2p1p/1pP5/1P6/8/8/5P1P/5K2 w - - 0 1',
       intendedColor: 'w',
     });
-    const startedAt = Date.now();
-    const result = await runProofSearchPass(query, { maxDiscoveredStates: 100_000, timeBudgetMs: 5_000 });
-    const observedElapsedMs = Date.now() - startedAt;
+    // Faster machines can find a checked witness for this historical unknown.
+    // Exercise graph exhaustion with a controlled clock instead of requiring
+    // positive discovery to fail for five seconds on every machine.
+    let elapsedMs = 0;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => {
+      const current = elapsedMs;
+      elapsedMs += 250;
+      return current;
+    });
+
+    let result;
+    try {
+      result = await runProofSearchPass(query, {
+        maxDiscoveredStates: 100_000,
+        timeBudgetMs: 5_000,
+        fastWitness: false,
+      });
+    } finally {
+      clock.mockRestore();
+    }
 
     expect(result).toMatchObject({ status: 'non-result', reason: 'time-budget', pass: { timeBudgetMs: 5000 } });
     if (result.status !== 'non-result' || result.checkpoint === null) throw new Error('A time cutoff must preserve a non-result checkpoint.');
     expect(result.pass.elapsedMs).toBeGreaterThanOrEqual(5_000);
-    expect(observedElapsedMs).toBeGreaterThanOrEqual(5_000);
+    expect(result.pass.processedEdgeCount).toBeGreaterThan(0);
+    expect(result.pass.totalDiscoveredStateCount).toBeGreaterThan(1);
     expect(result.pass.totalDiscoveredStateCount).toBeLessThan(100_000);
-  }, 20_000);
+    expect(validateProofSearchCheckpoint(result.checkpoint)).toMatchObject({ status: 'valid' });
+    expect(await runProofSearchPass(query, {
+      checkpoint: result.checkpoint,
+      maxDiscoveredStates: 1,
+      fastWitness: false,
+    })).toMatchObject({ status: 'non-result', reason: 'state-budget', checkpointDisposition: 'resumed' });
+  });
 
   it('keeps the searched winner independent from counter-99 draw thresholds', async () => {
     const query = createMatingReachabilityQuery({

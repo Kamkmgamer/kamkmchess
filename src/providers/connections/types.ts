@@ -1,4 +1,4 @@
-export type ConnectionProvider = 'openai' | 'openrouter' | 'anthropic' | 'custom';
+export type ConnectionProvider = 'openai' | 'openrouter' | 'anthropic' | 'cliproxy' | 'custom';
 export type ConnectionProtocol = 'chat-completions' | 'responses' | 'messages';
 export type CatalogPagination = 'none' | 'after' | 'after_id';
 

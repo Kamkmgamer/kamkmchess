@@ -1,4 +1,4 @@
-import type { ControllerSnapshotV1, GameController, GameControllerIntentResultV1 } from '../controller/index.js';
+import type { ControllerSnapshotV1, GameController, GameControllerIntentResultV1, ModelSelection } from '../controller/index.js';
 import type { CoordinateMove, Promotion, Square } from '../rules/index.js';
 
 const SQUARE = /^[a-h][1-8]$/;
@@ -27,15 +27,16 @@ export function submitBoardMove(
   return controller.dispatch({ schemaVersion: 1, kind: 'human-move', fence: snapshot.fence, move });
 }
 
-/** Start a local game only after the controller has accepted setup classification evidence. */
+/** Start an immediately classified local position, or a legacy proof-ready setup. */
 export function startClassifiedLocalGame(
   controller: GameController,
   snapshot: ControllerSnapshotV1,
+  modelSelection?: ModelSelection,
 ): Promise<ControllerSnapshotV1> {
-  if (snapshot.adjudication.status !== 'setup-ready' ||
-      snapshot.checkpoint.result.kind !== 'pending-adjudication' ||
-      snapshot.checkpoint.clocks.activeSide !== null) return Promise.resolve(snapshot);
-  return controller.startGame(snapshot.fence);
+  if (snapshot.checkpoint.clocks.activeSide !== null ||
+      !(snapshot.checkpoint.result.kind === 'unresolved' ||
+        (snapshot.adjudication.status === 'setup-ready' && snapshot.checkpoint.result.kind === 'pending-adjudication'))) return Promise.resolve(snapshot);
+  return controller.startGame(snapshot.fence, modelSelection);
 }
 
 export function isLocalBoardInputDisabled(snapshot: ControllerSnapshotV1, working: boolean): boolean {

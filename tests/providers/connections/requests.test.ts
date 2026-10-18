@@ -7,6 +7,18 @@ import {
 import { bindTestCredentials } from '../../support/connections';
 
 describe('prepared provider requests', () => {
+  it('sends CLIProxyAPI chat requests with bearer auth and keeps the exact requested model ID', async () => {
+    const profile = await createConnectionProfile({ id: 'cliproxy', name: 'CLIProxyAPI', provider: 'cliproxy' });
+    const credentials = await bindTestCredentials(profile, { apiKey: 'cliproxy-generation-key' });
+    const modelId = 'Vendor/Model:Exact_alias-V2';
+    const request = prepareGenerationRequest(profile, credentials, JSON.stringify({ model: modelId }));
+
+    expect(request.url).toBe('http://127.0.0.1:8317/v1/chat/completions');
+    expect(new Headers(request.init.headers).get('authorization')).toBe('Bearer cliproxy-generation-key');
+    expect(JSON.parse(request.init.body as string).model).toBe(modelId);
+    expect(request.init).toMatchObject({ credentials: 'omit', redirect: 'error' });
+  });
+
   it('CON-01/03 prepares Anthropic Messages headers without putting credentials in its URL', async () => {
     const profile = await createConnectionProfile({
       id: 'anthropic',

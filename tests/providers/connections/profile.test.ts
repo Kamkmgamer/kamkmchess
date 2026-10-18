@@ -12,11 +12,13 @@ describe('connection profiles', () => {
     const openai = await createConnectionProfile({ id: 'openai', name: 'OpenAI', provider: 'openai' });
     const openrouter = await createConnectionProfile({ id: 'router', name: 'OpenRouter', provider: 'openrouter' });
     const anthropic = await createConnectionProfile({ id: 'anthropic', name: 'Anthropic', provider: 'anthropic' });
+    const cliproxy = await createConnectionProfile({ id: 'cliproxy', name: 'CLIProxyAPI', provider: 'cliproxy' });
 
-    expect([openai.protocol, openrouter.protocol, anthropic.protocol]).toEqual([
+    expect([openai.protocol, openrouter.protocol, anthropic.protocol, cliproxy.protocol]).toEqual([
       'responses',
       'chat-completions',
       'messages',
+      'chat-completions',
     ] satisfies ConnectionProtocol[]);
   });
 
@@ -37,6 +39,34 @@ describe('connection profiles', () => {
       generationUrl: 'https://api.anthropic.com/v1/messages',
       catalogUrl: 'https://api.anthropic.com/v1/models',
     });
+  });
+
+  it('CON-01 uses the CLIProxyAPI preset defaults and endpoints', async () => {
+    const cliproxy = await createConnectionProfile({ id: 'cliproxy', name: 'CLIProxyAPI', provider: 'cliproxy' });
+    expect(cliproxy).toMatchObject({
+      protocol: 'chat-completions',
+      auth: { kind: 'bearer' },
+      catalogPagination: 'none',
+      baseUrl: 'http://127.0.0.1:8317/v1',
+    });
+    expect(getConnectionEndpoints(cliproxy)).toEqual({
+      generationUrl: 'http://127.0.0.1:8317/v1/chat/completions',
+      catalogUrl: 'http://127.0.0.1:8317/v1/models',
+    });
+  });
+
+  it('normalizes only a bare CLIProxyAPI origin and preserves API prefixes and pasted routes', async () => {
+    const cases = [
+      ['http://127.0.0.1:8317', 'http://127.0.0.1:8317/v1/chat/completions', 'http://127.0.0.1:8317/v1/models'],
+      ['http://127.0.0.1:8317/v1', 'http://127.0.0.1:8317/v1/chat/completions', 'http://127.0.0.1:8317/v1/models'],
+      ['http://proxy.test/tenant/api/v1/', 'http://proxy.test/tenant/api/v1/chat/completions', 'http://proxy.test/tenant/api/v1/models'],
+      ['http://127.0.0.1:8317/v1/chat/completions', 'http://127.0.0.1:8317/v1/chat/completions', 'http://127.0.0.1:8317/v1/models'],
+    ] as const;
+
+    for (const [baseUrl, generationUrl, catalogUrl] of cases) {
+      const profile = await createConnectionProfile({ id: baseUrl, name: 'CLIProxyAPI', provider: 'cliproxy', baseUrl });
+      expect(getConnectionEndpoints(profile)).toEqual({ generationUrl, catalogUrl });
+    }
   });
 
   it('CON-01 keeps a custom path prefix and appends each selected route once', async () => {

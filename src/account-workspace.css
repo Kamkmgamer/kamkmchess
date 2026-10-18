@@ -1,0 +1,12 @@
+.account-settings { max-width: 1392px; margin: 12px auto; padding: 12px 24px; color: var(--ink); border-bottom: 1px solid var(--rule); }
+.account-settings summary { cursor: pointer; font-weight: 600; }
+.account-panel { max-width: 70ch; padding-block: 12px; }
+.account-panel h2 { font-size: 18px; margin-block: 8px; }
+.account-panel h3 { font-size: 16px; }
+.account-panel-actions, .account-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-block: 12px; }
+.guest-import-preview label { display: flex; gap: 8px; align-items: start; margin-block: 8px; overflow-wrap: anywhere; }
+.account-games ul { list-style: none; padding: 0; }
+.account-games li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-block: 10px; border-top: 1px solid var(--rule); }
+.account-games li span { flex: 1; min-width: 220px; overflow-wrap: anywhere; }
+.account-settings button:disabled { opacity: .55; cursor: default; }
+@media (max-width: 620px) { .account-settings { padding-inline: 12px; } .account-settings input, .account-settings select { font-size: 16px; } }

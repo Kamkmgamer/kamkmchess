@@ -4,7 +4,10 @@ research/
 __pycache__/
 node_modules/
 /dist/
+/public/engines/
 /coverage/
+/test-results/
+/playwright-report/
 .vercel/
 *.tsbuildinfo
 *.zip

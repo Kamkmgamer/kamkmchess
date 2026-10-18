@@ -26,7 +26,7 @@ export interface DisclosureChoice {
 
 export function createFirstRequestDisclosure(profile: ConnectionProfile): FirstRequestDisclosure {
   const endpoints = getConnectionEndpoints(profile);
-  const isProviderHost = profile.provider !== 'custom'
+  const isProviderHost = profile.provider !== 'custom' && profile.provider !== 'cliproxy'
     && new URL(endpoints.generationUrl).origin === providerOrigin(profile.provider);
   const providerLabel = profile.provider === 'custom' ? 'the configured endpoint' : providerName(profile.provider);
   const target = isProviderHost
@@ -35,7 +35,7 @@ export function createFirstRequestDisclosure(profile: ConnectionProfile): FirstR
   const protocolText = profile.provider === 'custom'
     ? `${protocolName(profile.protocol)}`
     : `${providerLabel} ${protocolName(profile.protocol)}`;
-  const operator = profile.provider === 'custom'
+  const operator = profile.provider === 'custom' || profile.provider === 'cliproxy'
     ? `This connection uses the configured ${protocolText} protocol. The endpoint operator controls account access, logging, retention, and billing for this destination. Review the endpoint operator's rules before playing. Requests use the account and billing configured for this connection and may consume quota or paid credits. Endpoint decisions may cause account restrictions, suspension, or loss of access. You are responsible for your configuration and for following the applicable terms. The client does not verify account eligibility, funding source, remaining quota, or endpoint operator approval.`
     : isProviderHost
       ? `Review the linked provider rules before playing. Providers may restrict how accounts or subscription access can be used in third-party software. Requests use the account and billing configured for this connection and may consume quota or paid credits. Provider decisions may cause account restrictions, suspension, or loss of access. You are responsible for your configuration and for following the provider's terms. The client does not verify account eligibility, funding source, remaining quota, or provider approval.`
@@ -49,7 +49,7 @@ export function createFirstRequestDisclosure(profile: ConnectionProfile): FirstR
     : undefined;
   const notices = isProviderHost && profile.provider === 'anthropic' && profile.protocol === 'messages'
     ? ['Anthropic documents that organizations with Zero Data Retention cannot use this native direct-browser Messages route.', routeScope.statement]
-    : profile.provider === 'custom'
+    : profile.provider === 'custom' || profile.provider === 'cliproxy'
       ? ['The endpoint owner controls account access, logging, retention, and billing for this destination.', routeScope.statement]
       : [routeScope.statement];
   if (catalogNotice) notices.push(catalogNotice);
@@ -96,11 +96,12 @@ function providerName(provider: ConnectionProfile['provider']): string {
     case 'openai': return 'OpenAI';
     case 'openrouter': return 'OpenRouter';
     case 'anthropic': return 'Anthropic';
+    case 'cliproxy': return 'CLIProxyAPI';
     case 'custom': return 'the configured endpoint';
   }
 }
 
-function providerOrigin(provider: Exclude<ConnectionProfile['provider'], 'custom'>): string {
+function providerOrigin(provider: Exclude<ConnectionProfile['provider'], 'custom' | 'cliproxy'>): string {
   switch (provider) {
     case 'openai': return 'https://api.openai.com';
     case 'openrouter': return 'https://openrouter.ai';
@@ -130,6 +131,8 @@ function providerLinks(provider: ConnectionProfile['provider']): readonly Disclo
         label: 'Anthropic API data retention and Zero Data Retention browser restriction',
         href: 'https://platform.claude.com/docs/en/manage-claude/api-and-data-retention',
       }];
+    case 'cliproxy':
+      return [];
     case 'custom':
       return [];
   }

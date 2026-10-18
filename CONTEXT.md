@@ -1,5 +1,7 @@
 # Chess against AI models
 
+The owner's 2026-10-18 [Lichess rules amendment](docs/implementation/lichess-rules-research.md) supersedes exhaustive dead-position and timeout proof-search requirements below. Interactive games use chessops legal moves and material checks with bounded timeout handling; legacy exact-search tools are offline compatibility code.
+
 A platform where people play chess against AI models that choose their own moves.
 
 ## Language

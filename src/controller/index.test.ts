@@ -5,7 +5,7 @@ import { createTurnBudgets, decideModelTurn } from '../moves/index.js';
 import type { ModelTurnDecision } from '../moves/index.js';
 import { validateGameArchive } from '../archive/index.js';
 import { openGameStore } from '../storage/index.js';
-import { getOrCreateGameController, modelConfigurationIdentity } from './index.js';
+import { getOrCreateGameController, modelConfigurationIdentity, prepareOwnershipTakeover } from './index.js';
 import { checkProofEvidence, PROOF_CHECKER_VERSION, RULES_ADAPTER_VERSION, runProofSearchPass } from '../proofs/index.js';
 import type { ProofEvidence, ProofQuery, ProofSearchPassResult } from '../proofs/index.js';
 import type {
@@ -144,12 +144,235 @@ describe('model configuration identity', () => {
   });
 });
 
+describe('queued model handoff', () => {
+  it('scopes controller single-writer registration by stable namespace and game ID', async () => {
+    const testId = 'controller-registry-scope';
+    const factory = new IDBFactory();
+    const guestStore = await openGameStore({ databaseName: `${testId}-guest`, factory });
+    const accountStore = await openGameStore({ databaseName: `${testId}-account`, factory });
+    const options = { gameId: 'preserved-game-id', timeSource: { sample(at?: number) {
+      return { monotonicMs: at ?? 1_000, wallTimeMs: at ?? 1_000 };
+    } }, clockPolicy: { maxReferenceDivergenceMs: 0 } };
+    try {
+      const guest = getOrCreateGameController({ positionChecks: 'legacy-proof', ...options, registryScope: JSON.stringify({ kind: 'guest' }), store: guestStore });
+      const account = getOrCreateGameController({ positionChecks: 'legacy-proof', ...options, registryScope: JSON.stringify({ kind: 'account', accountId: 'account-1' }), store: accountStore });
+      expect(account).not.toBe(guest);
+      expect(() => getOrCreateGameController({ positionChecks: 'legacy-proof', ...options, registryScope: JSON.stringify({ kind: 'guest' }), store: accountStore }))
+        .toThrow(/cannot be rebound/);
+    } finally {
+      guestStore.close();
+      accountStore.close();
+    }
+  });
+
+  it('rebinds cloud checkpoint ownership and rejects a prior-owner request fence', async () => {
+    const testId = 'controller-ownership-takeover';
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
+      gameId: testId, registryScope: 'old-owner', store,
+      timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
+      clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
+    });
+    try {
+      const ready = await initializePlayable(controller, {
+        humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+      });
+      const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: ready.fence });
+      if (started.kind !== 'model-turn-started') throw new Error('Expected a request under the old owner.');
+      const checkpointBefore = started.snapshot.checkpoint;
+      const adopted = prepareOwnershipTakeover(checkpointBefore, 1);
+      expect(adopted.ownershipEpoch).toBe(1);
+      expect(adopted.requestGeneration).toBe(checkpointBefore.requestGeneration + 1);
+      expect(adopted.analysisGeneration).toBe(checkpointBefore.analysisGeneration + 1);
+      expect(adopted.rules).toEqual(checkpointBefore.rules);
+      expect(adopted.history).toEqual(checkpointBefore.history);
+      expect(adopted.clocks).toEqual(checkpointBefore.clocks);
+      expect(adopted.result).toEqual(checkpointBefore.result);
+      expect(adopted.extensions['model-handoff']?.data).toMatchObject({ producing: null });
+      const committed = await store.commitCheckpoint({ gameId: testId, expectedRevision: checkpointBefore.revision,
+        expectedEpoch: checkpointBefore.ownershipEpoch, events: [], chunks: [], knownCredentials: [],
+        decide: () => ({ checkpoint: adopted, events: [], outboxOperationIds: [] }) });
+      expect(committed.kind).toBe('committed');
+      const nextOwner = getOrCreateGameController({ positionChecks: 'legacy-proof',
+        gameId: testId, registryScope: 'new-owner', store,
+        timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
+        clockPolicy: { maxReferenceDivergenceMs: 0 },
+      });
+      const restored = await nextOwner.initialize();
+      expect(restored.checkpoint.ownershipEpoch).toBe(1);
+      expect(restored.fence.requestGeneration).toBe(started.request.fence.requestGeneration + 1);
+      const stale = await nextOwner.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: started.request.fence });
+      expect(stale).toMatchObject({ kind: 'rejected', reason: 'stale-fence' });
+    } finally {
+      store.close();
+    }
+  });
+
+  it('keeps a failed candidate blocked until the user resumes the prior model', async () => {
+    const testId = 'controller-candidate-failure-resume';
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
+      gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
+      clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
+    });
+    try {
+      let snapshot = await initializePlayable(controller, {
+        humanSide: 'white', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+      });
+      const candidate: ModelSelection = { ...model, providerId: 'anthropic', connectionId: 'connection-anthropic',
+        configurationRevision: 8, modelRoutingId: 'claude/test', protocol: 'messages' };
+      snapshot = await controller.queueModelSelection(snapshot.fence, candidate);
+      expect(snapshot.modelHandoff.queued).toMatchObject({ selection: candidate, state: 'queued' });
+      const humanMove = await controller.dispatch({ schemaVersion: 1, kind: 'human-move', fence: snapshot.fence,
+        move: { from: 'e2', to: 'e4' } });
+      expect(humanMove.kind).toBe('accepted');
+      if (humanMove.kind !== 'accepted') throw new Error('Expected the human move while the candidate was queued.');
+      snapshot = await settlePendingAdjudication(controller, humanMove.snapshot);
+      const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: snapshot.fence });
+      if (started.kind !== 'model-turn-started') throw new Error('Expected the candidate model request to start.');
+      expect(started.request.selection).toMatchObject(candidate);
+      const formattingFailure = decideModelTurn({ budgets: createTurnBudgets(), position: started.request.position,
+        classification: { kind: 'format-failure', reason: 'no-action', fragment: '', retainedFields: [] },
+        modelConfigurationIdentity: started.request.fence.modelConfigurationIdentity });
+      expect(formattingFailure.kind).toBe('format-correction');
+      if (formattingFailure.kind !== 'format-correction') throw new Error('Expected a terminal format failure.');
+      const failed = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-effect', fence: started.request.fence, effect: formattingFailure });
+      expect(failed.kind).toBe('accepted');
+      expect(failed.snapshot.modelHandoff.queued).toMatchObject({ selection: candidate, state: 'failed' });
+      const retriedCandidate = await controller.retryModelSelection(failed.snapshot.fence);
+      const candidateRetry = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: retriedCandidate.fence });
+      if (candidateRetry.kind !== 'model-turn-started') throw new Error('Expected the candidate retry to start.');
+      const providerFailed = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-interrupted', fence: candidateRetry.request.fence, reason: 'failed' });
+      expect(providerFailed.kind).toBe('accepted');
+      expect(providerFailed.snapshot.modelHandoff.queued).toMatchObject({ selection: candidate, state: 'failed' });
+      snapshot = await controller.resumePriorModel(providerFailed.snapshot.fence);
+      expect(snapshot.modelHandoff.committed).toMatchObject(model);
+      expect(snapshot.modelHandoff.queued).toBeNull();
+      const retry = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: snapshot.fence });
+      expect(retry.kind).toBe('model-turn-started');
+      if (retry.kind !== 'model-turn-started') throw new Error('Expected the prior model to resume.');
+      expect(retry.request.selection).toMatchObject(model);
+      const stoppedPrior = await controller.dispatch({ schemaVersion: 1, kind: 'stop-model-turn', fence: retry.request.fence });
+      expect(stoppedPrior.kind).toBe('accepted');
+      if (stoppedPrior.kind !== 'accepted') throw new Error('Expected the prior request to stop.');
+      const queuedAgain = await controller.queueModelSelection(stoppedPrior.snapshot.fence, candidate);
+      const candidateStarted = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: queuedAgain.fence });
+      if (candidateStarted.kind !== 'model-turn-started') throw new Error('Expected the queued candidate request to start.');
+      const stoppedCandidate = await controller.dispatch({ schemaVersion: 1, kind: 'stop-model-turn', fence: candidateStarted.request.fence });
+      expect(stoppedCandidate.kind).toBe('accepted');
+      expect(stoppedCandidate.snapshot.modelHandoff.producing).toBeNull();
+      expect(stoppedCandidate.snapshot.modelHandoff.queued).toMatchObject({ selection: candidate, state: 'failed' });
+    } finally {
+      store.close();
+    }
+  });
+
+  it('queues on the human turn and promotes only after the candidate legal reply', async () => {
+    const testId = 'controller-queue-on-human-turn';
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
+      gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
+      clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
+    });
+    try {
+      let snapshot = await initializePlayable(controller, {
+        humanSide: 'white', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+      });
+      const candidate: ModelSelection = { ...model, providerId: 'anthropic', connectionId: 'connection-anthropic',
+        configurationRevision: 8, modelRoutingId: 'claude/test', protocol: 'messages' };
+      snapshot = await controller.queueModelSelection(snapshot.fence, candidate);
+      expect(snapshot.modelHandoff).toMatchObject({ committed: model, producing: null, queued: { selection: candidate, state: 'queued' } });
+      const humanMove = await controller.dispatch({ schemaVersion: 1, kind: 'human-move', fence: snapshot.fence,
+        move: { from: 'e2', to: 'e4' } });
+      expect(humanMove.kind).toBe('accepted');
+      if (humanMove.kind !== 'accepted') throw new Error('Expected the human move to commit.');
+      snapshot = await settlePendingAdjudication(controller, humanMove.snapshot);
+      const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: snapshot.fence });
+      if (started.kind !== 'model-turn-started') throw new Error('Expected the queued candidate turn to start.');
+      expect(started.request.selection).toMatchObject(candidate);
+      expect(started.snapshot.modelHandoff.committed).toMatchObject(model);
+      const reply = decideModelTurn({ budgets: createTurnBudgets(), position: started.request.position,
+        classification: { kind: 'move', move: { from: 'e7', to: 'e5' }, text: 'e7e5', origin: 'json-move', retainedFields: [] },
+        modelConfigurationIdentity: started.request.fence.modelConfigurationIdentity });
+      expect(reply.kind).toBe('accepted-move');
+      if (reply.kind !== 'accepted-move') throw new Error('Expected the candidate reply to be legal.');
+      const applied = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-effect', fence: started.request.fence, effect: reply });
+      expect(applied.kind).toBe('accepted');
+      expect(applied.snapshot.modelHandoff.committed).toMatchObject(candidate);
+      expect(applied.snapshot.modelHandoff.queued).toBeNull();
+    } finally {
+      store.close();
+    }
+  });
+
+  it('replaces a cross-provider candidate while an old-model request completes under its original selection', async () => {
+    const testId = 'controller-queued-model-handoff';
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
+      gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
+      clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
+    });
+    try {
+      const snapshot = await initializePlayable(controller, {
+        humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+      });
+      const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: snapshot.fence });
+      if (started.kind !== 'model-turn-started') throw new Error('Expected the prior model request to start.');
+      const candidateA: ModelSelection = { ...model, providerId: 'anthropic', connectionId: 'connection-anthropic',
+        configurationRevision: 8, modelRoutingId: 'claude/test', protocol: 'messages' };
+      const candidateB: ModelSelection = { ...model, providerId: 'openai', connectionId: 'connection-openai',
+        configurationRevision: 4, modelRoutingId: 'gpt-test', protocol: 'responses' };
+      let current = await controller.queueModelSelection(controller.snapshot().fence, candidateA);
+      expect(current.modelHandoff).toMatchObject({ committed: model, producing: model, queued: { selection: candidateA, state: 'queued' } });
+      current = await controller.queueModelSelection(current.fence, candidateB);
+      expect(current.modelHandoff.queued?.selection).toMatchObject(candidateB);
+      const savedFence = await controller.appendModelTurnArchive(started.request.fence, {
+        kind: 'terminal', requestId: 'old-model-request', outcome: 'complete', details: {},
+        messages: [{ role: 'assistant', content: 'e2e4' }],
+      });
+      expect(savedFence).not.toBeNull();
+      const effect = decideModelTurn({ budgets: createTurnBudgets(), position: started.request.position,
+        classification: { kind: 'move', move: { from: 'e2', to: 'e4' }, text: 'e2e4', origin: 'json-move', retainedFields: [] },
+        modelConfigurationIdentity: started.request.fence.modelConfigurationIdentity });
+      expect(effect.kind).toBe('accepted-move');
+      if (effect.kind !== 'accepted-move' || savedFence === null) throw new Error('Expected the old model reply to be interpretable.');
+      const applied = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-effect', fence: savedFence, effect });
+      expect(applied.kind).toBe('accepted');
+      expect(applied.snapshot.modelHandoff.committed).toMatchObject(model);
+      expect(applied.snapshot.modelHandoff.queued?.selection).toMatchObject(candidateB);
+      expect(applied.snapshot.modelHandoff.producing).toBeNull();
+      const priorReady = await settlePendingAdjudication(controller, applied.snapshot);
+      const humanMove = await controller.dispatch({ schemaVersion: 1, kind: 'human-move', fence: priorReady.fence,
+        move: { from: 'e7', to: 'e5' } });
+      expect(humanMove.kind).toBe('accepted');
+      if (humanMove.kind !== 'accepted') throw new Error('Expected the human reply to be accepted.');
+      const ready = await settlePendingAdjudication(controller, humanMove.snapshot);
+      const candidateTurn = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: ready.fence });
+      expect(candidateTurn.kind).toBe('model-turn-started');
+      if (candidateTurn.kind !== 'model-turn-started') throw new Error('Expected the queued model to produce the next turn.');
+      expect(candidateTurn.request.selection).toMatchObject(candidateB);
+      const candidateEffect = decideModelTurn({ budgets: createTurnBudgets(), position: candidateTurn.request.position,
+        classification: { kind: 'move', move: { from: 'g1', to: 'f3' }, text: 'g1f3', origin: 'json-move', retainedFields: [] },
+        modelConfigurationIdentity: candidateTurn.request.fence.modelConfigurationIdentity });
+      expect(candidateEffect.kind).toBe('accepted-move');
+      if (candidateEffect.kind !== 'accepted-move') throw new Error('Expected an interpretable candidate reply.');
+      const promoted = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-effect', fence: candidateTurn.request.fence, effect: candidateEffect });
+      expect(promoted.kind).toBe('accepted');
+      expect(promoted.snapshot.modelHandoff.committed).toMatchObject(candidateB);
+      expect(promoted.snapshot.modelHandoff.queued).toBeNull();
+      expect(promoted.snapshot.checkpoint.history.segments.at(-1)).toMatchObject({ providerId: 'openai', modelRoutingId: 'gpt-test' });
+    } finally {
+      store.close();
+    }
+  });
+});
+
 describe('game controller setup', () => {
   it('runs a local two-human game through the same committed controller transitions', async () => {
     const testId = 'controller-local-two-human';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 1_000 });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (decisionTimeMs) => ({ monotonicMs: 5_000, wallTimeMs: decisionTimeMs ?? 1_000 }) },
@@ -191,7 +414,7 @@ describe('game controller setup', () => {
     const testId = 'controller-setup-adjudication-order';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 1_000 });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (decisionTimeMs) => ({ monotonicMs: 5_000, wallTimeMs: decisionTimeMs ?? 1_000 }) },
@@ -258,7 +481,7 @@ describe('game controller setup', () => {
     let wallTimeMs = 1_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => wallTimeMs });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (decisionTimeMs) => ({ monotonicMs, wallTimeMs: decisionTimeMs ?? wallTimeMs }) },
@@ -311,7 +534,7 @@ describe('game controller setup', () => {
     const timeSource: ControllerTimeSource = {
       sample: (decisionTimeMs) => ({ monotonicMs: 5_000, wallTimeMs: decisionTimeMs ?? 1_000 }),
     };
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource, clockPolicy: { maxReferenceDivergenceMs: 5 },
       idFactory: () => `${testId}-id-${++generatedId}`,
     });
@@ -341,7 +564,7 @@ describe('game controller setup', () => {
       vi.resetModules();
       const restoredStore = await openGameStore({ databaseName: testId, factory, now: () => 1_000 });
       const controllerModule = await import('./index.js');
-      const restoredController = controllerModule.getOrCreateGameController({
+      const restoredController = controllerModule.getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId, store: restoredStore, timeSource, clockPolicy: { maxReferenceDivergenceMs: 5 },
         idFactory: () => `${testId}-restored-${++generatedId}`,
       });
@@ -393,8 +616,8 @@ describe('game controller setup', () => {
       clockPolicy: { maxReferenceDivergenceMs: 5 },
       idFactory: () => `controller-id-${++generatedId}`,
     };
-    const controller = getOrCreateGameController(options);
-    const remountedController = getOrCreateGameController({
+    const controller = getOrCreateGameController({ ...options, positionChecks: 'legacy-proof' });
+    const remountedController = getOrCreateGameController({ positionChecks: 'legacy-proof',
       ...options,
       clockPolicy: { maxReferenceDivergenceMs: 5 },
     });
@@ -493,7 +716,7 @@ describe('game controller setup', () => {
       },
     };
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: delayedStore,
       timeSource,
@@ -553,7 +776,7 @@ describe('game controller setup', () => {
       },
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: delayedReadStore,
       timeSource: {
@@ -596,7 +819,7 @@ describe('game controller setup', () => {
     });
     let generatedId = 0;
     let randomSelections = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -650,7 +873,7 @@ describe('game controller setup', () => {
       factory: new IDBFactory(),
       now: () => 15_000,
     });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -699,7 +922,7 @@ describe('game controller setup', () => {
       factory: new IDBFactory(),
       now: () => 10_000,
     });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -747,7 +970,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -848,7 +1071,7 @@ describe('game controller setup', () => {
   it('[MOV-08] accepts controller effects only for the current full fence and only once', async () => {
     const testId = 'controller-move-effect-full-fence';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
       clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
     });
@@ -897,7 +1120,7 @@ describe('game controller setup', () => {
     const testId = 'controller-classified-illegal-attempts';
     let decisionTimeMs = 2_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? decisionTimeMs, wallTimeMs: at ?? decisionTimeMs }; } },
       clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
     });
@@ -907,6 +1130,7 @@ describe('game controller setup', () => {
         timeControl: { startingTimeMs: 30_000, incrementMs: 0 },
       });
       let budgets = createTurnBudgets();
+      let firstAttemptSnapshot: ControllerSnapshotV1 | null = null;
       for (let attempt = 1; attempt <= 4; attempt += 1) {
         const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: snapshot.fence });
         expect(started.kind).toBe('model-turn-started');
@@ -924,6 +1148,7 @@ describe('game controller setup', () => {
         expect(applied.kind).toBe('accepted');
         if (applied.kind !== 'accepted') throw new Error('Expected the effect checkpoint to commit.');
         snapshot = applied.snapshot;
+        if (attempt === 1) firstAttemptSnapshot = snapshot;
         expect(snapshot.checkpoint.budgets.illegalMoveAttemptsRemaining.white).toBe(4 - attempt);
         expect(snapshot.checkpoint.result.kind === 'final' ? snapshot.checkpoint.result.reason : null)
           .toBe(attempt === 4 ? 'illegal-move' : null);
@@ -931,6 +1156,49 @@ describe('game controller setup', () => {
       const saved = await store.readGame(testId);
       expect(saved?.events.filter((event) => event.kind === 'illegal-move-rejected')).toHaveLength(4);
       expect(saved?.checkpoint.extensions['move-attempts']?.data).toMatchObject({ white: [{ attempt: 1 }, { attempt: 2 }, { attempt: 3 }, { attempt: 4 }] });
+      const feedbackText = 'e2e5 is not legal in this position. Please choose a legal move yourself.';
+      expect(saved?.checkpoint.history.messages.filter((message) => message.role === 'user').map((message) => message.content))
+        .toEqual(Array(4).fill(feedbackText));
+      const feedback = firstAttemptSnapshot?.checkpoint.history.messages.at(-1);
+      expect(feedback).toMatchObject({ role: 'user', content: feedbackText, disposition: 'retained' });
+      expect(feedback?.eventIds).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  it('archives formatting corrections and pauses after three automatic corrections', async () => {
+    const testId = 'controller-format-correction-feedback';
+    let decisionTimeMs = 2_000;
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
+      gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? decisionTimeMs, wallTimeMs: at ?? decisionTimeMs }; } },
+      clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
+    });
+    try {
+      let snapshot = await initializePlayable(controller, { humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+        timeControl: { startingTimeMs: 30_000, incrementMs: 0 } });
+      let budgets = createTurnBudgets();
+      let firstCorrectionSnapshot: ControllerSnapshotV1 | null = null;
+      for (let correction = 1; correction <= 4; correction += 1) {
+        const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: snapshot.fence });
+        if (started.kind !== 'model-turn-started') throw new Error('Expected a model request.');
+        const effect = decideModelTurn({ budgets, position: started.request.position,
+          classification: { kind: 'format-failure', reason: 'no-action', fragment: '', retainedFields: [] },
+          modelConfigurationIdentity: started.request.fence.modelConfigurationIdentity });
+        if (effect.kind !== 'format-correction') throw new Error('Expected a format-correction effect.');
+        budgets = effect.budgets;
+        decisionTimeMs += 10;
+        const applied = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-effect', fence: started.request.fence, effect });
+        if (applied.kind !== 'accepted') throw new Error('Expected the correction to commit.');
+        snapshot = applied.snapshot;
+        if (correction === 1) firstCorrectionSnapshot = snapshot;
+        expect(effect.automatic).toBe(correction <= 3);
+        expect(snapshot.checkpoint.budgets.formattingCorrectionsRemaining).toBe(Math.max(0, 3 - correction));
+      }
+      const feedback = firstCorrectionSnapshot!.checkpoint.history.messages.at(-1);
+      expect(feedback).toMatchObject({ role: 'user', content: 'Your last message did not contain a move. Reply with one JSON object such as {"move":"e2e4"} using four coordinate squares, or {"resign":true} to resign. Do not send prose without a Move line.', disposition: 'retained' });
+      expect(snapshot.checkpoint.history.messages.filter((message) => message.role === 'user')).toHaveLength(4);
     } finally {
       store.close();
     }
@@ -939,7 +1207,7 @@ describe('game controller setup', () => {
   it('rejects forged attempt counters, records, losses, and accepted moves through public dispatch', async () => {
     const testId = 'controller-rejects-forged-effects';
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => 2_000 });
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId, store, timeSource: { sample(at) { return { monotonicMs: at ?? 2_000, wallTimeMs: at ?? 2_000 }; } },
       clockPolicy: { maxReferenceDivergenceMs: 0 }, idFactory: (() => { let id = 0; return () => `${testId}-${++id}`; })(),
     });
@@ -1002,7 +1270,7 @@ describe('game controller setup', () => {
       now: () => 2_000,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1046,7 +1314,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1128,7 +1396,7 @@ describe('game controller setup', () => {
       },
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1251,7 +1519,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1317,7 +1585,7 @@ describe('game controller setup', () => {
         now: () => decisionTimeMs,
       });
       let generatedId = 0;
-      const controller = getOrCreateGameController({
+      const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId,
         store,
         timeSource: {
@@ -1394,7 +1662,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1471,7 +1739,7 @@ describe('game controller setup', () => {
     let monotonicMs = 8_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (atDecisionTimeMs) => ({ monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs }) },
@@ -1544,7 +1812,7 @@ describe('game controller setup', () => {
     let monotonicMs = 9_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (atDecisionTimeMs) => ({ monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs }) },
@@ -1580,7 +1848,7 @@ describe('game controller setup', () => {
     let monotonicMs = 8_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: { sample: (atDecisionTimeMs) => ({ monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs }) },
@@ -1651,7 +1919,7 @@ describe('game controller setup', () => {
       },
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: delayedStore,
       timeSource: {
@@ -1745,7 +2013,7 @@ describe('game controller setup', () => {
       },
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: abortingStore,
       timeSource: {
@@ -1808,7 +2076,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const firstController = getOrCreateGameController({
+    const firstController = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -1852,7 +2120,7 @@ describe('game controller setup', () => {
         now: () => decisionTimeMs,
       });
       const controllerModule = await import('./index.js');
-      const restoredController = controllerModule.getOrCreateGameController({
+      const restoredController = controllerModule.getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId,
         store: restoredStore,
         timeSource: {
@@ -1921,7 +2189,7 @@ describe('game controller setup', () => {
     let monotonicMs = 5_000;
     const firstStore = await openGameStore({ databaseName: testId, factory, now: () => decisionTimeMs });
     let generatedId = 0;
-    const firstController = getOrCreateGameController({
+    const firstController = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: firstStore,
       timeSource: { sample: (at) => ({ monotonicMs, wallTimeMs: at ?? decisionTimeMs }) },
@@ -1942,7 +2210,7 @@ describe('game controller setup', () => {
       monotonicMs = 100;
       const restoredStore = await openGameStore({ databaseName: testId, factory, now: () => decisionTimeMs });
       const controllerModule = await import('./index.js');
-      const restoredController = controllerModule.getOrCreateGameController({
+      const restoredController = controllerModule.getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId,
         store: restoredStore,
         timeSource: { sample: (at) => ({ monotonicMs, wallTimeMs: at ?? decisionTimeMs }) },
@@ -1970,7 +2238,7 @@ describe('game controller setup', () => {
       now: () => 1_000,
     });
     let generatedId = 0;
-    const firstController = getOrCreateGameController({
+    const firstController = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store: firstStore,
       timeSource: {
@@ -2024,7 +2292,7 @@ describe('game controller setup', () => {
         },
       });
       const controllerModule = await import('./index.js');
-      const resumedController = controllerModule.getOrCreateGameController({
+      const resumedController = controllerModule.getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId,
         store: resumedStore,
         timeSource: {
@@ -2138,7 +2406,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -2232,7 +2500,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const controller = getOrCreateGameController({
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -2320,7 +2588,7 @@ describe('game controller setup', () => {
       now: () => decisionTimeMs,
     });
     let generatedId = 0;
-    const firstController = getOrCreateGameController({
+    const firstController = getOrCreateGameController({ positionChecks: 'legacy-proof',
       gameId: testId,
       store,
       timeSource: {
@@ -2357,7 +2625,7 @@ describe('game controller setup', () => {
         now: () => decisionTimeMs,
       });
       const controllerModule = await import('./index.js');
-      const restoredController = controllerModule.getOrCreateGameController({
+      const restoredController = controllerModule.getOrCreateGameController({ positionChecks: 'legacy-proof',
         gameId: testId,
         store: restoredStore,
         timeSource: {
