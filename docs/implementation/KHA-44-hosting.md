@@ -1,25 +1,27 @@
-# Vercel staging configuration
+# Vercel frontend and server API
 
-The repository includes a Vite build, Vercel security headers, a Go function in `api/index.go`, `/v1/*` storage API rewrites, and Clerk callback SPA routes. No hosted project or database was created by this implementation.
+The owner selected Vercel for the frontend and the existing server for both
+the Go API and PostgreSQL on 2026-10-18. The earlier Vercel Go function was
+removed. `vercel.json` sends `/v1/*` compatibility requests to the HTTPS API;
+the configured frontend normally calls that API directly.
 
-## Deployment configuration
+The frontend is `https://chess.khalil.mageed.net`, and the API is
+`https://chess-api.agent.soft-magic.com`. PostgreSQL has no published port.
+The API loopback port is proxied by Apache with a cPanel AutoSSL certificate.
+The container uses a restricted database role and verifies the database TLS
+hostname and public certificate chain. Migration and backup credentials stay
+in separate private files on the server. Vercel receives only public browser
+configuration, never database or Clerk secret keys.
 
-Use the pinned Node and pnpm versions from `.node-version` and `package.json`. Run `pnpm install --frozen-lockfile` and `pnpm check`. The browser distribution is `dist/`; Vercel builds the Go function separately using the root Go module. The browser CI uploads the exact distribution after its checks pass. The Go CI also compiles and checks the hosted entry point.
+Clerk production DNS, HTTPS and mail records are verified. Email code sign-in
+is enabled. Google sign-in requires a production OAuth client in Clerk; the
+generic sign-in button supports the configured methods. Vercel CSP allows the
+exact production Clerk script and account origins, Clerk images, inline
+component styles, and the challenge iframe. Provider generation remains direct
+from the browser, and the API only persists account-owned game data.
 
-Set the server environment from `.env.example` privately. A PostgreSQL migration role applies `go run ./cmd/migrate` before the application runtime connects using its own least-privileged role. The database provider and its transaction-capable connection URL still require the owner's selection and access. No schema migration runs during an HTTP request. Pool creation and Clerk verifier initialization are reused between requests in a warm function. Failed initialization can retry on a later request.
-
-`CLOUD_STORAGE_ENABLED` defaults to disabled. The function returns a JSON 503 with `Cache-Control: no-store` until it equals `true`. Enabling public account storage requires verified backups, deployed identity checks and a release decision. Environment provisioning alone does not enable it. A missing database or Clerk configuration returns a generic 503 without configuration values. The local Go server remains available for deliberate development without the hosted enablement gate.
-
-## Browser connections
-
-Vercel's CSP allows HTTPS connections and HTTP loopback destinations for player-configured direct AI connections. The protocol layer still requires explicit destination disclosure, matching credential bindings, omitted cookies and redirect rejection. A provider must permit browser CORS; the application has no generation relay. The CSP keeps scripts and Workers on the application origin. Clerk's external browser SDK and configured account origin will need an exact deployment-specific CSP addition when accounts are enabled. Account configuration must not be presented as working until that setup is verified.
-
-HTTP connections to other hosts do not pass this production policy. A loopback proxy may require browser local-network permission and native verification. HTTPS pages and individual browsers still enforce mixed-content and local-network rules. No CSP declaration certifies that a provider is reachable.
-
-The preexisting untracked `public/_headers` and `public/_redirects` files are not the Vercel configuration. `vercel.json` is authoritative for this host. Other static hosts need their own reviewed headers and routing; copying `dist/` elsewhere is not deployment verification.
-
-## Evidence and remaining runs
-
-Offline Go fixtures verify the disabled gate, generic errors, and preservation of HTTP method, authentication header and pagination through the hosted rewrite. They do not establish that Vercel's hosted Go runtime, HTTPS headers, Clerk redirects or PostgreSQL connectivity work in a deployed environment.
-
-KHA-44 remains open for an actual staging URL, configured Clerk/Google origins, a selected PostgreSQL service, deployed route tests, MIME/CSP verification, and measured storage/free-tier limits. KHA-45 backup rehearsal, native assistive-technology acceptance and live-provider evidence remain separate requirements. Do not mark those runs passed from local fixtures.
+The [deployment runbook](../../deploy/README.md) records build commands,
+services, secret handling, backup rotation, certificate refresh, and recovery.
+[Deployment evidence](../evidence/server-deployment.md) records the hosted
+Clerk/API checks and actual restore rehearsal. Local tests do not establish
+native assistive-technology acceptance or live model-provider compatibility.

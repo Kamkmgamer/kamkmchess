@@ -90,7 +90,7 @@ export function AccountPanel({ session, guestImport, onIdentityChanged, onOpenGa
       {!session.enabled && <p>Play as guest.</p>}
       {session.enabled && !identity && <>
         {session.client?.user && <button onClick={() => void signOut()} disabled={busy}>Sign out</button>}
-        <button onClick={() => void signIn()} disabled={busy}>Continue with Google</button>
+        <button onClick={() => void signIn()} disabled={busy}>Sign in</button>
       </>}
       {identity && <div className="account-panel-actions">
         {onOpenGames && <button onClick={onOpenGames} disabled={busy}>Games</button>}

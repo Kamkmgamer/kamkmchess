@@ -14,12 +14,24 @@ Inventory for [Establish the React/TypeScript application and build checks](http
 | react-dom | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | scheduler | 0.28.0 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | @clerk/clerk-js | 6.39.1 | MIT | [Clerk JavaScript source](https://github.com/clerk/javascript), optional account client loaded only when accounts are configured. |
+| @clerk/ui | 1.40.2 | MIT | [Clerk JavaScript source](https://github.com/clerk/javascript), lazy-loaded sign-in components supplied to the SDK. |
 
 `pnpm build` reads actual installed runtime package versions, checks them against the lockfile, and copies each full license text into `dist/THIRD_PARTY_NOTICES.txt`. It copies the original-code license to `dist/LICENSE.txt`. Missing license text or a runtime version mismatch fails the build. Ship these files with the assets.
 
 The generated inventory includes the Clerk client's transitive dependencies. `pnpm-workspace.yaml` explicitly denies the reviewed `browser-tabs-lock` and `core-js` install scripts, which only print funding banners and are not required to build. Application TypeScript remains strict, including exact optional properties. `skipLibCheck` skips third-party declaration-file checking because this Clerk release includes incompatible declarations; application adapter code still typechecks.
 
 Notice collection accepts both `LICENSE` and `LICENCE` filenames. The pinned `glob-to-regexp@0.4.1` release includes its complete BSD-2-Clause copyright, conditions and disclaimer in the final License section of its distributed README. The generator includes that section verbatim; it still fails for an unreviewed missing license.
+
+The UI dependencies include `jsesc@3.1.0`, whose full MIT terms are in `LICENSE-MIT.txt`.
+Two other pinned MIT packages omit license text from their npm archives. The
+retained [toggle-selection notice](licenses/toggle-selection-MIT.txt) is from
+upstream Git blob `4a7395ee831dc1617bf5195dcb353c5bbd89afcd`, SHA-256
+`771e50e27b24269923639e8e0cc650e7187ffeab5726f6a6f47d9ea83865089d`.
+The [input-otp notice](licenses/input-otp-MIT.txt) is from upstream Git blob
+`3d8feae905f69bb4279c5abe93d005c7ccc5bdf7`, SHA-256
+`079031192fea535a245aa64a637d8433c406b82a14f91c3606b1d63e41c00152`.
+Notice generation permits these copies only for `toggle-selection@1.0.6` and
+`input-otp@1.4.2`; new versions still require review.
 
 The build also writes `dist/DEPENDENCY_INVENTORY.json` with every locked package path, version, declared license, tooling/runtime scope and optional flag. This includes optional packages for other operating systems, not a claim that they are all installed or bundled. Review the lockfile and this inventory on changes. Tooling is not copied as a browser runtime dependency. The Vite module-preload polyfill is disabled for the selected modern targets.
 

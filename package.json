@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@clerk/clerk-js": "6.39.1",
+    "@clerk/ui": "1.40.2",
     "@lichess-org/chessground": "10.4.2",
     "chess.js": "1.4.0",
     "chessops": "0.15.1",

@@ -9,6 +9,8 @@ node_modules/
 /test-results/
 /playwright-report/
 .vercel/
+/deploy/*.env
+/deploy/tls/
 *.tsbuildinfo
 *.zip
 *.log

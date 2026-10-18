@@ -360,9 +360,10 @@ async function auditDeploymentConfiguration(root, findings) {
 
   const rewrites = config.rewrites ?? [];
   const sources = rewrites.map((rewrite) => rewrite.source);
-  const apiSource = sources.find((source) => source?.startsWith('/v1'));
-  if (!apiSource) {
-    findings.push(finding(SEVERITY.BLOCKER, 'api-route-unrouted', 'No rewrite routes the Go storage API paths (/v1/*) to a function.', 'vercel.json', 'Add a rewrite from /v1/:path* to the Go function entry point.'));
+  const apiRewrite = rewrites.find((rewrite) => rewrite.source?.startsWith('/v1'));
+  const apiSource = apiRewrite?.source;
+  if (!apiSource || !apiRewrite?.destination?.startsWith('https://')) {
+    findings.push(finding(SEVERITY.BLOCKER, 'api-route-unrouted', 'The /v1/* compatibility route must forward to the server API over HTTPS.', 'vercel.json', 'Route /v1/:path* to the HTTPS server API, without deploying a Vercel function.'));
   }
 
   const apiRoutes = await collectApiRoutes(root);
@@ -495,23 +496,24 @@ async function auditServerBoundary(root, findings) {
 async function auditAccountStorageGate(root, findings) {
   const env = await readText(join(root, '.env.example'));
   if (env !== null) {
-    const match = env.match(/^\s*CLOUD_STORAGE_ENABLED\s*=\s*(\S+)\s*$/m);
+    const match = env.match(/^\s*KAMKM_PUBLIC_ACCOUNTS_ENABLED\s*=\s*(\S+)\s*$/m);
     const configured = match?.[1] ?? '';
     if (!match) {
-      findings.push(finding(SEVERITY.BLOCKER, 'storage-gate-unset', 'CLOUD_STORAGE_ENABLED is not documented in .env.example.', '.env.example', 'Document the gate with a disabled default.'));
+      findings.push(finding(SEVERITY.BLOCKER, 'storage-gate-unset', 'KAMKM_PUBLIC_ACCOUNTS_ENABLED is not documented in .env.example.', '.env.example', 'Document the public account switch with a disabled default.'));
     } else if (configured.toLowerCase() === 'true') {
-      findings.push(finding(SEVERITY.BLOCKER, 'storage-gate-enabled', 'CLOUD_STORAGE_ENABLED defaults to true, so provisioning would silently enable public account storage.', '.env.example', 'Default it to false until backup readiness and the owner release decision.'));
+      findings.push(finding(SEVERITY.BLOCKER, 'storage-gate-enabled', 'Public accounts default to enabled in the example environment.', '.env.example', 'Default accounts to false; enable them deliberately for the configured deployment.'));
     } else {
-      findings.push(finding(SEVERITY.INFO, 'storage-gate-closed', `CLOUD_STORAGE_ENABLED defaults to ${configured}; hosted account storage fails closed.`, '.env.example', null));
+      findings.push(finding(SEVERITY.INFO, 'storage-gate-closed', `Public accounts default to ${configured}; guest builds need no hosted service.`, '.env.example', null));
     }
   }
-  const handler = await readText(join(root, 'api', 'index.go'));
-  if (handler === null) {
-    findings.push(finding(SEVERITY.INFO, 'hosted-function-absent', 'No hosted API function is present, so public account storage cannot be enabled from this tree.', 'api/index.go', null));
-  } else if (!/CLOUD_STORAGE_ENABLED/.test(handler) || !/StatusServiceUnavailable/.test(handler)) {
-    findings.push(finding(SEVERITY.BLOCKER, 'storage-gate-unenforced', 'The hosted function does not visibly enforce the account storage gate.', 'api/index.go', 'Return a generic 503 with no-store until the gate is enabled.'));
+  const server = await readText(join(root, 'cmd', 'server', 'main.go'));
+  if (server === null || !/httpapi\.NewAuthenticated\(/.test(server)) {
+    findings.push(finding(SEVERITY.BLOCKER, 'storage-gate-unenforced', 'The server entry point must use the Clerk-authenticated storage handler.', 'cmd/server/main.go', 'Require verified Clerk sessions for every storage request.'));
   } else {
-    findings.push(finding(SEVERITY.INFO, 'storage-gate-enforced', 'The hosted function refuses requests until the account storage gate is enabled.', 'api/index.go', null));
+    findings.push(finding(SEVERITY.INFO, 'storage-gate-enforced', 'The server entry point uses the Clerk-authenticated storage handler.', 'cmd/server/main.go', null));
+  }
+  if (await exists(join(root, 'api', 'index.go'))) {
+    findings.push(finding(SEVERITY.BLOCKER, 'frontend-function-present', 'The Vercel frontend still contains an API function.', 'api/index.go', 'Run the API on the server and keep the frontend deployment static.'));
   }
 }
 
@@ -638,7 +640,7 @@ async function auditIdentityBoundary(root, findings) {
  */
 async function accountStorageEnabled(root) {
   const env = await readText(join(root, '.env.example'));
-  const match = env === null ? null : env.match(/^\s*CLOUD_STORAGE_ENABLED\s*=\s*(\S+)\s*$/m);
+  const match = env === null ? null : env.match(/^\s*KAMKM_PUBLIC_ACCOUNTS_ENABLED\s*=\s*(\S+)\s*$/m);
   return match?.[1]?.toLowerCase() === 'true';
 }
 

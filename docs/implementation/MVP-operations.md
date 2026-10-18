@@ -1,9 +1,10 @@
 # MVP operations: deployment readiness, backups and restore
 
-This runbook covers what an operator can actually run today: an offline
-deployment/readiness audit and encrypted logical backups of the owner-only
-PostgreSQL storage. It deliberately does not describe a staging environment, a
-selected database provider or a public launch, because none of those exists yet.
+This document describes the offline readiness audit, encrypted backup format,
+and the original local restore rehearsal. The active Vercel frontend and server
+API/database deployment is documented in [the deployment runbook](../../deploy/README.md).
+The hosted verification and restore run are recorded in
+[the deployment evidence](../evidence/server-deployment.md).
 
 Scope boundaries that the rest of the repository depends on:
 
@@ -261,19 +262,18 @@ load does not run recovery.
 
 These are external gaps. The tooling above does not close any of them.
 
-* **No hosted rehearsal has run.** One local rehearsal against a disposable
-  fixture ran on 2026-10-18 (see above). No managed database, no private
-  destination and no scheduled automation has been used, so `OPS-04`, `DAT-09`
-  and the rotation targets remain unproven for the real service.
-* **No private destination is configured.** The owner must choose a free private
-  destination for the encrypted bundles and decide the schedule. Nothing here
-  schedules anything.
+* **Hosted recovery now has a rehearsal.** On 2026-10-18 an encrypted export was
+  restored into an isolated database on the real server. Restoring the older
+  weekly export with the newer daily deletion ledger reapplied two synthetic
+  game deletions. Daily server backups and certificate checks are scheduled.
+* **Recurring offsite copies remain open.** Encrypted bundles stay in a private
+  server directory, with an initial recovery copy outside the server. The daily
+  cron does not synchronize that separate recovery copy.
 * **No free-tier capacity has been measured.** Archive growth, quotas, inactivity
   pauses and read-only modes are unrecorded. If free operation cannot hold the
   contract, that constraint returns to the owner before a purchase.
-* **No staging deployment.** No Vercel project, Clerk origin or managed database
-  exists. `CLOUD_STORAGE_ENABLED` stays `false` until backup readiness, deployed
-  identity checks and a separate owner release decision.
+* **Google OAuth remains unconfigured.** The deployed Clerk production instance
+  supports email sign-in. Google requires its own production OAuth client.
 * **Native and assistive-technology acceptance is unrelated to this tooling.**
   The readiness audit reads files; it certifies no browser, screen reader, live
   provider or deployed route.

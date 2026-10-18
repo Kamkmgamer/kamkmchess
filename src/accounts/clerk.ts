@@ -177,7 +177,7 @@ function disabledSession(): AccountSession {
 interface OfficialClerkClient {
   user: { id: string } | null;
   session: { getToken(): Promise<string | null> } | null;
-  load(): Promise<void>;
+  load(options?: { ui: unknown }): Promise<void>;
   addListener(listener: () => void): () => void;
   openSignIn(options?: Record<string, unknown>): Promise<void>;
   signOut(): Promise<void>;
@@ -198,9 +198,9 @@ export const officialClerkSdk: ClerkSdkLoader = {
 const officialClientLoads = new Map<string, Promise<ClerkBrowserPort>>();
 
 async function loadOfficialClerkClient(publishableKey: string): Promise<ClerkBrowserPort> {
-    const sdk = await import('@clerk/clerk-js');
+    const [sdk, { ui }] = await Promise.all([import('@clerk/clerk-js'), import('@clerk/ui')]);
     const clerk = new sdk.Clerk(publishableKey) as unknown as OfficialClerkClient;
-    await clerk.load();
+    await clerk.load({ ui });
     return {
       get user() { return clerk.user; },
       get session() { return clerk.session; },

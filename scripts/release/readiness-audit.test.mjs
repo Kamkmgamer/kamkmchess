@@ -57,7 +57,7 @@ function findingFor(findings, code) {
 const minimalTree = {
   'vercel.json': JSON.stringify({
     framework: 'vite',
-    rewrites: [{ source: '/v1/:path*', destination: '/api/index?path=:path*' }],
+    rewrites: [{ source: '/v1/:path*', destination: 'https://api.example.com/v1/:path*' }],
     headers: [{
       source: '/(.*)',
       headers: [{
@@ -78,13 +78,13 @@ const minimalTree = {
   'backend/backup/backup.go': 'package backup\n',
   'backend/backup/cmd/khabackup/main.go': 'package main\n',
   'docs/implementation/MVP-operations.md': '# operations\n',
-  '.env.example': 'CLOUD_STORAGE_ENABLED=false\n',
+  '.env.example': 'KAMKM_PUBLIC_ACCOUNTS_ENABLED=false\n',
   '.gitignore': '.env\n',
   'pnpm-lock.yaml': 'lockfileVersion: 9.0\n',
   'go.sum': '',
   '.node-version': '24.22.0\n',
   'package.json': JSON.stringify({ engines: { node: '>=24.22.0 <25' } }),
-  'api/index.go': 'func Handler(w http.ResponseWriter, r *http.Request) {\n\tif os.Getenv("CLOUD_STORAGE_ENABLED") != "true" {\n\t\tw.WriteHeader(http.StatusServiceUnavailable)\n\t}\n}',
+  'cmd/server/main.go': 'handler := httpapi.NewAuthenticated(store, verifier)\n',
 };
 
 test('the scanner matches a planted canary and ignores ordinary text', () => {
@@ -273,10 +273,10 @@ test('an API handler without an owner guard blocks a release', async () => {
 });
 
 test('an enabled or unenforced account storage gate blocks a release', async () => {
-  const enabled = await auditRepository(await makeTree({ ...minimalTree, '.env.example': 'CLOUD_STORAGE_ENABLED=true\n' }));
+  const enabled = await auditRepository(await makeTree({ ...minimalTree, '.env.example': 'KAMKM_PUBLIC_ACCOUNTS_ENABLED=true\n' }));
   assert.ok(findingFor(enabled.findings, 'storage-gate-enabled'));
 
-  const unenforced = await auditRepository(await makeTree({ ...minimalTree, 'api/index.go': 'func Handler(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) }\n' }));
+  const unenforced = await auditRepository(await makeTree({ ...minimalTree, 'cmd/server/main.go': 'handler := httpapi.New(store)\n' }));
   assert.ok(findingFor(unenforced.findings, 'storage-gate-unenforced'));
 });
 
@@ -311,7 +311,7 @@ test('a committed Clerk SDK without a CSP allowance is reported against the stor
   assert.equal(warning.severity, 'warning');
   assert.match(warning.message, /gated off/);
 
-  const enabled = await auditRepository(await makeTree({ ...withClerk, '.env.example': 'CLOUD_STORAGE_ENABLED=true\n' }));
+  const enabled = await auditRepository(await makeTree({ ...withClerk, '.env.example': 'KAMKM_PUBLIC_ACCOUNTS_ENABLED=true\n' }));
   const blocker = findingFor(enabled.findings, 'clerk-csp-missing');
   assert.ok(blocker);
   assert.equal(blocker.severity, 'blocker');

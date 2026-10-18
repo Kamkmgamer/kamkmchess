@@ -1,0 +1,114 @@
+{
+  "schemaVersion": 1,
+  "gameId": "browser-game",
+  "namespace": {
+    "kind": "account",
+    "accountId": "user_fixture"
+  },
+  "revision": 1,
+  "ownershipEpoch": 1,
+  "segmentId": "46b48cfd-b85f-4841-b180-74e90a9f0668",
+  "positionRevision": 0,
+  "requestGeneration": 0,
+  "analysisGeneration": 0,
+  "updatedAtMs": 1792345539108,
+  "rules": {
+    "variant": "orthodox",
+    "startingFen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "currentFen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "sideToMove": "white",
+    "castlingRights": "KQkq",
+    "enPassantSquare": null,
+    "halfmoveClock": "0",
+    "fullmoveNumber": "1",
+    "repetitionLedger": {
+      "version": 1,
+      "positions": [
+        {
+          "identity": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq -",
+          "occurrences": "1"
+        }
+      ]
+    },
+    "moves": []
+  },
+  "history": {
+    "currentSegmentId": "46b48cfd-b85f-4841-b180-74e90a9f0668",
+    "segments": [
+      {
+        "segmentId": "46b48cfd-b85f-4841-b180-74e90a9f0668",
+        "providerId": null,
+        "modelRoutingId": null,
+        "connectionRevision": null,
+        "startedAtMs": 1792345539097,
+        "messageIds": []
+      }
+    ],
+    "messages": []
+  },
+  "clocks": {
+    "schemaVersion": 1,
+    "timeControl": {
+      "startingTimeMs": 900000,
+      "incrementMs": 10000
+    },
+    "banksAtAnchor": {
+      "whiteMs": 900000,
+      "blackMs": 900000
+    },
+    "activeSide": "white",
+    "anchor": {
+      "monotonicMs": 1763,
+      "wallTimeMs": 1792345539108
+    },
+    "lastReconciledAtMs": 1792345539108
+  },
+  "budgets": {
+    "formattingCorrectionsRemaining": 3,
+    "illegalMoveAttemptsRemaining": {
+      "white": 4,
+      "black": 4
+    },
+    "manualRetriesBySide": {
+      "white": 0,
+      "black": 0
+    }
+  },
+  "selections": {
+    "players": {
+      "white": {
+        "kind": "human"
+      },
+      "black": {
+        "kind": "human"
+      }
+    }
+  },
+  "archive": {
+    "egressStatus": "eligible",
+    "currentLine": {
+      "lineId": "ee583e19-02b4-46fd-ba5c-e38b729810fc",
+      "eventIds": []
+    },
+    "discardedLines": []
+  },
+  "result": {
+    "kind": "unresolved"
+  },
+  "practice": {
+    "mode": "ordinary",
+    "scored": true,
+    "sourceGameId": null,
+    "sourcePositionFen": null,
+    "originalResult": null
+  },
+  "extensions": {
+    "position-rules": {
+      "version": 1,
+      "data": {
+        "policy": "lichess",
+        "chessops": "0.15.1"
+      }
+    }
+  }
+}

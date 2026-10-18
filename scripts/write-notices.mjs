@@ -56,12 +56,19 @@ for (const metadata of packages.values()) {
   }
 
   const files = await readdir(directory);
-  const licenseFile = files.find((file) => /^(?:licen[sc]e|copying)(?:\.(?:txt|md))?$/i.test(file));
+  const licenseFile = files.find((file) => /^(?:licen[sc]e|copying)(?:-MIT)?(?:\.(?:txt|md))?$/i.test(file));
   // This exact release distributes its complete BSD terms in README.md.
   const readmeLicense = manifest.name === 'glob-to-regexp' && manifest.version === '0.4.1'
     ? (await readFile(join(directory, 'README.md'), 'utf8')).match(/^## License\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/m)?.[1]?.trim()
     : undefined;
-  const licenseText = licenseFile ? await readFile(join(directory, licenseFile), 'utf8') : readmeLicense;
+  // toggle-selection 1.0.6 omits LICENSE from its npm archive. Retain the
+  // upstream MIT notice, Git blob 4a7395ee831dc1617bf5195dcb353c5bbd89afcd.
+  const upstreamLicenseFile = manifest.name === 'toggle-selection' && manifest.version === '1.0.6'
+    ? 'toggle-selection-MIT.txt'
+    : manifest.name === 'input-otp' && manifest.version === '1.4.2' ? 'input-otp-MIT.txt' : undefined;
+  const upstreamLicense = upstreamLicenseFile
+    ? await readFile(new URL(`docs/licenses/${upstreamLicenseFile}`, root), 'utf8') : undefined;
+  const licenseText = licenseFile ? await readFile(join(directory, licenseFile), 'utf8') : readmeLicense ?? upstreamLicense;
   if (!licenseText) {
     throw new Error(`Review the missing license text for ${manifest.name}`);
   }

@@ -106,8 +106,14 @@ func (v *Verifier) Verify(ctx context.Context, token, requestOrigin string) (Cla
 	if err != nil {
 		return zero, ErrUnauthorized
 	}
-	var h struct{ Alg, Kid, Typ string }
-	if !exactFieldNames(headerBytes, []string{"alg", "kid", "typ"}, false) || strictJSON(headerBytes, &h) != nil || h.Kid == "" || (h.Alg != "RS256" && h.Alg != "ES256") || (h.Typ != "" && !strings.EqualFold(h.Typ, "JWT")) {
+	var h struct {
+		Alg, Kid, Typ, Cat string
+		Oiat               int64
+	}
+	// Clerk's SDK adds client-attestation and original-issued-at metadata.
+	// They do not select keys or change verification. Keep their types strict
+	// and continue rejecting unsupported JOSE controls such as crit or jku.
+	if !exactFieldNames(headerBytes, []string{"alg", "kid", "typ", "cat", "oiat"}, false) || strictJSON(headerBytes, &h) != nil || h.Kid == "" || (h.Alg != "RS256" && h.Alg != "ES256") || (h.Typ != "" && !strings.EqualFold(h.Typ, "JWT")) {
 		return zero, ErrUnauthorized
 	}
 	key, keyAlg, err := v.key(ctx, h.Kid)

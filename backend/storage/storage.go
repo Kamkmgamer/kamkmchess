@@ -12,6 +12,7 @@ import (
 	"io"
 	"math"
 	"reflect"
+	"regexp"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -141,11 +142,55 @@ func validateCheckpoint(raw []byte, gameID, owner string) error {
 	if !validPractice(v["practice"]) || !validateCheckpointShape(v) {
 		return ErrInvalidDTO
 	}
-	var extensions map[string]json.RawMessage
-	if json.Unmarshal(v["extensions"], &extensions) != nil || len(extensions) != 0 {
+	if !validCheckpointExtensions(v["extensions"]) {
 		return ErrInvalidDTO
 	}
 	return nil
+}
+
+// Extension data belongs to the browser controller. Preserve versioned sections
+// as opaque JSON, matching readExtensionSections, without interpreting them as
+// server configuration. Credential-bearing fields must never enter storage.
+func validCheckpointExtensions(raw json.RawMessage) bool {
+	var sections map[string]json.RawMessage
+	if json.Unmarshal(raw, &sections) != nil || sections == nil {
+		return false
+	}
+	for _, section := range sections {
+		if !exactObjectKeys(section, []string{"version", "data"}) {
+			return false
+		}
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(section, &fields) != nil {
+			return false
+		}
+		var version float64
+		if json.Unmarshal(fields["version"], &version) != nil || version < 1 || version > 9007199254740991 || math.Trunc(version) != version {
+			return false
+		}
+	}
+	var value any
+	return json.Unmarshal(raw, &value) == nil && !hasCredentialField(value)
+}
+
+var credentialField = regexp.MustCompile(`(?i)api.?key|authorization|access.?token|secret|credential`)
+
+func hasCredentialField(value any) bool {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, nested := range value {
+			if credentialField.MatchString(key) || hasCredentialField(nested) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range value {
+			if hasCredentialField(nested) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func exactObjectKeys(raw json.RawMessage, keys []string) bool {
@@ -375,7 +420,7 @@ func validateCheckpointShape(v map[string]json.RawMessage) bool {
 	for _, raw := range segmentList {
 		var x map[string]json.RawMessage
 		_ = json.Unmarshal(raw, &x)
-		if !exactObjectKeys(raw, []string{"segmentId", "providerId", "modelRoutingId", "connectionRevision", "startedAtMs", "messageIds"}) || !isNonemptyString(x["segmentId"]) || !isString(x["providerId"]) || !isString(x["modelRoutingId"]) || !validNonnegativeInt(x["connectionRevision"]) || !validNumber(x["startedAtMs"]) || !stringArray(x["messageIds"]) {
+		if !exactObjectKeys(raw, []string{"segmentId", "providerId", "modelRoutingId", "connectionRevision", "startedAtMs", "messageIds"}) || !isNonemptyString(x["segmentId"]) || !validHistoryBinding(x) || !validNumber(x["startedAtMs"]) || !stringArray(x["messageIds"]) {
 			return false
 		}
 		var id string
@@ -440,6 +485,17 @@ func validateCheckpointShape(v map[string]json.RawMessage) bool {
 	}
 	return true
 }
+
+func validHistoryBinding(segment map[string]json.RawMessage) bool {
+	providerNull := isNullJSON(segment["providerId"])
+	modelNull := isNullJSON(segment["modelRoutingId"])
+	revisionNull := isNullJSON(segment["connectionRevision"])
+	if providerNull || modelNull || revisionNull {
+		return providerNull && modelNull && revisionNull
+	}
+	return isString(segment["providerId"]) && isString(segment["modelRoutingId"]) && validNonnegativeInt(segment["connectionRevision"])
+}
+
 func isString(r json.RawMessage) bool { var s string; return json.Unmarshal(r, &s) == nil }
 func isNonemptyString(r json.RawMessage) bool {
 	var s string
