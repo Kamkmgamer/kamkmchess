@@ -5,9 +5,14 @@ async function startLocal(page: Page, fen = '') {
   await page.goto('/');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('local');
-  if (fen) await page.getByLabel('Custom starting position (six-field FEN)').fill(fen);
+  await page.getByRole('button', { name: 'Next', exact: true }).click();
+  if (fen) {
+    await page.getByRole('button', { name: 'Custom starting position', exact: true }).click();
+    await page.getByLabel('Custom starting position (six-field FEN)').fill(fen);
+    await page.getByRole('button', { name: 'Done', exact: true }).click();
+  }
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
   await page.locator('cg-board').scrollIntoViewIfNeeded();
 }
 
@@ -152,9 +157,9 @@ test('promotion waits for a piece choice and renders the chosen piece', async ({
   await expect(page.locator('square.move-dest.oc:visible')).toHaveCount(2);
   await page.mouse.move(to.x, to.y, { steps: 6 });
   await page.mouse.up();
-  await expect(page.getByRole('region', { name: 'Choose a promotion piece' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Promotion' })).toBeVisible();
   await expect(page.getByRole('list', { name: 'Committed moves' })).toHaveCount(0);
-  await page.getByRole('region', { name: 'Choose a promotion piece' }).getByRole('button', { name: 'Knight', exact: true }).click();
+  await page.getByRole('region', { name: 'Promotion' }).getByRole('button', { name: 'Knight', exact: true }).click();
   await expect(page.getByRole('list', { name: 'Committed moves' }).locator('li')).toHaveCount(1);
   await expect.poll(() => squareKeys(page, 'piece.white.knight')).toContain('a8');
 });
@@ -162,7 +167,8 @@ test('promotion waits for a piece choice and renders the chosen piece', async ({
 test('highlights survive flip and reload and follow undo', async ({ page }) => {
   await startLocal(page);
   for (const move of ['e2e4', 'e7e5']) {
-    await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: 'Type a move', exact: true }).click();
     await page.getByLabel('Enter a move by coordinates').fill(move);
     await page.getByRole('button', { name: 'Play move', exact: true }).click();
   }
@@ -172,7 +178,7 @@ test('highlights survive flip and reload and follow undo', async ({ page }) => {
   await expect.poll(() => squareKeys(page, 'square.last-move')).toEqual(['e5', 'e7']);
   await page.reload();
   await expect.poll(() => squareKeys(page, 'square.last-move')).toEqual(['e5', 'e7']);
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
   await expect.poll(() => squareKeys(page, 'square.last-move')).toEqual(['e2', 'e4']);
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeEnabled();
@@ -205,17 +211,18 @@ test.describe('touch board', () => {
 test('arrow keys review positions without changing live play or text entry', async ({ page }) => {
   await startLocal(page);
   for (const coordinate of ['e2e4', 'e7e5']) {
-    await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
+    await page.getByRole('button', { name: 'Type a move', exact: true }).click();
     await page.getByLabel('Enter a move by coordinates').fill(coordinate);
     await page.getByRole('button', { name: 'Play move', exact: true }).click();
   }
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
-  await page.getByRole('heading', { name: 'Classic match' }).click();
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
+  await page.getByRole('link', { name: 'Kamkm Chess home' }).click();
   await page.keyboard.press('ArrowLeft');
-  await expect(page.getByRole('navigation', { name: 'Move history' })).toContainText('Viewing move 1 of 2');
+  await expect(page.locator('.match-status')).toContainText('1/2');
   await expect.poll(() => squareKeys(page, 'square.last-move')).toEqual(['e2', 'e4']);
   await expect.poll(() => squareKeys(page, 'piece.black.pawn')).toContain('e7');
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeDisabled();
   await expect(page.getByRole('list', { name: 'Committed moves' }).locator('li')).toHaveCount(2);
   await page.keyboard.press('Home');
   await expect.poll(() => squareKeys(page, 'piece.white.pawn')).toContain('e2');
@@ -224,11 +231,14 @@ test('arrow keys review positions without changing live play or text entry', asy
   await expect.poll(() => squareKeys(page, 'square.last-move')).toEqual(['e2', 'e4']);
   await page.keyboard.press('End');
   await expect.poll(() => squareKeys(page, 'square.last-move')).toEqual(['e5', 'e7']);
-  await expect(page.getByRole('button', { name: 'Play move', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Type a move', exact: true }).click();
   await page.getByLabel('Enter a move by coordinates').fill('g1f3');
   await page.keyboard.press('ArrowLeft');
-  await expect(page.getByRole('navigation', { name: 'Move history' })).toContainText('Live position');
-  await page.getByRole('button', { name: 'View move 1: e4', exact: true }).click();
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.locator('.match-status')).toContainText('White to move');
+  await page.getByRole('button', { name: 'View move 1: e4', exact: true }).focus();
+  await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'View move 1: e4', exact: true })).toHaveAttribute('aria-current', 'step');
   await expect.poll(() => squareKeys(page, 'square.last-move')).toEqual(['e2', 'e4']);
   await page.getByRole('button', { name: 'Live', exact: true }).click();

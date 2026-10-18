@@ -1,3 +1,4 @@
+import { IconButton } from './Icon.js';
 import { useEffect, useState } from 'react';
 import type { AccountSession } from '../accounts';
 import { importGuestGames, previewGuestImport } from '../accounts';
@@ -7,14 +8,16 @@ export interface AccountPanelProps {
   readonly session: AccountSession;
   readonly guestImport?: GuestImportPort;
   readonly onIdentityChanged?: () => void;
+  readonly onOpenGames?: () => void;
 }
 
 /** Optional account controls. The parent decides where to mount this panel. */
-export function AccountPanel({ session, guestImport, onIdentityChanged }: AccountPanelProps) {
+export function AccountPanel({ session, guestImport, onIdentityChanged, onOpenGames }: AccountPanelProps) {
   const [identity, setIdentity] = useState(session.identity);
   const [preview, setPreview] = useState<GuestImportPreview | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
   const [message, setMessage] = useState('');
+  const [page, setPage] = useState(0);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => session.subscribe((nextIdentity) => {
@@ -71,43 +74,31 @@ export function AccountPanel({ session, guestImport, onIdentityChanged }: Accoun
   }
 
   return <section aria-labelledby="account-panel-title" className="account-panel">
-    <h2 id="account-panel-title">Optional account</h2>
-    {!session.enabled && <p>Accounts are not configured. Guest play and local saves are available.</p>}
-    {session.enabled && !identity && <>
-      <p>Sign in with Google through Clerk to sync private account games. Your guest games stay separate until you choose to import them.</p>
-      {session.client?.user && <button type="button" onClick={() => void signOut()} disabled={busy}>Retry sign out</button>}
-      <button type="button" onClick={() => void signIn()} disabled={busy}>Continue with Google</button>
-    </>}
-    {identity && <>
-      <p>Signed in. Account games are private to this identity. Guest games and AI credentials stay on this device unless you explicitly import games.</p>
-      <div className="account-panel-actions">
-        {guestImport && <button type="button" onClick={() => void beginImport()} disabled={busy}>Review guest games</button>}
-        <button type="button" onClick={() => void signOut()} disabled={busy}>Sign out</button>
-      </div>
-    </>}
-    {preview && <div aria-labelledby="guest-import-title" className="guest-import-preview">
-      <h3 id="guest-import-title">Import guest games</h3>
-      <p>{preview.warning}</p>
-      {preview.games.length === 0 ? <p>No guest games are available to import.</p> : <fieldset disabled={busy}>
-        <legend>Select games to copy into this account</legend>
-        {preview.games.map((game) => <label key={game.gameId}>
-          <input type="checkbox" checked={selected.has(game.gameId)} onChange={(event) => {
-            setSelected((current) => {
-              const next = new Set(current);
-              if (event.target.checked) next.add(game.gameId);
-              else next.delete(game.gameId);
-              return next;
-            });
-          }} />
-          <span>{game.gameId} · {game.result}{game.hasDiscardedLines ? ' · includes undone lines' : ''}{game.practice ? ' · practice' : ''}{game.unsynced ? ' · unsynced' : ''}</span>
+    <h2 id="account-panel-title">{preview ? 'Import games' : 'Account'}</h2>
+    {preview ? <>
+      <p>Device copies stay.</p>
+      {preview.games.length === 0 ? <p>No games yet.</p> : <fieldset disabled={busy}>
+        <legend className="sr-only">Select games</legend>
+        {preview.games.slice(page, page + 1).map(game => <label key={game.gameId}>
+          <input type="checkbox" aria-label="Import this game" checked={selected.has(game.gameId)} onChange={event => setSelected(current => { const next = new Set(current); if (event.target.checked) next.add(game.gameId); else next.delete(game.gameId); return next; })} />
+          <span>{game.gameId}</span>
         </label>)}
       </fieldset>}
-      <div className="account-panel-actions">
-        <button type="button" onClick={() => void confirmImport()} disabled={busy || selected.size === 0}>Import selected games</button>
-        <button type="button" onClick={() => setPreview(null)} disabled={busy}>Cancel</button>
-      </div>
-    </div>}
-    {message && <p role="status" aria-live="polite">{message}</p>}
+      <div className="account-panel-actions"><IconButton icon="back" label="Previous game" disabled={page === 0 || busy} onClick={() => setPage(value => value - 1)} /><IconButton icon="next" label="Next game" disabled={page + 1 >= preview.games.length || busy} onClick={() => setPage(value => value + 1)} />
+        <button onClick={() => void confirmImport()} disabled={busy || selected.size === 0}>Import ({selected.size})</button><button onClick={() => setPreview(null)} disabled={busy}>Cancel</button></div>
+    </> : <>
+      {!session.enabled && <p>Play as guest.</p>}
+      {session.enabled && !identity && <>
+        {session.client?.user && <button onClick={() => void signOut()} disabled={busy}>Sign out</button>}
+        <button onClick={() => void signIn()} disabled={busy}>Continue with Google</button>
+      </>}
+      {identity && <div className="account-panel-actions">
+        {onOpenGames && <button onClick={onOpenGames} disabled={busy}>Games</button>}
+        {guestImport && <button onClick={() => { setPage(0); void beginImport(); }} disabled={busy}>Import</button>}
+        <button onClick={() => void signOut()} disabled={busy}>Sign out</button>
+      </div>}
+    </>}
+    {message && <p role="status">{message.startsWith('Selected guest games') ? 'Imported.' : 'Try again.'}</p>}
   </section>;
 }
 

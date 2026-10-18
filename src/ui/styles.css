@@ -275,3 +275,68 @@ textarea:focus-visible, summary:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+
+/* Focused screens share the board's existing palette and controls. */
+[hidden] { display: none !important; }
+.minimal-workspace { max-width: 820px; padding-inline: 24px; }
+.minimal-workspace .topbar { border: 0; margin-bottom: 6px; }
+.minimal-workspace .match-layout { display: block; max-width: min(680px, calc(100dvh - 310px)); margin-inline: auto; }
+.minimal-workspace .board-column { display: flex; flex-direction: column; }
+.minimal-workspace .player-row.black { order: 0; }
+.minimal-workspace .playing-board { order: 1; }
+.minimal-workspace .player-row.white { order: 2; }
+.minimal-workspace .history-controls { order: 3; margin-top: 10px; }
+.minimal-workspace .match-status { order: 4; }
+.minimal-workspace .error-message, .minimal-workspace .promotion-panel { order: 5; }
+.minimal-workspace .player-name { overflow: hidden; }
+.minimal-workspace .player-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.icon-button { width: 42px; height: 42px; flex: 0 0 42px; display: inline-grid; place-items: center; padding: 0; }
+.icon-button svg { display: block; }
+.minimal-workspace .history-controls .button-row { width: 100%; display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; }
+.match-status { display: flex; align-items: center; justify-content: space-between; min-height: 44px; gap: 12px; padding-inline: 8px; }
+.match-status > span { font-size: 13px; font-weight: 600; }
+.focus-page { max-width: 420px; margin: clamp(16px, 8dvh, 80px) auto 32px; padding: 0; border: 0; background: transparent; }
+.focus-page h2 { font-size: 22px; font-weight: 600; letter-spacing: -.02em; margin-block: 24px; }
+.focus-page .panel-heading h2 { margin-block: 12px 24px; }
+.focus-page .connection-form { display: flex; flex-direction: column; gap: 20px; }
+.focus-page .connection-form label, .focus-page .opponent-fields { display: flex; flex-direction: column; gap: 8px; }
+.focus-page .opponent-fields { padding: 0; margin: 0; border: 0; gap: 20px; min-width: 0; }
+.focus-page input, .focus-page select, .focus-page textarea { width: 100%; min-height: 46px; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); font: inherit; color: var(--ink); }
+.focus-page textarea { resize: vertical; font-family: ui-monospace, monospace; font-size: 12px; }
+.focus-page .sr-label { font-size: 0; gap: 0; }
+.focus-page .sr-label input, .focus-page .sr-label select, .focus-page .sr-label textarea { font-size: 14px; }
+.focus-page .connection-form > .button.primary { align-self: flex-start; }
+.focus-page .engine-setup { margin: 0; }
+.focus-page .feedback-inline { margin-block: 16px; min-height: 21px; overflow-wrap: anywhere; }
+.focus-page .disclosure-panel { padding: 0; background: transparent; border: 0; }
+.focus-page .disclosure-panel code { overflow-wrap: anywhere; font-size: 12px; }
+.focus-nav { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 24px; }
+.setup-dots { display: flex; gap: 8px; }
+.setup-dots i { width: 5px; height: 5px; background: var(--rule); border-radius: 50%; }
+.setup-dots i.active { background: var(--ink); }
+.focus-footer { display: flex; justify-content: flex-end; margin-top: 24px; }
+.seat-indicator { display: block; margin-block: 12px; }
+.editor-grid { width: 100%; max-width: none; }
+.editor-square img { width: 90%; height: 90%; object-fit: contain; }
+.archive-page { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.8; min-height: 120px; font: inherit; }
+.focus-page .fen-value { overflow-wrap: anywhere; }
+.board-inspection.sr-only:focus-within { clip: auto; margin: 0; position: static; width: auto; height: auto; clip-path: none; overflow: visible; white-space: normal; }
+input, textarea { caret-color: var(--green); }
+* { scrollbar-color: var(--rule) var(--paper); scrollbar-width: thin; }
+@media (max-width: 620px) {
+  .minimal-workspace { padding: 0 12px 20px; }
+  .minimal-workspace .match-layout { max-width: 100%; }
+  .minimal-workspace .topbar { gap: 8px; min-height: 58px; }
+  .minimal-workspace .topbar-actions { gap: 4px; }
+  .focus-page { margin-top: 20px; padding-inline: 8px; }
+  .focus-page input, .focus-page select, .focus-page textarea, .focus-page .sr-label select, .focus-page .sr-label textarea { font-size: 16px; }
+  .minimal-workspace .history-controls .icon-button { width: 36px; flex-basis: 36px; }
+}
+
+.status-heading { font-size: 13px; font-weight: 600; margin: 0; }
+
+.focus-page .opponent-panel { border: 0; background: transparent; margin-top: 0; padding: 0; }
+.minimal-workspace .topbar-actions { width: auto; margin-left: auto; flex-wrap: nowrap; }
+.minimal-workspace .topbar { flex-wrap: nowrap; }
+
+.focus-page .connection-form { align-items: stretch; }

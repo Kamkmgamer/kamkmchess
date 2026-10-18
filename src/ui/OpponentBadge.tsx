@@ -1,3 +1,4 @@
+import { Icon } from './Icon.js';
 import type { PlayerSelectionV1 } from '../storage/index.js';
 import { OPPONENT_BRANDS, resolveOpponentBrand } from './opponent-brand.js';
 
@@ -19,5 +20,5 @@ export function OpponentBadge({ player, side }: {
   readonly side: 'white' | 'black';
 }) {
   if (player.kind === 'model') return <OpponentLogo modelId={player.modelRoutingId} />;
-  return <span className={`player-badge ${side === 'white' ? 'light' : 'dark'}-piece`} aria-hidden="true">{side === 'white' ? 'W' : 'B'}</span>;
+  return <span className={`player-badge ${side === 'white' ? 'light' : 'dark'}-piece`} aria-hidden="true"><Icon name="account" /></span>;
 }

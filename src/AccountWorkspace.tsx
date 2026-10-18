@@ -1,3 +1,4 @@
+import { IconButton } from './ui/Icon.js';
 import { useEffect, useRef, useState } from 'react';
 import { accountGameDatabaseName, createAccountSession, createIndexedDbAccountData, readClerkRuntimeConfig } from './accounts/index.js';
 import type { AccountIdentity, AccountSession, GuestGameSummary } from './accounts/index.js';
@@ -35,6 +36,8 @@ async function releaseAccountCompositions(keep?: MatchComposition): Promise<void
 
 /** Mounted only by an explicitly configured account build. Guest startup stays local. */
 export function AccountWorkspace(initialView: WorkspaceView) {
+  const [accountPage, setAccountPage] = useState<'account' | 'games' | null>(null);
+  const [gamePage, setGamePage] = useState(0);
   const [guestView] = useState(initialView);
   const guestResumeView = useRef(guestView);
   const [session, setSession] = useState<AccountSession | null>(null);
@@ -228,27 +231,28 @@ export function AccountWorkspace(initialView: WorkspaceView) {
   }
 
   return <>
-    <details className="account-settings">
-      <summary>Account and saved games{view.composition.namespace.kind === 'account' ? ' · account game' : ' · guest game'}</summary>
-      {session ? <AccountPanel session={session} guestImport={repositories} onIdentityChanged={() => setRevision((value) => value + 1)} /> : <p>Loading optional account controls. Guest play remains available.</p>}
-      {identity && <div className="account-games">
+    {!accountPage && <div className="account-launcher"><IconButton icon="account" label="Account and saved games" onClick={() => setAccountPage('account')} /></div>}
+    {accountPage && <section className="focus-page account-workspace" aria-label="Account and saved games">
+      <div className="panel-heading"><IconButton icon="back" label="Back" onClick={() => setAccountPage('account')} disabled={accountPage === 'account'} /><IconButton icon="close" label="Close account" onClick={() => setAccountPage(null)} /></div>
+      {accountPage === 'account' ? session ? <AccountPanel session={session} guestImport={repositories} onIdentityChanged={() => setRevision(value => value + 1)} onOpenGames={() => { setGamePage(0); setAccountPage('games'); }} /> : <p>Loading…</p> : <>
+        <h2>Saved games</h2>
         <div className="account-actions">
-          <button className="button secondary" type="button" disabled={busy} onClick={() => void openAccountGame()}>Open account workspace</button>
-          <button className="button secondary" type="button" disabled={busy} onClick={() => void openGuestWorkspace()}>Use guest workspace</button>
-          <button className="button quiet" type="button" disabled={busy} onClick={() => setRevision((value) => value + 1)}>Refresh saved games</button>
+          <IconButton icon="plus" label="New account game" disabled={busy} onClick={() => void openAccountGame()} />
+          <IconButton icon="account" label="Guest workspace" disabled={busy} onClick={() => void openGuestWorkspace()} />
+          <IconButton icon="change" label="Refresh saved games" disabled={busy} onClick={() => setRevision(value => value + 1)} />
         </div>
-        <p>Sync sends the selected account game and its full archive to the configured storage API. AI credentials stay on this device.</p>
-        <ul>{games.map((game) => <li key={game.gameId}>
-          <span>{game.gameId} · {game.result}</span>
-          <button type="button" className="button quiet" disabled={busy} onClick={() => void openAccountGame(game.gameId)}>Open game</button>
-          <button type="button" className="button secondary" disabled={busy} onClick={() => void syncGame(game.gameId)}>Sync game</button>
-          {conflicts[game.gameId] && <button type="button" className="button secondary" disabled={busy} onClick={() => void syncGame(game.gameId, 'takeover')}>Take over the accepted cloud game</button>}
-        </li>)}</ul>
-        {games.length === 0 && <p>No account games on this device. Open the account workspace or import selected guest games.</p>}
-      </div>}
-      {message && <p role="status" aria-live="polite">{message}</p>}
-    </details>
-    <App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} />
+        {games.slice(gamePage, gamePage + 1).map(game => <div key={game.gameId}>
+          <p>{game.gameId}</p><p>{game.result}</p>
+          <div className="account-actions"><button disabled={busy} onClick={() => { void openAccountGame(game.gameId); setAccountPage(null); }}>Open</button><button disabled={busy} onClick={() => void syncGame(game.gameId)}>Sync</button>
+            {conflicts[game.gameId] && <button disabled={busy} onClick={() => void syncGame(game.gameId, 'takeover')}>Take over</button>}
+          </div>
+        </div>)}
+        {games.length === 0 && <p>No games yet.</p>}
+        <div className="account-actions"><IconButton icon="back" label="Previous game" disabled={gamePage === 0} onClick={() => setGamePage(value => value - 1)} /><IconButton icon="next" label="Next game" disabled={gamePage + 1 >= games.length} onClick={() => setGamePage(value => value + 1)} /></div>
+        {message && <p role="status">{busy ? 'Syncing…' : message.startsWith('Complete game') ? 'Synced.' : message.startsWith('Cloud history') ? 'Sync conflict. Choose continuation.' : message.startsWith('Account game opened') || message.startsWith('Guest workspace opened') || message.startsWith('The accepted cloud game') ? 'Opened.' : 'Sync failed. Retry.'}</p>}
+      </>}
+    </section>}
+    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} /></div>
   </>;
 }
 

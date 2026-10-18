@@ -1,3 +1,4 @@
+import { Icon, IconButton } from './Icon.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Chessground } from '@lichess-org/chessground';
 import type { Api } from '@lichess-org/chessground/api';
@@ -170,15 +171,15 @@ export function ChessBoard({ orientation, snapshot, disabled, onMove, view, prem
     <div className="board-frame">
       <div className="board-host cg-wrap" ref={host} role="img" aria-label="Chessboard. Use the coordinate move controls or inspect a square."
         onContextMenu={(event) => { event.preventDefault(); board.current?.cancelMove(); }} />
-      {premove && premoveColor && <div className="premove-notice" role="status">
-        <span>Premove {premove.from} to {premove.to} queued.</span>
-        <button className="button quiet" type="button" onClick={() => board.current?.cancelMove()}>Cancel premove</button>
-        <span className="muted">Escape or right-click also cancels.</span>
+      {premove && premoveColor && <div className="premove-notice" role="status" aria-label={`Premove ${premove.from} to ${premove.to} queued.`}>
+        <span className="sr-only">Premove</span>
+        <IconButton icon="close" label="Cancel premove" onClick={() => board.current?.cancelMove()} />
+
       </div>}
-      <p className="board-hint muted">Right-drag for green arrows; right-click for circles. Hold Shift for red, Control for blue, or Alt for amber.</p>
-      <details className="board-inspection">
-        <summary>Inspect or move with the keyboard</summary>
-        <p>Choose a square to inspect it. Choose a piece of the side to move, then its destination to play a move.</p>
+      <p className="sr-only">Right-drag for green arrows; right-click for circles. Hold Shift for red, Control for blue, or Alt for amber.</p>
+      <details className="board-inspection sr-only">
+        <summary aria-label="Keyboard board"><Icon name="board" /></summary>
+        <p className="sr-only">Choose a square to inspect it. Choose a piece of the side to move, then its destination to play a move.</p>
         <div className="square-grid">
           {Array.from({ length: 64 }, (_, index) => {
             const square = ('abcdefgh'[index % 8] + String(8 - Math.floor(index / 8))) as Square;
