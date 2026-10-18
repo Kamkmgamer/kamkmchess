@@ -1,6 +1,6 @@
 import { modelConfigurationIdentity } from '../controller/index.js';
 import type { ControllerFenceV1, ControllerSnapshotV1, GameController, ModelTurnInterruptionReasonV1 } from '../controller/index.js';
-import { composeHistoryReplay, checkReplayCapacity, accountUsage } from '../history-cost/index.js';
+import { composeMoveInput, checkReplayCapacity, accountUsage, createThinkingRecord, latestThinking } from '../history-cost/index.js';
 import type { ReplayCapacityLimitsV1 } from '../history-cost/index.js';
 import { createTurnBudgets, decideCompletedAnswer } from '../moves/index.js';
 import type { TurnBudgetsV1 } from '../moves/index.js';
@@ -100,22 +100,15 @@ export async function runGenerationTurn(options: GenerationRunnerOptions): Promi
     const clock = started.request.clockReading;
     if (clock.status !== 'running') throw new Error('The model turn has no running clock reading.');
     const position = started.request.position;
-    const replay = composeHistoryReplay(started.snapshot.checkpoint.history, options.instructions, {
+    const currentBudgets = persistedBudgets(started.snapshot, fence.side);
+    const previousThinking = latestThinking(started.snapshot.checkpoint.history, started.snapshot.checkpoint.rules);
+    const replay = composeMoveInput(started.snapshot.checkpoint.rules, options.instructions, {
       snapshotId: requestId,
-      fen: position.fen,
-      pieces: position.pieces.map((piece) => ({
-        square: piece.square,
-        piece: `${piece.color === 'w' ? 'white' : 'black'}-${piece.type}`,
-        color: piece.color === 'w' ? 'white' : 'black',
-      })),
-      sideToMove: position.sideToMove === 'w' ? 'white' : 'black',
-      colors: { white: 'white', black: 'black' },
+      budgets: currentBudgets,
+      ...(previousThinking === undefined ? {} : { previousThinking }),
       clock: {
-        sampledAtMs: clock.evidence.observedAt.wallTimeMs,
         whiteMs: clock.remaining.whiteMs,
         blackMs: clock.remaining.blackMs,
-        activeSide: clock.activeSide,
-        startingTimeMs: started.snapshot.checkpoint.clocks.timeControl.startingTimeMs,
         incrementMs: started.snapshot.checkpoint.clocks.timeControl.incrementMs,
       },
     });
@@ -193,7 +186,6 @@ export async function runGenerationTurn(options: GenerationRunnerOptions): Promi
       dispatch = await interrupt(options.controller, fence, reason);
       return resultInterrupted(requestId, reason, protocolResult, dispatch, now(), undefined, protocol, persistence);
     }
-    const currentBudgets = persistedBudgets(started.snapshot, fence.side);
     const effect = decideCompletedAnswer({
       budgets: currentBudgets,
       position,
@@ -297,7 +289,7 @@ async function readBody(body: ReadableStream<Uint8Array>, decoder: ProtocolStrea
   }
 }
 
-function encode(protocol: ProviderProtocol, history: ReturnType<typeof composeHistoryReplay>['history'], config: ProtocolGenerationConfig) {
+function encode(protocol: ProviderProtocol, history: ReturnType<typeof composeMoveInput>['history'], config: ProtocolGenerationConfig) {
   switch (protocol) {
     case 'chat-completions': return encodeChatCompletionsRequest(history, config);
     case 'responses': return encodeResponsesRequest(history, config);
@@ -395,6 +387,8 @@ function messagesFromResult(_instructions: string, result: ProtocolStreamResult,
   ] as const) {
     if (content.length > 0) messages.push({ role, content } as HistoryMessageV1);
   }
+  const thinking = createThinkingRecord(currentInput, result);
+  if (thinking !== null) messages.push({ role: 'assistant', content: thinking } as HistoryMessageV1);
   const opaque = {
     protocol: result.protocol,
     unknownEvents: result.unknownEvents,

@@ -437,7 +437,9 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
             setGenerationState(abort!.signal.aborted ? 'stopped' : 'failed');
             setGenerationDetail(result.kind === 'interrupted'
               ? result.detail ?? `Generation ${result.reason}. The clock continued.`
-              : 'The complete conversation exceeds the destination capacity. Retry or start a new game.');
+              : result.capacity.status === 'rejected' && result.capacity.reason === 'capacity-unverifiable'
+                ? 'The request token capacity could not be verified for this model.'
+                : 'The chess position request exceeds the configured request limit. Choose another model or start a new game.');
           } else {
             setGenerationState('failed');
             setGenerationDetail(result.kind === 'not-started' ? statusLabel(result.snapshot) : 'The model reply was not accepted. Use Retry or Switch.');

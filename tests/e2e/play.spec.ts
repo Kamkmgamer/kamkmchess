@@ -7,15 +7,15 @@ const endpoint = 'https://offline-chess.example/v1';
 interface FixtureProvider {
   readonly calls: unknown[];
   readonly modelCalls: unknown[];
-  readonly respond: (route: Route, answer: string) => Promise<void>;
+  readonly respond: (route: Route, answer: string, reasoning?: string) => Promise<void>;
 }
 
 async function provider(page: Page, moves: readonly string[], intercept?: (route: Route, index: number, fixture: FixtureProvider) => Promise<void>, apiEndpoint = endpoint): Promise<FixtureProvider> {
   const calls: unknown[] = [];
   const modelCalls: unknown[] = [];
-  const respond = async (route: Route, answer: string) => {
+  const respond = async (route: Route, answer: string, reasoning?: string) => {
     const frames = [
-      { model: 'offline-fixture', choices: [{ index: 0, delta: { content: answer }, finish_reason: null }] },
+      { model: 'offline-fixture', choices: [{ index: 0, delta: { content: answer, ...(reasoning === undefined ? {} : { reasoning_content: reasoning }) }, finish_reason: null }] },
       { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 25, completion_tokens: 8, prompt_tokens_details: { cached_tokens: 0 } } },
     ].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join('') + 'data: [DONE]\n\n';
     await route.fulfill({ status: 200, contentType: 'text/event-stream', body: frames, headers: { 'access-control-allow-origin': '*' } }).catch(() => undefined);
@@ -77,7 +77,9 @@ const movesOnBoard = (page: Page) => page.getByRole('list', { name: 'Committed m
 test('finishes a legal AI match, preserves plans, restores its result and fits mobile', async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  const fixture = await provider(page, ['e7e5', 'b8c6', 'g8f6']);
+  const fixture = await provider(page, [], async (route, index, mock) => {
+    await mock.respond(route, JSON.stringify({ move: ['e7e5', 'b8c6', 'g8f6'][index], plan: `retained plan ${index + 1}` }), `retained reasoning ${index + 1}`);
+  });
   await page.goto('/');
   await configure(page);
   for (const [coordinate, count] of [['e2e4', 2], ['d1h5', 4], ['f1c4', 6]] as const) {
@@ -88,6 +90,16 @@ test('finishes a legal AI match, preserves plans, restores its result and fits m
   await expect(page.getByRole('heading', { name: 'White wins', exact: true })).toBeVisible();
   expect(fixture.calls).toHaveLength(4);
   expect(JSON.stringify(fixture.modelCalls[1])).toContain('retained plan 1');
+  expect(JSON.stringify(fixture.modelCalls[1])).toContain('retained reasoning 1');
+  expect(JSON.stringify(fixture.modelCalls[1])).toContain('e4 e5 Qh5');
+  expect(JSON.stringify(fixture.modelCalls[2])).toContain('retained plan 2');
+  expect(JSON.stringify(fixture.modelCalls[2])).not.toContain('retained plan 1');
+  expect(JSON.stringify(fixture.modelCalls[2])).toContain('retained reasoning 2');
+  expect(JSON.stringify(fixture.modelCalls[2])).not.toContain('retained reasoning 1');
+  for (const call of fixture.modelCalls) {
+    expect(new TextEncoder().encode(JSON.stringify(call)).byteLength).toBeLessThan(2_000);
+    expect(JSON.stringify(call)).not.toContain('opaque-provider-record');
+  }
   await page.reload();
   await expect(page.getByRole('heading', { name: 'White wins', exact: true })).toBeVisible();
   await expect(movesOnBoard(page)).toHaveCount(7);
@@ -135,7 +147,7 @@ test('Stop fences a delayed reply and Retry remains an explicit new request', as
 });
 
 test('Undo keeps the discarded conversation and the same model can start another game', async ({ page }) => {
-  await provider(page, ['e7e5']);
+  const fixture = await provider(page, ['e7e5', 'd7d5']);
   await page.goto('/');
   await configure(page);
   await move(page, 'e2e4');
@@ -145,6 +157,11 @@ test('Undo keeps the discarded conversation and the same model can start another
   await expect(movesOnBoard(page)).toHaveCount(0);
   await page.getByText('Match conversation and archive', { exact: true }).click();
   await expect(page.locator('.conversation-row.discarded').filter({ hasText: 'retained plan 1' }).first()).toBeVisible();
+  await move(page, 'd2d4');
+  await expect(movesOnBoard(page)).toHaveCount(2);
+  expect(JSON.stringify(fixture.modelCalls[1])).toContain('d4');
+  expect(JSON.stringify(fixture.modelCalls[1])).not.toContain('e4 e5');
+  expect(JSON.stringify(fixture.modelCalls[1])).not.toContain('retained plan 1');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Saved connection').selectOption({ label: 'Offline fixture · Custom endpoint' });
   await page.getByLabel('Exact model routing ID').fill('offline-fixture');
@@ -197,20 +214,27 @@ test('reload requires an explicit compatibility recheck before the next model re
   await expect(movesOnBoard(page)).toHaveCount(4);
   expect(fixture.modelCalls).toHaveLength(2);
   expect(JSON.stringify(fixture.modelCalls[1])).toContain('retained plan 1');
+  expect(JSON.stringify(fixture.modelCalls[1])).toContain('e4 e5 Qh5');
 });
 
-test('automatically corrects malformed and illegal replies with retained feedback', async ({ page }) => {
+test('corrects malformed and illegal replies with current-turn feedback only', async ({ page }) => {
   const fixture = await provider(page, [], async (route, index, mock) => {
-    await mock.respond(route, ['I prefer the center.', '{"move":"e7e4"}', '{"move":"e7e5"}'][index] ?? '{"resign":true}');
+    await mock.respond(route, ['I prefer the center.', '{"move":"e7e4"}', '{"move":"e7e5"}', '{"move":"g8f6"}'][index] ?? '{"resign":true}');
   });
   await page.goto('/');
   await configure(page);
   await move(page, 'e2e4');
   await expect(movesOnBoard(page)).toHaveCount(2);
   expect(fixture.modelCalls).toHaveLength(3);
-  expect(JSON.stringify(fixture.modelCalls[1])).toContain('Your last message did not contain a move');
+  expect(JSON.stringify(fixture.modelCalls[1])).toContain('invalid move format');
+  expect(JSON.stringify(fixture.modelCalls[1])).not.toContain('I prefer the center.');
   expect(JSON.stringify(fixture.modelCalls[2])).toContain('e7e4');
   await expect(page.getByRole('heading', { name: 'White to move', exact: true })).toBeVisible();
+  await move(page, 'g1f3');
+  await expect(movesOnBoard(page)).toHaveCount(4);
+  expect(JSON.stringify(fixture.modelCalls[3])).toContain('e4 e5 Nf3');
+  expect(JSON.stringify(fixture.modelCalls[3])).not.toContain('e7e4');
+  expect(JSON.stringify(fixture.modelCalls[3])).not.toContain('formatCorrection');
 });
 
 test('pauses after the formatting budget and sends another request only on Retry', async ({ page }) => {

@@ -1,5 +1,7 @@
 # MVP specification handoff
 
+The owner's 2026-10-18 [compact model input amendment](compact-model-input.md) supersedes the full-transcript replay requirements below. Model requests now contain chess state, current-turn feedback and the latest plan and returned reasoning for that side; complete provider traffic remains archived.
+
 Revision 2, updated on 2026-10-16 after the owner changed the account and hosting stack. Revision 1 remains the source for product behavior except where this revision changes the stack. The original approval is recorded in [Agree on MVP acceptance criteria and the specification handoff](https://linear.app/kamkm/issue/KHA-14/agree-on-mvp-acceptance-criteria-and-the-specification-handoff), resolution comment `3bcd24a7-2bd5-43fb-8a35-095bac2575f2`; the stack amendment is recorded on [Choose the application architecture and data boundaries](https://linear.app/kamkm/issue/KHA-13/choose-the-application-architecture-and-data-boundaries).
 
 This packet defines the approved implementation scope and the evidence needed before launch. The owner approved the reviewed content at commit `35444e0`; the attached review snapshots retain their original pending wording. Revision 2 changes the account and hosting stack only. Every product acceptance case in [the machine-readable matrix](mvp-acceptance.json) is `not_run`. Research and specification approval do not pass those cases.

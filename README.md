@@ -1,6 +1,8 @@
 # kamkm chess
 
-Chess against AI models that choose their own moves. The Classic workspace supports local two-player games and browser-direct AI opponents, with device-local saves, continuous clocks, explicit connection diagnostics, full retained conversation, Undo archives, and request recovery. Optional account storage remains disabled until its deployment is configured and verified.
+Chess against AI models that choose their own moves. The Classic workspace supports local two-player games and browser-direct AI opponents, with device-local saves, continuous clocks, explicit connection diagnostics, compact chess requests, complete conversation archives, Undo, and request recovery. Optional account storage remains disabled until its deployment is configured and verified.
+
+Each model move receives the current FEN and side, starting FEN with SAN move history, remaining clocks and increment, repeated-position counts when relevant, current-turn retry feedback, and the latest plan and returned reasoning for that side. Replies are asked to include a brief plan for the next turn. This rolling memory survives reloads and follows Undo; raw provider traffic and older thinking stay in the archive. Existing saved games use the same compact requests. See [model input policy](docs/spec/compact-model-input.md).
 
 To play through CLIProxyAPI, choose **New game** and AI mode. CLIProxyAPI is preselected with `http://127.0.0.1:8317/v1`. Enter your proxy API key and exact **Model ID**, then choose **Connect and use model**. Accept the destination disclosure to send one compatibility check. After it passes, choose **Start game**. A bare proxy origin gains `/v1`; existing path prefixes and pasted Chat Completions URLs are preserved. Advanced settings include authentication and protocol overrides. Choose authentication **None** only if your proxy is deliberately configured without a key.
 
@@ -43,7 +45,7 @@ Browser files are in `dist/`. The build includes the application license and pro
 
 Vitest runs offline fixtures for strict rules, clock calculations, proof checking and search, archive validation, local storage, provider connections and protocols, and serialized controller decisions. A missing fixture suite fails the test command. Fixture coverage does not certify native browser or product acceptance. See [the fixture guide](tests/README.md), [KHA-29 controller evidence](docs/implementation/KHA-29-controller-evidence.md), [KHA-31 proof-search evidence](docs/implementation/KHA-31-evidence.md), [KHA-34 connection API](docs/implementation/KHA-34-api.md) and [evidence](docs/implementation/KHA-34-evidence.md), and [KHA-35 protocol-core evidence](docs/implementation/KHA-35-evidence.md).
 
-The browser suite verifies a full legal game through checkmate and reload, retained plans on later requests, Black-side starts and practice, Stop/Retry, Undo retention, and another game with the same model. It also exercises queued model changes and explicit connection rechecks after reload. Browser and Go CI run automatically for pull requests and `main`. Native screen readers, real provider routes, and hosted account storage still require separate acceptance runs.
+The browser suite verifies a full legal game through checkmate and reload, compact requests with archived plans, Black-side starts and practice, Stop/Retry, Undo retention, and another game with the same model. It also exercises queued model changes and explicit connection rechecks after reload. Browser and Go CI run automatically for pull requests and `main`. Native screen readers, real provider routes, and hosted account storage still require separate acceptance runs.
 
 ## Implementation references
 

@@ -3,7 +3,6 @@ import { IDBFactory } from 'fake-indexeddb';
 import type { CoordinateMove } from '../rules/index.js';
 import { createTurnBudgets, decideModelTurn } from '../moves/index.js';
 import type { ModelTurnDecision } from '../moves/index.js';
-import { composeHistoryReplay } from '../history-cost/history.js';
 import { validateGameArchive } from '../archive/index.js';
 import { openGameStore } from '../storage/index.js';
 import { getOrCreateGameController, modelConfigurationIdentity, prepareOwnershipTakeover } from './index.js';
@@ -1163,20 +1162,12 @@ describe('game controller setup', () => {
       const feedback = firstAttemptSnapshot?.checkpoint.history.messages.at(-1);
       expect(feedback).toMatchObject({ role: 'user', content: feedbackText, disposition: 'retained' });
       expect(feedback?.eventIds).toHaveLength(1);
-      const replay = composeHistoryReplay(firstAttemptSnapshot!.checkpoint.history, 'Play one legal move.', {
-        snapshotId: 'retry-after-illegal-feedback', fen: firstAttemptSnapshot!.position.fen,
-        pieces: firstAttemptSnapshot!.position.pieces.map((piece) => ({ square: piece.square,
-          piece: `${piece.color === 'w' ? 'white' : 'black'}-${piece.type}`, color: piece.color === 'w' ? 'white' as const : 'black' as const })),
-        sideToMove: firstAttemptSnapshot!.position.sideToMove === 'w' ? 'white' : 'black', colors: { white: 'white', black: 'black' },
-        clock: { sampledAtMs: 2_010, whiteMs: 30_000, blackMs: 30_000, activeSide: 'white', startingTimeMs: 30_000, incrementMs: 0 },
-      });
-      expect(replay.history.records.some((record) => record.text.includes(feedbackText))).toBe(true);
     } finally {
       store.close();
     }
   });
 
-  it('persists formatting corrections in replay history and pauses after three automatic corrections', async () => {
+  it('archives formatting corrections and pauses after three automatic corrections', async () => {
     const testId = 'controller-format-correction-feedback';
     let decisionTimeMs = 2_000;
     const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
@@ -1207,14 +1198,6 @@ describe('game controller setup', () => {
       }
       const feedback = firstCorrectionSnapshot!.checkpoint.history.messages.at(-1);
       expect(feedback).toMatchObject({ role: 'user', content: 'Your last message did not contain a move. Reply with one JSON object such as {"move":"e2e4"} using four coordinate squares, or {"resign":true} to resign. Do not send prose without a Move line.', disposition: 'retained' });
-      const replay = composeHistoryReplay(firstCorrectionSnapshot!.checkpoint.history, 'Play one legal move.', {
-        snapshotId: 'retry-after-format-feedback', fen: firstCorrectionSnapshot!.position.fen,
-        pieces: firstCorrectionSnapshot!.position.pieces.map((piece) => ({ square: piece.square,
-          piece: `${piece.color === 'w' ? 'white' : 'black'}-${piece.type}`, color: piece.color === 'w' ? 'white' as const : 'black' as const })),
-        sideToMove: firstCorrectionSnapshot!.position.sideToMove === 'w' ? 'white' : 'black', colors: { white: 'white', black: 'black' },
-        clock: { sampledAtMs: 2_010, whiteMs: 30_000, blackMs: 30_000, activeSide: 'white', startingTimeMs: 30_000, incrementMs: 0 },
-      });
-      expect(replay.history.records.some((record) => record.text.includes('Your last message did not contain a move.'))).toBe(true);
       expect(snapshot.checkpoint.history.messages.filter((message) => message.role === 'user')).toHaveLength(4);
     } finally {
       store.close();

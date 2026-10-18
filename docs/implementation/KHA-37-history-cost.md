@@ -1,5 +1,7 @@
 # KHA-37 implementation evidence
 
+The owner's 2026-10-18 [compact model input policy](../spec/compact-model-input.md) supersedes the full-history composition described in this original evidence. `composeMoveInput` now builds one chess-state message with the latest available plan and returned reasoning for the playing side. The archive path and usage accounting remain in place. Current fixtures verify all three destination encoders, current-turn feedback, custom starts and repetition state, archive preservation, and a request below 1 KB despite a saved raw transcript above 1 MB. Integration and browser fixtures verify that the latest thinking survives reload, follows Undo, and replaces older thinking without replaying raw provider records.
+
 Implementation code and deterministic tests for full retained-history composition, provider-specific prompt-cache request controls, capacity rejection, and native usage accounting. The request/stream archive path is now wired through `src/integration/generation-runner.ts` and the serialized controller archive method.
 
 ## Method

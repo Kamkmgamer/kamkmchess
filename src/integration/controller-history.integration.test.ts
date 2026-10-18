@@ -4,12 +4,11 @@ import { checkProofEvidence, PROOF_CHECKER_VERSION, RULES_ADAPTER_VERSION } from
 import type { ProofEvidence } from '../proofs/index.js';
 import { createTurnBudgets, decideModelTurn, classifyCompletedAnswer } from '../moves/index.js';
 import { openGameStore } from '../storage/index.js';
-import type { HistoryCheckpointV1 } from '../storage/index.js';
 import { getOrCreateGameController } from '../controller/index.js';
 import type { GameController, GameControllerSetupV1, ModelSelection } from '../controller/index.js';
 import type { ControllerSnapshotV1 } from '../controller/index.js';
 import type { CoordinateMove } from '../rules/index.js';
-import { composeHistoryReplay } from '../history-cost/index.js';
+import { composeMoveInput, latestThinking } from '../history-cost/index.js';
 import { getGenerationJournal, runGenerationTurn } from './generation-runner.js';
 import { createConnectionProfile, openConnectionStore } from '../providers/connections/index.js';
 import type { ProtocolStreamDecoder, ProtocolStreamResult, ProviderProtocol } from '../providers/protocols/index.js';
@@ -260,57 +259,27 @@ describe('controller and retained history integration seams', () => {
     }
   }, 30_000);
 
-  it('replays retained records from a nullable guest segment as attributed text', async () => {
+  it('composes local-game chess state without needing a provider conversation segment', async () => {
     const gameId = 'integration-nullable-local-history';
     const { store, controller } = await createController(gameId, () => 3_000);
     try {
       const ready = await acceptInitialPositionClassification(controller);
       const started = await startClassifiedLocalGame(controller, ready);
-      const segment = started.checkpoint.history.segments[0];
-      if (!segment) throw new Error('Expected the local history segment.');
-      const localHistory: HistoryCheckpointV1 = {
-        currentSegmentId: segment.segmentId,
-        segments: [{ ...segment, messageIds: ['local-note'] }],
-        messages: [{
-          messageId: 'local-note',
-          segmentId: segment.segmentId,
-          lineId: started.checkpoint.archive.currentLine.lineId,
-          role: 'assistant',
-          content: 'local player note',
-          eventIds: [],
-          disposition: 'retained',
-        }],
-      };
-      const replay = composeHistoryReplay(localHistory, 'Current move instructions.', {
+      const input = composeMoveInput(started.checkpoint.rules, 'Current move instructions.', {
         snapshotId: 'current-position',
-        fen: started.position.fen,
-        pieces: [],
-        sideToMove: started.position.sideToMove === 'w' ? 'white' : 'black',
-        colors: { white: 'human', black: 'human' },
-        clock: {
-          sampledAtMs: 3_000,
-          whiteMs: 60_000,
-          blackMs: 60_000,
-          activeSide: 'white',
-          startingTimeMs: 60_000,
-          incrementMs: 0,
-        },
+        clock: { whiteMs: 60_000, blackMs: 60_000, incrementMs: 0 },
+        budgets: createTurnBudgets(),
       });
-      const prior = JSON.parse(replay.history.records[0]?.text ?? '{}') as Record<string, unknown>;
-      expect(prior).toMatchObject({
-        kind: 'retained-match-record',
-        sourceRole: 'assistant',
-        content: 'local player note',
-        providerId: null,
-        modelRoutingId: null,
+      expect(input.history.records).toHaveLength(1);
+      expect(JSON.parse(input.history.records[0]!.text)).toMatchObject({
+        kind: 'current-match-input', fen: started.position.fen, sideToMove: 'white', moves: '',
       });
-      expect(replay.history.records.at(-1)?.text).toContain('current-position');
     } finally {
       store.close();
     }
   }, 15_000);
 
-  it('persists failed and completed provider turns, replays the first plan after reload, and discards it on Undo', async () => {
+  it('archives provider turns and carries the latest complete thinking without raw records', async () => {
     const gameId = 'integration-durable-generation-history';
     const factory = new IDBFactory();
     const now = () => 5_000;
@@ -389,6 +358,9 @@ describe('controller and retained history integration seams', () => {
       expect(second).toMatchObject({ kind: 'completed', dispatch: 'accepted' });
       expect(requestBodies[2]).toContain('first plan');
       expect(requestBodies[2]).toContain('first reasoning');
+      expect(requestBodies[2]).not.toContain('partial reasoning');
+      expect(requestBodies[2]).not.toContain('opaque-provider-record');
+      expect(requestBodies[2]).toContain('e4 e5');
       expect(requestBodies[2]).toContain('rnbqkbnr/pppp1ppp/8/4p3');
       expect(requestBodies[2]).toContain('current-match-input');
       expect(requestBodies[0]).not.toContain('fixture-private-secret');
@@ -407,6 +379,8 @@ describe('controller and retained history integration seams', () => {
       try {
         const restored = await restoredStore.readGame(gameId);
         expect(restored?.checkpoint.history.messages.find((message) => message.content === 'first plan')?.disposition).toBe('retained');
+        expect(latestThinking(restored!.checkpoint.history, { ...restored!.checkpoint.rules, sideToMove: 'white' }))
+          .toMatchObject({ plan: 'second plan', reasoning: 'second reasoning', move: 'g1f3' });
         expect(getGenerationJournal(restored!).retainedEvents.filter((event) => event.kind === 'model-request-persisted')).toHaveLength(3);
         expect(restored?.checkpoint.archive.egressStatus).toBe('credential-echo-quarantined');
       } finally {
