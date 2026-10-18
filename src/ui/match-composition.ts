@@ -7,6 +7,7 @@ import { OpponentService } from '../opponents/index.js';
 import { runGenerationTurn } from '../integration/index.js';
 import type { GenerationRunResult } from '../integration/index.js';
 import type { StoredGameV1 } from '../storage/index.js';
+import type { PlayerSelectionV1 } from '../storage/index.js';
 import { openGameStore } from '../storage/index.js';
 import type { GameStore } from '../storage/index.js';
 
@@ -15,6 +16,7 @@ const storePromise = openGameStore();
 const connectionStorePromise = openConnectionStore();
 
 export interface LocalGameOptions {
+  readonly players?: Record<'white' | 'black', PlayerSelectionV1>;
   readonly humanSide?: HumanSideChoice;
   readonly modelSelection?: ModelSelection;
   readonly startingFen?: string;
@@ -266,6 +268,7 @@ export class MatchComposition {
     const incrementSeconds = options.incrementSeconds ?? DEFAULT_TIME_CONTROL.incrementMs / 1_000;
     return {
       humanSide: options.humanSide ?? 'white',
+      ...(options.players === undefined ? {} : { players: options.players }),
       ...(options.modelSelection === undefined ? {} : { modelSelection: options.modelSelection }),
       namespace: this.namespace,
       ownershipEpoch: 0,

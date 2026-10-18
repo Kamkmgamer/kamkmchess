@@ -12,6 +12,12 @@ import type { EditorPiece } from './position-editor.js';
 import type { LocalGameSession, MatchComposition } from './match-composition.js';
 import { T3_PALETTES } from './t3-palettes.js';
 import { OpponentPanel } from './OpponentPanel.js';
+import { EnginePanel } from './EnginePanel.js';
+import { composePlayers, MATCH_MODES, seatKinds } from './match-modes.js';
+import type { MatchMode } from './match-modes.js';
+import { isEngineSelection, runEngineTurn } from '../engines/local.js';
+import { BROWSER_ENGINES } from '../engines/browser.js';
+import { engineSettings } from '../engines/local.js';
 import { matchesOpponentSelection } from './opponent-selection.js';
 import { getGenerationJournal } from '../integration/generation-runner.js';
 import type { GenerationJournalV1 } from '../integration/generation-runner.js';
@@ -85,7 +91,11 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   const [editorPiece, setEditorPiece] = useState<EditorPiece>('wp');
   const [setupError, setSetupError] = useState('');
   const [working, setWorking] = useState(false);
-  const [matchMode, setMatchMode] = useState<'local' | 'ai'>('local');
+  const [matchMode, setMatchMode] = useState<MatchMode>('local');
+  const [engineSide, setEngineSide] = useState<'white' | 'black'>('white');
+  const [engineSeats, setEngineSeats] = useState<Record<'white' | 'black', ModelSelection | null>>({ white: null, black: null });
+  const [aiSeats, setAiSeats] = useState<Record<'white' | 'black', ModelSelection | null>>({ white: null, black: null });
+  const checkedIdentities = useRef(new Map<string, OpponentIdentityV1>());
   const [humanSide, setHumanSide] = useState<'white' | 'black' | 'random'>('white');
   const [modelSelection, setModelSelection] = useState<ModelSelection | null>(null);
   const [opponentIdentity, setOpponentIdentity] = useState<OpponentIdentityV1 | null>(null);
@@ -103,6 +113,13 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   const generationFenceKey = useRef('');
   const sessionRef = useRef(session);
   const setupReturnFocus = useRef<HTMLElement | null>(null);
+  const setupKinds = seatKinds(matchMode, 'white', engineSide);
+  const setupSelections: Record<'white' | 'black', ModelSelection | null> = matchMode === 'ai' ? { white: null, black: modelSelection }
+    : matchMode === 'human-engine' ? { white: null, black: engineSeats.black }
+      : { white: setupKinds.white === 'engine' ? engineSeats.white : aiSeats.white,
+        black: setupKinds.black === 'engine' ? engineSeats.black : aiSeats.black };
+  const setupReady = matchMode === 'local' || (matchMode === 'ai' || matchMode === 'human-engine'
+    ? setupSelections.black !== null : setupSelections.white !== null && setupSelections.black !== null);
   const refresh = useCallback((next: ControllerSnapshotV1) => {
     setSnapshot(next);
     if (next.checkpoint.result.kind === 'final') setFeedback(statusLabel(next));
@@ -192,7 +209,8 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
     const players = current.checkpoint.selections.players;
     const selection = players.white.kind === 'model' ? players.white : players.black.kind === 'model' ? players.black : undefined;
     if (selection && selection.diagnostic !== 'passed-current-session') return;
-    void startClassifiedLocalGame(session.controller, current, selection).then(refresh).catch(error => {
+    if (Object.values(players).some(player => player.kind === 'model' && player.diagnostic !== 'passed-current-session')) return;
+    void startClassifiedLocalGame(session.controller, current).then(refresh).catch(error => {
       setFeedback(error instanceof Error ? error.message : 'The game could not start.');
     });
   }, [session, refresh, snapshot.checkpoint.result.kind, snapshot.checkpoint.clocks.activeSide]);
@@ -237,7 +255,16 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
         let service: Awaited<typeof composition.opponentService> | null = null;
         let continueAutomatically = false;
         try {
-          const identities = [opponentIdentity, handoff.producing, handoff.queued?.identity, handoff.committed];
+          if (isEngineSelection(queuedSelection)) {
+            setGenerationDetail('The local chess engine is choosing a move. Its clock keeps running.');
+            const accepted = await runEngineTurn(session.controller, abort!.signal);
+            if (sessionRef.current.gameId !== session.gameId) return;
+            setGenerationState(accepted ? 'idle' : 'failed');
+            setGenerationDetail(accepted ? 'Engine move saved locally.' : 'Engine move was not accepted. Check the match status and retry.');
+            setJournalRefresh(revision => revision + 1);
+            return;
+          }
+          const identities = [...checkedIdentities.current.values(), opponentIdentity, handoff.producing, handoff.queued?.identity, handoff.committed];
           const identity = identities.find((candidate) => matchesOpponentSelection(candidate, queuedSelection)) ??
             identities.find((candidate) => matchesOpponentSelection(candidate, selection)) ?? null;
           if (!identity) {
@@ -399,7 +426,9 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   };
 
   const revalidateSavedOpponent = async (selection: ModelSelection, identity: OpponentIdentityV1) => {
-    const saved = snapshot.checkpoint.selections.players.white.kind === 'model'
+    const saved = snapshot.checkpoint.selections.players.white.kind === 'model' && snapshot.checkpoint.selections.players.black.kind === 'model'
+      ? snapshot.checkpoint.selections.players[sideKey]
+      : snapshot.checkpoint.selections.players.white.kind === 'model'
       ? snapshot.checkpoint.selections.players.white
       : snapshot.checkpoint.selections.players.black.kind === 'model'
         ? snapshot.checkpoint.selections.players.black : snapshot.checkpoint.selections.players[sideKey];
@@ -431,6 +460,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
       }
     }
     setModelSelection(selection);
+    checkedIdentities.current.set(JSON.stringify(selection), identity);
     setOpponentIdentity(identity);
     setRecoveryOpen(false);
     if (!final) setAutoGeneration(true);
@@ -465,10 +495,10 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   const createNewGame = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSetupError('');
-    if (matchMode === 'ai' && modelSelection === null) {
-      setSetupError('Choose a connection and pass its explicit compatibility check before starting an AI match.');
-      return;
-    }
+    let configuredPlayers;
+    try {
+      configuredPlayers = composePlayers(matchMode, humanSide, engineSide, setupSelections);
+    } catch (error) { setSetupError(error instanceof Error ? error.message : 'Check both opponents before starting.'); return; }
     let startingFen: string | undefined;
     if (setupFen.trim()) {
       try { startingFen = parsePosition(setupFen.trim()).fen; }
@@ -480,8 +510,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
     setWorking(true);
     try {
       const nextSession = await composition.startNewLocalGame({
-        humanSide: matchMode === 'ai' ? humanSide : 'white',
-        ...(matchMode === 'ai' && modelSelection ? { modelSelection } : {}),
+        players: configuredPlayers,
         ...(startingFen === undefined ? {} : { startingFen }),
         startingTimeMinutes: setupMinutes, incrementSeconds: setupIncrement,
       });
@@ -497,9 +526,9 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
       setGenerationDetail('');
       setJournalRefresh((revision) => revision + 1);
       setRecoveryOpen(false);
-      const started = await startClassifiedLocalGame(nextSession.controller, nextSession.controller.snapshot(), matchMode === 'ai' ? modelSelection ?? undefined : undefined);
+      const started = await startClassifiedLocalGame(nextSession.controller, nextSession.controller.snapshot());
       refresh(started);
-      setOrientation(started.checkpoint.selections.players.white.kind === 'human' ? 'white' : 'black');
+      setOrientation(started.checkpoint.selections.players.white.kind === 'model' && started.checkpoint.selections.players.black.kind === 'human' ? 'black' : 'white');
       if (matchMode === 'ai' && opponentIdentity) {
         const service = await composition.opponentService;
         service.setCommittedSelection(opponentIdentity);
@@ -594,6 +623,10 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   const isModelTurn = activePlayer.kind === 'model';
   const disabled = history.reviewing || promotion !== null || isLocalBoardInputDisabled(snapshot, working || isModelTurn || generationState === 'producing');
   const players = snapshot.checkpoint.selections.players;
+  const spectator = players.white.kind === 'model' && players.black.kind === 'model';
+  const usesLlm = Object.values(players).some(player => player.kind === 'model' && !isEngineSelection(player));
+  const engineTurn = isEngineSelection(activePlayer);
+  const recoverySelection = spectator ? activePlayer : players.white.kind === 'model' ? players.white : players.black;
   const humanColor = players.white.kind === 'human' && players.black.kind === 'model' ? 'white'
     : players.black.kind === 'human' && players.white.kind === 'model' ? 'black' : null;
   const premoveColor = !history.reviewing && !final && !setupOpen && !promotion &&
@@ -601,7 +634,8 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   const allowPremove = premoveColor !== null && isModelTurn && !working;
   const playerLabel = (side: 'white' | 'black') => {
     const player = snapshot.checkpoint.selections.players[side];
-    return player.kind === 'model' ? player.modelRoutingId : 'Local player';
+    return isEngineSelection(player) ? `${BROWSER_ENGINES[engineSettings(player).engineId].name} · browser engine`
+      : player.kind === 'model' ? `${player.modelRoutingId} · AI` : 'Local player';
   };
   let editorPieces: ReturnType<typeof readEditorPieces> | null = null;
   let editorSide: 'w' | 'b' = 'w';
@@ -631,24 +665,39 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
 
       {setupOpen && <section className="setup-panel" aria-labelledby="new-game-title">
         <div className="panel-heading"><div><h2 id="new-game-title" tabIndex={-1}>New match</h2>
-          <p>Choose a local two-player game or an AI opponent. Games and credentials stay in this browser.</p></div>
+          <p>Play or watch a match. Engines calculate chess moves in your browser; AI models choose moves through your connected provider.</p></div>
           <button className="button quiet" type="button" onClick={closeSetup}>Close</button></div>
         <div className="setup-form">
-          <label>Game mode<select value={matchMode} onChange={(event) => setMatchMode(event.target.value as 'local' | 'ai')}>
-            <option value="local">Two players on this device</option><option value="ai">Play against an AI model</option>
+          <label>Game mode<select value={matchMode} onChange={(event) => { setMatchMode(event.target.value as MatchMode); setSetupError(''); }}>
+            {MATCH_MODES.map(mode => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
           </select></label>
-          {matchMode === 'ai' && <label>Your side<select value={humanSide} onChange={(event) => setHumanSide(event.target.value as typeof humanSide)}>
+          {(matchMode === 'ai' || matchMode === 'human-engine') && <label>Your side<select value={humanSide} onChange={(event) => setHumanSide(event.target.value as typeof humanSide)}>
             <option value="white">White</option><option value="black">Black</option><option value="random">Random</option>
           </select></label>}
+          {matchMode === 'engine-ai' && <label>Engine plays<select value={engineSide} onChange={event => setEngineSide(event.target.value as typeof engineSide)}><option value="white">White</option><option value="black">Black</option></select></label>}
           <label>Starting minutes<input type="number" min="1" max="180" value={setupMinutes} onChange={(event) => setSetupMinutes(Number(event.target.value))} required /></label>
           <label>Increment seconds<input type="number" min="0" max="600" value={setupIncrement} onChange={(event) => setSetupIncrement(Number(event.target.value))} required /></label>
         </div>
           {matchMode === 'ai' && <OpponentPanel
             service={composition.opponentService} connectionStore={composition.connectionStore}
-            onSelect={(selection, identity) => { setModelSelection(selection); setOpponentIdentity(identity); }} selected={modelSelection}
+            onSelect={(selection, identity) => { setModelSelection(selection); setOpponentIdentity(identity); checkedIdentities.current.set(JSON.stringify(selection), identity); }} selected={modelSelection}
             onSelectionInvalidated={() => { setModelSelection(null); setOpponentIdentity(null); }}
             namespace={composition.namespace} idPrefix="new-opponent" selectLabel="Use this model for the new match"
           />}
+          {matchMode === 'human-engine' && <EnginePanel key="human-engine" label="Your engine opponent" selected={engineSeats.black} onSelect={selection => setEngineSeats(current => ({ ...current, black: selection }))} />}
+          {(matchMode === 'engine-engine' || matchMode === 'engine-ai' || matchMode === 'ai-ai') && <>
+            <p className="muted">Both sides play automatically. You can stop a turn, review moves and resume the match. LLM turns may use provider quota.</p>
+            {(['white', 'black'] as const).map(side => <div className="match-seat" key={`${matchMode}-${engineSide}-${side}`}>
+              {seatKinds(matchMode, 'white', engineSide)[side] === 'engine'
+                ? <EnginePanel label={`${side === 'white' ? 'White' : 'Black'} engine`} selected={engineSeats[side]} onSelect={selection => setEngineSeats(current => ({ ...current, [side]: selection }))} />
+                : <><h3>{side === 'white' ? 'White' : 'Black'} AI model</h3><OpponentPanel
+                  service={composition.opponentService} connectionStore={composition.connectionStore} namespace={composition.namespace}
+                  idPrefix={`new-${side}-ai`} selectLabel={`Use this model for ${side === 'white' ? 'White' : 'Black'}`} selected={aiSeats[side]}
+                  onSelect={(selection, identity) => { setAiSeats(current => ({ ...current, [side]: selection })); checkedIdentities.current.set(JSON.stringify(selection), identity); }}
+                  onSelectionInvalidated={() => setAiSeats(current => ({ ...current, [side]: null }))}
+                /></>}
+            </div>)}
+          </>}
         <form className="setup-form" onSubmit={createNewGame}>
           <label className="fen-field">Custom starting position (six-field FEN)
             <textarea rows={2} value={setupFen} onChange={(event) => { setSetupFen(event.target.value); setSetupError(''); }} placeholder="Leave blank for the standard position" />
@@ -679,7 +728,8 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
             </div> : <p className="error-message">Enter a valid FEN before using the visual editor.</p>}
           </fieldset>
            {setupError && <p id="setup-position-error" className="error-message" role="alert">{setupError}</p>}
-          <button className="button primary" disabled={working || (matchMode === 'ai' && modelSelection === null)} type="submit">Start game</button>
+          {!setupReady && <p className="muted">Prepare each opponent above to start this match.</p>}
+          <button className="button primary" disabled={working || !setupReady} type="submit">Start game</button>
         </form>
       </section>}
 
@@ -738,7 +788,8 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
 
         <aside className="details-panel" aria-label="Match details">
           <section className="status-block" aria-labelledby="match-status-title">
-            <h2 id="match-status-title">{generationState === 'producing' ? 'AI is choosing a move' : statusLabel(snapshot)}</h2>
+            <h2 id="match-status-title">{generationState === 'producing' ? engineTurn ? 'Engine is choosing a move' : 'AI is choosing a move' : statusLabel(snapshot)}</h2>
+            {spectator && <p className="muted">Watching {playerLabel('white')} versus {playerLabel('black')}.</p>}
             <p>{final && snapshot.checkpoint.result.kind === 'final'
               ? 'Final result recorded: ' + snapshot.checkpoint.result.reason.replaceAll('-', ' ') + '.'
               : snapshot.clockReading?.status === 'expired'
@@ -747,28 +798,28 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
             <p className="muted">Save status: saved on this device after each accepted controller transaction.</p>
             {isModelTurn && !autoGeneration && snapshot.checkpoint.result.kind === 'unresolved' &&
               <button className="button primary" type="button" onClick={() => {
-                if (opponentIdentity) retryModelTurn(); else setRecoveryOpen((open) => !open);
-              }}>{opponentIdentity ? 'Resume model turn' : 'Recheck connection to resume'}</button>}
+                if (engineTurn || opponentIdentity) retryModelTurn(); else setRecoveryOpen((open) => !open);
+              }}>{engineTurn ? 'Resume engine turn' : opponentIdentity ? 'Resume model turn' : 'Recheck connection to resume'}</button>}
             {final && snapshot.checkpoint.result.kind === 'final' && snapshot.checkpoint.result.winner !== 'draw' &&
-              (snapshot.checkpoint.selections.players.white.kind === 'model' || snapshot.checkpoint.selections.players.black.kind === 'model') &&
+              !spectator && !Object.values(players).some(isEngineSelection) && (players.white.kind === 'model' || players.black.kind === 'model') &&
               <button className="button secondary" type="button" onClick={() => void beginPractice()} disabled={working}>Start practice from this position</button>}
             {generationState === 'producing' && <button className="button secondary" type="button" onClick={() => void stopModelTurn()}>Stop generation</button>}
-            {!final && snapshot.modelHandoff.committed && snapshot.checkpoint.result.kind === 'unresolved' &&
-              <button className="button secondary" type="button" onClick={() => setRecoveryOpen((open) => !open)}>Choose another model</button>}
+            {!final && snapshot.modelHandoff.committed && snapshot.checkpoint.result.kind === 'unresolved' && (!spectator || !autoGeneration) &&
+              <button className="button secondary" type="button" onClick={() => setRecoveryOpen((open) => !open)}>{isEngineSelection(recoverySelection) ? 'Choose another engine' : 'Choose another model'}</button>}
             {(generationState === 'failed' || generationState === 'stopped') && isModelTurn && <div className="recovery-actions">
               <p className="error-message" role="status">{generationDetail}</p>
               {snapshot.modelHandoff.queued?.state === 'failed'
                 ? <button className="button primary" type="button" onClick={() => void recoverQueuedModel('retry')} disabled={working}>Retry queued model</button>
-                : <button className="button primary" type="button" onClick={retryModelTurn}>Retry model request</button>}
+                : <button className="button primary" type="button" onClick={retryModelTurn}>{engineTurn ? 'Retry engine turn' : 'Retry model request'}</button>}
               {snapshot.modelHandoff.queued?.state === 'failed' && <button className="button secondary" type="button" onClick={() => void recoverQueuedModel('resume')} disabled={working}>Resume previous model</button>}
               <button className="button secondary" type="button" onClick={(event) => {
                 event.currentTarget.focus();
                 setRecoveryOpen((open) => !open);
-              }}>Choose another model</button>
+              }}>{engineTurn ? 'Engine setup' : 'Choose another model'}</button>
             </div>}
             {generationDetail && generationState !== 'failed' && generationState !== 'stopped' && <p className="muted">{generationDetail}</p>}
-            <p className="muted">{usageLabel}</p>
-            {snapshot.modelHandoff.committed && <p className="muted">Committed model: {snapshot.modelHandoff.committed.modelRoutingId}</p>}
+            <p className="muted">{usesLlm ? usageLabel : 'Engine moves run on your device. No provider usage.'}</p>
+            {snapshot.modelHandoff.committed && <p className="muted">{isEngineSelection(snapshot.modelHandoff.committed) ? 'Engine' : 'Committed model'}: {isEngineSelection(snapshot.modelHandoff.committed) ? BROWSER_ENGINES[engineSettings(snapshot.modelHandoff.committed).engineId].name : snapshot.modelHandoff.committed.modelRoutingId}</p>}
             {snapshot.modelHandoff.producing && <p className="muted">Producing with: {snapshot.modelHandoff.producing.modelRoutingId}</p>}
             {snapshot.modelHandoff.queued && <p className="muted">Queued candidate: {snapshot.modelHandoff.queued.selection.modelRoutingId} · {snapshot.modelHandoff.queued.state}</p>}
             {snapshot.modelHandoff.queued && snapshot.modelHandoff.queued.state !== 'failed' &&
@@ -805,13 +856,16 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
             {snapshot.checkpoint.practice.mode === 'practice' && <p className="muted">Practice segment. Original result remains preserved in the saved match.</p>}
             <button className="button secondary" type="button" onClick={(event) => openSetup(event.currentTarget)}>New local game</button>
           </section>
-          {recoveryOpen && <OpponentPanel
+          {recoveryOpen && isEngineSelection(recoverySelection) && <EnginePanel key={`recovery-${sideKey}`} label="Engine setup" selected={recoverySelection} onSelect={selection => {
+            if (!selection) return;
+            void session.controller.queueModelSelection(session.controller.snapshot().fence, selection).then(next => {
+              refresh(next); setRecoveryOpen(false); generationFenceKey.current = ''; setGenerationState('idle'); setAutoGeneration(true); setGenerationAttempt(attempt => attempt + 1);
+            }).catch(error => setFeedback(error instanceof Error ? error.message : 'The engine could not be changed.'));
+          }} />}
+          {recoveryOpen && !isEngineSelection(recoverySelection) && <OpponentPanel
             service={composition.opponentService} connectionStore={composition.connectionStore}
             namespace={composition.namespace} idPrefix="recovery-opponent" selectLabel="Queue this model for play"
-            selected={snapshot.checkpoint.selections.players.white.kind === 'model'
-              ? snapshot.checkpoint.selections.players.white
-              : snapshot.checkpoint.selections.players.black.kind === 'model'
-                ? snapshot.checkpoint.selections.players.black : modelSelection}
+            selected={recoverySelection.kind === 'model' && !isEngineSelection(recoverySelection) ? recoverySelection : modelSelection}
             onSelect={revalidateSavedOpponent}
             onClose={() => setRecoveryOpen(false)}
           />}

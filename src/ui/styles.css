@@ -22,6 +22,20 @@
 }
 
 * { box-sizing: border-box; }
+.match-seat, .engine-setup { min-width: 0; margin-block: 20px; }
+.match-seat + .match-seat { padding-top: 16px; border-top: 1px solid var(--rule); }
+.engine-setup h3, .match-seat h3 { font-size: 16px; font-weight: 600; margin: 0; }
+.engine-setup p { max-width: 75ch; }
+.engine-instructions { margin-block: 16px; }
+.engine-instructions li { margin-block: 10px; }
+.engine-instructions pre { max-width: 100%; overflow-x: auto; padding: 12px; background: var(--soft); border-radius: 6px; }
+.engine-actions { margin-block: 12px; }
+.engine-ready { color: var(--green); font-weight: 600; }
+.engine-status { overflow-wrap: anywhere; }
+.engine-download { display: flex; align-items: center; gap: 12px; font-variant-numeric: tabular-nums; }
+.engine-download progress { accent-color: var(--green); max-width: 100%; }
+.engine-memory { display: grid; gap: 5px; max-width: 200px; margin-top: 10px; }
+.engine-memory select { background: var(--surface); padding: 8px; border: 1px solid var(--rule); border-radius: 6px; }
 body { margin: 0; min-width: 320px; background: var(--paper); color: var(--ink); }
 button, input, select, textarea { font: inherit; }
 button, select, input, textarea { color: inherit; }
@@ -125,7 +139,7 @@ textarea:focus-visible, summary:focus-visible {
 .coordinate-form label, .setup-form label { display: grid; gap: 5px; font-weight: 550; }
 .coordinate-row { display: flex; gap: 8px; margin-top: 7px; }
 .coordinate-row input { width: 140px; }
-.coordinate-row input, .setup-form input, .setup-form textarea {
+.coordinate-row input, .setup-form input, .setup-form select, .setup-form textarea {
   min-width: 0; border: 1px solid var(--rule); border-radius: 7px; background: var(--surface);
   padding: 8px 10px; color: var(--ink);
 }
@@ -171,6 +185,8 @@ textarea:focus-visible, summary:focus-visible {
 .setup-panel h2 { font-size: 16px; margin: 0; }
 .setup-panel p { margin: 4px 0; color: var(--dim); }
 .setup-form { display: grid; grid-template-columns: repeat(2, minmax(160px, 1fr)); align-items: end; gap: 12px; }
+.engine-setup .setup-form { margin-block: 12px; }
+.setup-form label, .setup-form select { min-width: 0; max-width: 100%; }
 .opponent-panel { min-width: 0; margin-top: 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--paper); }
 .connection-picker, .connection-form, .model-controls { display: grid; gap: 10px; min-width: 0; margin-top: 12px; }
 .connection-picker label, .connection-form label, .model-controls label { display: grid; gap: 5px; min-width: 0; font-weight: 550; }

@@ -90,6 +90,8 @@ export interface GameControllerOptions {
 
 export interface GameControllerSetupV1 {
   humanSide: HumanSideChoice;
+  /** Explicit seats support spectator matches; overrides the legacy human/model pair. */
+  players?: Record<ClockSide, PlayerSelectionV1>;
   /** Omit for a local game with two human players. */
   modelSelection?: ModelSelection;
   namespace: GameNamespaceV1;
@@ -290,6 +292,7 @@ const defaultIdFactory = (): string => globalThis.crypto.randomUUID();
 const defaultRandomSide = (): ClockSide => (Math.random() < 0.5 ? 'white' : 'black');
 interface PreparedSetup {
   readonly humanSide: ClockSide;
+  readonly players?: Record<ClockSide, PlayerSelectionV1>;
   readonly modelSelection: ModelSelection | null;
   readonly namespace: GameNamespaceV1;
   readonly ownershipEpoch: number;
@@ -500,6 +503,7 @@ function sideForCheckpoint(checkpoint: GameCheckpointV1): ClockSide {
 }
 
 function modelSideForCheckpoint(checkpoint: GameCheckpointV1): ClockSide | null {
+  if (checkpoint.selections.players.white.kind === 'model' && checkpoint.selections.players.black.kind === 'model') return sideForCheckpoint(checkpoint);
   if (checkpoint.selections.players.white.kind === 'model') return 'white';
   if (checkpoint.selections.players.black.kind === 'model') return 'black';
   return null;
@@ -818,6 +822,13 @@ function prepareSetup(
   randomSide: () => ClockSide,
 ): PreparedSetup {
   if (setup.modelSelection !== undefined) modelConfigurationIdentity(setup.modelSelection);
+  if (setup.players !== undefined) {
+    for (const side of ['white', 'black'] as const) {
+      const player = setup.players[side];
+      if (player.kind === 'model') modelConfigurationIdentity(player);
+      else if (player.kind !== 'human') throw new GameControllerError('invalid-setup', 'Unknown player type.');
+    }
+  }
   if (!Number.isSafeInteger(setup.ownershipEpoch) || setup.ownershipEpoch < 0) {
     throw new GameControllerError('invalid-setup', 'The ownership epoch must be a nonnegative safe integer.');
   }
@@ -849,6 +860,7 @@ function prepareSetup(
   }
   return {
     humanSide,
+    ...(setup.players === undefined ? {} : { players: structuredClone(setup.players) }),
     modelSelection: setup.modelSelection === undefined ? null : freezeModelSelection(setup.modelSelection),
     namespace,
     ownershipEpoch: setup.ownershipEpoch,
@@ -869,7 +881,7 @@ function makeCheckpoint(
   result: GameResultV1 = { kind: 'unresolved' },
 ): GameCheckpointV1 {
   const ledger = createRepetitionLedger(prepared.position);
-  const players: Record<ClockSide, PlayerSelectionV1> = {
+  const players: Record<ClockSide, PlayerSelectionV1> = prepared.players ?? {
     white: prepared.modelSelection === null || prepared.humanSide === 'white' ? { kind: 'human' } : prepared.modelSelection,
     black: prepared.modelSelection === null || prepared.humanSide === 'black' ? { kind: 'human' } : prepared.modelSelection,
   };
@@ -988,7 +1000,7 @@ function withHandoff(checkpoint: GameCheckpointV1, data: ModelHandoffDataV1): Ga
 }
 
 function handoffSnapshot(checkpoint: GameCheckpointV1): ModelHandoffSnapshotV1 {
-  const side = checkpoint.selections.players.white.kind === 'model' ? 'white' : 'black';
+  const side = modelSideForCheckpoint(checkpoint) ?? 'black';
   const committed = checkpoint.selections.players[side];
   const state = handoffData(checkpoint);
   return { committed: committed.kind === 'model' ? freezeModelSelection(committed) : null,
@@ -1562,8 +1574,8 @@ class IndexedGameController implements GameController {
       if (modelSelection !== undefined) {
         if (modelSelection.diagnostic !== 'passed-current-session') throw new GameControllerError('invalid-setup', 'A current-session diagnostic must pass before clocks start.');
         modelConfigurationIdentity(modelSelection);
-      } else if (checkpoint.selections.players.white.kind !== 'human' || checkpoint.selections.players.black.kind !== 'human') {
-        throw new GameControllerError('invalid-setup', 'A model selection is required to start a game against a model.');
+      } else if (Object.values(checkpoint.selections.players).some(player => player.kind === 'model' && player.diagnostic !== 'passed-current-session')) {
+        throw new GameControllerError('invalid-setup', 'Both opponents must pass their compatibility checks before clocks start.');
       }
       const committed = await this.commitMutation<{ kind: 'accepted' }>(fence, (context) => {
         const clock = startClock({ at: context.at, activeSide: fromPositionColor(context.position.sideToMove), timeControl: context.checkpoint.clocks.timeControl });
@@ -1574,10 +1586,10 @@ class IndexedGameController implements GameController {
               connectionRevision: modelSelection.configurationRevision }
           : segment);
         if (modelSelection !== undefined) {
-          const modelSide = players.white.kind === 'human' ? 'black' : 'white';
+          const modelSide = modelSideForCheckpoint(context.checkpoint) ?? 'black';
           players[modelSide] = freezeModelSelection(modelSelection);
         }
-        const details = modelSelection === undefined ? { mode: 'two-human' } : {
+        const details = modelSelection === undefined ? { players } : {
           modelSelection: { providerId: modelSelection.providerId, connectionId: modelSelection.connectionId,
             configurationRevision: modelSelection.configurationRevision, modelRoutingId: modelSelection.modelRoutingId,
             protocol: modelSelection.protocol },
@@ -1969,6 +1981,10 @@ class IndexedGameController implements GameController {
       return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
     }
     const current = handoffData(checkpoint);
+    if (intent.kind === 'queue-model-selection' && checkpoint.selections.players.white.kind === 'model' &&
+        checkpoint.selections.players.black.kind === 'model' && (this.activeRequest !== null || current.producing !== null)) {
+      return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
+    }
     let queued = current.queued;
     if (intent.kind === 'queue-model-selection') {
       const candidate = freezeModelSelection(intent.candidate);
@@ -3513,6 +3529,7 @@ export function createRestartSetup(source: ControllerSnapshotV1): GameController
     : checkpoint.selections.players.black;
   return {
     humanSide: checkpoint.selections.players.white.kind === 'human' ? 'white' : 'black',
+    players: structuredClone(checkpoint.selections.players),
     modelSelection: structuredClone(modelSelection) as ModelSelection,
     namespace: structuredClone(checkpoint.namespace),
     ownershipEpoch: checkpoint.ownershipEpoch,
@@ -3524,6 +3541,7 @@ export function createRestartSetup(source: ControllerSnapshotV1): GameController
 export function createRematchSetup(source: ControllerSnapshotV1): GameControllerSetupV1 {
   const setup = createRestartSetup(source);
   setup.humanSide = setup.humanSide === 'white' ? 'black' : 'white';
+  if (setup.players) setup.players = { white: setup.players.black, black: setup.players.white };
   return setup;
 }
 

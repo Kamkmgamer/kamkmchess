@@ -11,14 +11,14 @@
   },
   "packageManager": "pnpm@12.14.0",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
+    "dev": "node scripts/prepare-engines.mjs && vite --host 127.0.0.1",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.node.json",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:browser": "playwright test",
     "benchmark:position-check": "node scripts/benchmark-position-check.mjs",
-    "build": "pnpm run typecheck && vite build && node scripts/write-notices.mjs",
+    "build": "pnpm run typecheck && node scripts/prepare-engines.mjs && vite build && node scripts/write-notices.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "check": "pnpm run lint && pnpm run test && pnpm run build"
   },
@@ -28,7 +28,8 @@
     "chess.js": "1.4.0",
     "chessops": "0.15.1",
     "react": "19.3.1",
-    "react-dom": "19.3.1"
+    "react-dom": "19.3.1",
+    "stockfish": "19.0.1"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
