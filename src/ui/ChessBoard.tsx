@@ -110,8 +110,15 @@ export function ChessBoard({ orientation, snapshot, disabled, onMove, view, prem
       });
     };
     const element = host.current;
+    // React layout changes can move the board without resizing it. Refresh
+    // cached coordinates before Chessground handles the next pointer start.
+    const refreshBounds = () => instance.state.dom.bounds.clear();
+    element.addEventListener('mousedown', refreshBounds, true);
+    element.addEventListener('touchstart', refreshBounds, { capture: true, passive: true });
     element.addEventListener('mousedown', chooseBrush, true);
     return () => {
+      element.removeEventListener('mousedown', refreshBounds, true);
+      element.removeEventListener('touchstart', refreshBounds, true);
       element.removeEventListener('mousedown', chooseBrush, true);
       instance.destroy();
       board.current = null;

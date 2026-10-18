@@ -62,6 +62,23 @@ test('square edges select pieces and show legal destinations and last move', asy
   await expect(page.locator('square.move-dest:visible')).toHaveCount(0);
 });
 
+test('square-edge hit testing follows board movement without a resize', async ({ page }) => {
+  await startLocal(page);
+  // Prime Chessground's bounds cache, then simulate a position-only layout
+  // shift. ResizeObserver does not fire when the board keeps its dimensions.
+  const empty = await point(page, 'a3');
+  await page.mouse.click(empty.x, empty.y);
+  await page.locator('.board-host').evaluate((element) => {
+    element.style.transform = 'translateY(-16px)';
+  });
+  const from = await point(page, 'e2', true);
+  await page.mouse.click(from.x, from.y);
+  await expect.poll(() => squareKeys(page, 'square.move-dest')).toEqual(['e3', 'e4']);
+  const to = await point(page, 'e4', true);
+  await page.mouse.click(to.x, to.y);
+  await expect.poll(() => squareKeys(page, 'square.last-move')).toEqual(['e2', 'e4']);
+});
+
 test('click moves animate through intermediate positions', async ({ page }) => {
   await startLocal(page);
   const from = await point(page, 'e2');
