@@ -83,8 +83,13 @@ Clerk application `app_3KsNBjdK2nyfmuRJ4gnk8z2LwhB` has separate development
 and production instances. The production issuer is
 `https://clerk.chess.khalil.mageed.net`. Its frontend, account portal, and mail
 DNS records are in the delegated `khalil.mageed.net` zone. Email code sign-in
-is enabled. Google requires a production OAuth client in the Clerk dashboard;
-the frontend's generic sign-in action supports the configured methods.
+is enabled. Google sign-in uses a dedicated web OAuth client named
+`Kamkm Chess production` in Google Cloud project `wise-reporter-479504-e5`.
+Its authorized origin is `https://chess.khalil.mageed.net` and its callback is
+`https://clerk.chess.khalil.mageed.net/v1/oauth_callback`. It requests only
+OpenID, email and basic profile scopes. The public privacy policy is
+[`https://chess.khalil.mageed.net/privacy.html`](https://chess.khalil.mageed.net/privacy.html),
+with its source in `public/privacy.html`. The Account screen links to it.
 
 Release verification covers real Clerk sessions, isolated owners, create/read,
 atomic commits and idempotent retries, takeover epochs, stale-write rejection,

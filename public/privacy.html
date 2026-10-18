@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="How Kamkm Chess handles Google sign-in, saved games, AI model connections and backups.">
+  <title>Privacy policy | Kamkm Chess</title>
+  <link rel="stylesheet" href="/privacy.css">
+  <link rel="canonical" href="https://chess.khalil.mageed.net/privacy.html">
+</head>
+<body>
+  <main>
+    <nav aria-label="Back to the app"><a href="/">Back to Kamkm Chess</a></nav>
+    <h1>Kamkm Chess privacy policy</h1>
+    <p class="updated">Last updated <time datetime="2026-10-18">18 October 2026</time></p>
+    <h2>Who operates the app</h2>
+
+    <p>Kamkm Chess is operated by Khalil Abdalmjeed. Contact <a href="mailto:khalilabdalmajeed@gmail.com">khalilabdalmajeed@gmail.com</a> with privacy questions or requests about account and saved-game data.</p>
+
+    <h2>Signing in with Google</h2>
+
+    <p>Google sign-in uses Clerk to authenticate your account. With your permission, Google provides your account identifier, email address and basic profile information, such as your name and profile picture. This information identifies your account and establishes your sign-in session. The app does not request access to Gmail, Google Drive, Calendar or your Google Cloud resources.</p>
+
+    <p>Google and Clerk process authentication information under their own privacy policies. Google sign-in does not give Kamkm Chess your Google password. You can revoke the connection through your Google Account&#x27;s third-party connections settings. Revoking the connection does not itself remove data already saved in Kamkm Chess or Clerk.</p>
+
+    <h2>Games and browser storage</h2>
+
+    <p>The app stores games, moves, clocks, settings and game archives in your browser. Account games that you sync are sent to the app&#x27;s API and stored in its PostgreSQL database under your account identifier. An archive can contain model prompts, responses, plans and game metadata. Importing a guest game copies it into your account and retains the guest copy on that device.</p>
+
+    <p>Authentication uses cookies and related browser storage. Clearing site storage can remove local games, settings and saved connections, and can sign you out. Clearing browser data does not remove games already synced to the server.</p>
+
+    <h2>AI model connections</h2>
+
+    <p>When you configure an AI provider or proxy and allow a connection, the browser sends the game information and prompts needed to that destination. The selected provider or proxy processes those requests under its own policies. Provider API credentials are kept in this browser&#x27;s connection storage and are excluded from cloud game synchronization. Sign-out attempts to clear credentials saved for the departing account.</p>
+
+    <h2>Service providers and technical data</h2>
+
+    <p>Vercel serves the frontend. Clerk and Google handle authentication. The API, database and backups run on the app operator&#x27;s server. These services receive the network and request information needed to serve requests, authenticate users, prevent abuse and diagnose errors, which can include IP addresses, browser information and request times.</p>
+
+    <h2>Keeping and removing data</h2>
+
+    <p>Local records remain in your browser until removed. Synced account records remain on the server until removed. Encrypted database backups can contain earlier copies. The deployed backup rotation keeps seven daily and four weekly exports; separately retained recovery copies can last longer. Contact the operator to request access, correction or deletion of account and server data, including retained recovery copies. Signing out does not delete saved games.</p>
+
+    <h2>Changes</h2>
+
+    <p>This policy describes the current app. The published policy&#x27;s update date will change when its description of data handling changes.</p>
+  </main>
+</body>
+</html>
