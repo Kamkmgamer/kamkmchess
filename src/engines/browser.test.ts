@@ -23,9 +23,48 @@ class FakeWorker {
 const settings = { engineId: 'stockfish-lite' as const, hashMb: 16, moveTimeMs: 250 };
 const position = { startingFen: '8/8/8/8/8/8/K7/7k w - - 0 1', moves: ['a2a3'] };
 
+function stubEngineDownloads() {
+  vi.stubGlobal('Worker', FakeWorker);
+  vi.stubGlobal('caches', undefined);
+  vi.stubGlobal('fetch', vi.fn(async (url: string) => url.endsWith('.js') ? new Response('/*! Stockfish.js */')
+    : new Response(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0]))));
+}
+
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); FakeWorker.instances = []; });
 
 describe('browser UCI workers', () => {
+  it('releases unused opponent workers while preserving a selected engine for later turns', async () => {
+    stubEngineDownloads();
+    const browser = await import('./browser.js');
+    await browser.searchBrowserEngine({ ...settings, engineId: 'stockfish-full' }, position);
+    await browser.searchBrowserEngine(settings, position);
+    const [full, lite] = FakeWorker.instances;
+    browser.stopUnusedBrowserEngines(['stockfish-lite']);
+    expect(full!.terminated).toBe(true);
+    expect(lite!.terminated).toBe(false);
+    await browser.searchBrowserEngine(settings, position);
+    expect(FakeWorker.instances).toHaveLength(2);
+    browser.stopBrowserEngines();
+    expect(lite!.terminated).toBe(true);
+    await browser.searchBrowserEngine(settings, position);
+    expect(FakeWorker.instances).toHaveLength(3);
+    browser.stopBrowserEngines();
+  });
+
+  it('prevents a pending download from creating an opponent worker after cleanup', async () => {
+    stubEngineDownloads();
+    let finishDownload!: (response: Response) => void;
+    vi.mocked(fetch).mockImplementationOnce(() => new Promise(resolve => { finishDownload = resolve; }));
+    const browser = await import('./browser.js');
+    const pending = browser.searchBrowserEngine(settings, position);
+    const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalled());
+    browser.stopBrowserEngines();
+    finishDownload(new Response('/*! Stockfish.js */'));
+    await rejected;
+    expect(FakeWorker.instances).toHaveLength(0);
+  });
+
   it('streams White-relative evaluations and accepts checkmate with no best move', async () => {
     vi.stubGlobal('Worker', FakeWorker);
     const { BrowserUciEngine } = await import('./browser.js');
