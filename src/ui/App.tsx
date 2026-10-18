@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ChessBoard } from './ChessBoard.js';
+import { MoveList } from './MoveList.js';
 import { useBoardHistory } from './use-board-history.js';
 import type { ControllerSnapshotV1 } from '../controller/index.js';
 import type { ModelSelection } from '../controller/index.js';
@@ -64,19 +65,6 @@ function statusLabel(snapshot: ControllerSnapshotV1): string {
   return (snapshot.position.sideToMove === 'w' ? 'White' : 'Black') + ' to move';
 }
 
-function MoveRows({ snapshot, selectedPly, onSelect, page }: {
-  readonly page: number;
-  readonly snapshot: ControllerSnapshotV1;
-  readonly selectedPly: number;
-  readonly onSelect: (ply: number) => void;
-}) {
-  const moves = snapshot.checkpoint.rules.moves;
-  if (!moves.length) return <p className="muted">No moves yet.</p>;
-  return <ol className="move-list" aria-label="Committed moves">{moves.slice(page * 4, (page + 1) * 4).map((move, offset) => { const index = page * 4 + offset; return <li key={move.moveId}><span>{Math.floor(index / 2) + 1}.</span><button type="button"
-      aria-current={selectedPly === index + 1 ? 'step' : undefined}
-      aria-label={`View move ${index + 1}: ${move.san}`} onClick={() => onSelect(index + 1)}>{move.san}</button></li>; })}</ol>;
-}
-
 export function App({ composition, initialSession, initialSnapshot }: AppProps) {
   const [session, setSession] = useState(initialSession);
   const [snapshot, setSnapshot] = useState(initialSnapshot);
@@ -90,7 +78,7 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
   const [promotion, setPromotion] = useState<PromotionMove | null>(null);
   const [setupOpen, setSetupOpen] = useState(false);
   const [setupStep, setSetupStep] = useState<'mode' | 'white' | 'black' | 'options' | 'position'>('mode');
-  const [tool, setTool] = useState<'settings' | 'moves' | 'position' | 'archive' | 'move' | null>(null);
+  const [tool, setTool] = useState<'settings' | 'position' | 'archive' | 'move' | null>(null);
   const [toolPage, setToolPage] = useState(0);
   const [setupFen, setSetupFen] = useState('');
   const [setupMinutes, setSetupMinutes] = useState(15);
@@ -771,7 +759,6 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
       </div>}
       {tool === 'move' && <form className="coordinate-form" onSubmit={submitCoordinate}><label className="sr-label" htmlFor="coordinate-move">Enter a move by coordinates</label><input id="coordinate-move" aria-label="Enter a move by coordinates" value={coordinate} onChange={event => { setCoordinate(event.target.value); setCoordinateError(''); }} placeholder="e2e4" autoComplete="off" /><button className="button primary" type="submit" aria-label="Play move" disabled={disabled}>Play</button>{coordinateError && <p role="alert">{coordinateError}</p>}</form>}
       {tool === 'position' && <><p className="fen-value">{history.position.fen}</p><IconButton icon="board" label="Edit starting position" onClick={event => openSetup(event.currentTarget, history.position.fen)} /></>}
-      {tool === 'moves' && <><MoveRows snapshot={snapshot} selectedPly={history.ply} onSelect={ply => { history.select(ply); setTool(null); }} page={toolPage} /><div className="button-row"><IconButton icon="back" label="Previous moves" disabled={toolPage === 0} onClick={() => setToolPage(page => page - 1)} /><IconButton icon="next" label="Next moves" disabled={(toolPage + 1) * 4 >= snapshot.checkpoint.rules.moves.length} onClick={() => setToolPage(page => page + 1)} /></div></>}
       {tool === 'archive' && <><pre className="archive-page">{archiveWords.length ? archiveWords.slice(toolPage * 8, (toolPage + 1) * 8).join(' ') : 'No conversation yet.'}</pre><div className="button-row"><IconButton icon="back" label="Previous page" disabled={toolPage === 0} onClick={() => setToolPage(page => page - 1)} /><IconButton icon="next" label="Next page" disabled={(toolPage + 1) * 8 >= archiveWords.length} onClick={() => setToolPage(page => page + 1)} /></div></>}
     </section>}
     {recoveryOpen && !setupOpen && !tool && <section className="focus-page" aria-label={isEngineSelection(recoverySelection) ? "Choose another engine" : "Choose another model"}>
@@ -787,18 +774,10 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
           <OpponentBadge player={players[side]} side={side} /><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
           <time className={`clock ${activeSide === side ? 'running' : ''}`} aria-label={`${side} clock ${formatClock(clocks[`${side}Ms`])}`}>{formatClock(clocks[`${side}Ms`])}</time>
         </div>)}
-        {snapshot.checkpoint.rules.moves.length > 0 && <ol className="sr-only" aria-label="Committed moves">{snapshot.checkpoint.rules.moves.map((move, index) => <li key={move.moveId}><button onClick={() => history.select(index + 1)} aria-label={`View move ${index + 1}: ${move.san}`} aria-current={history.ply === index + 1 ? 'step' : undefined}>{move.san}</button></li>)}</ol>}
         <div className="playing-board"><ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} /></div>
-        <nav className="history-controls" aria-label="Move history"><div className="button-row">
-          <IconButton icon="first" label="First" onClick={() => history.select(0)} disabled={history.ply === 0} aria-keyshortcuts="Home" />
-          <IconButton icon="back" label="Previous" onClick={() => history.select(history.ply - 1)} disabled={history.ply === 0} aria-keyshortcuts="ArrowLeft" />
-          <IconButton icon="next" label="Next" onClick={() => history.select(history.ply + 1)} disabled={!history.reviewing} aria-keyshortcuts="ArrowRight" />
-          <IconButton icon="last" label="Live" onClick={() => history.select(history.count)} disabled={!history.reviewing} aria-keyshortcuts="End" />
-          <IconButton icon="moves" label="Moves" onClick={() => openTool('moves')} />
-          <IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />
-          <IconButton icon="undo" label="Undo" onClick={() => void undo()} disabled={working || !snapshot.checkpoint.rules.moves.length || snapshot.checkpoint.result.kind !== 'unresolved'} />
-          <IconButton icon="code" label="Type a move" disabled={disabled} onClick={() => openTool('move')} />
-        </div></nav>
+        <nav className="board-tools" aria-label="Board tools"><IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />
+          <IconButton icon="undo" label="Undo" onClick={() => void undo()} disabled={working || snapshot.readiness !== 'ready' || !snapshot.checkpoint.rules.moves.length || snapshot.checkpoint.result.kind !== 'unresolved'} />
+          <IconButton icon="code" label="Type a move" disabled={disabled} onClick={() => openTool('move')} /></nav>
         <div className="match-status" role="status" aria-description={generationDetail || feedback}>
           <h2 className="status-heading" aria-label={generationState === 'producing' ? isEngineSelection(activePlayer) ? 'Engine is choosing a move' : 'AI is choosing a move' : undefined}>{history.reviewing ? `${history.ply}/${history.count}` : generationState === 'stopped' ? 'Paused' : generationState === 'failed' ? conciseTurnError(new Error(generationDetail)) : generationState === 'producing' ? generationDetail === 'Checking connection…' ? 'Checking…' : 'Thinking…' : statusLabel(snapshot)}</h2>
           <div className="button-row">
@@ -815,6 +794,16 @@ export function App({ composition, initialSession, initialSnapshot }: AppProps) 
         </div>
         {promotion && <section className="promotion-panel" aria-label="Promotion"><div className="promotion-options">{PROMOTIONS.map(piece => <button className="button quiet" type="button" key={piece.value} aria-label={piece.label} autoFocus={piece.value === 'q'} onClick={() => selectPromotion(piece.value)}><img alt="" width="36" height="36" src={new URL(`./pieces/${snapshot.position.sideToMove}${piece.value}.svg`, import.meta.url).href} /></button>)}<IconButton icon="close" label="Cancel promotion" onClick={() => setPromotion(null)} /></div></section>}
       </section>
+      <aside className="moves-sidebar" aria-labelledby="moves-title">
+        <div className="moves-heading"><h2 id="moves-title">Moves</h2><span className="count" aria-label={`Move ${history.ply} of ${history.count}`}>{history.ply}/{history.count}</span></div>
+        <MoveList moves={snapshot.checkpoint.rules.moves} selectedPly={history.ply} visible={!focusPage} onSelect={history.select} />
+        <nav className="history-controls" aria-label="Move history"><div className="button-row">
+          <IconButton icon="first" label="First" onClick={() => history.select(0)} disabled={history.ply === 0} aria-keyshortcuts="Home" />
+          <IconButton icon="back" label="Previous" onClick={() => history.select(history.ply - 1)} disabled={history.ply === 0} aria-keyshortcuts="ArrowLeft" />
+          <IconButton icon="next" label="Next" onClick={() => history.select(history.ply + 1)} disabled={!history.reviewing} aria-keyshortcuts="ArrowRight" />
+          <IconButton icon="last" label="Live" onClick={() => history.select(history.count)} disabled={!history.reviewing} aria-keyshortcuts="End" />
+        </div></nav>
+      </aside>
     </div>
     <p className="sr-only" role="status" aria-live="polite">{feedback}</p>
   </main>;

@@ -18,7 +18,7 @@ Choose **New** to set up a match in short steps. For AI play, connect a provider
 
 CLIProxyAPI defaults to `http://127.0.0.1:8317/v1`. OpenAI, OpenRouter, Anthropic, and custom connections are also available. Advanced connection settings include protocol, authentication, and catalog overrides. Custom endpoints default to a `/models` catalog. A provider must expose a reachable catalog to appear in the picker. Diagnostics and moves can use provider quota. Connections and credentials stay in the browser; no server relays AI calls.
 
-Screens contain at most 20 words of interface copy, and engine screens at most 10. Chess coordinates, notation, clocks, and numeric values are game data. History, coordinate entry, appearance, and position editing open as focused screens. Conversation pages show eight words at a time; download the complete match archive from Settings for full messages, reasoning, usage, and undone lines. Icons retain accessible names and hover labels; keyboard history shortcuts remain available.
+Screens contain at most 20 words of interface copy, and engine screens at most 10. Chess coordinates, notation, clocks, and numeric values are game data. A scrollable moves sidebar pairs White and Black moves, follows the selected move, and lets you review any position without changing live play. It sits below the board on phones. Coordinate entry, appearance, and position editing open as focused screens. Conversation pages show eight words at a time; download the complete match archive from Settings for full messages, reasoning, usage, and undone lines. Icons retain accessible names and hover labels; keyboard history shortcuts remain available.
 
 ## Local development
 

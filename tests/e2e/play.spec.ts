@@ -87,7 +87,7 @@ async function archivedText(page: Page) {
   return text;
 }
 
-const movesOnBoard = (page: Page) => page.getByRole('list', { name: 'Committed moves' }).locator('li');
+const movesOnBoard = (page: Page) => page.getByRole('table', { name: 'Committed moves' }).getByRole('button');
 
 async function dragBoardMove(page: Page, from: string, to: string) {
   await page.locator('cg-board').scrollIntoViewIfNeeded();
