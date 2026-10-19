@@ -119,6 +119,10 @@ body { margin: 0; }
 .sidebar-guest { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2); font: var(--type-label); background: var(--nav-rest); border-radius: var(--radius-soft); }
 .sidebar-guest > svg { color: var(--brand-accent); flex-shrink: 0; }
 .sidebar-guest > div { min-width: 0; }
+.sidebar-account-avatar { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; object-fit: cover; }
+.sidebar-account-identity { flex: 1; overflow: hidden; }
+.sidebar-account-identity > span, .quartz .sidebar-account-identity > p { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quartz .sidebar-account-message { font: var(--type-body-sm); color: var(--text-2); }
 .quartz .sidebar-guest p { margin-top: var(--space-0-5); font: var(--type-body-sm); color: var(--text-2); }
 .quartz .sidebar-guest-settings { margin-left: auto; min-width: var(--control-lg); width: var(--control-lg); min-height: var(--control-lg); padding: var(--space-2); flex-shrink: 0; color: var(--text-2); }
 .quartz .sidebar-guest-settings:hover { background: var(--nav-hover); color: var(--text-1); }

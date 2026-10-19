@@ -7,10 +7,20 @@ import { GameNavigation } from './GameNavigation';
 
 describe('landing integration with the playable workspace', () => {
   it('links the primary play action to the existing game', () => {
-    const markup = renderToStaticMarkup(<GameNavigation onOptions={() => {}} onNavigate={() => {}} onAppearance={() => {}} />);
+    const markup = renderToStaticMarkup(<GameNavigation onOptions={() => {}} onNavigate={() => {}} onAppearance={() => {}} account={{ status: 'disabled', user: null, busy: false, message: '' }} onAccount={() => {}} />);
     expect(markup).toMatch(/<button[^>]*>[\s\S]*?AI opponent/);
     expect(markup).not.toContain('Opponent label');
     expect(markup).not.toContain('Preview options');
+  });
+
+  it('shows the signed-in account in the settings control', () => {
+    const markup = renderToStaticMarkup(<GameNavigation onOptions={() => {}} onNavigate={() => {}} onAppearance={() => {}}
+      account={{ status: 'ready', user: { name: 'Alex Player', email: 'alex@example.com', imageUrl: 'https://img.clerk.com/avatar.png' }, busy: false, message: '' }} onAccount={() => {}} />);
+    expect(markup).toContain('Alex Player');
+    expect(markup).toContain('alex@example.com');
+    expect(markup).toContain('aria-label="Account settings"');
+    expect(markup).not.toContain('Guest player');
+    expect(markup).not.toContain('aria-label="Game settings"');
   });
 
   it('shows a finished custom position with the demo players and result', () => {

@@ -5,13 +5,18 @@ export interface ClerkSessionPort {
 }
 
 export interface ClerkUserPort {
-  id: string;
+  readonly id: string;
+  readonly fullName?: string | null;
+  readonly username?: string | null;
+  readonly primaryEmailAddress?: { readonly emailAddress: string } | null;
+  readonly imageUrl?: string;
 }
 
 export interface ClerkBrowserPort {
   readonly user: ClerkUserPort | null;
   readonly session: ClerkSessionPort | null;
   signInWithGoogle(returnUrl: string): Promise<void>;
+  openUserProfile?(): void;
   signOut(): Promise<void>;
   subscribe(listener: () => void): () => void;
 }
@@ -175,11 +180,12 @@ function disabledSession(): AccountSession {
 }
 
 interface OfficialClerkClient {
-  user: { id: string } | null;
+  user: ClerkUserPort | null;
   session: { getToken(): Promise<string | null> } | null;
   load(options?: { ui: unknown }): Promise<void>;
   addListener(listener: () => void): () => void;
   openSignIn(options?: Record<string, unknown>): Promise<void>;
+  openUserProfile(): void;
   signOut(): Promise<void>;
 }
 
@@ -207,6 +213,7 @@ async function loadOfficialClerkClient(publishableKey: string): Promise<ClerkBro
       async signInWithGoogle(returnUrl) {
         await clerk.openSignIn({ forceRedirectUrl: returnUrl });
       },
+      openUserProfile() { clerk.openUserProfile(); },
       async signOut() { await clerk.signOut(); },
       subscribe(listener) { return clerk.addListener(listener); },
     };
