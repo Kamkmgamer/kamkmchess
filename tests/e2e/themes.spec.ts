@@ -2,13 +2,41 @@ import { expect, test } from '@playwright/test';
 
 test.use({ reducedMotion: 'reduce' });
 
+for (const mode of ['light', 'dark']) {
+  test(`Screen preserves the original gold palette in ${mode} appearance`, async ({ page }, testInfo) => {
+    await page.addInitScript(appearance => {
+      localStorage.setItem('kamkmchess.theme.v1', JSON.stringify({ theme: 'screen', appearance }));
+    }, mode);
+    await page.goto('/');
+    const tokens = await page.evaluate(() => {
+      const style = getComputedStyle(document.documentElement);
+      return ['canvas', 'surface', 'accent', 'accent-foreground', 'sidebar'].map(role => style.getPropertyValue('--t3-' + role).trim());
+    });
+    expect(tokens).toEqual(mode === 'dark'
+      ? ['#000000', '#171717', '#cfbb86', '#15130e', '#111111']
+      : ['#faf8f2', '#ffffff', '#cfbb86', '#15130e', '#f1ece0']);
+    await page.screenshot({ path: testInfo.outputPath(`screen-${mode}-desktop.png`), fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`screen-${mode}-mobile.png`), fullPage: true });
+    await page.goto('/play');
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'screen');
+    await page.getByRole('button', { name: 'New game', exact: true }).click();
+    const primary = page.locator('.button.primary').first();
+    await expect(primary).toHaveCSS('background-color', 'rgb(207, 187, 134)');
+    await expect(primary).toHaveCSS('color', 'rgb(21, 19, 14)');
+    await page.screenshot({ path: testInfo.outputPath(`screen-${mode}-game-mobile.png`), fullPage: true });
+  });
+}
+
 test('all app palettes theme the landing page in light and dark modes', async ({ page }, testInfo) => {
   await page.goto('/');
-  await page.screenshot({ path: testInfo.outputPath('t3-chat-light-desktop.png'), fullPage: true });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'screen');
+  await page.screenshot({ path: testInfo.outputPath('screen-default-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'Appearance', exact: true }).click();
   const theme = page.getByRole('combobox', { name: 'Theme', exact: true });
   const appearance = page.getByRole('combobox', { name: 'Appearance', exact: true });
-  for (const id of ['t3-code', 't3-chat', 'grove', 'ocean', 'ember', 'iris']) {
+  for (const id of ['t3-code', 't3-chat', 'screen', 'grove', 'ocean', 'ember', 'iris']) {
     for (const mode of ['light', 'dark']) {
       await theme.selectOption(id);
       await appearance.selectOption(mode);
@@ -73,15 +101,15 @@ test('all app palettes theme the landing page in light and dark modes', async ({
 test('theme choices persist through reload and both directions of navigation', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Appearance', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Theme', exact: true }).selectOption('grove');
+  await page.getByRole('combobox', { name: 'Theme', exact: true }).selectOption('screen');
   await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('dark');
   await page.reload();
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'grove');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'screen');
   await expect(page.locator('html')).toHaveAttribute('data-appearance', 'dark');
   await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(page.getByRole('combobox', { name: 'Theme', exact: true })).toHaveValue('grove');
+  await expect(page.getByRole('combobox', { name: 'Theme', exact: true })).toHaveValue('screen');
   await expect(page.getByRole('combobox', { name: 'Appearance', exact: true })).toHaveValue('dark');
   await page.getByRole('combobox', { name: 'Theme', exact: true }).selectOption('ocean');
   await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('light');
@@ -126,6 +154,7 @@ test('unavailable storage does not prevent changing the landing theme', async ({
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto('/');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'screen');
   await page.getByRole('button', { name: 'Appearance', exact: true }).click();
   await page.getByRole('combobox', { name: 'Theme', exact: true }).selectOption('ember');
   await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('dark');

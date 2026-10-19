@@ -30,7 +30,7 @@
 .engine-instructions li { margin-block: 10px; }
 .engine-instructions pre { max-width: 100%; overflow-x: auto; padding: 12px; background: var(--soft); border-radius: 6px; }
 .engine-actions { margin-block: 12px; }
-.engine-ready { color: var(--green); font-weight: 600; }
+.engine-ready { color: var(--t3-update-foreground, var(--green)); font-weight: 600; }
 .engine-status { overflow-wrap: anywhere; }
 .engine-download { display: flex; align-items: center; gap: 12px; font-variant-numeric: tabular-nums; }
 .engine-download progress { accent-color: var(--green); max-width: 100%; }
@@ -90,7 +90,7 @@ textarea:focus-visible, summary:focus-visible {
   font-variant-numeric: tabular-nums; letter-spacing: -.04em; padding: 6px 9px;
   border-radius: 6px; background: var(--soft); color: var(--dim);
 }
-.clock.running { background: var(--green); color: var(--paper); }
+.clock.running { background: var(--green); color: var(--t3-accent-foreground, var(--paper)); }
 .board-frame { padding: 3px 0; }
 .playing-board.with-evaluation { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
 .evaluation-bar { position: relative; align-self: stretch; margin-block: 3px; padding: 0; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; background: #333; cursor: default; }
@@ -188,7 +188,7 @@ textarea:focus-visible, summary:focus-visible {
 .move-list button { display: block; width: 100%; min-height: 40px; border: 0; border-radius: 3px; padding: 8px 10px; background: transparent; color: inherit; font-weight: 600; text-align: left; cursor: pointer; }
 .move-list button:hover { background: var(--rule); }
 .move-list button:focus-visible { outline-offset: -3px; }
-.move-list button[aria-current="step"] { background: var(--green); color: var(--paper); }
+.move-list button[aria-current="step"] { background: var(--green); color: var(--t3-accent-foreground, var(--paper)); }
 .moves-sidebar .history-controls { padding: 6px 8px; border-top: 1px solid var(--rule); }
 .history-controls { padding-top: 8px; }
 .history-controls p { margin: 4px 0 0; }
@@ -200,7 +200,7 @@ textarea:focus-visible, summary:focus-visible {
 }
 .button > svg, .button > img { display: block; flex-shrink: 0; }
 .button:disabled { opacity: .48; cursor: not-allowed; }
-.button.primary { color: #fff; background: var(--green); }
+.button.primary { color: var(--t3-accent-foreground, #fff); background: var(--green); }
 .button.secondary { background: var(--surface); border-color: var(--rule); }
 .button.quiet:hover, .button.secondary:hover:not(:disabled) { background: var(--soft); }
 .promotion-panel { margin-top: 10px; padding: 14px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
