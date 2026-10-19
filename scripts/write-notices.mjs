@@ -45,6 +45,12 @@ const sections = [
   'Copyright (c) 2026 kamkmchess contributors. Original application code is licensed under the GNU General Public License, version 3 or, at your option, any later version (GPL-3.0-or-later). See LICENSE.txt for the full terms and warranty disclaimer.',
   'The combined browser application includes Chessground, chessops and Stockfish under their GPL terms. Third-party code and artwork retain their own licenses. Corresponding source: https://github.com/Kamkmgamer/kamkmchess. Distributors must provide the exact corresponding source for their deployed version, including dependency source and build instructions.',
   'The Wikimedia standard chess pieces by Cburnett and Rfc1394 are distributed under CC BY-SA 3.0, extracted into individual SVG files from the cm-chessboard standard sprite. Source and license notices are embedded in each image.',
+  'The landing artwork was generated for kamkm chess. Chess and interface icons are Font Awesome Free SVGs (CC BY 4.0); its JavaScript code is MIT licensed. AI brand names and marks depicted in the artwork remain trademarks of their owners.',
+  'The animated landing overlay uses DitherGradient by ripgrim from Boring-Software-Inc/dither-kit, revision 1e7faee9aa252e499651e6736ed65f7a07d9a6bd, declared MIT in upstream package manifests. Source: https://github.com/Boring-Software-Inc/dither-kit. Provenance: src/components/grim-dither-kit/UPSTREAM.md.',
+  'Quartz design system source, copyright (c) 2026 Arlan Marat, is included under the MIT license below.',
+  await readFile(new URL('docs/design/QUARTZ-LICENSE.txt', root), 'utf8'),
+  'The earlier image-dithering core remains vendored from github.com/jvgomg/ditherkit by James Greenaway; the hero no longer imports it.',
+  await readFile(new URL('src/components/dither-kit/LICENSE', root), 'utf8'),
 ];
 const inventory = [];
 

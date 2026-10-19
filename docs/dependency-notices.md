@@ -13,6 +13,14 @@ Inventory for [Establish the React/TypeScript application and build checks](http
 | react | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | react-dom | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | scheduler | 0.28.0 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
+| @base-ui/react | 1.9.0 | MIT | [Base UI](https://base-ui.com), the primitives beneath Quartz controls. |
+| @fortawesome/free-solid-svg-icons | 7.3.1 | CC BY 4.0 (SVGs), MIT (code) | [Font Awesome Free license](https://fontawesome.com/license/free). |
+| @fontsource-variable/inter-tight | 5.3.0 | OFL-1.1 | [Inter Tight](https://fontsource.org/fonts/inter-tight), self-hosted Latin subset. |
+| @fontsource/instrument-serif | 5.3.0 | OFL-1.1 | [Instrument Serif](https://fontsource.org/fonts/instrument-serif), self-hosted regular Latin subset. |
+| @fontsource-variable/space-grotesk | 5.3.0 | OFL-1.1 | [Space Grotesk](https://fontsource.org/fonts/space-grotesk), retained from earlier design work; not bundled. |
+| class-variance-authority | 0.7.1 | Apache-2.0 | [CVA](https://cva.style), Quartz control variants. |
+| clsx | 2.1.1 | MIT | [clsx source](https://github.com/lukeed/clsx). |
+| tailwind-merge | 3.7.0 | MIT | [tailwind-merge source](https://github.com/dcastil/tailwind-merge). |
 | @clerk/clerk-js | 6.39.1 | MIT | [Clerk JavaScript source](https://github.com/clerk/javascript), optional account client loaded only when accounts are configured. |
 | @clerk/ui | 1.40.2 | MIT | [Clerk JavaScript source](https://github.com/clerk/javascript), lazy-loaded sign-in components supplied to the SDK. |
 
@@ -45,11 +53,13 @@ The build also writes `dist/DEPENDENCY_INVENTORY.json` with every locked package
 | @types/react | 19.3.0 | MIT |
 | @types/react-dom | 19.3.0 | MIT |
 | @vitejs/plugin-react | 6.1.2 | MIT |
+| @tailwindcss/vite | 4.3.3 | MIT |
 | eslint | 10.12.0 | MIT |
 | eslint-plugin-react-hooks | 7.1.1 | MIT |
 | eslint-plugin-react-refresh | 0.5.7 | MIT |
 | fake-indexeddb | 6.2.5 | Apache-2.0 |
 | globals | 17.13.0 | MIT |
+| tailwindcss | 4.3.3 | MIT |
 | typescript | 6.0.3 | Apache-2.0 |
 | typescript-eslint | 8.71.2 | MIT |
 | vite | 8.3.4 | MIT |
@@ -60,6 +70,8 @@ The optional developer subpackage in `supabase/tests/local/` has its own lockfil
 TypeScript 6.0.3 stays within typescript-eslint 8.71.2's declared `>=4.8.4 <6.1.0` support. The current TypeScript 7 release is not selected. Vite 8 and its React plugin's declared peer versions agree. The verified build runtime is Node 24.22.0 with npm 11.19.1. Dependency installation reported zero known vulnerabilities on 2026-10-16; this does not certify future registry advisories or application security.
 
 ## Artwork and later dependencies
+
+The landing page adds original AI-generated chess artwork, self-hosted Inter Tight and Instrument Serif fonts, and Font Awesome icons. Quartz source is MIT licensed, copyright (c) 2026 Arlan Marat; its [notice](design/QUARTZ-LICENSE.txt) is retained in distribution notices. The animated overlay uses Grim's Dither Kit by ripgrim, pinned at `1e7faee9aa252e499651e6736ed65f7a07d9a6bd`; its provenance is recorded in `src/components/grim-dither-kit/UPSTREAM.md`. The earlier, unused James Greenaway image-dithering core retains its MIT license at `src/components/dither-kit/LICENSE`. The project remains GPL-3.0-or-later, and these assets retain their individual terms. [Landing notes](design/landing.md) record sources and adaptations.
 
 This build uses Chessground, chessops and system fonts. The owner authorized replacing cm-chessboard with Chessground on 2026-10-18, superseding the original board choice and GPL exclusion for this dependency. The project and combined browser application are distributed under GPL-3.0-or-later. Ship exact corresponding source from https://github.com/Kamkmgamer/kamkmchess for the deployed version and the generated dependency license notices. The disposable prototype's application code is not included; the extracted theme values are identified below.
 

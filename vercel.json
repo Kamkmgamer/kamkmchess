@@ -5,6 +5,8 @@
   "outputDirectory": "dist",
   "rewrites": [
     { "source": "/v1/:path*", "destination": "https://chess-api.agent.soft-magic.com/v1/:path*" },
+    { "source": "/play", "destination": "/index.html" },
+    { "source": "/play/:path*", "destination": "/index.html" },
     { "source": "/sign-in/:path*", "destination": "/index.html" },
     { "source": "/sign-up/:path*", "destination": "/index.html" }
   ],

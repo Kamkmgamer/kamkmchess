@@ -53,7 +53,6 @@ async function configure(page: Page, side = 'white') {
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('ai');
   await page.getByLabel('Your side').selectOption(side);
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByLabel('Provider').selectOption('custom');
   await page.getByLabel('Base URL', { exact: true }).fill(endpoint);
   await page.getByRole('button', { name: 'Advanced connection settings', exact: true }).click();
@@ -64,7 +63,6 @@ async function configure(page: Page, side = 'white') {
   await page.getByLabel('Available models').selectOption('offline-fixture');
   await page.getByRole('button', { name: 'Allow', exact: true }).click();
   await expect(page.getByText('Ready', { exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
 }
 async function move(page: Page, coordinate: string) {
@@ -74,10 +72,13 @@ async function move(page: Page, coordinate: string) {
   await page.getByRole('button', { name: 'Play move', exact: true }).click();
 }
 async function selectModel(page: Page, model = 'offline-candidate') {
-  await page.getByLabel('Available models').selectOption(model);
+  const panel = page.getByRole('region', { name: 'AI model', exact: true });
+  await expect(panel).toHaveAttribute('aria-busy', 'false');
+  await panel.getByLabel('Available models').selectOption(model);
   await expect.poll(async () => await page.getByText('Ready', { exact: true }).isVisible() || await page.locator('.match-layout').isVisible()).toBe(true);
 }
 async function archivedText(page: Page) {
+  await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const download = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download match archive', exact: true }).click();
@@ -117,7 +118,7 @@ test('executes one legal premove after the AI reply', async ({ page }) => {
       await fixture.respond(route, '{"move":"e7e5"}');
     } else await fixture.respond(route, '{"resign":true}');
   });
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   await move(page, 'e2e4');
   await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
@@ -138,7 +139,7 @@ test('drops an illegal premove after the AI reply without submitting a move', as
     await new Promise<void>((resolve) => { release = resolve; });
     await mock.respond(route, '{"move":"e7e5"}');
   });
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   await move(page, 'e2e4');
   await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
@@ -157,7 +158,7 @@ test('cancels premoves and keeps a reviewed position while the AI finishes', asy
     await new Promise<void>((resolve) => { release = resolve; });
     await fixture.respond(route, '{"move":"e7e5"}');
   });
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   await move(page, 'e2e4');
   await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
@@ -169,7 +170,7 @@ test('cancels premoves and keeps a reviewed position while the AI finishes', asy
   await page.getByRole('button', { name: 'Cancel premove' }).click();
   await expect(page.locator('square.current-premove:visible')).toHaveCount(0);
   await dragBoardMove(page, 'g1', 'f3');
-  await page.getByRole('link', { name: 'Kamkm Chess home' }).click();
+  await page.getByRole('button', { name: 'Flip board', exact: true }).focus();
   await page.keyboard.press('Home');
   await expect(page.getByRole('button', { name: 'Cancel premove' })).toHaveCount(0);
   release?.();
@@ -185,7 +186,7 @@ test('plays against the AI without a position-check worker', async ({ page }) =>
   const workers: string[] = [];
   page.on('worker', worker => workers.push(worker.url()));
   await page.route('**/assets/proof-search.worker-*.js', route => route.abort('connectionrefused'));
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   await move(page, 'e2e4');
   await expect(movesOnBoard(page)).toHaveCount(2);
@@ -200,7 +201,7 @@ test('finishes a legal AI match, preserves plans, restores its result and fits m
   const fixture = await provider(page, [], async (route, index, mock) => {
     await mock.respond(route, JSON.stringify({ move: ['e7e5', 'b8c6', 'g8f6'][index], plan: `retained plan ${index + 1}` }), `retained reasoning ${index + 1}`);
   });
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   for (const [coordinate, count] of [['e2e4', 2], ['d1h5', 4], ['f1c4', 6]] as const) {
     await move(page, coordinate);
@@ -234,7 +235,7 @@ test('finishes a legal AI match, preserves plans, restores its result and fits m
 
 test('starts with a model playing White and offers practice after that model resigns', async ({ page }) => {
   const fixture = await provider(page, ['e2e4', 'resign']);
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page, 'black');
   await expect(movesOnBoard(page)).toHaveCount(1);
   await move(page, 'e7e5');
@@ -252,7 +253,7 @@ test('Stop fences a delayed reply and Retry remains an explicit new request', as
     if (index === 0) await new Promise<void>((resolve) => { release = resolve; });
     await mock.respond(route, '{"move":"e7e5","plan":"after explicit retry"}');
   });
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   await move(page, 'e2e4');
   await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
@@ -269,7 +270,7 @@ test('Stop fences a delayed reply and Retry remains an explicit new request', as
 
 test('Undo keeps the discarded conversation and the same model can start another game', async ({ page }) => {
   const fixture = await provider(page, ['e7e5', 'd7d5']);
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   await move(page, 'e2e4');
   await expect(movesOnBoard(page)).toHaveCount(2);
@@ -283,9 +284,7 @@ test('Undo keeps the discarded conversation and the same model can start another
   expect(JSON.stringify(fixture.modelCalls[1])).not.toContain('e4 e5');
   expect(JSON.stringify(fixture.modelCalls[1])).not.toContain('retained plan 1');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await selectModel(page, 'offline-fixture');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'White to move', exact: true })).toBeVisible();
 });
@@ -296,7 +295,7 @@ test('queues a different model and commits it only with its first legal reply', 
     await new Promise<void>((resolve) => { release = resolve; });
     await mock.respond(route, '{"move":"e7e5","plan":"new model continuation"}');
   });
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   await page.getByRole('button', { name: 'Choose another model', exact: true }).click();
   await selectModel(page);
@@ -316,7 +315,7 @@ test('queues a different model and commits it only with its first legal reply', 
 
 test('reload rechecks compatibility automatically before the next model request', async ({ page }) => {
   const fixture = await provider(page, ['e7e5', 'b8c6']);
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   await move(page, 'e2e4');
   await expect(movesOnBoard(page)).toHaveCount(2);
@@ -333,7 +332,7 @@ test('corrects malformed and illegal replies with current-turn feedback only', a
   const fixture = await provider(page, [], async (route, index, mock) => {
     await mock.respond(route, ['I prefer the center.', '{"move":"e7e4"}', '{"move":"e7e5"}', '{"move":"g8f6"}'][index] ?? '{"resign":true}');
   });
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   await move(page, 'e2e4');
   await expect(movesOnBoard(page)).toHaveCount(2);
@@ -353,7 +352,7 @@ test('pauses after the formatting budget and sends another request only on Retry
   const fixture = await provider(page, [], async (route, index, mock) => {
     await mock.respond(route, index < 4 ? 'I prefer the center.' : '{"move":"e7e5"}');
   });
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   await move(page, 'e2e4');
   await expect(page.getByRole('button', { name: 'Retry model request' })).toBeVisible();
@@ -368,7 +367,7 @@ test('a failed candidate keeps the prior model and can be retried explicitly', a
   const fixture = await provider(page, [], async (route, index, mock) => {
     await mock.respond(route, index === 0 ? 'I prefer the center.' : '{"move":"e7e5"}');
   });
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   await page.getByRole('button', { name: 'Choose another model', exact: true }).click();
   await selectModel(page);
@@ -384,23 +383,21 @@ test('a failed candidate keeps the prior model and can be retried explicitly', a
 
 test('CLIProxyAPI discovers models, preserves consent cancellation, and plays', async ({ page }) => {
   const fixture = await provider(page, ['e7e5', 'b8c6'], undefined, 'http://127.0.0.1:8317/v1');
-  await page.goto('/');
+  await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('ai');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByLabel('API key', { exact: true }).fill('offline-key');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   await page.getByLabel('Available models').selectOption('offline-fixture');
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(fixture.calls).toHaveLength(0);
-  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled();
   await page.getByLabel('Available models').selectOption('offline-fixture');
   await page.getByRole('button', { name: 'Allow', exact: true }).click();
   await expect(page.getByText('Ready', { exact: true })).toBeVisible();
   expect(fixture.calls).toHaveLength(1);
   await selectModel(page, 'another-model');
   expect(fixture.calls).toHaveLength(2);
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await move(page, 'e2e4'); await expect(movesOnBoard(page)).toHaveCount(2);
   await move(page, 'g1f3'); await expect(movesOnBoard(page)).toHaveCount(4);
@@ -411,7 +408,7 @@ test('a model playing White continues through knight and bishop development', as
   const searchWorkers: string[] = [];
   page.on('worker', (worker) => searchWorkers.push(worker.url()));
   const fixture = await provider(page, ['e2e4', 'g1f3', 'f1c4']);
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page, 'black');
   await expect(movesOnBoard(page)).toHaveCount(1);
   await move(page, 'e7e5');
@@ -430,7 +427,7 @@ test('plays through move 15 without proof workers', async ({ page }) => {
   const fixture = await provider(page, coordinates.filter((_, index) => index % 2 === 1));
   const workers: string[] = [];
   page.on('worker', (worker) => workers.push(worker.url()));
-  await page.goto('/');
+  await page.goto('/play');
   await configure(page);
   for (let ply = 0; ply < coordinates.length; ply += 2) {
     await move(page, coordinates[ply]!);
@@ -451,10 +448,9 @@ test('a prefixed endpoint discovers models but blocks rejected credentials from 
     expect(route.request().postDataJSON()).toMatchObject({ model: 'exact-routing-alias' });
     await route.fulfill({ status: 401, json: { error: { message: 'Invalid API key.' } } });
   });
-  await page.goto('/');
+  await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('ai');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByLabel('Base URL', { exact: true }).fill(`${apiEndpoint}/chat/completions`);
   await page.getByLabel('API key', { exact: true }).fill('offline-key');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
@@ -462,7 +458,7 @@ test('a prefixed endpoint discovers models but blocks rejected credentials from 
   await expect(page.locator('.disclosure-panel')).toContainText(`${apiEndpoint}/chat/completions`);
   await page.getByRole('button', { name: 'Allow', exact: true }).click();
   await expect(page.getByText('Check API key.', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Next', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled();
   expect(attempts).toBe(1);
 });
 
@@ -470,9 +466,8 @@ test('changing a saved destination requires its own key and consent', async ({ p
   await provider(page, []);
   const changed = 'http://127.0.0.1:8318/v1';
   const proxy = await provider(page, [], undefined, changed);
-  await page.goto('/'); await configure(page);
+  await page.goto('/play'); await configure(page);
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await expect(page.getByLabel('Available models')).toBeVisible();
   await page.getByRole('button', { name: 'Connection', exact: true }).click();
   await page.getByLabel('Provider').selectOption('cliproxy');
@@ -492,7 +487,7 @@ test('reports an upstream failure without calling it a connection failure', asyn
   const fixture = await provider(page, [], async route => {
     await route.fulfill({ status: 502, json: { error: { type: 'server_error', message: 'Upstream service failed.' } } });
   });
-  await page.goto('/'); await configure(page); await move(page, 'e2e4');
+  await page.goto('/play'); await configure(page); await move(page, 'e2e4');
   await expect(page.getByRole('heading', { name: 'Provider unavailable. Retry.', exact: true })).toBeVisible();
   expect(fixture.modelCalls).toHaveLength(1);
   await expect(page.getByRole('button', { name: 'Retry model request' })).toBeVisible();

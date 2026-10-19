@@ -23,17 +23,26 @@
     "check": "pnpm run lint && pnpm run test && pnpm run build"
   },
   "dependencies": {
+    "@base-ui/react": "1.9.0",
+    "@fontsource-variable/inter-tight": "5.3.0",
+    "@fontsource-variable/space-grotesk": "5.3.0",
+    "@fontsource/instrument-serif": "5.3.0",
+    "@fortawesome/free-solid-svg-icons": "7.3.1",
     "@clerk/clerk-js": "6.39.1",
     "@clerk/ui": "1.40.2",
     "@lichess-org/chessground": "10.4.2",
     "chess.js": "1.4.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
     "chessops": "0.15.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "stockfish": "19.0.1"
+    "stockfish": "19.0.1",
+    "tailwind-merge": "3.7.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@tailwindcss/vite": "4.3.3",
     "@playwright/test": "1.64.1",
     "@types/node": "24.19.2",
     "@types/react": "19.3.0",
@@ -44,6 +53,7 @@
     "eslint-plugin-react-refresh": "0.5.7",
     "fake-indexeddb": "6.2.5",
     "globals": "17.13.0",
+    "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "typescript-eslint": "8.71.2",
     "vite": "8.3.4",

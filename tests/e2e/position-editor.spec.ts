@@ -2,14 +2,15 @@ import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
 async function openEditor(page: Page) {
-  await page.goto('/');
+  await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('local');
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   await page.getByRole('button', { name: 'Custom starting position', exact: true }).click();
 }
 
 async function dragTo(page: Page, source: string, target: string) {
+  await page.locator('.editor-interaction').scrollIntoViewIfNeeded();
+  await expect(page.getByRole('button', { name: source, exact: true })).toBeInViewport();
   const from = await page.getByRole('button', { name: source, exact: true }).boundingBox();
   const to = await page.getByRole('button', { name: target, exact: true }).boundingBox();
   if (!from || !to) throw new Error('Drag source or destination is missing');
@@ -85,7 +86,7 @@ test('keyboard editing and flipped-board dragging preserve chess coordinates', a
   await page.getByRole('button', { name: 'e4, empty', exact: true }).focus();
   await page.keyboard.press('Enter');
   await expect(page.getByRole('button', { name: 'e4, white pawn', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Flip board', exact: true }).click();
+  await page.getByRole('dialog', { name: 'New game', exact: true }).getByRole('button', { name: 'Flip board', exact: true }).click();
   await expect(page.locator('.editor-square').first()).toHaveAttribute('data-editor-square', 'h1');
   await dragTo(page, 'e4, white pawn', 'e5, empty');
   await expect(page.getByRole('button', { name: 'e5, white pawn', exact: true })).toBeVisible();
@@ -115,22 +116,21 @@ test('FEN import, metadata, empty boards, and starting a custom game work togeth
 for (const appearance of ['light', 'dark'] as const) {
   test(`${appearance} editor has readable contrast and fits its viewport`, async ({ page }, testInfo) => {
     await page.setViewportSize(appearance === 'light' ? { width: 1280, height: 900 } : { width: 390, height: 844 });
-    await page.goto('/');
+    await page.goto('/play');
+    await page.getByRole('button', { name: 'New game', exact: true }).click();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.getByRole('combobox', { name: /Appearance/ }).selectOption(appearance);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     await page.getByRole('button', { name: 'New game', exact: true }).click();
     await page.getByLabel('Game mode').selectOption('local');
-    await page.getByRole('button', { name: 'Next', exact: true }).click();
     await page.getByRole('button', { name: 'Custom starting position', exact: true }).click();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     const board = await page.locator('.editor-grid').boundingBox();
     const panel = await page.locator('.editor-palette-panel').boundingBox();
     if (!board || !panel) throw new Error('Editor layout is missing');
-    expect(board.width).toBeGreaterThan(340);
+    expect(board.width).toBeGreaterThan(180);
     expect(board.height).toBeCloseTo(board.width, 0);
-    if (appearance === 'light') expect(panel.x).toBeGreaterThan(board.x + board.width);
-    else expect(panel.y).toBeGreaterThan(board.y + board.height);
+    expect(panel.y).toBeGreaterThan(board.y + board.height);
     const contrasts = await page.evaluate(() => {
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = 1;

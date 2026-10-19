@@ -1,0 +1,72 @@
+{
+  "author": "ripgrim",
+  "source": "https://github.com/Boring-Software-Inc/dither-kit",
+  "revision": "1e7faee9aa252e499651e6736ed65f7a07d9a6bd",
+  "component": "DitherGradient",
+  "method": "Exact upstream paintGradient over an unchanged frozen video frame.",
+  "variants": [
+    {
+      "id": "bottom",
+      "label": "Bottom dissolve",
+      "description": "A fine grey dither wash rising from the bottom and fading into the video.",
+      "layers": [
+        {
+          "from": "grey",
+          "direction": "up",
+          "cell": 3,
+          "opacity": 0.65,
+          "bloom": "off"
+        }
+      ]
+    },
+    {
+      "id": "top",
+      "label": "Top dissolve",
+      "description": "A slightly coarser wash falling from the top edge, with a clear lower board.",
+      "layers": [
+        {
+          "from": "grey",
+          "direction": "down",
+          "cell": 4,
+          "opacity": 0.55,
+          "bloom": "off"
+        }
+      ]
+    },
+    {
+      "id": "side",
+      "label": "Side dissolve",
+      "description": "Larger pixels dissolving from the right edge across the model pieces.",
+      "layers": [
+        {
+          "from": "grey",
+          "direction": "left",
+          "cell": 5,
+          "opacity": 0.68,
+          "bloom": "off"
+        }
+      ]
+    },
+    {
+      "id": "crossed",
+      "label": "Crossed washes",
+      "description": "Two fine dither fades meet from the bottom and left for a fuller texture.",
+      "layers": [
+        {
+          "from": "grey",
+          "direction": "up",
+          "cell": 3,
+          "opacity": 0.48,
+          "bloom": "off"
+        },
+        {
+          "from": "grey",
+          "direction": "right",
+          "cell": 4,
+          "opacity": 0.38,
+          "bloom": "off"
+        }
+      ]
+    }
+  ]
+}

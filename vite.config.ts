@@ -1,4 +1,5 @@
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { defineConfig } from 'vite';
 import { readPublicConfig } from './src/public-config.js';
 
@@ -12,7 +13,7 @@ if (process.env.KAMKM_PUBLIC_ACCOUNTS_ENABLED === 'true' && !browserConfig.accou
 }
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   // Public configuration will be allowlisted when hosted accounts are implemented.
   envPrefix: [],
   // Each setting below is public by design. No other environment value enters

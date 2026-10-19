@@ -3,9 +3,8 @@ import type { Page } from '@playwright/test';
 import { Chess } from 'chess.js';
 
 async function startLocal(page: Page, fen?: string) {
-  await page.goto('/');
+  await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByRole('button', { name: 'Next', exact: true }).click();
   if (fen) {
     await page.getByRole('button', { name: 'Custom starting position', exact: true }).click();
     await page.getByLabel('Custom starting position (six-field FEN)').fill(fen);
