@@ -171,14 +171,14 @@ export function OpponentPanel({ service, connectionStore, onSelect, selected, id
             const next = event.target.value as ConnectionProvider; const values = defaults[next];
             setProvider(next); setProfile(null); setBound(false); setName(providers[next]); setBaseUrl(values[0]); setProtocol(values[1]); setAuthMode(values[2]); setCatalogUrl(''); setApiKey(''); invalidate();
           }}>{Object.entries(providers).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
-          <label>Address<input aria-label="Base URL" type="url" required value={baseUrl} onChange={event => { setBaseUrl(event.target.value); setBound(false); invalidate(); }} /></label>
-          {authMode !== 'none' && <label>API key<input type="password" autoComplete="new-password" value={apiKey} required={!bound} placeholder={bound ? 'Saved' : ''} onChange={event => { setApiKey(event.target.value); invalidate(); }} /></label>}
+          <label>Address<input aria-label="Base URL" type="url" autoCapitalize="none" autoComplete="url" spellCheck={false} required value={baseUrl} onChange={event => { setBaseUrl(event.target.value); setBound(false); invalidate(); }} /></label>
+          {authMode !== 'none' && <label>API key<input type="password" autoComplete="new-password" autoCapitalize="none" spellCheck={false} value={apiKey} required={!bound} placeholder={bound ? 'Saved' : ''} onChange={event => { setApiKey(event.target.value); invalidate(); }} /></label>}
           <div className="button-row"><button className="button primary" type="submit">{busy ? 'Connecting…' : 'Connect'}</button><IconButton icon="settings" label="Advanced connection settings" onClick={() => { setPage('advanced'); setMessage(''); }} /></div>
         </> : <>
           <label>Name<input aria-label="Connection name" value={name} required onChange={event => setName(event.target.value)} /></label>
           <label>Protocol<select value={protocol} onChange={event => { setProtocol(event.target.value as ConnectionProtocol); setBound(false); invalidate(); }}><option value="chat-completions">Chat Completions</option><option value="responses">Responses</option><option value="messages">Anthropic Messages</option></select></label>
           <label>Authentication<select value={authMode} onChange={event => { setAuthMode(event.target.value as typeof authMode); setBound(false); setApiKey(''); invalidate(); }}><option value="bearer">Bearer</option><option value="api-key-header">API key</option><option value="none">None</option></select></label>
-          <label>Catalog<input aria-label="Catalog URL override" type="url" value={catalogUrl} onChange={event => { setCatalogUrl(event.target.value); setBound(false); invalidate(); }} /></label>
+          <label>Catalog<input aria-label="Catalog URL override" type="url" autoCapitalize="none" spellCheck={false} value={catalogUrl} onChange={event => { setCatalogUrl(event.target.value); setBound(false); invalidate(); }} /></label>
           <button className="button primary" type="button" onClick={() => setPage('connection')}>Done</button>
         </>}
       </fieldset>

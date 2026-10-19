@@ -8,19 +8,22 @@ import './right-game-sidebar.css';
 interface Props {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
+  readonly showReopenButton?: boolean;
   readonly children: (close: () => void) => ReactNode;
 }
 
+const MOBILE_QUERY = '(max-width: 760px), (max-width: 1000px) and (max-height: 500px)';
+
 function subscribeToMobile(onChange: () => void) {
-  const media = window.matchMedia('(max-width: 700px)');
+  const media = window.matchMedia(MOBILE_QUERY);
   media.addEventListener('change', onChange);
   return () => media.removeEventListener('change', onChange);
 }
 
 /** The real game configuration lives in the existing right-hand drawer. */
-export function RightGameSidebar({ open, onOpenChange, children }: Props) {
+export function RightGameSidebar({ open, onOpenChange, showReopenButton = true, children }: Props) {
   const [width, setWidth] = useState(() => readSidebarPreferences().width);
-  const mobile = useSyncExternalStore(subscribeToMobile, () => window.matchMedia('(max-width: 700px)').matches, () => false);
+  const mobile = useSyncExternalStore(subscribeToMobile, () => window.matchMedia(MOBILE_QUERY).matches, () => false);
   const returnFocus = useRef<HTMLElement | null>(null);
   const wasOpen = useRef(false);
 
@@ -37,7 +40,7 @@ export function RightGameSidebar({ open, onOpenChange, children }: Props) {
   function resize(next: number) { setWidth(clampSidebarWidth(next)); }
 
   return <Dialog.Root modal={mobile} open={open} onOpenChange={changeOpen}>
-    {!open && <button className="game-options-reopen" type="button" aria-label="Expand game settings" title="Expand game settings" onClick={() => changeOpen(true)}><Icon name="settings" /></button>}
+    {!open && showReopenButton && <button className="game-options-reopen" type="button" aria-label="Expand game settings" title="Expand game settings" onClick={() => changeOpen(true)}><Icon name="settings" /></button>}
     <Dialog.Portal>
       {mobile && <Dialog.Backdrop className="game-options-backdrop" />}
       <Dialog.Popup className="right-game-sidebar" aria-hidden={open ? undefined : true} inert={!open} style={{ '--game-options-width': `${width}px` } as CSSProperties}

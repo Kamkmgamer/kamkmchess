@@ -128,8 +128,8 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
     </section>)}
     <form onSubmit={createNewGame} className="connection-form game-start-form">
       <fieldset className="game-time-options"><legend>Time control</legend>
-        <label>Minutes<input id="starting-minutes" aria-label="Starting minutes" type="number" min="1" max="180" required value={setupMinutes} onChange={event => setSetupMinutes(Number(event.target.value))} /></label>
-        <label>Increment (sec)<input aria-label="Increment seconds" type="number" min="0" max="600" required value={setupIncrement} onChange={event => setSetupIncrement(Number(event.target.value))} /></label>
+        <label>Minutes<input id="starting-minutes" aria-label="Starting minutes" type="number" inputMode="numeric" min="1" max="180" required value={setupMinutes} onChange={event => setSetupMinutes(Number(event.target.value))} /></label>
+        <label>Increment (sec)<input aria-label="Increment seconds" type="number" inputMode="numeric" min="0" max="600" required value={setupIncrement} onChange={event => setSetupIncrement(Number(event.target.value))} /></label>
       </fieldset>
       <div className="game-position-heading"><span>Starting position</span><button className="button quiet" type="button" aria-label="Custom starting position" aria-expanded={editorOpen} onClick={() => setEditorOpen(value => !value)}>Board setup</button></div>
       {editorOpen && <>
@@ -144,7 +144,7 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
                 <button className="button quiet" type="button" onClick={() => { setSetupFen('8/8/8/8/8/8/8/8 w - - 0 1'); setSetupError(''); }}>Clear board</button></div>
               <div className="position-editor-footer">{setupError && <p role="alert">{conciseError(new Error(setupError))}</p>}<button className="button primary" type="button" onClick={() => setEditorOpen(false)}>Done</button></div>
             </aside>
-            <div className="editor-fen-field"><label htmlFor="editor-fen">FEN</label><div className="editor-fen-row"><textarea id="editor-fen" aria-label="Custom starting position (six-field FEN)" rows={2} value={setupFen} onChange={event => { setSetupFen(event.target.value); setSetupError(''); }} /><button className="button quiet" type="button" onClick={() => { if (navigator.clipboard) void navigator.clipboard.writeText(setupFen).catch(() => setSetupError('Select the FEN and copy it manually.')); else setSetupError('Select the FEN and copy it manually.'); }}>Copy</button></div></div>
+            <div className="editor-fen-field"><label htmlFor="editor-fen">FEN</label><div className="editor-fen-row"><textarea id="editor-fen" aria-label="Custom starting position (six-field FEN)" autoCapitalize="none" autoComplete="off" spellCheck={false} rows={2} value={setupFen} onChange={event => { setSetupFen(event.target.value); setSetupError(''); }} /><button className="button quiet" type="button" onClick={() => { if (navigator.clipboard) void navigator.clipboard.writeText(setupFen).catch(() => setSetupError('Select the FEN and copy it manually.')); else setSetupError('Select the FEN and copy it manually.'); }}>Copy</button></div></div>
           </div>
       </>}
       {setupError && <p role="alert">{conciseError(new Error(setupError))}</p>}

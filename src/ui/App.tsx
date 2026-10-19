@@ -60,7 +60,8 @@ function statusLabel(snapshot: ControllerSnapshotV1): string {
 export function App({ composition, initialSession, initialSnapshot, onOpenAccount }: AppProps) {
   const [session, setSession] = useState(initialSession);
   const [snapshot, setSnapshot] = useState(initialSnapshot);
-  const [orientation, setOrientation] = useState<'white' | 'black'>('white');
+  const [orientation, setOrientation] = useState<'white' | 'black'>(() =>
+    initialSnapshot.checkpoint.selections.players.white.kind === 'model' && initialSnapshot.checkpoint.selections.players.black.kind === 'human' ? 'black' : 'white');
   const { theme, setTheme, appearance, setAppearance } = useTheme();
   const [coordinate, setCoordinate] = useState('');
   const [coordinateError, setCoordinateError] = useState('');
@@ -90,6 +91,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const practiceController = useRef<AbortController | null>(null);
   const generationFenceKey = useRef('');
   const sessionRef = useRef(session);
+  const movesPanel = useRef<HTMLElement>(null);
+  const boardPanel = useRef<HTMLElement>(null);
   useEffect(() => {
     const url = new URL(window.location.href);
     if (url.searchParams.get('setup') !== 'new') return;
@@ -601,7 +604,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     setFeedback('New game saved.');
   };
   return <>
-    <RightGameSidebar open={setupOpen} onOpenChange={setSetupOpen}>
+    <RightGameSidebar open={setupOpen} onOpenChange={setSetupOpen} showReopenButton={false}>
       {close => <>
         <NewGameSetup key={setupRequest} composition={composition} draft={setupDraft} startingFen={setupStartingFen} focus={setupFocus} onStarted={game => { acceptSidebarGame(game); close(); }} />
         <button className="button quiet game-options-tools" type="button" onClick={() => { close(); openTool('settings'); }}>Settings</button>
@@ -612,6 +615,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       <a className="wordmark" href="/" aria-label="Kamkm Chess home">kamkm chess</a>
       <div className="topbar-actions">
         {onOpenAccount && <IconButton icon="account" label="Account and saved games" onClick={onOpenAccount} />}
+        {!setupOpen && <IconButton icon="settings" label="Settings" onClick={() => openTool('settings')} />}
         <button className="button primary" type="button" onClick={() => openSetup()} aria-label="New game">New</button></div>
     </header>}
     {tool && <section className="focus-page" aria-label="Match tools">
@@ -624,7 +628,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           const link = document.createElement('a'); link.href = url; link.download = `chess-${session.gameId}.json`; link.click(); URL.revokeObjectURL(url);
         }} /></div>
       </div>}
-      {tool === 'move' && <form className="coordinate-form" onSubmit={submitCoordinate}><label className="sr-label" htmlFor="coordinate-move">Enter a move by coordinates</label><input id="coordinate-move" aria-label="Enter a move by coordinates" value={coordinate} onChange={event => { setCoordinate(event.target.value); setCoordinateError(''); }} placeholder="e2e4" autoComplete="off" /><button className="button primary" type="submit" aria-label="Play move" disabled={disabled}>Play</button>{coordinateError && <p role="alert">{coordinateError}</p>}</form>}
+      {tool === 'move' && <form className="coordinate-form" onSubmit={submitCoordinate}><label className="sr-label" htmlFor="coordinate-move">Enter a move by coordinates</label><input id="coordinate-move" aria-label="Enter a move by coordinates" value={coordinate} onChange={event => { setCoordinate(event.target.value); setCoordinateError(''); }} placeholder="e2e4" autoComplete="off" autoCapitalize="none" spellCheck={false} enterKeyHint="go" /><button className="button primary" type="submit" aria-label="Play move" disabled={disabled}>Play</button>{coordinateError && <p role="alert">{coordinateError}</p>}</form>}
       {tool === 'position' && <><p className="fen-value">{history.position.fen}</p><IconButton icon="board" label="Edit starting position" onClick={() => openSetup(history.position.fen)} /></>}
       {tool === 'archive' && <><pre className="archive-page">{archiveWords.length ? archiveWords.slice(toolPage * 8, (toolPage + 1) * 8).join(' ') : 'No conversation yet.'}</pre><div className="button-row"><IconButton icon="back" label="Previous page" disabled={toolPage === 0} onClick={() => setToolPage(page => page - 1)} /><IconButton icon="next" label="Next page" disabled={(toolPage + 1) * 8 >= archiveWords.length} onClick={() => setToolPage(page => page + 1)} /></div></>}
     </section>}
@@ -636,8 +640,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       }} /> : <OpponentPanel service={composition.opponentService} connectionStore={composition.connectionStore} namespace={composition.namespace} selected={recoverySelection.kind === 'model' ? recoverySelection : modelSelection} onSelect={revalidateSavedOpponent} />}
     </section>}
     <div className="match-layout" hidden={focusPage} data-practice={snapshot.checkpoint.practice.mode} data-committed-model={snapshot.modelHandoff.committed?.modelRoutingId} data-queued-model={snapshot.modelHandoff.queued?.selection.modelRoutingId}>
-      <section className="board-column" id="board" aria-label="Chess match board">
-        {(['black', 'white'] as const).map(side => <div key={side} className={`player-row ${side} ${activeSide === side ? 'active' : ''}`}>
+      <section className="board-column" id="board" ref={boardPanel} tabIndex={-1} aria-label="Chess match board">
+        {(['black', 'white'] as const).map(side => <div key={side} className={`player-row ${side} ${side === orientation ? 'near-player' : 'far-player'} ${activeSide === side ? 'active' : ''}`}>
           <OpponentBadge player={players[side]} side={side} /><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
           <time className={`clock ${activeSide === side ? 'running' : ''}`} aria-label={`${side} clock ${formatClock(clocks[`${side}Ms`])}`}>{formatClock(clocks[`${side}Ms`])}</time>
         </div>)}
@@ -645,10 +649,17 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           {showEvaluation && <EvaluationBar key={session.gameId} orientation={orientation} startingFen={snapshot.checkpoint.rules.startingFen}
             moves={snapshot.checkpoint.rules.moves.slice(0, history.ply).map(move => `${move.from}${move.to}${move.promotion ?? ''}`).join(' ')} />}
           <ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} visible={!focusPage} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} />
+          {promotion && <section className="promotion-panel" aria-label="Promotion"><div className="promotion-options">{PROMOTIONS.map(piece => <button className="button quiet" type="button" key={piece.value} aria-label={piece.label} autoFocus={piece.value === 'q'} onClick={() => selectPromotion(piece.value)}><img alt="" width="36" height="36" src={new URL(`./pieces/${snapshot.position.sideToMove}${piece.value}.svg`, import.meta.url).href} /></button>)}<IconButton icon="close" label="Cancel promotion" onClick={() => setPromotion(null)} /></div></section>}
         </div>
-        <nav className="board-tools" aria-label="Board tools"><IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />
+        <nav hidden={setupOpen} className="board-tools" aria-label="Board tools"><IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />
           <IconButton icon="undo" label="Undo" onClick={() => void undo()} disabled={working || snapshot.readiness !== 'ready' || !snapshot.checkpoint.rules.moves.length || snapshot.checkpoint.result.kind !== 'unresolved'} />
-          <IconButton icon="code" label="Type a move" disabled={disabled} onClick={() => openTool('move')} /></nav>
+          <IconButton icon="code" label="Type a move" disabled={disabled} onClick={() => openTool('move')} />
+          <div className="mobile-history-tools">
+            <IconButton icon="back" label="Previous move" disabled={history.ply === 0} onClick={() => history.select(history.ply - 1)} />
+            <IconButton icon="next" label="Next move" disabled={!history.reviewing} onClick={() => history.select(history.ply + 1)} />
+            <IconButton icon="moves" label="Show moves" aria-controls="moves-panel" onClick={() => { movesPanel.current?.focus({ preventScroll: true }); movesPanel.current?.scrollIntoView({ block: 'start' }); }} />
+          </div>
+        </nav>
         <div className="match-status" role="status" aria-description={generationDetail || feedback}>
           <h2 className="status-heading" aria-label={generationState === 'producing' ? isEngineSelection(activePlayer) ? 'Engine is choosing a move' : 'AI is choosing a move' : undefined}>{history.reviewing ? `${history.ply}/${history.count}` : generationState === 'stopped' ? 'Paused' : generationState === 'failed' ? conciseTurnError(new Error(generationDetail)) : generationState === 'producing' ? generationDetail === 'Checking connection…' ? 'Checking…' : 'Thinking…' : statusLabel(snapshot)}</h2>
           <div className="button-row">
@@ -663,10 +674,11 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
             {final && snapshot.checkpoint.result.kind === 'final' && snapshot.checkpoint.result.winner !== 'draw' && !spectator && !Object.values(players).some(isEngineSelection) && Object.values(players).some(player => player.kind === 'model') && <IconButton icon="play" label="Start practice from this position" disabled={working} onClick={() => void beginPractice()} />}
           </div>
         </div>
-        {promotion && <section className="promotion-panel" aria-label="Promotion"><div className="promotion-options">{PROMOTIONS.map(piece => <button className="button quiet" type="button" key={piece.value} aria-label={piece.label} autoFocus={piece.value === 'q'} onClick={() => selectPromotion(piece.value)}><img alt="" width="36" height="36" src={new URL(`./pieces/${snapshot.position.sideToMove}${piece.value}.svg`, import.meta.url).href} /></button>)}<IconButton icon="close" label="Cancel promotion" onClick={() => setPromotion(null)} /></div></section>}
       </section>
-      <aside className="moves-sidebar" aria-labelledby="moves-title">
-        <div className="moves-heading"><h2 id="moves-title">Moves</h2><span className="count" aria-label={`Move ${history.ply} of ${history.count}`}>{history.ply}/{history.count}</span></div>
+      <aside className="moves-sidebar" id="moves-panel" ref={movesPanel} tabIndex={-1} aria-labelledby="moves-title">
+        <div className="moves-heading"><h2 id="moves-title">Moves</h2><span className="count" aria-label={`Move ${history.ply} of ${history.count}`}>{history.ply}/{history.count}</span>
+          <span className="mobile-board-return"><IconButton icon="board" label="Show board" aria-controls="board" onClick={() => { boardPanel.current?.focus({ preventScroll: true }); boardPanel.current?.scrollIntoView({ block: 'start' }); }} /></span>
+        </div>
         <MoveList moves={snapshot.checkpoint.rules.moves} selectedPly={history.ply} visible={!focusPage} onSelect={history.select} />
         <nav hidden={setupOpen} className="history-controls" aria-label="Move history"><div className="button-row">
           <IconButton icon="first" label="First" onClick={() => history.select(0)} disabled={history.ply === 0} aria-keyshortcuts="Home" />

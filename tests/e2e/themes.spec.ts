@@ -30,8 +30,10 @@ for (const mode of ['light', 'dark']) {
 }
 
 test('all app palettes theme the landing page in light and dark modes', async ({ page }, testInfo) => {
+  await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('/');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'screen');
+  await expect(page.locator('html')).toHaveAttribute('data-appearance', 'dark');
   await page.screenshot({ path: testInfo.outputPath('screen-default-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'Appearance', exact: true }).click();
   const theme = page.getByRole('combobox', { name: 'Theme', exact: true });
@@ -129,6 +131,7 @@ test('mobile appearance follows the system and synchronizes changes from another
   await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
   await page.getByRole('button', { name: 'Appearance', exact: true }).click();
   await expect(page.getByRole('combobox', { name: 'Theme', exact: true })).toBeFocused();
+  await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('system');
   await page.getByRole('combobox', { name: 'Theme', exact: true }).selectOption('ember');
   await page.getByRole('button', { name: 'Close menu', exact: true }).click();
   await page.emulateMedia({ colorScheme: 'light' });
