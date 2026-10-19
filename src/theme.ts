@@ -1,4 +1,5 @@
 import { T3_PALETTES } from './ui/t3-palettes.js';
+import { SCREEN_PALETTE } from './ui/screen-palette.js';
 
 export type Appearance = 'light' | 'dark' | 'system';
 export interface ThemePreferences {
@@ -7,7 +8,7 @@ export interface ThemePreferences {
 }
 
 export const THEME_STORAGE_KEY = 'kamkmchess.theme.v1';
-const DEFAULTS: ThemePreferences = { theme: 't3-chat', appearance: 'system' };
+const DEFAULTS: ThemePreferences = { theme: SCREEN_PALETTE.id, appearance: 'system' };
 
 export function isAppearance(value: unknown): value is Appearance {
   return value === 'light' || value === 'dark' || value === 'system';
@@ -35,7 +36,7 @@ export function saveThemePreferences(preferences: ThemePreferences): void {
 
 /** Both entry points use the same palette roles before rendering their UI. */
 export function applyTheme(preferences: ThemePreferences, systemDark: boolean): void {
-  const palette = (T3_PALETTES.find(item => item.id === preferences.theme) ?? T3_PALETTES[1]) as {
+  const palette = (T3_PALETTES.find(item => item.id === preferences.theme) ?? SCREEN_PALETTE) as {
     id: string;
     colors: Record<string, string>;
     variants?: Partial<Record<'dark' | 'light', Record<string, string>>>;

@@ -290,9 +290,13 @@ body { margin: 0; }
   .page-width { width: calc(100% - var(--gutter-sm) * 2); }
   .quartz h1 { font: var(--type-display); }
   .quartz h2 { font: var(--type-heading-lg); }
-  .hero-introduction { gap: var(--space-6); padding-block: var(--space-15); }
-  .hero-introduction > p { max-width: min(var(--overlay-sm), 100%); }
-  .hero { --hero-panel-inset: var(--space-4); }
+  .hero { min-height: max(620px, 100svh); min-height: max(620px, 100dvh); --hero-panel-inset: var(--space-4); --hero-panel-radius: var(--radius-frame); }
+  .hero-media img { object-position: 58% center; }
+  .hero-introduction { gap: var(--space-5); padding-block: calc(var(--space-20) + var(--space-8)); }
+  .hero-introduction h1 { max-width: 12ch; }
+  .hero-introduction > p { max-width: min(34ch, 100%); }
+  .hero-introduction > [data-slot='button'] { margin-top: var(--space-1); }
+  .quartz .mobile-menu-trigger { inset-block-start: calc(var(--space-4) + var(--space-2)); inset-inline-start: calc(var(--space-4) + var(--space-2)); }
   .quartz .page-sections { border-radius: calc(var(--radius-frame) * 2) calc(var(--radius-frame) * 2) 0 0; }
   .page-sections :is(.idea-section, .preview-section, .questions-section) { padding-block: var(--space-15); }
   .page-sections :is(.idea-section, .preview-section) { padding-bottom: 0; }
@@ -309,7 +313,7 @@ body { margin: 0; }
   .desktop-break { display: none; }
   .board-square[data-last-move]::after { inset: var(--space-0-5); }
 }
-@media (prefers-reduced-motion: no-preference) and (min-height: 700px) {
+@media (prefers-reduced-motion: no-preference) and (min-height: 700px) and (min-width: 701px) {
   .hero { position: sticky; top: 0; }
   /* Keyboard focus must be able to scroll hero controls out from under the sheet. */
   .hero:has(:focus-visible) { position: relative; }

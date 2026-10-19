@@ -1,4 +1,6 @@
 // Palette values extracted from T3 Code `packages/shared/src/themePalettes.ts` at 9503155da67add4fbd7fbc51c99ec19a0c8c4a2c (SHA-256 82385050b8b691ff280efc0e93ea9dd8a4bbfd64a4c50cf8536b5c15d1e74479). See docs/dependency-notices.md for provenance.
+import { SCREEN_PALETTE } from './screen-palette.js';
+
 export const T3_PALETTES = [
   {
     "id": "t3-code",
@@ -251,6 +253,7 @@ export const T3_PALETTES = [
     },
     "sidebarArtwork": true
   },
+  SCREEN_PALETTE,
   {
     "id": "grove",
     "label": "Grove",
