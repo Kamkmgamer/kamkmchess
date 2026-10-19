@@ -6,6 +6,19 @@ async function expectNoOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 }
 
+test('editing the current position reopens setup while the drawer is still closing', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await page.goto('/play');
+  await page.addStyleTag({ content: '.right-game-sidebar { transition: none !important; } .right-game-sidebar[data-ending-style] { animation: hold-drawer-close 30s linear; } @keyframes hold-drawer-close { from { opacity: 1; } to { opacity: 1; } }' });
+  await page.getByRole('button', { name: 'New game', exact: true }).click();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.locator('.right-game-sidebar')).toHaveAttribute('data-ending-style', '');
+  await page.getByRole('button', { name: 'Position', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit starting position', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'Visual starting position board' })).toBeVisible();
+  await expect(page.getByLabel('Custom starting position (six-field FEN)')).toHaveValue('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1');
+});
+
 test('AI opponent opens the functional right-hand drawer and the redundant preview group is gone', async ({ page }, testInfo) => {
   await page.goto('/');
   await expect(page.locator('.game-sidebar .sidebar-setup')).toHaveCount(0);
