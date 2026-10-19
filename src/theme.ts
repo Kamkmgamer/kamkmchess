@@ -8,7 +8,7 @@ export interface ThemePreferences {
 }
 
 export const THEME_STORAGE_KEY = 'kamkmchess.theme.v1';
-const DEFAULTS: ThemePreferences = { theme: SCREEN_PALETTE.id, appearance: 'system' };
+const DEFAULTS: ThemePreferences = { theme: SCREEN_PALETTE.id, appearance: 'dark' };
 
 export function isAppearance(value: unknown): value is Appearance {
   return value === 'light' || value === 'dark' || value === 'system';
