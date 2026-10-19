@@ -293,9 +293,9 @@ textarea:focus-visible, summary:focus-visible {
 .minimal-workspace .topbar { border: 0; max-width: calc(var(--board-size) + 304px); margin: 0 auto 6px; }
 .minimal-workspace .match-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; max-width: calc(var(--board-size) + 304px); margin-inline: auto; }
 .minimal-workspace .board-column { display: flex; flex-direction: column; }
-.minimal-workspace .player-row.black { order: 0; }
+.minimal-workspace .player-row.far-player { order: 0; }
 .minimal-workspace .playing-board { order: 1; }
-.minimal-workspace .player-row.white { order: 2; }
+.minimal-workspace .player-row.near-player { order: 2; }
 .minimal-workspace .board-tools { order: 3; display: flex; justify-content: center; gap: 8px; margin-top: 8px; padding: 0; }
 .minimal-workspace .match-status { order: 4; }
 .minimal-workspace .error-message, .minimal-workspace .promotion-panel { order: 5; }
@@ -303,6 +303,11 @@ textarea:focus-visible, summary:focus-visible {
 .minimal-workspace .player-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .icon-button { width: 42px; height: 42px; flex: 0 0 42px; display: inline-grid; place-items: center; padding: 0; }
 .icon-button svg { display: block; }
+.mobile-history-tools { display: none; }
+.playing-board { position: relative; }
+.playing-board > .promotion-panel { position: absolute; z-index: 3; top: 50%; left: 12px; right: 12px; width: fit-content; max-width: calc(100% - 24px); margin: auto; padding: 8px; transform: translateY(-50%); box-shadow: 0 8px 28px rgb(0 0 0 / .25); }
+.playing-board .promotion-options { flex-wrap: nowrap; justify-content: center; align-items: center; gap: 4px; margin: 0; }
+.playing-board .promotion-options > .button { display: grid; place-items: center; width: 44px; height: 48px; min-width: 0; padding: 4px; }
 .minimal-workspace .history-controls .button-row { width: 100%; display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; }
 .match-status { display: flex; align-items: center; justify-content: space-between; min-height: 44px; gap: 12px; padding-inline: 8px; }
 .match-status > span { font-size: 13px; font-weight: 600; }

@@ -83,3 +83,10 @@
 @media (max-width: 1000px) {
   .right-game-sidebar .sidebar-game-setup :is(input, select, textarea) { font-size: 16px; }
 }
+@media (max-width: 760px), (max-width: 1000px) and (max-height: 500px) {
+  .sidebar-game-setup { gap: 20px; padding-bottom: 12px; }
+  .sidebar-game-setup .editor-grid { width: 100%; max-width: 420px; }
+  .right-game-sidebar .sidebar-game-setup .editor-fen-row textarea { font-size: 16px; }
+  .sidebar-game-setup .editor-castling-rights label { min-height: 44px; }
+  .sidebar-game-setup .editor-piece-choice { height: auto; min-height: 44px; aspect-ratio: 1; }
+}

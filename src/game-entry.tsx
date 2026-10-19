@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from './ui/App.js';
 import { MatchComposition } from './ui/match-composition.js';
 import './ui/styles.css';
+import './ui/mobile.css';
 import { publicConfig } from './public-config.js';
 
 const root = document.getElementById('root');
