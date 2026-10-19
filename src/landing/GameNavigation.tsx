@@ -3,6 +3,7 @@ import {
   Icon, Book, ChessKnight, Code, Home, Information, Settings, UserAvatar,
 } from '../components/quartz/icon';
 import { Button } from '../components/quartz/ui/button';
+import type { AccountControlsState } from '../accounts/account-controls';
 
 export type OptionsFocus = 'modelId' | 'minutes' | 'fen' | null;
 
@@ -10,6 +11,8 @@ type GameNavigationProps = {
   onOptions: (focus?: OptionsFocus) => void;
   onNavigate: () => void;
   onAppearance: () => void;
+  account: AccountControlsState;
+  onAccount: () => void;
 };
 
 function subscribeToSection(onChange: () => void) {
@@ -22,9 +25,12 @@ function currentSection() {
 }
 
 /** One navigation tree for the fixed rail and the mobile drawer. */
-export function GameNavigation({ onOptions, onNavigate, onAppearance }: GameNavigationProps) {
+export function GameNavigation({ onOptions, onNavigate, onAppearance, account, onAccount }: GameNavigationProps) {
   const id = useId();
   const section = useSyncExternalStore(subscribeToSection, currentSection, () => '#home');
+  const accountLabel = account.status === 'loading' ? 'Loading account' : account.status === 'error' ? 'Retry account' : account.user ? 'Account settings' : 'Sign in';
+  const accountDescription = account.user ? account.user.email ?? 'Signed in'
+    : account.status === 'disabled' ? 'Board preview' : account.status === 'loading' ? 'Loading account...' : 'Sign in';
 
   return (
     <div className="sidebar-content">
@@ -56,12 +62,21 @@ export function GameNavigation({ onOptions, onNavigate, onAppearance }: GameNavi
           </a>
         </nav>
         <div className="sidebar-guest" aria-labelledby={`${id}-guest`}>
-          <Icon icon={UserAvatar} size={32} />
-          <div><span id={`${id}-guest`}>Guest player</span><p>Board preview</p></div>
-          <Button className="sidebar-guest-settings" variant="ghost" size="lg" aria-label="Game settings" onClick={() => onOptions()}>
+          {account.user?.imageUrl
+            ? <img className="sidebar-account-avatar" src={account.user.imageUrl} alt="" width={32} height={32} referrerPolicy="no-referrer" />
+            : <Icon icon={UserAvatar} size={32} />}
+          <div className="sidebar-account-identity">
+            <span id={`${id}-guest`} title={account.user?.name}>{account.user?.name ?? 'Guest player'}</span>
+            <p title={account.user?.email ?? undefined}>{accountDescription}</p>
+          </div>
+          <Button className="sidebar-guest-settings" variant="ghost" size="lg"
+            aria-label={account.status === 'disabled' ? 'Account settings' : accountLabel}
+            title={account.status === 'disabled' ? 'Account sign-in is unavailable' : accountLabel}
+            aria-haspopup="dialog" disabled={account.status === 'disabled' || account.status === 'loading' || account.busy} onClick={onAccount}>
             <Icon icon={Settings} size={20} />
           </Button>
         </div>
+        {account.message && <p className="sidebar-account-message" role="status">{account.message}</p>}
       </div>
     </div>
   );

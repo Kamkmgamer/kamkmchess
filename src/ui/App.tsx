@@ -67,6 +67,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [feedback, setFeedback] = useState('');
   const [promotion, setPromotion] = useState<PromotionMove | null>(null);
   const [setupOpen, setSetupOpen] = useState(() => new URLSearchParams(window.location.search).get('setup') === 'new' || !readSidebarPreferences().collapsed);
+  const [setupRequest, setSetupRequest] = useState(0);
   const [setupStartingFen, setSetupStartingFen] = useState<string | undefined>();
   const [setupFocus, setSetupFocus] = useState<'opponent' | 'time' | 'position' | null>(null);
   const [setupDraft, setSetupDraft] = useState<NewGameDraft | undefined>();
@@ -348,6 +349,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   }, [refresh, session.controller]);
 
   const openSetup = (fen?: string, focus: 'opponent' | 'time' | 'position' | null = null) => {
+    // A closing popup can still be mounted when another setup request arrives.
+    setSetupRequest(request => request + 1);
     setSetupStartingFen(fen);
     setSetupFocus(fen ? 'position' : focus);
     setTool(null);
@@ -600,7 +603,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   return <>
     <RightGameSidebar open={setupOpen} onOpenChange={setSetupOpen}>
       {close => <>
-        <NewGameSetup composition={composition} draft={setupDraft} startingFen={setupStartingFen} focus={setupFocus} onStarted={game => { acceptSidebarGame(game); close(); }} />
+        <NewGameSetup key={setupRequest} composition={composition} draft={setupDraft} startingFen={setupStartingFen} focus={setupFocus} onStarted={game => { acceptSidebarGame(game); close(); }} />
         <button className="button quiet game-options-tools" type="button" onClick={() => { close(); openTool('settings'); }}>Settings</button>
       </>}
     </RightGameSidebar>

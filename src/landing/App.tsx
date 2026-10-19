@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Dialog } from '@base-ui/react/dialog';
 import { Button } from '../components/quartz/ui/button';
 import { Icon, Bot, Close, ChessKnight, SidePanelOpen } from '../components/quartz/icon';
@@ -14,6 +14,8 @@ import { ThemeOptions } from './ThemeOptions';
 import { RightGameSidebar } from '../navigation/RightGameSidebar';
 import { HomeGameSetup } from './HomeGameSetup';
 import { readSidebarPreferences } from '../navigation/sidebar-preferences';
+import { createAccountControls } from '../accounts/account-controls';
+import { publicConfig } from '../public-config';
 
 type SidebarPanel = { kind: 'closed' } | { kind: 'navigation' } | { kind: 'appearance' };
 
@@ -28,6 +30,9 @@ function Wordmark() {
 
 export function App() {
   const theme = useTheme();
+  const [accountControls] = useState(() => createAccountControls(publicConfig.accountsEnabled ? publicConfig.clerkPublishableKey : null));
+  const account = useSyncExternalStore(accountControls.subscribe, accountControls.getSnapshot, accountControls.getSnapshot);
+  const pendingAccountSettings = useRef(false);
   const [gameOptions, setGameOptions] = useState<{ open: boolean; focus: 'opponent' | 'time' | 'position' | null }>(() => ({ open: !readSidebarPreferences().collapsed, focus: null }));
   const [panel, setPanel] = useState<SidebarPanel>({ kind: 'closed' });
   const sidebarOpen = panel.kind !== 'closed';
@@ -63,16 +68,28 @@ export function App() {
     setPanel({ kind: 'appearance' });
   }
 
+  function openAccountSettings() {
+    if (sidebarOpen) {
+      pendingAccountSettings.current = true;
+      closeNavigation();
+    } else void accountControls.openSettings();
+  }
+
   return (
     <>
     <RightGameSidebar open={gameOptions.open} onOpenChange={open => setGameOptions(current => ({ ...current, open }))}>
       {close => <HomeGameSetup onClose={close} focus={gameOptions.focus} />}
     </RightGameSidebar>
-    <Dialog.Root open={sidebarOpen} onOpenChange={(open) => { if (!open) closeNavigation(); }}>
+    <Dialog.Root open={sidebarOpen} onOpenChange={(open) => { if (!open) closeNavigation(); }} onOpenChangeComplete={open => {
+      if (!open && pendingAccountSettings.current) {
+        pendingAccountSettings.current = false;
+        void accountControls.openSettings();
+      }
+    }}>
       <a className="skip-link" href="#main">Skip to content</a>
       <aside className="game-sidebar" aria-label="Main sidebar">
         <Wordmark />
-        <GameNavigation onOptions={openGameOptions} onNavigate={closeNavigation} onAppearance={openAppearance} />
+        <GameNavigation onOptions={openGameOptions} onNavigate={closeNavigation} onAppearance={openAppearance} account={account} onAccount={openAccountSettings} />
       </aside>
       <Button className="mobile-menu-trigger" variant="secondary" size="icon-lg" aria-label="Open navigation" aria-haspopup="dialog" aria-expanded={panel.kind === 'navigation'} onClick={() => { setPanel({ kind: 'navigation' }); }}>
         <Icon icon={SidePanelOpen} size={24} />
@@ -148,7 +165,7 @@ export function App() {
           </div>
           <Dialog.Description className="visually-hidden">{panel.kind === 'navigation' ? 'Explore chess, set up a game or find help.' : 'Choose a theme and light, dark or system appearance.'}</Dialog.Description>
           {panel.kind === 'navigation'
-            ? <GameNavigation onOptions={openGameOptions} onNavigate={closeNavigation} onAppearance={openAppearance} />
+            ? <GameNavigation onOptions={openGameOptions} onNavigate={closeNavigation} onAppearance={openAppearance} account={account} onAccount={openAccountSettings} />
             : <ThemeOptions {...theme} />}
         </Dialog.Popup>
       </Dialog.Portal>
