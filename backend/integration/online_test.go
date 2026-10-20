@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/history"
 	"github.com/Kamkmgamer/kamkmchess/backend/migrations"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -563,7 +564,12 @@ func TestPostgresOnlineAbortAndControlEpoch(t *testing.T) {
 		t.Fatal(err)
 	}
 	seat, ok := match.Seat(online.SeatWhite)
-	if !ok || seat.Control.Kind != online.ControlAgent || seat.Control.ModelLabel == nil || *seat.Control.ModelLabel != label || seat.ControlEpoch != 2 {
+	// The declared label of a model opponent is resolved to the label that may
+	// be published before it is accepted, so a private routing identity never
+	// reaches the seat row. The declared label of this fixture is not a public
+	// model name and was never registered by its owner, so the seat carries
+	// the neutral label.
+	if !ok || seat.Control.Kind != online.ControlAgent || seat.Control.ModelLabel == nil || *seat.Control.ModelLabel != history.NeutralModelLabel || seat.ControlEpoch != 2 {
 		t.Fatalf("seat after control change = %+v", seat)
 	}
 	if match.ControlEpoch != 2 {

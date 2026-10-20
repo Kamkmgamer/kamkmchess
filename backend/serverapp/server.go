@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/auth"
+	"github.com/Kamkmgamer/kamkmchess/backend/history"
 	"github.com/Kamkmgamer/kamkmchess/backend/httpapi"
 	"github.com/Kamkmgamer/kamkmchess/backend/invite"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
@@ -74,6 +75,11 @@ type OnlineConfig struct {
 	QueueSweepInterval time.Duration
 	// QueueSweepBatch bounds one queue reconciliation pass.
 	QueueSweepBatch int
+	// HistoryPublishInterval is how often the server publishes the replay and
+	// the profile results of the matches that completed.
+	HistoryPublishInterval time.Duration
+	// HistoryPublishBatch bounds one publishing pass.
+	HistoryPublishBatch int
 }
 
 // flag reads an optional boolean setting. A missing or malformed value keeps
@@ -94,17 +100,19 @@ func Load(getenv func(string) string) (Config, error) {
 			AllowedOrigins:    csv(getenv("APP_ALLOWED_ORIGINS")),
 		},
 		Online: OnlineConfig{
-			GuestCredentialTTL:    duration(getenv, "ONLINE_GUEST_CREDENTIAL_TTL", onlineauth.DefaultGuestCredentialTTL),
-			OwnershipProofTTL:     duration(getenv, "ONLINE_OWNERSHIP_PROOF_TTL", onlineauth.DefaultOwnershipProofTTL),
-			StreamMaxDuration:     duration(getenv, "ONLINE_STREAM_MAX_DURATION", onlineauth.DefaultStreamMaxDuration),
-			RulesWorkerEntry:      strings.TrimSpace(getenv("ONLINE_RULES_WORKER_ENTRY")),
-			DeadlineSweepInterval: duration(getenv, "ONLINE_DEADLINE_SWEEP_INTERVAL", DefaultDeadlineSweepInterval),
-			DeadlineSweepBatch:    positiveInt(getenv, "ONLINE_DEADLINE_SWEEP_BATCH", DefaultDeadlineSweepBatch),
-			HealthCheckInterval:   duration(getenv, "ONLINE_HEALTH_CHECK_INTERVAL", DefaultHealthCheckInterval),
-			FriendEnabled:         flag(getenv, "ONLINE_FRIEND_ENABLED"),
-			QueueEnabled:          flag(getenv, "ONLINE_QUEUE_ENABLED"),
-			QueueSweepInterval:    duration(getenv, "ONLINE_QUEUE_SWEEP_INTERVAL", DefaultQueueSweepInterval),
-			QueueSweepBatch:       positiveInt(getenv, "ONLINE_QUEUE_SWEEP_BATCH", DefaultQueueSweepBatch),
+			GuestCredentialTTL:     duration(getenv, "ONLINE_GUEST_CREDENTIAL_TTL", onlineauth.DefaultGuestCredentialTTL),
+			OwnershipProofTTL:      duration(getenv, "ONLINE_OWNERSHIP_PROOF_TTL", onlineauth.DefaultOwnershipProofTTL),
+			StreamMaxDuration:      duration(getenv, "ONLINE_STREAM_MAX_DURATION", onlineauth.DefaultStreamMaxDuration),
+			RulesWorkerEntry:       strings.TrimSpace(getenv("ONLINE_RULES_WORKER_ENTRY")),
+			DeadlineSweepInterval:  duration(getenv, "ONLINE_DEADLINE_SWEEP_INTERVAL", DefaultDeadlineSweepInterval),
+			DeadlineSweepBatch:     positiveInt(getenv, "ONLINE_DEADLINE_SWEEP_BATCH", DefaultDeadlineSweepBatch),
+			HealthCheckInterval:    duration(getenv, "ONLINE_HEALTH_CHECK_INTERVAL", DefaultHealthCheckInterval),
+			FriendEnabled:          flag(getenv, "ONLINE_FRIEND_ENABLED"),
+			QueueEnabled:           flag(getenv, "ONLINE_QUEUE_ENABLED"),
+			QueueSweepInterval:     duration(getenv, "ONLINE_QUEUE_SWEEP_INTERVAL", DefaultQueueSweepInterval),
+			QueueSweepBatch:        positiveInt(getenv, "ONLINE_QUEUE_SWEEP_BATCH", DefaultQueueSweepBatch),
+			HistoryPublishInterval: duration(getenv, "ONLINE_HISTORY_PUBLISH_INTERVAL", history.DefaultPublishInterval),
+			HistoryPublishBatch:    positiveInt(getenv, "ONLINE_HISTORY_PUBLISH_BATCH", history.DefaultPublishBatch),
 		},
 	}
 	if cfg.DatabaseURL == "" || len(cfg.Clerk.AllowedOrigins) == 0 {
@@ -212,6 +220,14 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		pool.Close()
 		return nil, nil, errors.New("public profile initialization failed")
 	}
+	// The history service publishes the allowlisted public replay and the
+	// public game history of the completed online matches. It writes only its
+	// own tables, and it never writes match state.
+	historyService, err := history.Open(ctx, pool, profileService, history.Options{})
+	if err != nil {
+		pool.Close()
+		return nil, nil, errors.New("public history initialization failed")
+	}
 	root := http.NewServeMux()
 	// The online surface carries the participant routes, the feature state
 	// and, when the friend switch is on, the friend routes. The feature
@@ -223,7 +239,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		Friends: cfg.Online.FriendEnabled,
 		Queue:   cfg.Online.QueueEnabled,
 	}))
-	surface.Handle("/", httpapi.NewOnline(onlineService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}))
+	surface.Handle("/", httpapi.NewOnlineWithPublicReplay(onlineService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}, historyService))
 	if cfg.Online.FriendEnabled {
 		// The friend surface is independent of the participant commands. It
 		// is mounted only when the switch is on, so a closed surface is not
@@ -271,6 +287,9 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		root.Handle("/v1/online/queue/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders,
 			httpapi.NewQueue(queueService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins})))
 	}
+	// The public history API is mounted under its own prefix. Its reads need
+	// no credential at all.
+	root.Handle("/v1/public/", httpapi.CORS(cfg.Clerk.AllowedOrigins, httpapi.NewPublicHistory(historyService)))
 	// The public profile API is mounted under its own prefixes so it never
 	// widens the private single-owner sync API.
 	profileHandler := httpapi.CORSWithMethods(cfg.Clerk.AllowedOrigins, httpapi.ProfileRequestHeaders, "GET, POST, PUT, OPTIONS", httpapi.NewProfile(profileService, guestProofIssuer{allocator: onlineauth.NewAllocator(authorizer)}, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}))
@@ -300,12 +319,20 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 			Batch:    cfg.Online.QueueSweepBatch,
 		})
 	}
+	// The publishing loop publishes the replay and the profile results of the
+	// matches that completed. It is bound to the server context and to the
+	// release function.
+	stopPublishing := history.StartPublisher(ctx, historyService, history.PublishConfig{
+		Interval: cfg.Online.HistoryPublishInterval,
+		Batch:    cfg.Online.HistoryPublishBatch,
+	})
 	release := func() {
-		// The deadline loop stops before the pool closes, so no background
-		// sweep can use a closed connection.
+		// The loops stop before the pool closes, so no background sweep can
+		// use a closed connection.
 		stopDeadlines()
 		stopHealth()
 		stopQueue()
+		stopPublishing()
 		if closeWorker != nil {
 			closeWorker()
 		}

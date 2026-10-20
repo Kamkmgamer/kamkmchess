@@ -71,7 +71,12 @@ type onlineAPI struct {
 	// presence is the presence, claim and runner lease seam. It is optional:
 	// a service without it never exposes the routes that need it.
 	presence OnlinePresenceService
-	options  OnlineOptions
+	// publicReplay serves the canonical public replay of a completed match.
+	// It is optional only for a composition that has no history service yet:
+	// without it the public replay route refuses to answer rather than
+	// serving a payload that was not checked against the public allowlist.
+	publicReplay PublicReplayProvider
+	options      OnlineOptions
 }
 
 // NewOnline returns the participant-authorized online API.
@@ -89,7 +94,20 @@ type onlineAPI struct {
 // The explicit guest-link path, including the guest ownership proof, belongs
 // to the public profile API.
 func NewOnline(service OnlineService, authenticator OnlineAuthenticator, options OnlineOptions) http.Handler {
-	api := &onlineAPI{service: service, auth: newParticipantAuthenticator(authenticator, options), options: normalizeUpdatesOptions(options)}
+	return NewOnlineWithPublicReplay(service, authenticator, options, nil)
+}
+
+// NewOnlineWithPublicReplay returns the participant-authorized online API with
+// the public replay provider of the history service.
+//
+// The public replay URL is served by the history service, so the replay a
+// signed-out visitor reads is the allowlisted replay: the starting position,
+// the accepted moves, the time control, the result, the public participants
+// and the declared control of every accepted move. The older projection of
+// the match writer is never served on this route, because it carries neither
+// the declared control timeline nor the public allowlist of the model labels.
+func NewOnlineWithPublicReplay(service OnlineService, authenticator OnlineAuthenticator, options OnlineOptions, public PublicReplayProvider) http.Handler {
+	api := &onlineAPI{service: service, auth: newParticipantAuthenticator(authenticator, options), publicReplay: public, options: normalizeUpdatesOptions(options)}
 	if authorizer, ok := authenticator.(OnlineStreamAuthorizer); ok {
 		api.streamAuthorizer = authorizer
 	}
@@ -144,13 +162,22 @@ func normalizeUpdatesOptions(options OnlineOptions) OnlineOptions {
 
 // replay returns the allowlisted completed replay. It is readable without
 // signing in. Live state is not reachable here.
+//
+// The payload comes from the history service, so it is the replay with the
+// declared control of every accepted move and with the public allowlist of
+// the model labels. A composition without a history service refuses the route
+// instead of serving an unchecked projection.
 func (a *onlineAPI) replay(w http.ResponseWriter, r *http.Request) {
-	projection, err := a.service.GetPublicProjection(r.Context(), r.PathValue("matchID"))
-	if err != nil {
-		writeOnlineError(w, err)
+	if a.publicReplay == nil {
+		writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
 		return
 	}
-	writeJSON(w, http.StatusOK, projection)
+	replay, err := a.publicReplay.PublicReplay(r.Context(), r.PathValue("matchID"))
+	if err != nil {
+		writeHistoryError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, replay)
 }
 
 // live returns the live match to one of its participants only.

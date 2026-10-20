@@ -877,6 +877,15 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		if err := control.Validate(); err != nil {
 			return CommandResult{}, err
 		}
+		// The declared label is resolved to the label that may be published
+		// before it is accepted. The accepted event, the stored event and the
+		// returned receipt therefore carry the same publishable label, and a
+		// private routing identity never reaches a response body.
+		resolvedControl, err := s.resolveDeclaredControl(ctx, tx, match.MatchID, cmd.Seat, control)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		control = resolvedControl
 		match.ControlEpoch++
 		clock = match.Clock
 		for i := range match.Seats {

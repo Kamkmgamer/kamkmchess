@@ -156,6 +156,46 @@ func (s *Service) UpdateProfile(ctx context.Context, account onlineauth.Principa
 	return updated, nil
 }
 
+// EnsureProfileForAccount returns the public profile identifier of an account.
+//
+// It is the internal seam the history publisher uses: the publisher needs the
+// stable public identifier of every account that played an online game, and
+// the profile service is the only writer of the profile table.
+//
+// The call is not an account authorization. It names an account that the
+// caller already resolved from the shared match state, and it never accepts an
+// account from a request body. A concurrent first use still creates one
+// profile, because the insert is a no-op when the account already has one.
+func (s *Service) EnsureProfileForAccount(ctx context.Context, accountID string) (string, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return "", ErrNotFound
+	}
+	row, err := s.readStoredProfile(ctx, s.db, profileByAccount, accountID)
+	if err == nil {
+		return row.ProfileID, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return "", err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	if err = s.ensureProfileRow(ctx, tx, accountID); err != nil {
+		return "", err
+	}
+	stored, err := s.readStoredProfile(ctx, tx, profileByAccount, accountID)
+	if err != nil {
+		return "", err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return stored.ProfileID, nil
+}
+
 // PublicProfile reads one profile by its public identifier.
 //
 // The read is public: it needs no credential, and it answers with the
@@ -309,9 +349,9 @@ func (s *Service) GuestLinks(ctx context.Context, accountID string) ([]GuestLink
 	links := make([]GuestLink, 0)
 	for rows.Next() {
 		var (
-			link    GuestLink
-			seat    string
-			linked  time.Time
+			link   GuestLink
+			seat   string
+			linked time.Time
 		)
 		if err = rows.Scan(&link.LinkID, &link.ProfileID, &link.MatchID, &seat, &linked); err != nil {
 			return nil, err
