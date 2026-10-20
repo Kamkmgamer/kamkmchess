@@ -90,6 +90,54 @@ async function archivedText(page: Page) {
 
 const movesOnBoard = (page: Page) => page.getByRole('table', { name: 'Committed moves' }).getByRole('button');
 
+test('a final AI result closes an open declaration and focuses the result', async ({ page }) => {
+  let release: (() => void) | undefined;
+  await provider(page, [], async (route, _index, fixture) => {
+    await new Promise<void>(resolve => { release = resolve; });
+    await fixture.respond(route, '{"resign":true}');
+  });
+  await page.goto('/play');
+  await configure(page);
+  await move(page, 'e2e4');
+  await expect.poll(() => release !== undefined).toBe(true);
+  await page.getByRole('button', { name: 'Agree a draw', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  release?.();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'White wins', exact: true })).toBeFocused();
+  await expect(movesOnBoard(page)).toHaveCount(1);
+});
+
+for (const action of ['draw', 'resignation'] as const) {
+  test(`a confirmed ${action} fences a delayed AI reply and its recovery controls`, async ({ page }) => {
+    let release: (() => void) | undefined;
+    let delivered: (() => void) | undefined;
+    const delivery = new Promise<void>(resolve => { delivered = resolve; });
+    await provider(page, [], async (route, _index, fixture) => {
+      await new Promise<void>(resolve => { release = resolve; });
+      await fixture.respond(route, '{"move":"e7e5"}');
+      delivered?.();
+    });
+    await page.goto('/play');
+    await configure(page);
+    await move(page, 'e2e4');
+    await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
+    await expect.poll(() => release !== undefined).toBe(true);
+    await page.getByRole('button', { name: action === 'draw' ? 'Agree a draw' : 'Resign game', exact: true }).click();
+    await page.getByRole('alertdialog').getByRole('button', { name: action === 'draw' ? 'Draw' : 'Resign', exact: true }).click();
+    release?.();
+    await delivery;
+    const finalStatus = action === 'draw' ? 'Draw agreed' : 'Black wins';
+    await expect(page.locator('.status-heading')).toHaveText(finalStatus);
+    await expect(page.getByRole('heading', { name: finalStatus, exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Stop generation|Retry model request|Resume model turn/ })).toHaveCount(0);
+    await expect(movesOnBoard(page)).toHaveCount(1);
+    await page.reload();
+    await expect(page.locator('.status-heading')).toHaveText(finalStatus);
+    await expect(movesOnBoard(page)).toHaveCount(1);
+  });
+}
+
 async function dragBoardMove(page: Page, from: string, to: string) {
   await page.locator('cg-board').scrollIntoViewIfNeeded();
   const box = await page.locator('cg-board').boundingBox();
