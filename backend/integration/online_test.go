@@ -296,7 +296,7 @@ func TestPostgresOnlineMigrationTablesTriggersAndIsolation(t *testing.T) {
 		t.Fatalf("apply migrations: %v", err)
 	}
 	ctx := context.Background()
-	for _, table := range []string{"online_matches", "online_seats", "online_clocks", "online_moves", "online_events", "online_operation_receipts", "online_queue_entries", "online_runner_leases", "online_public_projections", "online_deletion_markers", "online_session_revocations", "online_guest_seat_credentials", "online_guest_ownership_proofs", "online_offers", "online_discarded_moves"} {
+	for _, table := range []string{"online_matches", "online_seats", "online_clocks", "online_moves", "online_events", "online_operation_receipts", "online_queue_entries", "online_runner_leases", "online_public_projections", "online_deletion_markers", "online_session_revocations", "online_guest_seat_credentials", "online_guest_ownership_proofs", "online_offers", "online_discarded_moves", "online_turn_budgets"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
 			t.Fatal(err)
@@ -306,11 +306,11 @@ func TestPostgresOnlineMigrationTablesTriggersAndIsolation(t *testing.T) {
 		}
 	}
 	var versions int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM kamkmchess_schema_migrations WHERE version IN (1,2,3,4)`).Scan(&versions); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM kamkmchess_schema_migrations WHERE version IN (1,2,3,4,5,6)`).Scan(&versions); err != nil {
 		t.Fatal(err)
 	}
-	if versions != 4 {
-		t.Fatalf("applied migration versions = %d, want 1, 2, 3 and 4", versions)
+	if versions != 6 {
+		t.Fatalf("applied migration versions = %d, want 1, 2, 3, 4, 5 and 6", versions)
 	}
 	var triggers int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE NOT t.tgisinternal AND n.nspname=current_schema() AND t.tgname IN ('online_moves_immutable','online_events_immutable','online_receipts_immutable','online_matches_guard','online_matches_immutable_delete','online_seats_guard','online_projections_guard')`).Scan(&triggers); err != nil {
