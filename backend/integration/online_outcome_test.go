@@ -368,7 +368,8 @@ func TestPostgresOnlineCancellationAfterATakebackStillResigns(t *testing.T) {
 	if _, err := service.Execute(ctx, alice, offerTakebackOnlineCommand(matchID, "op-cancel-takeback-offer", online.SeatWhite, 3, 2)); err != nil {
 		t.Fatalf("takeback offer: %v", err)
 	}
-	if _, err := service.Execute(ctx, bob, acceptTakebackOnlineCommand(matchID, "op-cancel-takeback-accept", online.SeatBlack, 3)); err != nil {
+	offer := pendingOffer(t, service, matchID, online.OfferTakeback)
+	if _, err := service.Execute(ctx, bob, acceptTakebackOnlineCommand(matchID, "op-cancel-takeback-accept", online.SeatBlack, 4, offer.OfferID)); err != nil {
 		t.Fatalf("takeback acceptance: %v", err)
 	}
 	afterTakeback, err := service.GetMatch(ctx, matchID)
@@ -383,7 +384,7 @@ func TestPostgresOnlineCancellationAfterATakebackStillResigns(t *testing.T) {
 	}
 	// White cancels after the takeback. The seat once had an accepted move,
 	// so the cancellation resigns instead of aborting.
-	cancelled, err := service.Execute(ctx, alice, cancelOnlineCommand(matchID, "op-cancel-takeback-cancel", online.SeatWhite, 4))
+	cancelled, err := service.Execute(ctx, alice, cancelOnlineCommand(matchID, "op-cancel-takeback-cancel", online.SeatWhite, 5))
 	if err != nil {
 		t.Fatalf("cancel after a takeback: %v", err)
 	}
@@ -410,15 +411,17 @@ func TestPostgresOnlineDrawOfferNeedsMutualConsent(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A seat without an offer cannot accept a draw.
-	if _, err = service.Execute(ctx, bob, acceptDrawOnlineCommand(matchID, "op-draw-no-offer", online.SeatBlack, 1)); !errors.Is(err, online.ErrActionNotAllowed) {
+	if _, err = service.Execute(ctx, bob, acceptDrawOnlineCommand(matchID, "op-draw-no-offer", online.SeatBlack, 1, "offer-missing-0001")); !errors.Is(err, online.ErrActionNotAllowed) {
 		t.Fatalf("acceptance without an offer = %v, want ErrActionNotAllowed", err)
 	}
 	offered, err := service.Execute(ctx, alice, offerDrawOnlineCommand(matchID, "op-draw-offer", online.SeatWhite, 1))
 	if err != nil {
 		t.Fatalf("draw offer: %v", err)
 	}
-	if offered.Receipt.Version != before.Version {
-		t.Fatalf("the offer advanced the match version to %d", offered.Receipt.Version)
+	// The offer is part of the versioned match state, so it advances the
+	// canonical version without touching the clocks.
+	if offered.Receipt.Version != before.Version+1 {
+		t.Fatalf("the offer version = %d, want %d", offered.Receipt.Version, before.Version+1)
 	}
 	afterOffer, err := service.GetMatch(ctx, matchID)
 	if err != nil {
@@ -430,14 +433,21 @@ func TestPostgresOnlineDrawOfferNeedsMutualConsent(t *testing.T) {
 	if afterOffer.Clock.WhiteMs != before.Clock.WhiteMs || afterOffer.Clock.BlackMs != before.Clock.BlackMs {
 		t.Fatalf("the offer moved a clock: %+v -> %+v", before.Clock, afterOffer.Clock)
 	}
+	if afterOffer.Clock.TurnNumber != before.Clock.TurnNumber {
+		t.Fatalf("the offer moved the turn: %+v -> %+v", before.Clock, afterOffer.Clock)
+	}
 	if len(afterOffer.Offers) != 1 || afterOffer.Offers[0].Kind != online.OfferDraw || afterOffer.Offers[0].Seat != online.SeatWhite {
 		t.Fatalf("pending offers = %+v", afterOffer.Offers)
 	}
+	drawOffer := afterOffer.Offers[0]
+	if drawOffer.BaseVersion != afterOffer.Version {
+		t.Fatalf("the offer is not bound to the version it produced: %+v", drawOffer)
+	}
 	// The offering seat cannot accept its own offer.
-	if _, err = service.Execute(ctx, alice, acceptDrawOnlineCommand(matchID, "op-draw-self-accept", online.SeatWhite, 1)); !errors.Is(err, online.ErrActionNotAllowed) {
+	if _, err = service.Execute(ctx, alice, acceptDrawOnlineCommand(matchID, "op-draw-self-accept", online.SeatWhite, afterOffer.Version, drawOffer.OfferID)); !errors.Is(err, online.ErrActionNotAllowed) {
 		t.Fatalf("self acceptance = %v, want ErrActionNotAllowed", err)
 	}
-	accepted, err := service.Execute(ctx, bob, acceptDrawOnlineCommand(matchID, "op-draw-accept", online.SeatBlack, 1))
+	accepted, err := service.Execute(ctx, bob, acceptDrawOnlineCommand(matchID, "op-draw-accept", online.SeatBlack, afterOffer.Version, drawOffer.OfferID))
 	if err != nil {
 		t.Fatalf("draw acceptance: %v", err)
 	}
@@ -454,8 +464,9 @@ func TestPostgresOnlineDrawOfferNeedsMutualConsent(t *testing.T) {
 }
 
 // MAT-11: an exact-version takeback restores the position without refunding
-// time, minting an increment or resetting a spent recovery budget. The
-// discarded accepted moves stay in the table.
+// time or minting an increment, and the increment that was credited to a
+// discarded move is removed again. The discarded accepted moves stay in the
+// table.
 func TestPostgresOnlineTakebackRestoresThePositionWithoutRefunding(t *testing.T) {
 	service, pool := onlineService(t, moveEvaluator{})
 	ctx := context.Background()
@@ -471,7 +482,14 @@ func TestPostgresOnlineTakebackRestoresThePositionWithoutRefunding(t *testing.T)
 	if _, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-takeback-black-1", online.SeatBlack, 2, "e7e5")); err != nil {
 		t.Fatalf("opening reply: %v", err)
 	}
-	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-takeback-white-2", online.SeatWhite, 3, "g1f3")); err != nil {
+	// The reply starts White's main clock. Its start is read so the charge of
+	// the next accepted move is exact.
+	var whiteClockStart time.Time
+	if err := pool.QueryRow(ctx, `SELECT active_since FROM online_clocks WHERE match_id=$1`, matchID).Scan(&whiteClockStart); err != nil {
+		t.Fatal(err)
+	}
+	second, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-takeback-white-2", online.SeatWhite, 3, "g1f3"))
+	if err != nil {
 		t.Fatalf("second white move: %v", err)
 	}
 	before, err := service.GetMatch(ctx, matchID)
@@ -481,11 +499,28 @@ func TestPostgresOnlineTakebackRestoresThePositionWithoutRefunding(t *testing.T)
 	if len(before.Moves) != 3 {
 		t.Fatalf("moves before the takeback = %d", len(before.Moves))
 	}
+	// White's bank lost the thinking time of its own move and gained the
+	// increment once. The opening move already credited one increment.
+	whiteCharge := second.Receipt.DecidedAt.Sub(whiteClockStart).Milliseconds()
+	whiteBefore := int64(302_000) - whiteCharge + 2_000
+	if before.Clock.WhiteMs != whiteBefore {
+		t.Fatalf("white bank = %d, want %d", before.Clock.WhiteMs, whiteBefore)
+	}
+	if before.Clock.BlackMs != 302_000 {
+		t.Fatalf("black bank = %d, want 302000", before.Clock.BlackMs)
+	}
 	// White asks for the position after its own opening move back.
 	if _, err = service.Execute(ctx, alice, offerTakebackOnlineCommand(matchID, "op-takeback-offer", online.SeatWhite, 4, 2)); err != nil {
 		t.Fatalf("takeback offer: %v", err)
 	}
-	accepted, err := service.Execute(ctx, bob, acceptTakebackOnlineCommand(matchID, "op-takeback-accept", online.SeatBlack, 4))
+	offer := pendingOffer(t, service, matchID, online.OfferTakeback)
+	// Black's clock runs from White's second move, and the takeback charges
+	// it. Its start is read so the charge is exact.
+	var blackClockStart time.Time
+	if err := pool.QueryRow(ctx, `SELECT active_since FROM online_clocks WHERE match_id=$1`, matchID).Scan(&blackClockStart); err != nil {
+		t.Fatal(err)
+	}
+	accepted, err := service.Execute(ctx, bob, acceptTakebackOnlineCommand(matchID, "op-takeback-accept", online.SeatBlack, 5, offer.OfferID))
 	if err != nil {
 		t.Fatalf("takeback acceptance: %v", err)
 	}
@@ -508,12 +543,15 @@ func TestPostgresOnlineTakebackRestoresThePositionWithoutRefunding(t *testing.T)
 	if after.Clock.TurnNumber != int64(len(after.Moves)) {
 		t.Fatalf("the turn number did not follow the accepted line: %d", after.Clock.TurnNumber)
 	}
-	// No time is refunded and no increment is minted.
-	if after.Clock.WhiteMs > before.Clock.WhiteMs || after.Clock.BlackMs > before.Clock.BlackMs {
-		t.Fatalf("the takeback refunded time: %+v -> %+v", before.Clock, after.Clock)
+	// The elapsed time stays charged and the increment of every discarded
+	// accepted move is removed again, so a replacement move receives exactly
+	// one increment.
+	blackCharge := accepted.Receipt.DecidedAt.Sub(blackClockStart).Milliseconds()
+	if want := whiteBefore - 2_000; after.Clock.WhiteMs != want {
+		t.Fatalf("white bank = %d, want %d", after.Clock.WhiteMs, want)
 	}
-	if after.Clock.WhiteMs != before.Clock.WhiteMs {
-		t.Fatalf("the takeback changed White's bank: %d -> %d", before.Clock.WhiteMs, after.Clock.WhiteMs)
+	if want := int64(302_000) - blackCharge - 2_000; after.Clock.BlackMs != want {
+		t.Fatalf("black bank = %d, want %d", after.Clock.BlackMs, want)
 	}
 	// The discarded accepted moves stay in the table and are marked discarded.
 	var discarded int
@@ -537,7 +575,8 @@ func TestPostgresOnlineTakebackRestoresThePositionWithoutRefunding(t *testing.T)
 	}
 }
 
-// MAT-11: a stale takeback offer cannot rewind later play.
+// MAT-11: a stale takeback offer cannot rewind later play, and it is no
+// longer published as pending once the play made it inapplicable.
 func TestPostgresOnlineStaleTakebackOfferCannotRewindLaterPlay(t *testing.T) {
 	service, _ := onlineService(t, moveEvaluator{})
 	ctx := context.Background()
@@ -552,16 +591,21 @@ func TestPostgresOnlineStaleTakebackOfferCannotRewindLaterPlay(t *testing.T) {
 	if _, err := service.Execute(ctx, alice, offerTakebackOnlineCommand(matchID, "op-takeback-stale-offer", online.SeatWhite, 3, 2)); err != nil {
 		t.Fatalf("takeback offer: %v", err)
 	}
+	offer := pendingOffer(t, service, matchID, online.OfferTakeback)
 	// Play advances, so the offer no longer names the current position.
-	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-takeback-stale-white-2", online.SeatWhite, 3, "g1f3")); err != nil {
+	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-takeback-stale-white-2", online.SeatWhite, 4, "g1f3")); err != nil {
 		t.Fatalf("white second move: %v", err)
 	}
 	before, err := service.GetMatch(ctx, matchID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = service.Execute(ctx, bob, acceptTakebackOnlineCommand(matchID, "op-takeback-stale-accept", online.SeatBlack, 4)); !errors.Is(err, online.ErrConflict) {
-		t.Fatalf("a stale takeback acceptance = %v, want ErrConflict", err)
+	// The inapplicable offer is no longer published as pending.
+	if len(before.Offers) != 0 {
+		t.Fatalf("the stale offer is still pending: %+v", before.Offers)
+	}
+	if _, err = service.Execute(ctx, bob, acceptTakebackOnlineCommand(matchID, "op-takeback-stale-accept", online.SeatBlack, 5, offer.OfferID)); !errors.Is(err, online.ErrActionNotAllowed) {
+		t.Fatalf("a stale takeback acceptance = %v, want ErrActionNotAllowed", err)
 	}
 	after, err := service.GetMatch(ctx, matchID)
 	if err != nil {
@@ -596,7 +640,8 @@ func TestPostgresOnlineTakebackOfferRejectsAPositionOutsideTheLine(t *testing.T)
 }
 
 // MAT-11: the recovery budget of a turn survives a control change and a
-// takeback, and only an accepted move of that seat starts it again.
+// takeback that restores the turn, and only an accepted move of that seat
+// starts it again.
 func TestPostgresOnlineRecoveryBudgetsSurviveControlChangesAndTakebacks(t *testing.T) {
 	service, _ := onlineService(t, moveEvaluator{})
 	ctx := context.Background()
@@ -638,7 +683,8 @@ func TestPostgresOnlineRecoveryBudgetsSurviveControlChangesAndTakebacks(t *testi
 	if _, err = service.Execute(ctx, bob, offerTakebackOnlineCommandAt(matchID, "op-recovery-offer", online.SeatBlack, 5, 2, 1)); err != nil {
 		t.Fatalf("takeback offer: %v", err)
 	}
-	if _, err = service.Execute(ctx, alice, acceptTakebackOnlineCommandAt(matchID, "op-recovery-accept", online.SeatWhite, 5, 2)); err != nil {
+	offer := pendingOffer(t, service, matchID, online.OfferTakeback)
+	if _, err = service.Execute(ctx, alice, acceptTakebackOnlineCommandAt(matchID, "op-recovery-accept", online.SeatWhite, 6, 2, offer.OfferID)); err != nil {
 		t.Fatalf("takeback acceptance: %v", err)
 	}
 	afterTakeback, err := service.GetMatch(ctx, matchID)
@@ -651,7 +697,7 @@ func TestPostgresOnlineRecoveryBudgetsSurviveControlChangesAndTakebacks(t *testi
 	}
 	// Only an accepted move of that seat starts the budget again. The
 	// control epoch is still raised.
-	if _, err = service.Execute(ctx, alice, moveOnlineCommandAt(matchID, "op-recovery-white-2", online.SeatWhite, 6, 2, "e2e4")); err != nil {
+	if _, err = service.Execute(ctx, alice, moveOnlineCommandAt(matchID, "op-recovery-white-2", online.SeatWhite, 7, 2, "e2e4")); err != nil {
 		t.Fatalf("accepted move: %v", err)
 	}
 	afterMove, err := service.GetMatch(ctx, matchID)
@@ -816,7 +862,8 @@ func TestPostgresOnlineAcceptedMoveWithdrawsAPendingDrawOffer(t *testing.T) {
 	if _, err := service.Execute(ctx, alice, offerDrawOnlineCommand(matchID, "op-draw-withdrawn-offer", online.SeatWhite, 1)); err != nil {
 		t.Fatalf("draw offer: %v", err)
 	}
-	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-draw-withdrawn-white", online.SeatWhite, 1, "e2e4")); err != nil {
+	offer := pendingOffer(t, service, matchID, online.OfferDraw)
+	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-draw-withdrawn-white", online.SeatWhite, 2, "e2e4")); err != nil {
 		t.Fatalf("opening move: %v", err)
 	}
 	after, err := service.GetMatch(ctx, matchID)
@@ -826,7 +873,7 @@ func TestPostgresOnlineAcceptedMoveWithdrawsAPendingDrawOffer(t *testing.T) {
 	if len(after.Offers) != 0 {
 		t.Fatalf("the accepted move left %d pending offers", len(after.Offers))
 	}
-	if _, err = service.Execute(ctx, bob, acceptDrawOnlineCommand(matchID, "op-draw-withdrawn-accept", online.SeatBlack, 2)); !errors.Is(err, online.ErrActionNotAllowed) {
+	if _, err = service.Execute(ctx, bob, acceptDrawOnlineCommand(matchID, "op-draw-withdrawn-accept", online.SeatBlack, 3, offer.OfferID)); !errors.Is(err, online.ErrActionNotAllowed) {
 		t.Fatalf("accepting a withdrawn offer = %v, want ErrActionNotAllowed", err)
 	}
 	match, err := service.GetMatch(ctx, matchID)
@@ -847,7 +894,7 @@ func TestPostgresOnlineFinishedMatchHasNoPendingOffer(t *testing.T) {
 	if _, err := service.Execute(ctx, alice, offerDrawOnlineCommand(matchID, "op-offer-finished-offer", online.SeatWhite, 1)); err != nil {
 		t.Fatalf("draw offer: %v", err)
 	}
-	if _, err := service.Execute(ctx, bob, resignOnlineCommand(matchID, "op-offer-finished-resign", online.SeatBlack, 1)); err != nil {
+	if _, err := service.Execute(ctx, bob, resignOnlineCommand(matchID, "op-offer-finished-resign", online.SeatBlack, 2)); err != nil {
 		t.Fatalf("resign: %v", err)
 	}
 	after, err := service.GetMatch(ctx, matchID)
@@ -935,8 +982,8 @@ func TestPostgresOnlineFinalResultCannotBeOverwritten(t *testing.T) {
 		"move":            moveOnlineCommand(matchID, "op-final-move", online.SeatBlack, 2, "e7e5"),
 		"cancel":          cancelOnlineCommand(matchID, "op-final-cancel", online.SeatBlack, 2),
 		"offer draw":      offerDrawOnlineCommand(matchID, "op-final-offer", online.SeatBlack, 2),
-		"accept draw":     acceptDrawOnlineCommand(matchID, "op-final-accept", online.SeatBlack, 2),
-		"accept takeback": acceptTakebackOnlineCommand(matchID, "op-final-takeback", online.SeatBlack, 2),
+		"accept draw":     acceptDrawOnlineCommand(matchID, "op-final-accept", online.SeatBlack, 2, "offer-final-0001"),
+		"accept takeback": acceptTakebackOnlineCommand(matchID, "op-final-takeback", online.SeatBlack, 2, "offer-final-0001"),
 		"recovery":        recoveryAttemptOnlineCommand(matchID, "op-final-recovery", online.SeatBlack, 2, online.RecoveryIllegalMove),
 	} {
 		if _, err = service.Execute(ctx, bob, command); !errors.Is(err, online.ErrMatchEnded) {
@@ -1027,8 +1074,8 @@ func TestPostgresOnlineOfferReceiptsAreIdempotent(t *testing.T) {
 	}
 }
 
-// The pending offers of a match are readable by both participants and carry
-// no private identity.
+// The pending offers of a match are readable by both participants, carry the
+// identity a consent names, and carry no private identity.
 func TestPostgresOnlinePendingOffersAreVisibleToBothParticipants(t *testing.T) {
 	service, _ := onlineService(t, moveEvaluator{})
 	ctx := context.Background()
@@ -1037,7 +1084,10 @@ func TestPostgresOnlinePendingOffersAreVisibleToBothParticipants(t *testing.T) {
 	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-offer-visible-white", online.SeatWhite, 1, "e2e4")); err != nil {
 		t.Fatalf("opening move: %v", err)
 	}
-	if _, err := service.Execute(ctx, alice, offerTakebackOnlineCommand(matchID, "op-offer-visible-offer", online.SeatWhite, 2, 1)); err != nil {
+	if _, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-offer-visible-black", online.SeatBlack, 2, "e7e5")); err != nil {
+		t.Fatalf("opening reply: %v", err)
+	}
+	if _, err := service.Execute(ctx, alice, offerTakebackOnlineCommand(matchID, "op-offer-visible-offer", online.SeatWhite, 3, 1)); err != nil {
 		t.Fatalf("takeback offer: %v", err)
 	}
 	for name, participant := range map[string]online.ParticipantRef{"white": alice, "black": bob} {
@@ -1052,8 +1102,11 @@ func TestPostgresOnlinePendingOffersAreVisibleToBothParticipants(t *testing.T) {
 		if offer.Kind != online.OfferTakeback || offer.Seat != online.SeatWhite || offer.TargetVersion == nil || *offer.TargetVersion != 1 {
 			t.Fatalf("%s participant sees %+v", name, offer)
 		}
-		if offer.BaseVersion != 2 {
-			t.Fatalf("%s participant sees base version %d", name, offer.BaseVersion)
+		if offer.OfferID == "" {
+			t.Fatalf("%s participant sees an offer without an identity", name)
+		}
+		if offer.BaseVersion != view.Version {
+			t.Fatalf("%s participant sees base version %d, want the version the offer produced %d", name, offer.BaseVersion, view.Version)
 		}
 	}
 }

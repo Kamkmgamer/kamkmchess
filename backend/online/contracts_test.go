@@ -20,6 +20,7 @@ type contractFixture struct {
 	OfferTakebackCommand  json.RawMessage  `json:"offerTakebackCommand"`
 	AcceptTakebackCommand json.RawMessage  `json:"acceptTakebackCommand"`
 	RecoveryAttemptCmd    json.RawMessage  `json:"recoveryAttemptCommand"`
+	OfferEvent            Event            `json:"offerEvent"`
 	Candidate             Candidate        `json:"candidate"`
 	TimeoutFacts          TimeoutFacts     `json:"timeoutFacts"`
 	Receipt               Receipt          `json:"receipt"`
@@ -84,6 +85,34 @@ func TestGoldenContractFixtureRoundTrips(t *testing.T) {
 	if recovery.Action.Kind != ActionRecordRecoveryAttempt || recovery.Action.Recovery.Attempt != RecoveryIllegalMove {
 		t.Fatalf("fixture recovery command = %+v", recovery.Action)
 	}
+	// The acceptance names the exact offer it consents to.
+	acceptDraw, err := ParseCommand(fixture.AcceptDrawCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acceptDraw.Action.Kind != ActionAcceptDraw || acceptDraw.Action.AcceptOffer.OfferID != "offer-contract-draw-01" {
+		t.Fatalf("fixture accept draw command = %+v", acceptDraw.Action)
+	}
+	acceptTakeback, err := ParseCommand(fixture.AcceptTakebackCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acceptTakeback.Action.Kind != ActionAcceptTakeback || acceptTakeback.Action.AcceptOffer.OfferID != "offer-contract-takeback-01" {
+		t.Fatalf("fixture accept takeback command = %+v", acceptTakeback.Action)
+	}
+	// The offer event carries the exact offer it created.
+	if fixture.OfferEvent.Kind != EventOfferCreated || fixture.OfferEvent.Offer == nil {
+		t.Fatalf("fixture offer event = %+v", fixture.OfferEvent)
+	}
+	if fixture.OfferEvent.Offer.OfferID != "offer-contract-takeback-01" || fixture.OfferEvent.Offer.Kind != OfferTakeback {
+		t.Fatalf("fixture offer event payload = %+v", fixture.OfferEvent.Offer)
+	}
+	if fixture.OfferEvent.Offer.TargetVersion == nil || *fixture.OfferEvent.Offer.TargetVersion != 3 {
+		t.Fatalf("fixture offer event target = %+v", fixture.OfferEvent.Offer)
+	}
+	if fixture.OfferEvent.Offer.BaseVersion != fixture.OfferEvent.Version {
+		t.Fatalf("the offer is not bound to the version it produced: %+v", fixture.OfferEvent.Offer)
+	}
 	if err = fixture.Candidate.Validate(); err != nil {
 		t.Fatalf("candidate: %v", err)
 	}
@@ -129,6 +158,11 @@ func TestActionAndCommandRejectUnknownOrChangedPayloads(t *testing.T) {
 		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"cancel","reason":"resign"}}`,
 		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"offer_takeback","targetVersion":0}}`,
 		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"record_recovery_attempt","attempt":"anything"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"accept_draw"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"black","controlEpoch":1,"action":{"kind":"accept_takeback"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"black","controlEpoch":1,"action":{"kind":"accept_takeback","offerId":"short"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"black","controlEpoch":1,"action":{"kind":"accept_takeback","offerId":"offer-contract-takeback-01","targetVersion":3}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"black","controlEpoch":1,"action":{"kind":"accept_draw","offerId":"offer-contract-draw-01","sql":"delete from online_offers"}}`,
 	}
 	for i, raw := range cases {
 		if _, err := ParseCommand([]byte(raw)); !errors.Is(err, ErrInvalidContract) {
@@ -172,6 +206,30 @@ func TestCommandFingerprintIsStableAndActorBound(t *testing.T) {
 	}
 	if first == third {
 		t.Fatal("changed expected version produced the same fingerprint")
+	}
+}
+
+// The consent is bound to the exact offered identity, so a changed offer
+// cannot reuse an accepted operation ID.
+func TestCommandFingerprintCoversTheAcceptedOffer(t *testing.T) {
+	fixture := loadFixture(t)
+	accept, err := ParseCommand(fixture.AcceptTakebackCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := ParticipantRef{Kind: ParticipantAccount, ID: "user_a"}
+	first, err := CommandFingerprint(alice, accept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := accept
+	other.Action = Action{Kind: ActionAcceptTakeback, AcceptOffer: &AcceptOfferAction{OfferID: "offer-contract-takeback-02"}}
+	second, err := CommandFingerprint(alice, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("a changed offered identity produced the same fingerprint")
 	}
 }
 

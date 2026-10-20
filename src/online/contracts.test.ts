@@ -24,6 +24,7 @@ const fixture = JSON.parse(fixtureRaw) as {
   offerTakebackCommand: unknown;
   acceptTakebackCommand: unknown;
   recoveryAttemptCommand: unknown;
+  offerEvent: unknown;
   candidate: unknown;
   timeoutFacts: unknown;
   receipt: unknown;
@@ -103,6 +104,9 @@ describe('online shared contracts', () => {
     const acceptDraw = parseCommand(fixture.acceptDrawCommand);
     expect(acceptDraw.action.kind).toBe('accept_draw');
     expect(acceptDraw.seat).toBe('black');
+    if (acceptDraw.action.kind === 'accept_draw') {
+      expect(acceptDraw.action.offerId).toBe('offer-contract-draw-01');
+    }
 
     const offerTakeback = parseCommand(fixture.offerTakebackCommand);
     expect(offerTakeback.action.kind).toBe('offer_takeback');
@@ -112,6 +116,9 @@ describe('online shared contracts', () => {
 
     const acceptTakeback = parseCommand(fixture.acceptTakebackCommand);
     expect(acceptTakeback.action.kind).toBe('accept_takeback');
+    if (acceptTakeback.action.kind === 'accept_takeback') {
+      expect(acceptTakeback.action.offerId).toBe('offer-contract-takeback-01');
+    }
 
     const recovery = parseCommand(fixture.recoveryAttemptCommand);
     expect(recovery.action.kind).toBe('record_recovery_attempt');
@@ -154,6 +161,46 @@ describe('online shared contracts', () => {
         action: { kind: 'cancel', reason: 'resign' },
       }),
     ).toThrow(OnlineContractError);
+  });
+
+  it('requires the exact offered identity for a consent', () => {
+    const acceptTakeback = fixture.acceptTakebackCommand as Record<string, unknown>;
+    expect(() =>
+      parseCommand({
+        ...acceptTakeback,
+        action: { kind: 'accept_takeback' },
+      }),
+    ).toThrow(OnlineContractError);
+    expect(() =>
+      parseCommand({
+        ...acceptTakeback,
+        action: { kind: 'accept_takeback', offerId: 'short' },
+      }),
+    ).toThrow(OnlineContractError);
+    expect(() =>
+      parseCommand({
+        ...acceptTakeback,
+        action: { kind: 'accept_takeback', offerId: 'offer-contract-takeback-01', targetVersion: 3 },
+      }),
+    ).toThrow(OnlineContractError);
+    const acceptDraw = fixture.acceptDrawCommand as Record<string, unknown>;
+    expect(() =>
+      parseCommand({
+        ...acceptDraw,
+        action: { kind: 'accept_draw' },
+      }),
+    ).toThrow(OnlineContractError);
+  });
+
+  it('parses the offer event of the shared fixture', () => {
+    const receipt = parseReceipt({
+      ...(fixture.receipt as Record<string, unknown>),
+      event: fixture.offerEvent,
+    });
+    expect(receipt.event?.kind).toBe('offer_created');
+    expect(receipt.event?.offer?.offerId).toBe('offer-contract-takeback-01');
+    expect(receipt.event?.offer?.kind).toBe('takeback');
+    expect(receipt.event?.offer?.targetVersion).toBe(3);
   });
 
   it('is stable across a JSON round trip', () => {

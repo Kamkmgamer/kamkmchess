@@ -178,15 +178,19 @@ func offerDrawOnlineCommand(matchID, operationID string, seat online.Seat, versi
 	}
 }
 
-func acceptDrawOnlineCommand(matchID, operationID string, seat online.Seat, version int64) online.Command {
+func acceptDrawOnlineCommand(matchID, operationID string, seat online.Seat, version int64, offerID string) online.Command {
+	return acceptDrawOnlineCommandAt(matchID, operationID, seat, version, 1, offerID)
+}
+
+func acceptDrawOnlineCommandAt(matchID, operationID string, seat online.Seat, version, controlEpoch int64, offerID string) online.Command {
 	return online.Command{
 		SchemaVersion:   online.ContractsSchemaVersion,
 		MatchID:         matchID,
 		OperationID:     operationID,
 		ExpectedVersion: version,
 		Seat:            seat,
-		ControlEpoch:    1,
-		Action:          online.Action{Kind: online.ActionAcceptDraw},
+		ControlEpoch:    controlEpoch,
+		Action:          online.Action{Kind: online.ActionAcceptDraw, AcceptOffer: &online.AcceptOfferAction{OfferID: offerID}},
 	}
 }
 
@@ -206,11 +210,11 @@ func offerTakebackOnlineCommandAt(matchID, operationID string, seat online.Seat,
 	}
 }
 
-func acceptTakebackOnlineCommand(matchID, operationID string, seat online.Seat, version int64) online.Command {
-	return acceptTakebackOnlineCommandAt(matchID, operationID, seat, version, 1)
+func acceptTakebackOnlineCommand(matchID, operationID string, seat online.Seat, version int64, offerID string) online.Command {
+	return acceptTakebackOnlineCommandAt(matchID, operationID, seat, version, 1, offerID)
 }
 
-func acceptTakebackOnlineCommandAt(matchID, operationID string, seat online.Seat, version, controlEpoch int64) online.Command {
+func acceptTakebackOnlineCommandAt(matchID, operationID string, seat online.Seat, version, controlEpoch int64, offerID string) online.Command {
 	return online.Command{
 		SchemaVersion:   online.ContractsSchemaVersion,
 		MatchID:         matchID,
@@ -218,18 +222,39 @@ func acceptTakebackOnlineCommandAt(matchID, operationID string, seat online.Seat
 		ExpectedVersion: version,
 		Seat:            seat,
 		ControlEpoch:    controlEpoch,
-		Action:          online.Action{Kind: online.ActionAcceptTakeback},
+		Action:          online.Action{Kind: online.ActionAcceptTakeback, AcceptOffer: &online.AcceptOfferAction{OfferID: offerID}},
 	}
 }
 
+// pendingOffer returns the pending offer of one kind. A consent names the
+// exact offer it accepts, so the fixture reads the identity it was given.
+func pendingOffer(t *testing.T, service *online.Service, matchID string, kind online.OfferKind) online.Offer {
+	t.Helper()
+	match, err := service.GetMatch(context.Background(), matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, offer := range match.Offers {
+		if offer.Kind == kind {
+			return offer
+		}
+	}
+	t.Fatalf("match %s has no pending %s offer", matchID, kind)
+	return online.Offer{}
+}
+
 func recoveryAttemptOnlineCommand(matchID, operationID string, seat online.Seat, version int64, attempt online.RecoveryAttemptKind) online.Command {
+	return recoveryAttemptOnlineCommandAt(matchID, operationID, seat, version, 1, attempt)
+}
+
+func recoveryAttemptOnlineCommandAt(matchID, operationID string, seat online.Seat, version, controlEpoch int64, attempt online.RecoveryAttemptKind) online.Command {
 	return online.Command{
 		SchemaVersion:   online.ContractsSchemaVersion,
 		MatchID:         matchID,
 		OperationID:     operationID,
 		ExpectedVersion: version,
 		Seat:            seat,
-		ControlEpoch:    1,
+		ControlEpoch:    controlEpoch,
 		Action:          online.Action{Kind: online.ActionRecordRecoveryAttempt, Recovery: &online.RecordRecoveryAttemptAction{Attempt: attempt}},
 	}
 }

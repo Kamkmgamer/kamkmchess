@@ -123,6 +123,8 @@ func newOnlineHandler(t *testing.T) (http.Handler, *stubOnlineService, *stubAuth
 
 func seatOf(seat online.Seat) *online.Seat { return &seat }
 
+func int64Of(value int64) *int64 { return &value }
+
 func onlineRequest(t *testing.T, handler http.Handler, method, path, origin string, headers map[string]string, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	var reader *strings.Reader
@@ -196,6 +198,68 @@ func TestOnlineLiveStateRequiresAParticipantAndRedactsAuthorizationIdentities(t 
 	}
 	if first["publicLabel"] != "Alice" {
 		t.Fatalf("seat public label = %v", first["publicLabel"])
+	}
+}
+
+// The live view exposes the identity of a pending offer, because a consent
+// names the exact offer it accepts. The identity carries no private data.
+func TestOnlineLiveStateExposesTheOfferIdentity(t *testing.T) {
+	handler, service, _ := newOnlineHandler(t)
+	service.match.Offers = []online.Offer{{
+		OfferID:       "offer-live-0001",
+		MatchID:       "match-live",
+		Kind:          online.OfferTakeback,
+		Seat:          online.SeatWhite,
+		TargetVersion: int64Of(2),
+		BaseVersion:   3,
+		CreatedAt:     time.Unix(1_900_000_000, 0).UTC(),
+	}}
+	response := onlineRequest(t, handler, http.MethodGet, "/v1/online/matches/match-live", testOrigin, map[string]string{"Authorization": "Bearer account-token"}, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("participant live read status=%d body=%s", response.Code, response.Body.String())
+	}
+	body := response.Body.String()
+	for _, forbidden := range []string{"user_secret_1", "guest_secret_2", "participantId", "ownerId", "credential"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("the pending offer leaked %q: %s", forbidden, body)
+		}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(response.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	offers, ok := payload["pendingOffers"].([]any)
+	if !ok || len(offers) != 1 {
+		t.Fatalf("pending offers = %v", payload["pendingOffers"])
+	}
+	offer, _ := offers[0].(map[string]any)
+	if offer["offerId"] != "offer-live-0001" {
+		t.Fatalf("the pending offer has no identity: %v", offer)
+	}
+	if offer["kind"] != "takeback" || offer["seat"] != "white" {
+		t.Fatalf("the pending offer = %v", offer)
+	}
+}
+
+// An acceptance names the exact offer it consents to, so a command without
+// that identity is rejected before it reaches the writer.
+func TestOnlineRejectsAnAcceptanceWithoutTheOfferIdentity(t *testing.T) {
+	handler, service, _ := newOnlineHandler(t)
+	body := `{"schemaVersion":2,"matchId":"match-live","operationId":"op-accept-1","expectedVersion":3,"seat":"white","controlEpoch":1,"action":{"kind":"accept_draw"}}`
+	response := onlineRequest(t, handler, http.MethodPost, "/v1/online/matches/match-live/commands", testOrigin, map[string]string{"Authorization": "Bearer account-token"}, body)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if len(service.executed) != 0 {
+		t.Fatalf("the malformed acceptance reached the writer: %+v", service.executed)
+	}
+	named := `{"schemaVersion":2,"matchId":"match-live","operationId":"op-accept-2","expectedVersion":3,"seat":"white","controlEpoch":1,"action":{"kind":"accept_draw","offerId":"offer-live-0001"}}`
+	accepted := onlineRequest(t, handler, http.MethodPost, "/v1/online/matches/match-live/commands", testOrigin, map[string]string{"Authorization": "Bearer account-token"}, named)
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", accepted.Code, accepted.Body.String())
+	}
+	if len(service.executed) != 1 || service.executed[0].Action.AcceptOffer == nil || service.executed[0].Action.AcceptOffer.OfferID != "offer-live-0001" {
+		t.Fatalf("the named acceptance did not reach the writer: %+v", service.executed)
 	}
 }
 

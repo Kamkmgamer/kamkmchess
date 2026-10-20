@@ -256,6 +256,9 @@ const (
 	EventReplayRemoved  EventKind = "replay_removed"
 	EventDrawAgreement  EventKind = "draw_agreement"
 	EventTakebackAccept EventKind = "takeback_accepted"
+	// EventOfferCreated records a pending offer. An offer is part of the
+	// versioned match state, so the event carries the exact offer it created.
+	EventOfferCreated EventKind = "offer_created"
 	// EventRecoveryAttempt records one spent recovery attempt of a turn.
 	EventRecoveryAttempt EventKind = "recovery_attempt"
 	// EventIllegalMoveLoss ends the match after the fourth illegal attempt.
@@ -274,6 +277,9 @@ type Event struct {
 	Move          *Move        `json:"move,omitempty"`
 	Result        *Result      `json:"result,omitempty"`
 	Control       *SeatControl `json:"control,omitempty"`
+	// Offer is the pending offer an offer_created event created. It is the
+	// only payload of that event kind.
+	Offer *Offer `json:"offer,omitempty"`
 	// TakebackTargetVersion is the exact position an accepted takeback
 	// restored.
 	TakebackTargetVersion *int64 `json:"takebackTargetVersion,omitempty"`
@@ -347,14 +353,17 @@ const (
 	ActionCancel             ActionKind = "cancel"
 	ActionSetControl         ActionKind = "set_control"
 	ActionRemovePublicReplay ActionKind = "remove_public_replay"
-	// ActionOfferDraw records a draw offer. It is not a versioned transition:
-	// an offer never changes the position, the turn or the clocks.
+	// ActionOfferDraw records a draw offer. It is a versioned transition: the
+	// offer is part of the shared match state, so it advances the match
+	// version without changing the position, the turn or the clocks.
 	ActionOfferDraw ActionKind = "offer_draw"
-	// ActionAcceptDraw accepts the opponent's pending draw offer.
+	// ActionAcceptDraw accepts the opponent's pending draw offer. It names
+	// the exact offer it consents to.
 	ActionAcceptDraw ActionKind = "accept_draw"
 	// ActionOfferTakeback records a takeback offer for an exact position.
 	ActionOfferTakeback ActionKind = "offer_takeback"
-	// ActionAcceptTakeback accepts the opponent's pending takeback offer.
+	// ActionAcceptTakeback accepts the opponent's pending takeback offer. It
+	// names the exact offer it consents to.
 	ActionAcceptTakeback ActionKind = "accept_takeback"
 	// ActionRecordRecoveryAttempt records one spent recovery attempt.
 	ActionRecordRecoveryAttempt ActionKind = "record_recovery_attempt"
@@ -397,6 +406,16 @@ type OfferTakebackAction struct {
 	TargetVersion int64 `json:"targetVersion"`
 }
 
+// AcceptOfferAction names the exact offer a participant consents to.
+//
+// The consent is bound to the identity of the offer the other participant
+// saw. A replaced, consumed or stale offer cannot be accepted in its place,
+// so an acceptance never applies a different offer than the one that was
+// offered.
+type AcceptOfferAction struct {
+	OfferID string `json:"offerId"`
+}
+
 // RecoveryAttemptKind names one spent recovery attempt.
 type RecoveryAttemptKind string
 
@@ -437,9 +456,13 @@ const (
 	OfferWithdrawn OfferResolution = "withdrawn"
 )
 
-// Offer is one pending draw or takeback offer. Offers are not versioned match
-// transitions: they carry the match version they were made against so a
-// stale takeback offer can be refused.
+// Offer is one pending draw or takeback offer. An offer is part of the
+// versioned match state: creating it advances the match version without
+// changing the position, the turn or the clocks.
+//
+// BaseVersion is the match version the offer produced. The offer is
+// actionable only while the match version still equals it, so any later
+// transition makes it inapplicable and it is withdrawn.
 type Offer struct {
 	OfferID       string    `json:"offerId"`
 	MatchID       string    `json:"matchId"`
@@ -458,7 +481,9 @@ type Action struct {
 	SetControl    *SetControlAction
 	RemoveReplay  *RemovePublicReplayAction
 	OfferTakeback *OfferTakebackAction
-	Recovery      *RecordRecoveryAttemptAction
+	// AcceptOffer names the exact offer an acceptance consents to.
+	AcceptOffer *AcceptOfferAction
+	Recovery    *RecordRecoveryAttemptAction
 }
 
 func (a Action) MarshalJSON() ([]byte, error) {
@@ -491,12 +516,17 @@ func (a Action) MarshalJSON() ([]byte, error) {
 			Kind          ActionKind `json:"kind"`
 			TargetVersion int64      `json:"targetVersion"`
 		}{a.Kind, a.OfferTakeback.TargetVersion})
+	case ActionAcceptDraw, ActionAcceptTakeback:
+		return json.Marshal(struct {
+			Kind    ActionKind `json:"kind"`
+			OfferID string     `json:"offerId"`
+		}{a.Kind, a.AcceptOffer.OfferID})
 	case ActionRecordRecoveryAttempt:
 		return json.Marshal(struct {
 			Kind    ActionKind          `json:"kind"`
 			Attempt RecoveryAttemptKind `json:"attempt"`
 		}{a.Kind, a.Recovery.Attempt})
-	case ActionResign, ActionCancel, ActionOfferDraw, ActionAcceptDraw, ActionAcceptTakeback:
+	case ActionResign, ActionCancel, ActionOfferDraw:
 		return json.Marshal(struct {
 			Kind ActionKind `json:"kind"`
 		}{a.Kind})
@@ -532,13 +562,22 @@ func (a *Action) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("%w: submit_move action", ErrInvalidContract)
 		}
 		a.SubmitMove = &SubmitMoveAction{UCI: v.Move}
-	case ActionResign, ActionCancel, ActionOfferDraw, ActionAcceptDraw, ActionAcceptTakeback:
+	case ActionResign, ActionCancel, ActionOfferDraw:
 		var v struct {
 			Kind ActionKind `json:"kind"`
 		}
 		if err := decodeStrict(data, &v); err != nil {
 			return fmt.Errorf("%w: %s action", ErrInvalidContract, probe.Kind)
 		}
+	case ActionAcceptDraw, ActionAcceptTakeback:
+		var v struct {
+			Kind    ActionKind `json:"kind"`
+			OfferID string     `json:"offerId"`
+		}
+		if err := decodeStrict(data, &v); err != nil {
+			return fmt.Errorf("%w: %s action", ErrInvalidContract, probe.Kind)
+		}
+		a.AcceptOffer = &AcceptOfferAction{OfferID: v.OfferID}
 	case ActionSetControl:
 		var v struct {
 			Kind    ActionKind  `json:"kind"`
@@ -598,13 +637,25 @@ func (a Action) Validate() error {
 	if a.OfferTakeback != nil {
 		set++
 	}
+	if a.AcceptOffer != nil {
+		set++
+	}
 	if a.Recovery != nil {
 		set++
 	}
 	switch a.Kind {
-	case ActionResign, ActionCancel, ActionOfferDraw, ActionAcceptDraw, ActionAcceptTakeback:
+	case ActionResign, ActionCancel, ActionOfferDraw:
 		if set != 0 {
 			return fmt.Errorf("%w: %s carries no payload", ErrInvalidContract, a.Kind)
+		}
+		return nil
+	case ActionAcceptDraw, ActionAcceptTakeback:
+		// The acceptance names the exact offer it consents to.
+		if set != 1 || a.AcceptOffer == nil {
+			return fmt.Errorf("%w: %s offer identity", ErrInvalidContract, a.Kind)
+		}
+		if !idPattern.MatchString(a.AcceptOffer.OfferID) {
+			return fmt.Errorf("%w: %s offer id", ErrInvalidContract, a.Kind)
 		}
 		return nil
 	case ActionCreateMatch:

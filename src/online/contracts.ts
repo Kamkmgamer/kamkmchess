@@ -40,6 +40,7 @@ export type EventKind =
   | 'replay_removed'
   | 'draw_agreement'
   | 'takeback_accepted'
+  | 'offer_created'
   | 'recovery_attempt'
   | 'illegal_move_loss';
 export type ReceiptOutcome = 'accepted' | 'deadline_expired' | 'replay_removed' | 'opening_expired';
@@ -109,6 +110,8 @@ export interface Event {
   move?: Move;
   result?: Result;
   control?: SeatControl;
+  /** The pending offer an `offer_created` event created. */
+  offer?: Offer;
   /** The exact position an accepted takeback restored. */
   takebackTargetVersion?: number;
   /** The spent recovery attempt an event records. */
@@ -141,9 +144,9 @@ export type OnlineAction =
   | { kind: 'set_control'; control: SeatControl }
   | { kind: 'remove_public_replay'; reason: 'owner_request' | 'erasure_request' }
   | { kind: 'offer_draw' }
-  | { kind: 'accept_draw' }
+  | { kind: 'accept_draw'; offerId: string }
   | { kind: 'offer_takeback'; targetVersion: number }
-  | { kind: 'accept_takeback' }
+  | { kind: 'accept_takeback'; offerId: string }
   | { kind: 'record_recovery_attempt'; attempt: RecoveryAttemptKind };
 
 export interface Command {
@@ -180,8 +183,9 @@ export interface MatchSeat {
 }
 
 /**
- * A pending draw or takeback offer. An offer is a request, not a match
- * transition: it never changes the position, the turn or the clocks.
+ * A pending draw or takeback offer. An offer is part of the versioned match
+ * state: creating it advances the match version without changing the
+ * position, the turn or the clocks.
  */
 export interface Offer {
   offerId: string;
@@ -190,7 +194,7 @@ export interface Offer {
   seat: Seat;
   /** The exact position a takeback offer would restore. */
   targetVersion: number | null;
-  /** The match version the offer was made against. */
+  /** The match version the offer produced. */
   baseVersion: number;
   createdAt: string;
 }
@@ -510,6 +514,7 @@ function parseEventKind(value: unknown, path: string): EventKind {
     'replay_removed',
     'draw_agreement',
     'takeback_accepted',
+    'offer_created',
     'recovery_attempt',
     'illegal_move_loss',
   ];
@@ -593,9 +598,35 @@ function parseMove(value: unknown, path: string): Move {
   };
 }
 
+function parseOffer(value: unknown, path: string): Offer {
+  const objectValue = object(value, path);
+  onlyKeys(objectValue, ['offerId', 'matchId', 'kind', 'seat', 'targetVersion', 'baseVersion', 'createdAt'], path);
+  requiredKeys(objectValue, ['offerId', 'matchId', 'kind', 'seat', 'baseVersion', 'createdAt'], path);
+  const kind = stringValue(objectValue.kind, `${path}.kind`);
+  if (kind !== 'draw' && kind !== 'takeback') {
+    throw new OnlineContractError('invalid offer kind', `${path}.kind`);
+  }
+  const targetVersion =
+    objectValue.targetVersion === null || objectValue.targetVersion === undefined
+      ? null
+      : positiveInteger(objectValue.targetVersion, `${path}.targetVersion`);
+  if ((kind === 'takeback') !== (targetVersion !== null)) {
+    throw new OnlineContractError('offer kind does not match its target version', path);
+  }
+  return {
+    offerId: idValue(objectValue.offerId, `${path}.offerId`),
+    matchId: idValue(objectValue.matchId, `${path}.matchId`),
+    kind,
+    seat: seatValue(objectValue.seat, `${path}.seat`),
+    targetVersion,
+    baseVersion: positiveInteger(objectValue.baseVersion, `${path}.baseVersion`),
+    createdAt: timestampValue(objectValue.createdAt, `${path}.createdAt`),
+  };
+}
+
 function parseEvent(value: unknown, path: string): Event {
   const objectValue = object(value, path);
-  onlyKeys(objectValue, ['schemaVersion', 'matchId', 'version', 'kind', 'seat', 'controlEpoch', 'decisionAt', 'acceptedAt', 'move', 'result', 'control', 'takebackTargetVersion', 'recoveryAttempt'], path);
+  onlyKeys(objectValue, ['schemaVersion', 'matchId', 'version', 'kind', 'seat', 'controlEpoch', 'decisionAt', 'acceptedAt', 'move', 'result', 'control', 'offer', 'takebackTargetVersion', 'recoveryAttempt'], path);
   requiredKeys(objectValue, ['schemaVersion', 'matchId', 'version', 'kind', 'controlEpoch', 'decisionAt', 'acceptedAt'], path);
   const event: Event = {
     schemaVersion: positiveInteger(objectValue.schemaVersion, `${path}.schemaVersion`),
@@ -618,6 +649,9 @@ function parseEvent(value: unknown, path: string): Event {
   }
   if (objectValue.control !== undefined) {
     event.control = parseControl(objectValue.control, `${path}.control`);
+  }
+  if (objectValue.offer !== undefined) {
+    event.offer = parseOffer(objectValue.offer, `${path}.offer`);
   }
   if (objectValue.takebackTargetVersion !== undefined) {
     event.takebackTargetVersion = positiveInteger(objectValue.takebackTargetVersion, `${path}.takebackTargetVersion`);
@@ -686,11 +720,15 @@ function parseAction(value: unknown, path: string): OnlineAction {
     }
     case 'resign':
     case 'cancel':
-    case 'offer_draw':
-    case 'accept_draw':
-    case 'accept_takeback': {
+    case 'offer_draw': {
       onlyKeys(objectValue, ['kind'], path);
       return { kind } as OnlineAction;
+    }
+    case 'accept_draw':
+    case 'accept_takeback': {
+      onlyKeys(objectValue, ['kind', 'offerId'], path);
+      requiredKeys(objectValue, ['offerId'], path);
+      return { kind, offerId: idValue(objectValue.offerId, `${path}.offerId`) } as OnlineAction;
     }
     case 'set_control': {
       onlyKeys(objectValue, ['kind', 'control'], path);

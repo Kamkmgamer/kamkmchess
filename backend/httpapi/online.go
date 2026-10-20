@@ -188,7 +188,12 @@ type onlineSeatResponse struct {
 
 // onlineOfferResponse is the allowlisted pending offer view. An offer carries
 // no participant reference and no private data.
+//
+// The offer identity is part of the view because a participant consents to an
+// exact offer: the acceptance names this identity, so a replaced or consumed
+// offer can never be accepted in its place.
 type onlineOfferResponse struct {
+	OfferID       string           `json:"offerId"`
 	Kind          online.OfferKind `json:"kind"`
 	Seat          online.Seat      `json:"seat"`
 	TargetVersion *int64           `json:"targetVersion"`
@@ -243,6 +248,7 @@ func toOnlineMatch(match online.Match, principal onlineauth.Principal) onlineMat
 	offers := make([]onlineOfferResponse, 0, len(match.Offers))
 	for _, offer := range match.Offers {
 		offers = append(offers, onlineOfferResponse{
+			OfferID:       offer.OfferID,
 			Kind:          offer.Kind,
 			Seat:          offer.Seat,
 			TargetVersion: offer.TargetVersion,

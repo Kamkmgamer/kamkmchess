@@ -53,6 +53,16 @@ func ApplyAcceptedMove(clock ClockState, tc TimeControl, seat Seat, decision tim
 	return next
 }
 
+// takebacksAllowed reports whether the match left the opening exchange.
+//
+// A takeback needs a completed opening exchange, so the fifteen second reply
+// window, its deadline and the first-move flags of a match are never touched
+// by a takeback request. The flags are historical: a takeback that restores
+// the starting position does not reopen the opening phase.
+func takebacksAllowed(clock ClockState) bool {
+	return clock.Moved(SeatWhite) && clock.Moved(SeatBlack)
+}
+
 // armMainClock starts one side's main clock from the authoritative decision
 // time. The deadline is absolute, so a later decision charges the whole
 // elapsed time at once.

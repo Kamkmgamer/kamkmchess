@@ -437,10 +437,6 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 		decision, match.MatchID, string(cmd.Seat)); err != nil {
 		return CommandResult{}, err
 	}
-	// Play that continues after a draw offer declines it.
-	if err = withdrawDrawOffers(ctx, tx, match.MatchID, decision); err != nil {
-		return CommandResult{}, err
-	}
 	match.PositionFEN = move.ResultingFEN
 	match.Version = nextVersion
 	match.Clock = clock
@@ -480,12 +476,13 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 
 // executeOffer records a pending draw or takeback offer.
 //
-// An offer is a request, not a match transition. It never changes the
-// position, the turn or the clocks, so it does not advance the match version
-// and it does not interrupt a move the other participant is preparing. The
-// offer is still ordered against the match: it is written under the match
-// lock, after the same authorization and expiry checks every other intent
-// passes, and it keeps the match version it was made against.
+// An offer is part of the shared match state: it advances the match version
+// and is recorded as its own event, so a durable event stream can rebuild
+// which offer is pending. It never changes the position, the turn or the
+// clocks, so it does not interrupt a move the other participant is preparing.
+// The offer is written under the match lock, after the same authorization and
+// expiry checks every other intent passes, and it is bound to the version it
+// produces.
 func (s *Service) executeOffer(ctx context.Context, actor ParticipantRef, cmd Command) (CommandResult, error) {
 	fingerprint, err := CommandFingerprint(actor, cmd)
 	if err != nil {
@@ -545,6 +542,11 @@ func (s *Service) executeOffer(ctx context.Context, actor ParticipantRef, cmd Co
 	case ActionOfferTakeback:
 		kind = OfferTakeback
 		version := cmd.Action.OfferTakeback.TargetVersion
+		// A takeback needs a completed opening exchange. The reply window
+		// and its deadline are never touched by a takeback request.
+		if !takebacksAllowed(match.Clock) {
+			return CommandResult{}, ErrActionNotAllowed
+		}
 		if _, _, err = takebackTarget(match, version); err != nil {
 			return CommandResult{}, err
 		}
@@ -553,23 +555,42 @@ func (s *Service) executeOffer(ctx context.Context, actor ParticipantRef, cmd Co
 		return CommandResult{}, ErrInvalidContract
 	}
 
-	offerID := hashHex(fingerprint)
+	// The offer advances the canonical version and is bound to it, so the
+	// offer is actionable only while the match version still equals it.
+	nextVersion := match.Version + 1
+	offer := Offer{
+		OfferID:       hashHex(fingerprint),
+		MatchID:       match.MatchID,
+		Kind:          kind,
+		Seat:          cmd.Seat,
+		TargetVersion: target,
+		BaseVersion:   nextVersion,
+		CreatedAt:     decision,
+	}
 	// A seat has one outstanding offer per kind. A newer offer replaces the
 	// older one, which stays in the table as a record of what was offered.
-	if _, err = tx.Exec(ctx, `UPDATE online_offers SET resolved_at=$1,resolution='superseded' WHERE match_id=$2 AND kind=$3 AND seat=$4 AND resolved_at IS NULL`,
-		decision, match.MatchID, string(kind), string(cmd.Seat)); err != nil {
+	if err = supersedeSeatOffer(ctx, tx, match.MatchID, kind, cmd.Seat, decision); err != nil {
 		return CommandResult{}, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO online_offers(offer_id,match_id,kind,seat,target_version,base_version,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
-		offerID, match.MatchID, string(kind), string(cmd.Seat), target, match.Version, decision); err != nil {
+		offer.OfferID, offer.MatchID, string(offer.Kind), string(offer.Seat), offer.TargetVersion, offer.BaseVersion, offer.CreatedAt); err != nil {
 		return CommandResult{}, err
 	}
-	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeAccepted, Version: match.Version, ControlEpoch: match.ControlEpoch, DecidedAt: decision}
+	match.Version = nextVersion
+	match.UpdatedAt = decision
+	if err = s.updateMatch(ctx, tx, match, decision); err != nil {
+		return CommandResult{}, err
+	}
+	event := &Event{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, Version: nextVersion, Kind: EventOfferCreated, Seat: &cmd.Seat, ControlEpoch: match.ControlEpoch, DecisionAt: decision, AcceptedAt: decision, Offer: &offer}
+	if err = insertEvent(ctx, tx, *event); err != nil {
+		return CommandResult{}, err
+	}
+	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeAccepted, Version: nextVersion, ControlEpoch: match.ControlEpoch, DecidedAt: decision, Event: event}
 	raw, err := marshalReceipt(receipt)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if err = insertReceipt(ctx, tx, cmd, fingerprint[:], raw, match.Version, match.ControlEpoch, decision); err != nil {
+	if err = insertReceipt(ctx, tx, cmd, fingerprint[:], raw, nextVersion, match.ControlEpoch, decision); err != nil {
 		return CommandResult{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -704,7 +725,7 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 			receipt.Result = result
 		}
 	case ActionAcceptDraw:
-		offer, err := loadPendingOffer(ctx, tx, match.MatchID, OfferDraw, opponentSeat(cmd.Seat))
+		offer, err := consentOffer(ctx, tx, match, OfferDraw, cmd.Seat, cmd.Action.AcceptOffer.OfferID)
 		if err != nil {
 			return CommandResult{}, err
 		}
@@ -720,14 +741,14 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 			return CommandResult{}, err
 		}
 	case ActionAcceptTakeback:
-		offer, err := loadPendingOffer(ctx, tx, match.MatchID, OfferTakeback, opponentSeat(cmd.Seat))
+		offer, err := consentOffer(ctx, tx, match, OfferTakeback, cmd.Seat, cmd.Action.AcceptOffer.OfferID)
 		if err != nil {
 			return CommandResult{}, err
 		}
-		// The offer is bound to the exact version it was made against. Any
-		// later play makes it inapplicable.
-		if offer.BaseVersion != match.Version {
-			return CommandResult{}, ErrConflict
+		// A takeback needs a completed opening exchange. The reply window
+		// and its deadline are never touched by a takeback request.
+		if !takebacksAllowed(match.Clock) {
+			return CommandResult{}, ErrActionNotAllowed
 		}
 		index, position, err := takebackTarget(match, *offer.TargetVersion)
 		if err != nil {
@@ -735,17 +756,18 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		}
 		// The discarded accepted moves stay in the table. Only the current
 		// line changes, so the discarded private archives survive.
-		for _, discarded := range match.Moves[index:] {
+		discarded := match.Moves[index:]
+		for _, discardedMove := range discarded {
 			if _, err = tx.Exec(ctx, `INSERT INTO online_discarded_moves(match_id,move_version,takeback_version,discarded_at) VALUES($1,$2,$3,$4)`,
-				match.MatchID, discarded.Version, nextVersion, decision); err != nil {
+				match.MatchID, discardedMove.Version, nextVersion, decision); err != nil {
 				return CommandResult{}, err
 			}
 		}
 		match.Moves = match.Moves[:index]
 		match.PositionFEN = position
 		// The clock keeps running. The side that was thinking is charged and
-		// the restored side to move takes over. No time is refunded, no
-		// increment is minted and no recovery budget is reset.
+		// the restored side to move takes over. No time is refunded and no
+		// increment is minted.
 		clock = chargeActiveClock(clock, decision)
 		clock = stopClock(clock)
 		sideToMove, ok := fenSideToMove(position)
@@ -754,8 +776,18 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		}
 		clock.armMainClock(sideToMove, decision)
 		clock.TurnNumber = int64(len(match.Moves))
+		// The increment that was credited to every discarded accepted move
+		// is removed again. The elapsed time that was already charged stays
+		// charged, and the replacement move is a new accepted move that
+		// receives exactly one increment.
+		for _, discardedMove := range discarded {
+			clock.setBank(discardedMove.Seat, clock.Bank(discardedMove.Seat)-match.TimeControl.IncrementMs)
+		}
 		event.Kind = EventTakebackAccept
 		event.TakebackTargetVersion = offer.TargetVersion
+		if err = resolveOffer(ctx, tx, offer, decision, OfferAccepted); err != nil {
+			return CommandResult{}, err
+		}
 	case ActionRecordRecoveryAttempt:
 		if err := requireSideToMove(match.PositionFEN, match.Clock, cmd.Seat); err != nil {
 			return CommandResult{}, err
@@ -1129,6 +1161,12 @@ func (s *Service) updateMatch(ctx context.Context, tx pgx.Tx, match Match, decis
 	_, err = tx.Exec(ctx, `UPDATE online_clocks SET white_ms=$1,black_ms=$2,active_seat=$3,active_since=$4,deadline_at=$5,white_moved=$6,black_moved=$7,turn_number=$8,reply_seat=$9,reply_deadline_at=$10,updated_at=$11 WHERE match_id=$12`,
 		match.Clock.WhiteMs, match.Clock.BlackMs, seatValue(match.Clock.ActiveSeat), match.Clock.ActiveSince, match.Clock.DeadlineAt, match.Clock.WhiteMoved, match.Clock.BlackMoved, match.Clock.TurnNumber, seatValue(match.Clock.ReplySeat), match.Clock.ReplyDeadlineAt, decision, match.MatchID)
 	if err != nil {
+		return err
+	}
+	// A version transition makes every offer that is bound to an earlier
+	// version inapplicable, so the pending offers of a match are exactly the
+	// ones that can still be accepted.
+	if err = withdrawStaleOffers(ctx, tx, match.MatchID, match.Version, decision); err != nil {
 		return err
 	}
 	if match.Result != nil {
@@ -1611,36 +1649,10 @@ func loadOffers(ctx context.Context, q queryer, matchID string) ([]Offer, error)
 	return out, rows.Err()
 }
 
-// loadPendingOffer returns the outstanding offer of one kind from one seat.
-func loadPendingOffer(ctx context.Context, q queryer, matchID string, kind OfferKind, seat Seat) (Offer, error) {
-	var o Offer
-	var storedKind string
-	err := q.QueryRow(ctx, `SELECT offer_id,kind,seat,target_version,base_version,created_at FROM online_offers WHERE match_id=$1 AND kind=$2 AND seat=$3 AND resolved_at IS NULL`, matchID, string(kind), string(seat)).
-		Scan(&o.OfferID, &storedKind, &o.Seat, &o.TargetVersion, &o.BaseVersion, &o.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Offer{}, ErrActionNotAllowed
-	}
-	if err != nil {
-		return Offer{}, err
-	}
-	o.MatchID = matchID
-	o.Kind = OfferKind(storedKind)
-	o.CreatedAt = o.CreatedAt.UTC()
-	return o, nil
-}
-
 // resolveOffer records how a pending offer ended. The resolution is written
 // once and never rewritten.
 func resolveOffer(ctx context.Context, tx pgx.Tx, offer Offer, at time.Time, resolution OfferResolution) error {
 	_, err := tx.Exec(ctx, `UPDATE online_offers SET resolved_at=$1,resolution=$2 WHERE offer_id=$3 AND resolved_at IS NULL`, at.UTC(), string(resolution), offer.OfferID)
-	return err
-}
-
-// withdrawDrawOffers ends every pending draw offer of a match. Play that
-// continues after a draw offer declines it, so a draw offer never survives
-// an accepted move.
-func withdrawDrawOffers(ctx context.Context, tx pgx.Tx, matchID string, at time.Time) error {
-	_, err := tx.Exec(ctx, `UPDATE online_offers SET resolved_at=$1,resolution='withdrawn' WHERE match_id=$2 AND kind='draw' AND resolved_at IS NULL`, at.UTC(), matchID)
 	return err
 }
 
@@ -1668,8 +1680,16 @@ func insertEvent(ctx context.Context, tx pgx.Tx, e Event) error {
 	if e.RecoveryAttempt != nil {
 		recoveryAttempt = string(*e.RecoveryAttempt)
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO online_events(match_id,version,event_kind,seat,control_epoch,decision_at,accepted_at,move_uci,move_san,resulting_fen,result,control_kind,control_model_label,takeback_target_version,recovery_attempt) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14)`,
-		e.MatchID, e.Version, string(e.Kind), seatValue(e.Seat), e.ControlEpoch, e.DecisionAt.UTC(), moveUCI, moveSAN, fen, resultJSON, controlKind, controlLabel, e.TakebackTargetVersion, recoveryAttempt)
+	var offerJSON any
+	if e.Offer != nil {
+		raw, err := json.Marshal(e.Offer)
+		if err != nil {
+			return err
+		}
+		offerJSON = string(raw)
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO online_events(match_id,version,event_kind,seat,control_epoch,decision_at,accepted_at,move_uci,move_san,resulting_fen,result,control_kind,control_model_label,takeback_target_version,recovery_attempt,offer_json) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15::jsonb)`,
+		e.MatchID, e.Version, string(e.Kind), seatValue(e.Seat), e.ControlEpoch, e.DecisionAt.UTC(), moveUCI, moveSAN, fen, resultJSON, controlKind, controlLabel, e.TakebackTargetVersion, recoveryAttempt, offerJSON)
 	return err
 }
 

@@ -53,7 +53,7 @@
     "expectedVersion": 3,
     "seat": "black",
     "controlEpoch": 1,
-    "action": { "kind": "accept_draw" }
+    "action": { "kind": "accept_draw", "offerId": "offer-contract-draw-01" }
   },
   "offerTakebackCommand": {
     "schemaVersion": 2,
@@ -71,7 +71,7 @@
     "expectedVersion": 4,
     "seat": "black",
     "controlEpoch": 1,
-    "action": { "kind": "accept_takeback" }
+    "action": { "kind": "accept_takeback", "offerId": "offer-contract-takeback-01" }
   },
   "recoveryAttemptCommand": {
     "schemaVersion": 2,
@@ -81,6 +81,25 @@
     "seat": "white",
     "controlEpoch": 1,
     "action": { "kind": "record_recovery_attempt", "attempt": "illegal_move" }
+  },
+  "offerEvent": {
+    "schemaVersion": 2,
+    "matchId": "match-contract-01",
+    "version": 5,
+    "kind": "offer_created",
+    "seat": "white",
+    "controlEpoch": 1,
+    "decisionAt": "2026-10-20T10:00:05Z",
+    "acceptedAt": "2026-10-20T10:00:05Z",
+    "offer": {
+      "offerId": "offer-contract-takeback-01",
+      "matchId": "match-contract-01",
+      "kind": "takeback",
+      "seat": "white",
+      "targetVersion": 3,
+      "baseVersion": 5,
+      "createdAt": "2026-10-20T10:00:05Z"
+    }
   },
   "candidate": {
     "schemaVersion": 1,
