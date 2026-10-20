@@ -100,6 +100,8 @@ heartbeats, cursors, snapshots or polling. KHA-69 owns that transport and its in
 
 Server-only optional settings are `ONLINE_RULES_WORKER_ENTRY`, `ONLINE_GUEST_CREDENTIAL_TTL`
 with a 12-hour default, `ONLINE_OWNERSHIP_PROOF_TTL` with a 15-minute default, and
-`ONLINE_STREAM_MAX_DURATION`, capped at 20 seconds. Build the private artifact with
-`pnpm build:rules-worker`. An absent worker entry leaves rules-dependent commands unavailable.
-Apply migrations separately through `cmd/migrate`; server startup never migrates the database.
+`ONLINE_STREAM_MAX_DURATION`, capped at 20 seconds. The trusted deadline reconciliation reads
+`ONLINE_DEADLINE_SWEEP_INTERVAL`, with a one-second default, and `ONLINE_DEADLINE_SWEEP_BATCH`,
+with a batch of one hundred. Build the private artifact with `pnpm build:rules-worker`. An absent
+worker entry leaves rules-dependent commands unavailable. Apply migrations separately through
+`cmd/migrate`; server startup never migrates the database.
