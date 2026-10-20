@@ -18,18 +18,7 @@ func InitialClock(tc TimeControl) ClockState {
 // never uses a client timestamp. When the move is terminal, no next deadline is
 // armed; otherwise the opponent receives the remaining bank and deadline.
 func ApplyAcceptedMove(clock ClockState, tc TimeControl, seat Seat, decision time.Time, terminal bool) ClockState {
-	next := clock
-	if clock.ActiveSeat != nil && *clock.ActiveSeat == seat && clock.ActiveSince != nil {
-		elapsed := decision.Sub(*clock.ActiveSince).Milliseconds()
-		if elapsed < 0 {
-			elapsed = 0
-		}
-		bank := clock.Bank(seat) - elapsed
-		if bank < 0 {
-			bank = 0
-		}
-		next.setBank(seat, bank)
-	}
+	next := chargeActiveClock(clock, decision)
 	next.setBank(seat, next.Bank(seat)+tc.IncrementMs)
 	next.setMoved(seat)
 	next.TurnNumber++
@@ -52,6 +41,20 @@ func ApplyAcceptedMove(clock ClockState, tc TimeControl, seat Seat, decision tim
 	next.ActiveSince = &since
 	next.DeadlineAt = &deadline
 	return next
+}
+
+// chargeActiveClock settles only elapsed playing time, without adding an
+// increment or changing the turn. Both move and non-move endings use it.
+func chargeActiveClock(clock ClockState, decision time.Time) ClockState {
+	if clock.ActiveSeat != nil && clock.ActiveSince != nil {
+		elapsed := max(int64(0), decision.Sub(*clock.ActiveSince).Milliseconds())
+		bank := clock.Bank(*clock.ActiveSeat) - elapsed
+		if clock.IsExpired(decision) {
+			bank = 0
+		}
+		clock.setBank(*clock.ActiveSeat, bank)
+	}
+	return clock
 }
 
 func (c *ClockState) setBank(seat Seat, value int64) {

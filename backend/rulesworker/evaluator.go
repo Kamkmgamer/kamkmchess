@@ -33,6 +33,35 @@ func NewOnlineEvaluator(client *Client) (*OnlineEvaluator, error) {
 	return &OnlineEvaluator{client: client}, nil
 }
 
+// ValidateSetup uses an evaluate-only request so Go does not duplicate FEN,
+// counter or terminal-position rules. Finished positions cannot start matches.
+func (e *OnlineEvaluator) ValidateSetup(ctx context.Context, input online.RulesInput) error {
+	if input.SchemaVersion != online.RulesInputSchemaVersion || input.RulesPolicyVersion != RulesPolicyVersion ||
+		input.Version != 1 || input.ControlEpoch != 1 || input.ProposedMove != "" ||
+		input.ActiveSeat != nil || len(input.Moves) != 0 || input.StartingFEN != input.PositionFEN ||
+		online.RulesInputHash(input) != input.InputHash {
+		return ErrInvalidRulesInput
+	}
+	response, err := e.client.Evaluate(ctx, Request{
+		RequestID:          fmt.Sprintf("setup.%d", e.sequence.Add(1)),
+		MatchVersion:       input.Version,
+		FEN:                input.StartingFEN,
+		History:            []string{input.StartingFEN},
+		RulesPolicyVersion: input.RulesPolicyVersion,
+	})
+	if err != nil {
+		var rejected *RejectionError
+		if errors.As(err, &rejected) && rejected.Code == "invalid-fen" {
+			return fmt.Errorf("%w: starting FEN rejected by the rules policy", online.ErrInvalidContract)
+		}
+		return err
+	}
+	if response.Facts.Ending != "none" {
+		return fmt.Errorf("%w: starting position is already terminal (%s)", online.ErrActionNotAllowed, response.Facts.Ending)
+	}
+	return nil
+}
+
 // EvaluateTimeout applies the same pinned material and bounded one-ply timeout
 // policy outside the match transaction. The writer must re-lock and verify the
 // returned version, input hash, epoch and expired seat before committing it.

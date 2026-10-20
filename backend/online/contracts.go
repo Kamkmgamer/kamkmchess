@@ -749,6 +749,10 @@ func (f TimeoutFacts) Result() *Result {
 }
 
 type Evaluator interface {
+	// ValidateSetup checks an unstarted position through the pinned rules policy.
+	// Invalid FEN/counters return ErrInvalidContract; terminal starting positions
+	// return ErrActionNotAllowed. The writer must not create either kind of match.
+	ValidateSetup(ctx context.Context, input RulesInput) error
 	Evaluate(ctx context.Context, input RulesInput) (Candidate, error)
 }
 

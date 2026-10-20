@@ -90,6 +90,9 @@ original receipt bytes under `(scope_kind, scope_id, operation_id)`.
   transition.
 - For an existing match, duplicate lookup happens again under the match lock, so a retry racing the
   original writer still converges on the stored receipt.
+- Move preflight reads the consistent snapshot before checking receipts. An original operation
+  visible in that snapshot therefore has a visible receipt before stale-version or terminal-state
+  rejection can run.
 
 ## Acceptance transaction
 
@@ -109,14 +112,21 @@ For an existing match the writer:
 6. Applies the typed transition, writes the append-only move/event rows, updates the match and clock,
    publishes an allowlisted projection on a terminal result, writes the receipt, and commits.
 
-For a new match, the writer samples the decision time, inserts the match, seats, initial clock,
+For a new match, the pinned rules worker first validates the starting FEN and exact counters with
+no database transaction held. Invalid positions return `ErrInvalidContract`; already-terminal
+positions return `ErrActionNotAllowed`. Missing or failed setup evaluation returns `ErrUnavailable`
+without saving any match state. An accepted creation retry returns its stored receipt without
+requiring the worker again.
+
+After validation, the writer samples the decision time and inserts the match, seats, initial clock,
 creation event, and receipt in one transaction. A unique conflict from a concurrent create resolves
 to the stored receipt when the operation is identical, otherwise `ErrAlreadyExists`.
 
 No client timestamp is trusted. Elapsed time is computed from the stored active start to the
-authoritative decision time; a terminal event clears the active deadline. Increment is applied once
-per accepted move. The first-move/opening-reply window and full draw/takeback behaviour belong to
-KHA-68 and are not claimed here.
+authoritative decision time. Resignation, abort and timeout settle the active bank before clearing
+the active deadline; an expired bank is zero. These events add no increment. Increment is applied
+once per accepted move. The first-move/opening-reply window and full draw/takeback behaviour belong
+to KHA-68 and are not claimed here.
 
 ## Rules candidate fencing
 
@@ -137,7 +147,7 @@ candidate is accepted only when all of the following still match under the fresh
 A stale candidate fails with `ErrStaleCandidate` and writes nothing. The evaluator has no database
 handle in this package; the Go writer remains the only committer.
 
-`rulesworker.NewOnlineEvaluator` implements the move and timeout evaluator contracts using the
+`rulesworker.NewOnlineEvaluator` implements the setup, move and timeout evaluator contracts using the
 private pinned Node process. Real-process/PostgreSQL fixtures exercise this composition. HTTP
 bootstrap and participant credential verification are later integrations. Internal match/receipt
 read helpers require authorization by their server callers; they are not public routes.
@@ -161,6 +171,9 @@ records a revocation time and marker ID, and appends a `replay_removal` deletion
 lookup then returns `ErrNotFound`. The projection guard allows this one-way transition only; the
 projection identity and payload are otherwise immutable, and revoked rows cannot be deleted or
 un-revoked. The match result remains immutable for anonymous aggregate history.
+
+The marker ID is the accepted command fingerprint, which includes the match scope. Separate
+matches can therefore reuse an operation ID without colliding in the global deletion ledger.
 
 Public projection reads also validate the requested match identity and the stored result hash.
 

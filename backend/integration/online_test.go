@@ -19,6 +19,10 @@ import (
 
 type moveEvaluator struct{}
 
+// Transaction fixtures trust their setup; strict setup conformance is covered
+// separately with the actual pinned rules worker.
+func (moveEvaluator) ValidateSetup(context.Context, online.RulesInput) error { return nil }
+
 // fakePositionFEN mirrors what a real rules process returns: a valid FEN with
 // the opponent of the accepted move to play.
 func fakePositionFEN(sideToMove online.Seat) string {

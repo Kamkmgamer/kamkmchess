@@ -80,23 +80,11 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 	if err != nil {
 		return CommandResult{}, err
 	}
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return CommandResult{}, err
-	}
-	defer tx.Rollback(ctx)
-
-	if duplicate, err := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
+	if duplicate, err := loadReceipt(ctx, s.db, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
 		return duplicate, nil
 	} else if !errors.Is(err, ErrNotFound) {
 		return CommandResult{}, err
 	}
-
-	var decision time.Time
-	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&decision); err != nil {
-		return CommandResult{}, err
-	}
-	decision = decision.UTC()
 	match := Match{
 		SchemaVersion:      ContractsSchemaVersion,
 		MatchID:            cmd.MatchID,
@@ -112,11 +100,36 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 			{Seat: SeatWhite, Participant: setup.Seats.White.Participant, PublicLabel: setup.Seats.White.PublicLabel, Control: setup.Seats.White.Control, ControlEpoch: 1},
 			{Seat: SeatBlack, Participant: setup.Seats.Black.Participant, PublicLabel: setup.Seats.Black.PublicLabel, Control: setup.Seats.Black.Control, ControlEpoch: 1},
 		},
-		Clock:     InitialClock(setup.TimeControl),
-		Moves:     []Move{},
-		CreatedAt: decision,
-		UpdatedAt: decision,
+		Clock: InitialClock(setup.TimeControl),
+		Moves: []Move{},
 	}
+	if s.evaluator == nil {
+		return CommandResult{}, ErrUnavailable
+	}
+	// Validate the immutable setup with no transaction or database lock held.
+	if err = s.evaluator.ValidateSetup(ctx, BuildRulesInput(match, match.Moves, "")); err != nil {
+		if errors.Is(err, ErrInvalidContract) || errors.Is(err, ErrActionNotAllowed) {
+			return CommandResult{}, err
+		}
+		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	if duplicate, err := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
+		return duplicate, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return CommandResult{}, err
+	}
+	var decision time.Time
+	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&decision); err != nil {
+		return CommandResult{}, err
+	}
+	decision = decision.UTC()
+	match.CreatedAt = decision
+	match.UpdatedAt = decision
 	inputHash := RulesInputHash(BuildRulesInput(match, match.Moves, ""))
 	if _, err = tx.Exec(ctx, `INSERT INTO online_matches(match_id,schema_version,variant,starting_fen,position_fen,starting_time_ms,increment_ms,version,control_epoch,input_hash,rules_policy_version,status,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		match.MatchID, match.SchemaVersion, match.Variant, match.StartingFEN, match.PositionFEN, match.TimeControl.StartingTimeMs, match.TimeControl.IncrementMs, match.Version, match.ControlEpoch, mustHashBytes(inputHash), match.RulesPolicyVersion, string(match.Status), decision, decision); err != nil {
@@ -163,18 +176,20 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 	if err != nil {
 		return CommandResult{}, err
 	}
-	// Fast duplicate resolution avoids needless rules evaluation on a retried
-	// lost acknowledgement. The authoritative check repeats under the row lock.
+	snapshot, err := loadMatchConsistent(ctx, s.db, cmd.MatchID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	// Resolve receipts after the snapshot read: any original operation reflected
+	// in that snapshot has already committed its receipt. An overlapping retry
+	// cannot reject the advanced state before discovering its accepted operation.
+	// The authoritative duplicate check repeats under the match lock.
 	if duplicate, err := loadReceipt(ctx, s.db, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
 		return duplicate, nil
 	} else if !errors.Is(err, ErrNotFound) {
 		return CommandResult{}, err
 	}
 
-	snapshot, err := loadMatchConsistent(ctx, s.db, cmd.MatchID)
-	if err != nil {
-		return CommandResult{}, err
-	}
 	seat, ok := snapshot.Seat(cmd.Seat)
 	if !ok || seat.Participant != actor {
 		return CommandResult{}, ErrNotAuthorized
@@ -379,7 +394,7 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		match.Status = MatchCompleted
 		match.Result = result
 		match.CompletedAt = &decision
-		clock = terminalClock(clock)
+		clock = terminalClock(clock, decision)
 		event.Kind = EventResign
 		event.Result = result
 		receipt.Result = result
@@ -391,7 +406,7 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		match.Status = MatchAborted
 		match.Result = result
 		match.CompletedAt = &decision
-		clock = terminalClock(clock)
+		clock = terminalClock(clock, decision)
 		event.Kind = EventAbort
 		event.Result = result
 		receipt.Result = result
@@ -420,15 +435,18 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		if match.Status == MatchActive {
 			return CommandResult{}, ErrActionNotAllowed
 		}
+		// The fingerprint includes the match scope, so different matches can use
+		// the same operation ID without colliding in the global removal ledger.
+		markerID := hashHex(fingerprint)
 		var revoked *time.Time
-		if err = tx.QueryRow(ctx, `UPDATE online_public_projections SET projection_json='{}'::jsonb,revoked_at=$1,revocation_marker_id=$2 WHERE match_id=$3 AND revoked_at IS NULL RETURNING revoked_at`, decision, cmd.OperationID, match.MatchID).Scan(&revoked); err != nil {
+		if err = tx.QueryRow(ctx, `UPDATE online_public_projections SET projection_json='{}'::jsonb,revoked_at=$1,revocation_marker_id=$2 WHERE match_id=$3 AND revoked_at IS NULL RETURNING revoked_at`, decision, markerID, match.MatchID).Scan(&revoked); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return CommandResult{}, ErrNotFound
 			}
 			return CommandResult{}, err
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO online_deletion_markers(marker_id,marker_kind,subject_kind,subject_id,match_id,reason,requested_at,applied_at) VALUES($1,'replay_removal','match',$2,$2,$3,$4,$4)`,
-			cmd.OperationID, match.MatchID, cmd.Action.RemoveReplay.Reason, decision); err != nil {
+			markerID, match.MatchID, cmd.Action.RemoveReplay.Reason, decision); err != nil {
 			return CommandResult{}, err
 		}
 		event.Kind = EventReplayRemoved
@@ -563,7 +581,7 @@ func (s *Service) commitTimeout(ctx context.Context, tx pgx.Tx, cmd Command, fin
 	match.Result = result
 	completed := decision
 	match.CompletedAt = &completed
-	match.Clock = terminalClock(match.Clock)
+	match.Clock = terminalClock(match.Clock, decision)
 	match.UpdatedAt = decision
 	if err := s.updateMatch(ctx, tx, match, decision); err != nil {
 		return CommandResult{}, err
@@ -1040,7 +1058,8 @@ func terminalStatus(result *Result) MatchStatus {
 	return MatchCompleted
 }
 
-func terminalClock(clock ClockState) ClockState {
+func terminalClock(clock ClockState, decision time.Time) ClockState {
+	clock = chargeActiveClock(clock, decision)
 	clock.ActiveSeat = nil
 	clock.ActiveSince = nil
 	clock.DeadlineAt = nil

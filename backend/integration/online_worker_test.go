@@ -82,9 +82,25 @@ func TestPostgresOnlineWorkerFailureLeavesMatchUnchanged(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			service, _ := onlineService(t, evaluator)
+			// Accept the starting position before installing the failed process.
+			// This test targets failure during a move, not setup validation.
+			setupService, pool := onlineService(t, moveEvaluator{})
 			ctx := context.Background()
-			createOnlineMatch(t, service, "worker-failure-game", "worker-create-op")
+			createOnlineMatch(t, setupService, "worker-failure-game", "worker-create-op")
+			service, err := online.Open(ctx, pool, evaluator)
+			if err != nil {
+				t.Fatal(err)
+			}
+			failedSetup := createOnlineCommand("worker-failed-setup", "worker-setup-op")
+			if _, err = service.Execute(ctx, alice, failedSetup); !errors.Is(err, online.ErrUnavailable) {
+				t.Fatalf("failed worker must refuse setup, got %v", err)
+			}
+			if _, err = service.GetMatch(ctx, failedSetup.MatchID); !errors.Is(err, online.ErrNotFound) {
+				t.Fatalf("failed setup persisted a match: %v", err)
+			}
+			if _, err = service.GetReceipt(ctx, failedSetup.MatchID, failedSetup.OperationID); !errors.Is(err, online.ErrNotFound) {
+				t.Fatalf("failed setup persisted a receipt: %v", err)
+			}
 			move := moveOnlineCommand("worker-failure-game", "worker-failed-op", online.SeatWhite, 1, "e2e4")
 			if _, err = service.Execute(ctx, alice, move); !errors.Is(err, online.ErrUnavailable) {
 				t.Fatalf("failed worker must refuse the move, got %v", err)
