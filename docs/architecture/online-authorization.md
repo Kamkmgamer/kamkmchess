@@ -102,8 +102,9 @@ for shared snapshots, public labels, logs or analytics.
 ## Streams and configuration
 
 `AuthorizeStream` and `RenewStream` check current participant membership and credentials. A grant
-lasts at most 20 seconds or credential expiry. They authorize a window; they do not deliver SSE,
-heartbeats, cursors, snapshots or polling. KHA-69 owns that transport and its integrated acceptance.
+lasts at most 20 seconds or credential expiry. The [online update transport](online-updates.md)
+uses those grants for finite fetch-SSE windows, with canonical snapshots, version cursors and
+authenticated polling. Each renewal obtains fresh credentials and repeats membership checks.
 
 Server-only optional settings are `ONLINE_RULES_WORKER_ENTRY`, `ONLINE_GUEST_CREDENTIAL_TTL`
 with a 12-hour default, `ONLINE_OWNERSHIP_PROOF_TTL` with a 15-minute default, and

@@ -20,6 +20,25 @@ only through the dedicated Docker network, using SCRAM passwords and verified
 TLS for the runtime role. The network alias matches the AutoSSL certificate.
 Migrations and backups use a separate administrative role inside the container.
 
+## Online update delivery
+
+Online fetch-SSE uses the configured direct API origin, bypassing Vercel's
+compatibility rewrite. See the [online update contract](../docs/architecture/online-updates.md).
+The participant `/v1/online/matches/{matchID}/updates` route accepts bearer or
+guest credentials in headers and `Last-Event-ID` for reconnects. Keep those
+headers allowed only on the online API; private account sync retains its
+existing CORS policy.
+
+Before enabling online play, inspect the actual Apache route with an
+authorized participant session. Confirm the initial snapshot and heartbeat
+comments arrive before the response ends, each stream ends within 20 seconds
+or credential expiry, and a renewed stream obtains fresh authorization.
+Disable compression or buffering for `text/event-stream` if it delays frames.
+Verify the same snapshot through the JSON polling path, denied origins and
+revoked membership, then measure concurrent streams against the existing host
+and database pool. Go's flush calls and response headers do not prove Apache
+delivery or hosting capacity. Record these checks in KHA-83 before rollout.
+
 ## Build and start
 
 Build static Linux amd64 binaries from the repository using Go 1.26 or newer.

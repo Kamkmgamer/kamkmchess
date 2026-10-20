@@ -45,11 +45,30 @@ type OnlineOptions struct {
 	// A same-origin read that omits the Origin header resolves against this
 	// list by request host.
 	AllowedOrigins []string
+	// UpdatesPollInterval is how often the live update stream probes the
+	// durable match version for a change. The probe is a bounded read that
+	// holds no database connection between two probes.
+	UpdatesPollInterval time.Duration
+	// UpdatesHeartbeatInterval is how often the live update stream writes an
+	// SSE comment while nothing changed.
+	UpdatesHeartbeatInterval time.Duration
+	// UpdatesStreamMaxDuration bounds one live update stream. It is capped
+	// at twenty seconds, and a stream also ends at the expiry of the
+	// credential that opened it.
+	UpdatesStreamMaxDuration time.Duration
+	// UpdatesWriteTimeout bounds one write to a consumer. A consumer that
+	// cannot keep up fails closed instead of holding a stream open.
+	UpdatesWriteTimeout time.Duration
 }
 
 type onlineAPI struct {
 	service OnlineService
 	auth    participantAuthenticator
+	// streamAuthorizer grants a live subscription window. It is optional:
+	// an authenticator without one still opens a bounded window that ends
+	// at the expiry of the presented credential.
+	streamAuthorizer OnlineStreamAuthorizer
+	options          OnlineOptions
 }
 
 // NewOnline returns the participant-authorized online API.
@@ -58,6 +77,7 @@ type onlineAPI struct {
 //
 //	GET  /v1/online/matches/{matchID}/replay                  public completed replay
 //	GET  /v1/online/matches/{matchID}                         participant live state
+//	GET  /v1/online/matches/{matchID}/updates                 participant updates and stream
 //	GET  /v1/online/matches/{matchID}/operations/{operationID} participant receipt
 //	POST /v1/online/matches/{matchID}/commands                participant command
 //
@@ -66,13 +86,45 @@ type onlineAPI struct {
 // The explicit guest-link path, including the guest ownership proof, belongs
 // to the public profile API.
 func NewOnline(service OnlineService, authenticator OnlineAuthenticator, options OnlineOptions) http.Handler {
-	api := &onlineAPI{service: service, auth: newParticipantAuthenticator(authenticator, options)}
+	api := &onlineAPI{service: service, auth: newParticipantAuthenticator(authenticator, options), options: normalizeUpdatesOptions(options)}
+	if authorizer, ok := authenticator.(OnlineStreamAuthorizer); ok {
+		api.streamAuthorizer = authorizer
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/online/matches/{matchID}/replay", api.replay)
 	mux.HandleFunc("GET /v1/online/matches/{matchID}", api.live)
+	mux.HandleFunc("GET /v1/online/matches/{matchID}/updates", api.updates)
 	mux.HandleFunc("GET /v1/online/matches/{matchID}/operations/{operationID}", api.operation)
 	mux.HandleFunc("POST /v1/online/matches/{matchID}/commands", api.command)
 	return mux
+}
+
+// normalizeUpdatesOptions applies the defaults and the hard caps of the live
+// update stream.
+//
+// The caps are the contract of the stream: a window lasts at most twenty
+// seconds, and a heartbeat appears at least every five seconds. A configured
+// value that would break them is reduced instead of trusted.
+func normalizeUpdatesOptions(options OnlineOptions) OnlineOptions {
+	if options.UpdatesPollInterval <= 0 {
+		options.UpdatesPollInterval = defaultUpdatesPollInterval
+	}
+	if options.UpdatesHeartbeatInterval <= 0 {
+		options.UpdatesHeartbeatInterval = defaultUpdatesHeartbeatInterval
+	}
+	if options.UpdatesHeartbeatInterval > maxUpdatesHeartbeatInterval {
+		options.UpdatesHeartbeatInterval = maxUpdatesHeartbeatInterval
+	}
+	if options.UpdatesStreamMaxDuration <= 0 {
+		options.UpdatesStreamMaxDuration = defaultUpdatesStreamDuration
+	}
+	if options.UpdatesStreamMaxDuration > maxUpdatesStreamDuration {
+		options.UpdatesStreamMaxDuration = maxUpdatesStreamDuration
+	}
+	if options.UpdatesWriteTimeout <= 0 {
+		options.UpdatesWriteTimeout = defaultUpdatesWriteTimeout
+	}
+	return options
 }
 
 // replay returns the allowlisted completed replay. It is readable without
@@ -256,6 +308,10 @@ func toOnlineMatch(match online.Match, principal onlineauth.Principal) onlineMat
 			CreatedAt:     offer.CreatedAt.UTC(),
 		})
 	}
+	// The accepted moves are always a list, never a null. A client parses
+	// the same shape for a new match and for a match with history.
+	moves := make([]online.Move, 0, len(match.Moves))
+	moves = append(moves, match.Moves...)
 	return onlineMatchResponse{
 		SchemaVersion:      match.SchemaVersion,
 		MatchID:            match.MatchID,
@@ -270,7 +326,7 @@ func toOnlineMatch(match online.Match, principal onlineauth.Principal) onlineMat
 		Result:             match.Result,
 		Seats:              seats,
 		Clock:              match.Clock,
-		Moves:              match.Moves,
+		Moves:              moves,
 		PendingOffers:      offers,
 		CreatedAt:          match.CreatedAt.UTC(),
 		UpdatedAt:          match.UpdatedAt.UTC(),

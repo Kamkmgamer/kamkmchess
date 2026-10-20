@@ -358,9 +358,12 @@ inside the link transaction, under the account lock and the guest seat lock. The
 guest actor, the accepted receipts and the accepted fingerprints are left untouched. See
 [the public profile contract](public-profiles.md) for the routes, the storage, and the boundaries.
 
+The [online update transport](online-updates.md) delivers participant snapshots over finite
+fetch-SSE or authenticated polling. Its cursor is the durable match version. Shared notifications
+do not change command authority or the stored operation-receipt contract.
+
 ## Deferred work
 
-- Finite fetch-SSE delivery, durable cursors and polling recovery (KHA-69).
 - Queue allocation, lease acquisition/revocation commands, matchmaking, cutoffs, and fallback.
 - The abandonment claim after one continuous minute offline, and the reconnection window.
 - The browser agent runner that produces the recovery attempt reports and the per-move declared
