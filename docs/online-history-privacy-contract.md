@@ -14,10 +14,10 @@ implemented behaviour only; it claims no native, host or acceptance sign-off.
 | `GET /v1/public/matches/{matchID}/replay` | none (signed-out readable) | Public replay of a completed online match |
 | `GET /v1/online/matches/{matchID}/replay` | none (signed-out readable) | Same payload; canonical replay URL |
 | `GET /v1/public/profiles/{profileID}/history` | none (signed-out readable) | Public game history and aggregate totals of one profile |
-| `POST /v1/account/deletion` | account session | Ordinary account deletion (anonymize shared games) |
-| `POST /v1/account/removal` | account session | Explicit verified removal (erase shared replays) |
-| `POST /v1/guest-seats/removal` | guest seat credential | Explicit verified removal for a guest seat owner |
-| `POST /v1/account/model-labels` | account session | Register an owner-chosen public label for a private routing ID |
+| `POST /v1/privacy/account/deletion` | account session | Ordinary account deletion (anonymize shared games) |
+| `POST /v1/privacy/account/removal` | account session | Explicit verified removal (erase shared replays) |
+| `POST /v1/privacy/guest/removal` | guest seat credential | Explicit verified removal for a guest seat owner |
+| `POST /v1/privacy/account/model-labels` | account session | Register an owner-chosen public label for a model opponent |
 
 Live reads stay participant-only: `GET /v1/online/matches/{matchID}` and
 `GET /v1/online/matches/{matchID}/updates` still require a participant credential.
@@ -38,8 +38,7 @@ Live reads stay participant-only: `GET /v1/online/matches/{matchID}` and
     {
       "seat": "white",
       "publicLabel": "Alice",
-      "control": { "kind": "human", "declaration": "declared" },
-      "finalControl": { "kind": "agent", "modelLabel": "GPT-4o", "declaration": "declared" }
+      "control": { "kind": "human", "declaration": "declared" }
     }
   ],
   "moves": [
@@ -72,8 +71,8 @@ Rules the browser must honour:
   name or an owner-chosen public label. It is never a private routing ID, a secret-bearing
   alias, a connection nickname, an endpoint, or a credential.
 * The per-move `control` is the control that was in effect for that accepted move. A later
-  control change never relabels an earlier move. `participants[].finalControl` is the control
-  at the end of the match.
+  control change never relabels an earlier move. `participants[].control` is the control of that
+  seat at the end of the match.
 * There is no separate "Declared models" list. Render compact labels (for example `Human`,
   `Agent · GPT-4o`, `Engine · Stockfish 19 Lite (browser)`) from the metadata above.
 * `scored` is `false` for an abort. An abort is published as an unscored game and is not counted
@@ -112,16 +111,17 @@ Rules the browser must honour:
 
 | Flow | Body | Answer |
 | --- | --- | --- |
-| Account deletion | `{"confirm":"delete-account"}` | `{ "schemaVersion": 1, "status": "applied", "anonymizedMatches": 3, "removedMatches": 0 }` |
-| Explicit removal (account) | `{"confirm":"erase-shared-replays"}` | `{ "schemaVersion": 1, "removalId": "rm_...", "status": "applied", "removedMatches": 3, "liveDeletedAt": "...", "liveDeleteDueAt": "...", "recoverySanitizeDueAt": "..." }` |
-| Explicit removal (guest) | `{"confirm":"erase-shared-replays"}` | same shape as the account answer |
+| Account deletion | `{"confirm":"delete-account"}` | `{ "schemaVersion": 1, "removalId": "rm_...", "scope": "account_deletion", "status": "applied", "anonymizedMatches": 3, "removedMatches": 0, "verifiedAt": "...", "liveDeletedAt": "...", "liveDeleteDueAt": "...", "recoverySanitizeDueAt": "..." }` |
+| Explicit removal (account) | `{"confirm":"erase-shared-replays"}` | the same shape with `"scope": "explicit_removal"` and the erased match count in `removedMatches` |
+| Explicit removal (guest) | `{"confirm":"erase-shared-replays"}` | the same shape as the account answer |
 | Public model label | `{"publicLabel":"My chess model"}` | `{ "schemaVersion": 1, "labelId": "kl_...", "publicLabel": "My chess model" }` |
 
 * The two deletion flows are separate on purpose. Account deletion anonymizes the shared games
   and keeps them. Explicit removal erases the shared replays from both histories and from the
   public URL.
-* Every flow is idempotent. A repeated request answers with the same result and never counts a
-  result twice.
+* Every flow is idempotent. A repeated request never counts a result twice, never removes a game
+  twice, and never creates a second removal record. The removed account is fenced inside the same
+  transaction, so a retry with a revoked session is refused and the stored removal is unchanged.
 * A guest uses the guest seat credential header `X-Guest-Seat-Token`; the server derives the
   guest identity from it. A guest never names an account.
 * `publicLabel` is the only value the browser sends when it registers a public model label. The
@@ -137,11 +137,16 @@ Rules the browser must honour:
 
 ## Typed browser modules
 
-* `src/online/history.ts` – `parsePublicReplay`, `parseProfileHistory`, `fetchPublicReplay`,
-  `fetchProfileHistory`, `publicReplayPath`, `compactControlLabel`.
+* `src/online/history.ts` – `parseOnlinePublicReplay`, `parseOnlineProfileHistory`,
+  `fetchOnlinePublicReplay`, `fetchOnlineProfileHistory`, `publicReplayPath`,
+  `profileHistoryPath`, `compactControlLabel`.
 * `src/online/privacy.ts` – `requestAccountDeletion`, `requestExplicitRemoval`,
   `requestGuestRemoval`, `registerPublicModelLabel` and their response parsers.
 
 Both modules are pure: they take a `fetch` implementation and never read a credential themselves.
 The account and guest calls go through the existing authorized requester in `src/online/request.ts`
 with `accountScope()` and `matchSeatScope(matchId, seat)`.
+
+The public reads are signed-out reads: `fetchOnlinePublicReplay` and `fetchOnlineProfileHistory`
+take a `baseUrl` and an optional `fetch`, refuse an answer that is not the allowlisted payload,
+and never send a credential.
