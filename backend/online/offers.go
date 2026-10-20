@@ -15,8 +15,7 @@ const offerColumns = `offer_id,kind,seat,target_version,base_version,created_at`
 // stays in the table as the record of what was offered.
 type storedOffer struct {
 	Offer
-	Resolved   bool
-	Resolution string
+	Resolved bool
 }
 
 // loadOfferByID reads one offer of a match whatever its resolution is. An
@@ -26,9 +25,8 @@ func loadOfferByID(ctx context.Context, q queryer, matchID, offerID string) (sto
 	var row storedOffer
 	var kind string
 	var resolvedAt *time.Time
-	var resolution *string
-	err := q.QueryRow(ctx, `SELECT `+offerColumns+`,resolved_at,resolution FROM online_offers WHERE match_id=$1 AND offer_id=$2`, matchID, offerID).
-		Scan(&row.OfferID, &kind, &row.Seat, &row.TargetVersion, &row.BaseVersion, &row.CreatedAt, &resolvedAt, &resolution)
+	err := q.QueryRow(ctx, `SELECT `+offerColumns+`,resolved_at FROM online_offers WHERE match_id=$1 AND offer_id=$2`, matchID, offerID).
+		Scan(&row.OfferID, &kind, &row.Seat, &row.TargetVersion, &row.BaseVersion, &row.CreatedAt, &resolvedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return storedOffer{}, ErrActionNotAllowed
 	}
@@ -38,12 +36,7 @@ func loadOfferByID(ctx context.Context, q queryer, matchID, offerID string) (sto
 	row.MatchID = matchID
 	row.Kind = OfferKind(kind)
 	row.CreatedAt = row.CreatedAt.UTC()
-	if resolvedAt != nil {
-		row.Resolved = true
-		if resolution != nil {
-			row.Resolution = *resolution
-		}
-	}
+	row.Resolved = resolvedAt != nil
 	return row, nil
 }
 
