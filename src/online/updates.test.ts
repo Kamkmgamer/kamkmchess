@@ -478,6 +478,28 @@ describe('online match updates', () => {
     subscriber.dispose();
   });
 
+  it('redelivers a snapshot when the consumer failed before accepting it', async () => {
+    const { fetcher } = recordingFetch(() => jsonResponse(envelope(11)));
+    const session = guestSession();
+    const requester = createAuthorizedRequester({ session, baseUrl: 'https://service.example', fetch: fetcher });
+    const memory = memoryStorage();
+    const consume = vi.fn(() => {
+      if (consume.mock.calls.length === 1) throw new Error('Consumer failed');
+    });
+    const subscriber = createOnlineUpdatesSubscriber({
+      requester, session, matchId: 'match_alpha', seat: 'white', transport: 'poll',
+      storage: memory.storage, onSnapshot: consume, pollIntervalMs: 10,
+    });
+    try {
+      subscriber.start();
+      await vi.waitFor(() => expect(consume).toHaveBeenCalledTimes(2));
+      expect(memory.state.writes).toEqual([11]);
+      expect(subscriber.cursor).toBe(11);
+    } finally {
+      subscriber.dispose();
+    }
+  });
+
   it('stops when the participant is not a member of the match', async () => {
     const { calls, fetcher } = recordingFetch(() => new Response('', { status: 404 }));
     const { subscriber, stops, updates } = harness({ fetcher });
@@ -732,6 +754,28 @@ describe('online match updates', () => {
       expect(subscriber.transport).toBe('poll');
     } finally {
       subscriber.dispose();
+    }
+  });
+
+  it('keeps the retry backoff after a polling request times out', async () => {
+    vi.useFakeTimers();
+    const { fetcher, calls } = recordingFetch(() => new Promise<Response>(() => undefined));
+    const { subscriber, errors } = harness({ fetcher, transport: 'poll', maxIdleMs: 20, baseBackoffMs: 500 });
+    try {
+      subscriber.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(21);
+      expect(errors).toHaveLength(1);
+      expect(calls).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(400);
+      expect(calls).toHaveLength(1);
+      subscriber.wake();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(calls).toHaveLength(2);
+    } finally {
+      subscriber.dispose();
+      vi.useRealTimers();
     }
   });
 

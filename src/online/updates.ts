@@ -665,6 +665,7 @@ export function createOnlineUpdatesSubscriber(options: OnlineUpdatesOptions): On
 
   interface Cycle {
     readonly controller: AbortController;
+    readonly delayController: AbortController;
     woken: boolean;
   }
 
@@ -758,13 +759,15 @@ export function createOnlineUpdatesSubscriber(options: OnlineUpdatesOptions): On
       previousCursor: applied,
       gap: applied !== null && envelope.cursor > applied + 1,
     };
-    cursor = envelope.cursor;
-    appliedCursor = envelope.cursor;
     try {
       options.onSnapshot(update);
     } catch (error) {
       report(error);
+      return;
     }
+    if (disposed || generation !== session.generation) return;
+    cursor = envelope.cursor;
+    appliedCursor = envelope.cursor;
     await persistCursor(envelope.cursor, generation);
   }
 
@@ -916,15 +919,18 @@ export function createOnlineUpdatesSubscriber(options: OnlineUpdatesOptions): On
 
   async function wait(cycle: Cycle, ms: number): Promise<void> {
     if (disposed || stopReason !== null) return;
-    await sleep(ms, cycle.controller.signal);
+    await sleep(ms, cycle.delayController.signal);
   }
 
   async function runLoop(): Promise<void> {
     await loadCursor();
     while (!disposed && stopReason === null) {
-      const cycle: Cycle = { controller: new AbortController(), woken: false };
+      const cycle: Cycle = { controller: new AbortController(), delayController: new AbortController(), woken: false };
       activeCycle = cycle;
-      const onLifetimeAbort = (): void => cycle.controller.abort();
+      const onLifetimeAbort = (): void => {
+        cycle.controller.abort();
+        cycle.delayController.abort();
+      };
       lifetime.signal.addEventListener('abort', onLifetimeAbort, { once: true });
       try {
         if (transport === 'sse') await runStream(cycle);
@@ -985,6 +991,7 @@ export function createOnlineUpdatesSubscriber(options: OnlineUpdatesOptions): On
       if (!cycle) return;
       cycle.woken = true;
       cycle.controller.abort();
+      cycle.delayController.abort();
     },
     dispose() {
       if (disposed) return;
