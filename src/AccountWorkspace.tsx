@@ -143,6 +143,8 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       // flight, so a pending answer settles instead of hanging.
       profileIdentities.current?.dispose();
       profileIdentities.current = null;
+      identityRef.current = null;
+      guestCredentialRef.current = null;
       void releaseAccountCompositions().catch(() => undefined);
     };
   }, [guestView]);
