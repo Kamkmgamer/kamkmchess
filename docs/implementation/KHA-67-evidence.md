@@ -101,7 +101,8 @@ the existing participant replay-removal command and trusted seat revocation meth
 Durable account revocation methods are implemented and tested. No Clerk webhook or session-status
 poller populates them automatically yet. Revocation made only in Clerk is enforced through token
 expiry unless trusted server integration records it first. Deployment and provider spending were
-not performed. Source and evidence commits remain local.
+not performed. The verification above used the local source tree; branch publication is tracked
+separately in the pull request.
 
 OpenCode `opencode/minimax-m3.1-flash-free` handled implementation, independent reviews and corrective
 work. The parent checked the findings, rejected the disproved CORS claim, completed two browser
