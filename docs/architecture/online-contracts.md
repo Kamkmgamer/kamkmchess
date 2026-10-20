@@ -142,6 +142,11 @@ private pinned Node process. Real-process/PostgreSQL fixtures exercise this comp
 bootstrap and participant credential verification are later integrations. Internal match/receipt
 read helpers require authorization by their server callers; they are not public routes.
 
+`GetMatchForParticipant` and `GetReceiptForParticipant` provide membership-scoped reads. They return
+`ErrNotFound` for non-members as well as missing matches, while unrestricted helpers remain trusted
+internal interfaces. Command decoding requires EOF after the JSON value. Accepted move and public
+replay SAN use a bounded notation check rather than the broader public-label validator.
+
 Match snapshots use one repeatable-read transaction for the match, seats, clock and move list.
 
 ## Public projection and removal
@@ -156,6 +161,8 @@ records a revocation time and marker ID, and appends a `replay_removal` deletion
 lookup then returns `ErrNotFound`. The projection guard allows this one-way transition only; the
 projection identity and payload are otherwise immutable, and revoked rows cannot be deleted or
 un-revoked. The match result remains immutable for anonymous aggregate history.
+
+Public projection reads also validate the requested match identity and the stored result hash.
 
 ## Runtime roles and isolation
 

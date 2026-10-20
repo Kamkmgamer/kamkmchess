@@ -30,3 +30,21 @@ The full browser run preceded the final reply-race and confirmation-focus correc
 ## Files
 
 Controller lifecycle and tests, result availability/copy helpers, App/Icon and narrow toolbar/dialog styles, persistence types/archive validation, the Go private-save validator and its PostgreSQL regression, and focused browser journeys.
+
+
+## CLIProxy Luna review continuation
+
+Completed on 2026-10-20 using OpenCode `cliproxy/gpt-6-luna`. Latest verified source commit: `00d9ae8d9689d2f1f11c2ab994a860d7723850aa`.
+
+The failed DeepSeek reviews had later queued retry turns. Those retries were stopped, their remaining edits were inspected, and stale evidence claiming a missing timeout adapter was removed. The implemented move and timeout adapters remain verified.
+
+Final combined verification passed:
+
+- `pnpm check`: lint, strict TypeScript, 673 tests across 64 files, browser build, private worker build and notices.
+- Six focused Playwright result cases, including a final AI result arriving while a confirmation is open, delayed replies after both declared outcomes, cancel focus, and confirmed result focus/reload.
+- `go test -count=1 ./backend/... ./cmd/...` with isolated PostgreSQL and the built private worker.
+- `go vet ./backend/... ./cmd/...` and `git diff --check`.
+
+The earlier full 69-journey browser pass remains historical evidence; this continuation reran the changed flows. Native, assistive-technology, staging and release acceptance remain separate.
+
+Luna fixed the focus path when another controller event finishes the game while the declaration dialog is open. The synthetic AI regression proves that the dialog closes and focuses the final result. Retained retry edits also keep an aborted generation idle once the game is final and assert resignation focus. The controller lifecycle review found no additional material issue.

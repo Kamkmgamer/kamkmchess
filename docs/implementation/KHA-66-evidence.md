@@ -49,3 +49,21 @@ The builder verifies the chessops pin and rejects remaining external packages. I
 ARC-01 has local rules/process/database evidence. Native accessibility, deployed command paths, hosting capacity and staged release remain separate acceptance work.
 
 DeepSeek V4.1 Flash Free through OpenCode implemented the slice and most review edits. Its final review response was blocked; the other review tasks later hit rate limits. The parent inspected and completed the partial edits and ran the final checks above.
+
+
+## CLIProxy Luna review continuation
+
+Completed on 2026-10-20 using OpenCode `cliproxy/gpt-6-luna`. Latest verified source commit: `00d9ae8d9689d2f1f11c2ab994a860d7723850aa`.
+
+The failed DeepSeek reviews had later queued retry turns. Those retries were stopped, their remaining edits were inspected, and stale evidence claiming a missing timeout adapter was removed. The implemented move and timeout adapters remain verified.
+
+Final combined verification passed:
+
+- `pnpm check`: lint, strict TypeScript, 673 tests across 64 files, browser build, private worker build and notices.
+- Six focused Playwright result cases, including a final AI result arriving while a confirmation is open, delayed replies after both declared outcomes, cancel focus, and confirmed result focus/reload.
+- `go test -count=1 ./backend/... ./cmd/...` with isolated PostgreSQL and the built private worker.
+- `go vet ./backend/... ./cmd/...` and `git diff --check`.
+
+The earlier full 69-journey browser pass remains historical evidence; this continuation reran the changed flows. Native, assistive-technology, staging and release acceptance remain separate.
+
+Luna reported a clean worker review with no new material defect. The retained input-reader correction checks byte length before concatenation; unit/process cases cover streamed oversized lines, bounded retention, UTF-8 framing and recovery. The rebuilt artifact is 81,113 bytes. A parallel test run had hit a 150 ms cold-start fixture limit; the fixture now allows 500 ms while retaining its two-second bound and the fake worker's five-second stall. The final serial Go suite passed.

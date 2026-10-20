@@ -44,3 +44,21 @@ An initial broader `go test ./...` / `go vet ./...` encountered an excluded expe
 ARC-02, ARC-03 and ARC-04 have local service/database evidence. Authenticated routes, opening clocks and the 15-second reply, full outcomes, subscriptions, queue allocation, agent leases, public history, erasure/retention/restore and staging continue in their dependent tickets. The overall product acceptance matrix remains unmodified.
 
 DeepSeek implemented the slice and most review corrections. Its corrective review hit the free-endpoint rate limit; the parent completed and verified the partial edits.
+
+
+## CLIProxy Luna review continuation
+
+Completed on 2026-10-20 using OpenCode `cliproxy/gpt-6-luna`. Latest verified source commit: `00d9ae8d9689d2f1f11c2ab994a860d7723850aa`.
+
+The failed DeepSeek reviews had later queued retry turns. Those retries were stopped, their remaining edits were inspected, and stale evidence claiming a missing timeout adapter was removed. The implemented move and timeout adapters remain verified.
+
+Final combined verification passed:
+
+- `pnpm check`: lint, strict TypeScript, 673 tests across 64 files, browser build, private worker build and notices.
+- Six focused Playwright result cases, including a final AI result arriving while a confirmation is open, delayed replies after both declared outcomes, cancel focus, and confirmed result focus/reload.
+- `go test -count=1 ./backend/... ./cmd/...` with isolated PostgreSQL and the built private worker.
+- `go vet ./backend/... ./cmd/...` and `git diff --check`.
+
+The earlier full 69-journey browser pass remains historical evidence; this continuation reran the changed flows. Native, assistive-technology, staging and release acceptance remain separate.
+
+Luna fixed strict JSON decoding to require EOF after the command value, rejecting malformed trailing bytes. Go and TypeScript now constrain SAN independently of public labels. Retained retry edits add participant-scoped match/receipt reads with non-member concealment and verify public projection identity/result hashes. Real PostgreSQL verification includes the new participant-read regression. No remaining material transaction or contract objection was reported.
