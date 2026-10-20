@@ -260,7 +260,9 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 			AllowedOrigins: cfg.Clerk.AllowedOrigins,
 			LabelResolver:  invite.NewAccountLabelResolver(pool),
 		})
+		surface.Handle("/v1/online/invitations", friendHandler)
 		surface.Handle("/v1/online/invitations/", friendHandler)
+		surface.Handle("/v1/online/rematches", friendHandler)
 		surface.Handle("/v1/online/rematches/", friendHandler)
 		surface.Handle("GET /v1/online/matches/{matchID}/rematch", friendHandler)
 	}
