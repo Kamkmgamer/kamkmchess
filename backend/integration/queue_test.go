@@ -238,8 +238,11 @@ func TestQueueMatchIdentifiersNeverCollideAcrossOwners(t *testing.T) {
 	h := newQueueHarness(t)
 	ctx := context.Background()
 	first := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "intent-0001")
+	h.clock.Advance(time.Millisecond)
 	second := h.createEntry("user_b", agentControl("Claude"), standardClock(), "intent-0001")
+	h.clock.Advance(time.Millisecond)
 	third := h.createEntry("user_c", agentControl("Gemini"), standardClock(), "intent-0002")
+	h.clock.Advance(time.Millisecond)
 	fourth := h.createEntry("user_d", agentControl("Llama"), standardClock(), "intent-0002")
 	if first.EntryID == second.EntryID || third.EntryID == fourth.EntryID {
 		t.Fatal("two owners share one entry")
@@ -465,6 +468,43 @@ func TestQueueUnresponsiveEntryExpiresAndNeedsAnExplicitRejoin(t *testing.T) {
 	}
 	if assignment.MatchID == "" {
 		t.Fatal("the rearmed entry produced no game")
+	}
+}
+
+// QUE-07: a responsive background owner stays eligible while it heartbeats.
+func TestQueueResponsiveBackgroundEntryStaysEligible(t *testing.T) {
+	h := newQueueHarness(t)
+	ctx := context.Background()
+	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
+	// The owner keeps reporting in while the search runs.
+	for step := 0; step < 3; step++ {
+		h.clock.Advance(queue.DefaultReadinessTTL / 2)
+		if _, err := h.service.Heartbeat(ctx, account("user_a"), entry.EntryID, queue.Operation{}); err != nil {
+			t.Fatalf("heartbeat %d: %v", step, err)
+		}
+	}
+	sweep, err := h.service.ExpireWaiting(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sweep.Expired != 0 {
+		t.Fatalf("a responsive entry expired: %d entries", sweep.Expired)
+	}
+	stored, err := h.service.Entry(ctx, account("user_a"), entry.EntryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ReadyAt == nil || stored.Status != online.QueueWaiting {
+		t.Fatalf("the responsive entry left the eligibility: %+v", stored)
+	}
+	// The entry is still a candidate for a fresh opponent.
+	candidate := h.createEntry("user_b", agentControl("Claude"), standardClock(), "")
+	assignment, err := h.service.Match(ctx, account("user_b"), candidate.EntryID, queue.Operation{})
+	if err != nil {
+		t.Fatalf("the responsive entry was not a candidate: %v", err)
+	}
+	if assignment.MatchID == "" {
+		t.Fatal("the responsive entry produced no game")
 	}
 }
 

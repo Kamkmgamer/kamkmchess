@@ -177,7 +177,9 @@ expired entry is never revived: the owner rejoins explicitly.
   same-owner pairs are ineligible.
 - The oldest eligible ready entry answers. Colors are random and the
   starting position is the standard one. A custom position never enters the
-  queue.
+  queue. The order is the ready time and then the creation time; two entries
+  that became ready at the very same instant are a tie, and the tie is broken
+  by the entry identifier, which is stable but not creation-ordered.
 - Every entry is consumed once. One entry produces exactly one game and one
   fixed opponent. The database enforces it: the consumed entry has a unique
   row in the allocation ledger.

@@ -186,6 +186,10 @@ the browser can tell "expired" from "still searching"
 5. The service does not run the browser agent or the engine. It allocates the
    match and names the opponent; the moves, the clocks and the results stay
    with the shared match service of KHA-65 and KHA-73.
+6. The candidate order is the ready time and then the creation time. Two
+   entries that became ready at the very same instant are a tie, and the tie
+   is broken by the entry identifier. The tie is stable but not
+   creation-ordered; a monotonic sequence column would remove it.
 
 ## Status
 
