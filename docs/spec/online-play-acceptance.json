@@ -1,0 +1,520 @@
+{
+  "schemaVersion": 1,
+  "title": "Casual online chess acceptance contract",
+  "specificationStatus": "approved_with_owner_corrections",
+  "createdAt": "2026-10-19",
+  "map": "https://linear.app/kamkm/issue/KHA-54",
+  "executionStatus": "not_run",
+  "cases": [
+    {
+      "id": "FRI-01",
+      "source": "KHA-55",
+      "title": "Invitation paths",
+      "scenario": "Create/join a one-use 12-hour link as guests and a named challenge as accounts; consume once and respect cancellation/expiry.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FRI-02",
+      "source": "KHA-55",
+      "title": "Independent seats",
+      "scenario": "Cover human/human, human/agent and agent/agent; each owner selects their seat without choosing the other person's private agent.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FRI-03",
+      "source": "KHA-55",
+      "title": "Visible setup",
+      "scenario": "Invitee sees assigned color, minutes/increment and custom FEN; link preview has inviter/Guest, board where relevant and no invented final pairing.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "FRI-04",
+      "source": "KHA-55",
+      "title": "Mutual rematch",
+      "scenario": "Both accept a new rematch with reversed colors, retained setup and agreed time changes; neither can revive the old result.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-01",
+      "source": "KHA-56",
+      "title": "Account and consent",
+      "scenario": "Guests cannot join public queue; an entry authorizes one automatic game, without a per-match approval or automatic requeue.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-02",
+      "source": "KHA-56",
+      "title": "Compatible pairing",
+      "scenario": "Pair human/other agent or different-owner agents with identical time controls; reject human/human and same-owner pairs.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-03",
+      "source": "KHA-56",
+      "title": "Concurrent games",
+      "scenario": "One owner creates multiple entries/games using the same or different models without an arbitrary cap; each entry is consumed once.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-04",
+      "source": "KHA-56",
+      "title": "Multi-tab entry",
+      "scenario": "Opening the same entry in another tab creates no extra entry/game; Join another game explicitly does.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-05",
+      "source": "KHA-56",
+      "title": "Readiness start",
+      "scenario": "No search time elapses during own-agent checks; ready entry acceptance starts the ten seconds.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-06",
+      "source": "KHA-56",
+      "title": "Readiness failure",
+      "scenario": "Failed agent check blocks entry and offers Retry or explicit human play, never silent takeover.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-07",
+      "source": "KHA-56",
+      "title": "Background eligibility",
+      "scenario": "Responsive background client stays eligible; a frozen/disconnected waiting entry expires and needs an explicit rejoin.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-08",
+      "source": "KHA-56",
+      "title": "Selection change",
+      "scenario": "Waiting selection stays fixed; cancel/rejoin with a new model starts fresh and leaves other games unaffected.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-09",
+      "source": "KHA-56",
+      "title": "Deadline equality",
+      "scenario": "A compatible ready candidate at exactly the cutoff wins over engine fallback; later candidates cannot replace it.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-10",
+      "source": "KHA-56",
+      "title": "Atomic allocation",
+      "scenario": "Compete two matchmakers, cancel and fallback on the same entries; at most one assigned game and one opponent survive.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-11",
+      "source": "KHA-56",
+      "title": "Stockfish assignment",
+      "scenario": "Human or selected agent faces Stockfish 19 Lite with selected time, random colors and standard starting board.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-12",
+      "source": "KHA-56",
+      "title": "Fallback failure",
+      "scenario": "Stockfish download/startup failure still permits agent search, then offers Retry or Keep searching if no match.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-13",
+      "source": "KHA-56",
+      "title": "Fixed opponent",
+      "scenario": "Late candidate, late engine ready and reconnected duplicate tab cannot replace a committed opponent.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "QUE-14",
+      "source": "KHA-56",
+      "title": "Queue position isolation",
+      "scenario": "Friend custom positions never carry into queue entries; colors are random and no color-preference partition exists.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-01",
+      "source": "KHA-57",
+      "title": "Opening clock",
+      "scenario": "Default opening and 15-second reply abort work for White-to-move and Black-to-move custom FENs; increment is applied exactly once.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-02",
+      "source": "KHA-57",
+      "title": "First-move cancellation",
+      "scenario": "Cancel before own first accepted move aborts even after opponent's move; after own first move it resigns, including after a takeback.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-03",
+      "source": "KHA-57",
+      "title": "Accepted move ordering",
+      "scenario": "Duplicate, stale, illegal and wrong-seat intents neither advance state nor mint clock increments.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-04",
+      "source": "KHA-57",
+      "title": "Expiry boundary",
+      "scenario": "At authoritative expiry a late intent cannot become a move; terminal event order is consistent for both clients.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-05",
+      "source": "KHA-57",
+      "title": "Connected stalling",
+      "scenario": "With 20 minutes left, a connected opponent may use all time; no abandonment claim appears merely because no move arrives.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-06",
+      "source": "KHA-57",
+      "title": "Optional offline claim",
+      "scenario": "After 60 continuous seconds offline, prompt Claim win or Keep waiting; waiting preserves play and the optional claim.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-07",
+      "source": "KHA-57",
+      "title": "Reconnect race",
+      "scenario": "Reconnect accepted first removes claim eligibility; a claim or normal final outcome accepted first remains final.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-08",
+      "source": "KHA-57",
+      "title": "Clock continuity",
+      "scenario": "Generation, errors, Stop/Retry, navigation, refresh, peer disconnect and control changes do not refund or pause chess time.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-09",
+      "source": "KHA-57",
+      "title": "Control changes",
+      "scenario": "Human takeover, agent handoff and model switches apply between accepted moves and fence a late old reply.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-10",
+      "source": "KHA-57",
+      "title": "Retry budgets",
+      "scenario": "Four illegal attempts lose; formatting budget is independent; retry/switch does not reset spent attempts; transport failure alone never resigns.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-11",
+      "source": "KHA-57",
+      "title": "Draw and takeback",
+      "scenario": "Mutual draw/takeback consent is required; stale takeback cannot rewind later play or restore elapsed time/budgets.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "MAT-12",
+      "source": "KHA-57",
+      "title": "Immutable result",
+      "scenario": "Later replies, claims, rematch/practice or reconnect cannot overwrite a final result.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-01",
+      "source": "KHA-58",
+      "title": "Public identity",
+      "scenario": "Stable editable username/avatar profile reveals no Clerk email/legal name/auth identifier by default.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-02",
+      "source": "KHA-58",
+      "title": "Guest identity",
+      "scenario": "Guest has no merged profile; linking a guest seat requires verified ownership and explicit action.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-03",
+      "source": "KHA-58",
+      "title": "Included history",
+      "scenario": "Completed friend/queue/fallback games appear with correct result/types; aborts are unscored; private/local/practice games stay private.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-04",
+      "source": "KHA-58",
+      "title": "Replay access",
+      "scenario": "Signed-out visitor reads final public replay with starting board/moves/time/result; live match subscription still requires membership.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-05",
+      "source": "KHA-58",
+      "title": "Control attribution",
+      "scenario": "Human, model changes and mixed play remain attributed to the correct accepted moves; terminal agent action is labeled. Retain attribution metadata without a separate Declared models per-move list in the interface.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-06",
+      "source": "KHA-58",
+      "title": "Routing privacy",
+      "scenario": "Custom endpoints, private route IDs, connection nicknames and secret-bearing aliases never leak through public model labels.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-07",
+      "source": "KHA-58",
+      "title": "Assurance",
+      "scenario": "Declared model/alias or browser Stockfish is not shown as verified actual provider execution.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-08",
+      "source": "KHA-58",
+      "title": "Account deletion",
+      "scenario": "Delete profile/personal/private owner data and identifying snapshots; anonymized shared games remain as Deleted player.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-09",
+      "source": "KHA-58",
+      "title": "Explicit removal",
+      "scenario": "Verified erasure removes shared replay from both histories/public URLs; only anonymous opponent aggregate results remain.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "HIS-10",
+      "source": "KHA-58",
+      "title": "Private archives",
+      "scenario": "Opponent/public visitor cannot access another owner's AI conversations/raw traffic; no public projection includes credentials.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-01",
+      "source": "KHA-60",
+      "title": "Rules parity",
+      "scenario": "Pinned Node/chessops wrapper conformance covers strict FEN, counters, EP, castling, promotions, repetition, mate/draw, material and bounded timeouts.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-02",
+      "source": "KHA-60",
+      "title": "Single writer",
+      "scenario": "Only Go transaction writer commits versioned canonical state; private rules process cannot write DB or accept public commands.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-03",
+      "source": "KHA-60",
+      "title": "Fresh decision time",
+      "scenario": "Lock wait crossing a deadline uses a fresh post-lock decision time; old transaction/client timestamps cannot backdate acceptance.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-04",
+      "source": "KHA-60",
+      "title": "Operation receipts",
+      "scenario": "Lost acknowledgement retried with identical operation returns original result; changed payload with same ID fails.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-05",
+      "source": "KHA-60",
+      "title": "Token and membership",
+      "scenario": "Reject wrong account/seat/origin, expired/revoked auth and identity-changed stale work; refresh stream authentication within its lifetime.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-06",
+      "source": "KHA-60",
+      "title": "Guest credential",
+      "scenario": "Consumed invitation cannot control a seat; private scoped guest credentials can reconnect and request their own data removal.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-07",
+      "source": "KHA-60",
+      "title": "Stream recovery",
+      "scenario": "Finite SSE renewal and poll fallback preserve state/order across cursor gaps, lost events, slow readers and API restarts.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-08",
+      "source": "KHA-60",
+      "title": "Agent runner",
+      "scenario": "Only current per-seat turn/epoch runner submits; duplicate tabs cannot duplicate accepted move; different explicit games can run concurrently.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-09",
+      "source": "KHA-60",
+      "title": "Uncertain provider work",
+      "scenario": "Runner loss during an uncertain billable request prompts explicit retry/switch/takeover rather than blindly reissuing.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-10",
+      "source": "KHA-60",
+      "title": "Late timer",
+      "scenario": "After a delayed deadline worker, resolve original queue cutoffs without double consuming entries or matching post-cutoff candidates.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-11",
+      "source": "KHA-60",
+      "title": "Service outage",
+      "scenario": "Service failure never becomes peer-abandonment win; recovery adjusts unfinished active deadlines once, fences old epochs and preserves prior terminal results.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-12",
+      "source": "KHA-60",
+      "title": "Backup removal",
+      "scenario": "Old restore applies latest removal ledger before serving; deleted live data/projections clear within 24h and removed recovery data within 30d.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-13",
+      "source": "KHA-60",
+      "title": "Host verification",
+      "scenario": "Authorized staging proves Apache streaming/flushing/deadlines, correct CSP/CORS, private worker grants and finite reconnect behavior.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "ARC-14",
+      "source": "KHA-60",
+      "title": "Capacity gate",
+      "scenario": "Measure sustainable clients/games, pool/CPU/storage/connection load without claiming an arbitrary owner cap or unmeasured throughput guarantee.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "UX-01",
+      "source": "KHA-61",
+      "title": "Owner prototype reaction",
+      "scenario": "Owner reviews concrete friend/queue/game/profile/history and removal states and chooses or corrects the proposed structure.",
+      "status": "approved_in_planning",
+      "evidence": [
+        "2026-10-20 owner response accepting the proposal with the listed interface corrections; incorporated into the specification/prototype."
+      ]
+    },
+    {
+      "id": "UX-02",
+      "source": "KHA-61",
+      "title": "Native accessible play",
+      "scenario": "Verify desktop/mobile pointer/touch/keyboard/screen-reader flows in implementation; viewport screenshots alone are insufficient.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "UX-03",
+      "source": "KHA-61",
+      "title": "Concise states",
+      "scenario": "Retain 20-word product interface and 10-word engine-screen conventions, accessible names and visible keyboard focus; game data is excluded. Clearly represented actions use icons without visible button text, with accessible names, hover labels and visible focus.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "UX-04",
+      "source": "KHA-61",
+      "title": "Concurrent navigation",
+      "scenario": "Owner can reach parallel games, new explicit entry, current game/reconnect state, public replay and privacy controls without losing shared state.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "UX-05",
+      "source": "KHA-61",
+      "title": "Preserved offline game",
+      "scenario": "Keep the existing offline layout, setup, local rules/clocks, AI/engine behavior, Undo and keyboard/history tools. Add draw/resign icons without introducing online-match controls or network requirements.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "UX-06",
+      "source": "KHA-61",
+      "title": "Removed attribution panel",
+      "scenario": "The separate Declared models per-move block is absent from replay/board UI. Relevant model/participant identity remains in agreed game metadata and compact labels.",
+      "status": "not_run",
+      "evidence": []
+    },
+    {
+      "id": "REL-01",
+      "source": "KHA-62",
+      "title": "Final agreement",
+      "scenario": "Owner approves the traced specification after interface review and all consequential follow-up decisions are resolved.",
+      "status": "approved_in_planning",
+      "evidence": [
+        "2026-10-20 owner response accepting the proposal with the listed interface corrections; incorporated into the specification/prototype."
+      ]
+    },
+    {
+      "id": "REL-02",
+      "source": "KHA-62",
+      "title": "Release separation",
+      "scenario": "No spec/prototype approval counts as production acceptance, paid usage authorization or public launch approval.",
+      "status": "not_run",
+      "evidence": []
+    }
+  ],
+  "approvedAt": "2026-10-20",
+  "ownerApproval": {
+    "source": "Owner response to the prototype and final handoff question",
+    "corrections": [
+      "Preserve existing offline play and add draw/resign icons",
+      "Use icons for clearly represented actions with accessible names and hover labels",
+      "Remove the separate Declared models per-move presentation"
+    ],
+    "scope": "Planning agreement, not production acceptance or deployment permission"
+  }
+}

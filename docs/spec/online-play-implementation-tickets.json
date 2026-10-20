@@ -1,0 +1,1310 @@
+{
+  "schemaVersion": 1,
+  "title": "Casual online play implementation backlog",
+  "createdAt": "2026-10-20",
+  "canonicalTracker": "Linear",
+  "project": "https://linear.app/kamkm/project/ai-chess-mvp-8a102853ce2c",
+  "parent": {
+    "id": "KHA-63",
+    "title": "Implement casual online chess, player agents and public profiles",
+    "url": "https://linear.app/kamkm/issue/KHA-63/implement-casual-online-chess-player-agents-and-public-profiles"
+  },
+  "roadmap": {
+    "id": "78cd8352-e2b8-4334-a46e-84b5a5405391",
+    "url": "https://linear.app/kamkm/document/casual-online-play-implementation-roadmap-and-acceptance-trace-4e1a84dc82b6"
+  },
+  "specification": "https://linear.app/kamkm/document/casual-online-chess-specification-f9bcbe764d42",
+  "acceptanceMatrix": "https://linear.app/kamkm/document/online-play-acceptance-scenarios-6fb40e1bd9cb",
+  "approvedSpecificationCommit": "7023260a8d11678a521d73dc8b1e0cd3c8d37b5d",
+  "approvedPrototypeCommit": "367ad78069571ff053002e1aaf74e8aad4bf1ec1",
+  "planningApprovals": [
+    {
+      "id": "UX-01",
+      "status": "approved_in_planning"
+    },
+    {
+      "id": "REL-01",
+      "status": "approved_in_planning"
+    }
+  ],
+  "implementationScenarioCount": 60,
+  "ticketCount": 22,
+  "dependencyEdgeCount": 39,
+  "evidenceStatus": "All 60 implementation scenarios remain not_run. This is a curated backlog snapshot, not implementation or acceptance evidence.",
+  "milestones": [
+    {
+      "key": "foundations",
+      "id": "31a48c97-6a36-4678-aaa4-72b01e7954ec",
+      "name": "Online foundations and offline preservation"
+    },
+    {
+      "key": "play",
+      "id": "ea7c2448-f0f5-4851-aac2-189375a9ab7c",
+      "name": "Friend play and browser-owned agents"
+    },
+    {
+      "key": "profiles",
+      "id": "b1cdd895-b7d7-417b-819e-4d29b29f42f8",
+      "name": "Public profiles, history and data removal"
+    },
+    {
+      "key": "verification",
+      "id": "4d47844f-89ee-4ddb-925a-2b16e51a4e49",
+      "name": "Online acceptance and staged rollout"
+    }
+  ],
+  "tickets": [
+    {
+      "id": "KHA-64",
+      "url": "https://linear.app/kamkm/issue/KHA-64/preserve-offline-play-and-add-drawresign-icon-controls",
+      "title": "Preserve offline play and add draw/resign icon controls",
+      "parentId": "KHA-63",
+      "milestone": "Online foundations and offline preservation",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [],
+      "acceptanceIds": [
+        "UX-03",
+        "UX-05"
+      ],
+      "sources": [
+        "KHA-61",
+        "KHA-62"
+      ],
+      "outcome": "The current offline game keeps its layout and behavior, with draw and resign available beside the existing board tools.",
+      "scope": [
+        "Retain local setup, board, clocks, move sidebar, Undo, keyboard/history navigation and current model/engine behavior. Offline play must not depend on online sessions or transport.",
+        "Add the accepted draw icon and resign flag, with explicit result/confirmation behavior and fencing of pending local moves after a final result. Reuse local lifecycle semantics; do not invent a network draw protocol.",
+        "Use icons for existing actions whose meaning is clear. Keep accessible names, tooltips, visible focus and usable pointer/touch targets. Preserve meaningful settings labels and confirmation copy."
+      ],
+      "completionEvidence": [
+        "Demonstrate offline human/model/engine flows, draw and resignation, pending-reply rejection, Undo and keyboard move review on the changed build.",
+        "Compare desktop and phone layouts with the existing game. Record focused regression and accessibility checks for the changed controls."
+      ]
+    },
+    {
+      "id": "KHA-65",
+      "url": "https://linear.app/kamkm/issue/KHA-65/add-shared-online-state-transactional-commands-and-operation-receipts",
+      "title": "Add shared online state, transactional commands and operation receipts",
+      "parentId": "KHA-63",
+      "milestone": "Online foundations and offline preservation",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [],
+      "acceptanceIds": [
+        "ARC-02",
+        "ARC-03",
+        "ARC-04"
+      ],
+      "sources": [
+        "KHA-60"
+      ],
+      "outcome": "Online matches have a versioned durable contract and one Go transaction writer, separate from private single-owner sync.",
+      "scope": [
+        "Add additive PostgreSQL migrations and typed Go/TypeScript contracts for matches/seats, accepted events, immutable results, clocks/deadlines, queue entries, runner leases, public projections and deletion markers.",
+        "Define authenticated command intents, expected match version, seat/control epoch, operation ID and durable receipts. Reject changed payloads reusing an operation ID; repeat the original receipt after a lost acknowledgement.",
+        "Serialize acceptance against the current state. Sample decision time after lock acquisition, reconcile deadlines with that fresh time and commit candidate transitions only against the same version.",
+        "Keep provider credentials, raw requests, reasoning, private routes and owner-only archives outside shared state. Preserve the existing private sync schema/API and runtime-role isolation."
+      ],
+      "completionEvidence": [
+        "Run real PostgreSQL migration and transaction tests, including competing writers, lost acknowledgements, payload mismatch and a lock wait crossing expiry.",
+        "Publish the shared contract and schema boundaries, with tests proving the private rules process cannot write canonical state."
+      ]
+    },
+    {
+      "id": "KHA-66",
+      "url": "https://linear.app/kamkm/issue/KHA-66/run-the-pinned-chess-rules-in-a-private-node-worker",
+      "title": "Run the pinned chess rules in a private Node worker",
+      "parentId": "KHA-63",
+      "milestone": "Online foundations and offline preservation",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [],
+      "acceptanceIds": [
+        "ARC-01"
+      ],
+      "sources": [
+        "KHA-57",
+        "KHA-60"
+      ],
+      "outcome": "The Go authority can evaluate online positions through the same pinned chessops/application policy used by local play.",
+      "scope": [
+        "Wrap the pure modules in src/rules with a private versioned Node/TypeScript request/response process. Use the locked chessops dependency and existing October 18 rules amendment.",
+        "Cover strict FEN and counters, en passant, castling, promotions, repetition, mate/draw precedence, material and bounded timeout outcomes. Do not restore exhaustive interactive proof search.",
+        "Return candidates and the evaluated input/version to Go. Expose no public endpoint, database writer, provider credentials or private archives.",
+        "Provide one local start/build path and bounded worker-failure behavior suitable for later service recovery."
+      ],
+      "completionEvidence": [
+        "Run browser/worker conformance fixtures across the listed rules and endings, including invalid FEN and boundary cases.",
+        "Show worker crash/timeout cannot commit a partial or stale match transition. Record dependency/license and packaging changes."
+      ]
+    },
+    {
+      "id": "KHA-67",
+      "url": "https://linear.app/kamkm/issue/KHA-67/authorize-online-participants-and-revocable-guest-seats",
+      "title": "Authorize online participants and revocable guest seats",
+      "parentId": "KHA-63",
+      "milestone": "Online foundations and offline preservation",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-65"
+      ],
+      "acceptanceIds": [
+        "ARC-05",
+        "ARC-06"
+      ],
+      "sources": [
+        "KHA-55",
+        "KHA-58",
+        "KHA-60"
+      ],
+      "outcome": "Only a current participant session can command or subscribe to its online seat.",
+      "scope": [
+        "Extend the existing Clerk verification with match membership, seat, origin, expiry and revocation checks. Cancel stale client work when the signed-in identity changes.",
+        "Issue private revocable seat-scoped guest credentials on invitation acceptance. Support reconnect and verified guest removal requests without turning the public invitation into a control token.",
+        "Separate public invitation/replay reads from participant-only live state. A consumed link grants no seat control.",
+        "Define explicit proof of guest-seat ownership for account linking, without silently merging a guest into the current account."
+      ],
+      "completionEvidence": [
+        "Exercise wrong owner/seat/origin, expired or revoked sessions, identity changes, consumed invitation replay and guest reconnect/removal credentials.",
+        "Demonstrate stream renewal rechecks authorization and no live participant data leaks through public routes."
+      ]
+    },
+    {
+      "id": "KHA-68",
+      "url": "https://linear.app/kamkm/issue/KHA-68/implement-authoritative-online-moves-clocks-and-match-outcomes",
+      "title": "Implement authoritative online moves, clocks and match outcomes",
+      "parentId": "KHA-63",
+      "milestone": "Online foundations and offline preservation",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-65",
+        "KHA-66",
+        "KHA-67"
+      ],
+      "acceptanceIds": [
+        "MAT-01",
+        "MAT-02",
+        "MAT-03",
+        "MAT-04",
+        "MAT-08",
+        "MAT-11",
+        "MAT-12",
+        "ARC-03",
+        "ARC-04"
+      ],
+      "sources": [
+        "KHA-55",
+        "KHA-57",
+        "KHA-60"
+      ],
+      "outcome": "Both participants see one accepted move order, continuous clocks and one final result.",
+      "scope": [
+        "Connect authenticated commands, the private rules candidate and the Go writer. Reject illegal, stale, wrong-seat and late moves; add increment exactly once per accepted move.",
+        "Implement first-move start and the 15-second opening reply abort for either starting side. Neither main bank runs before that side's first move; after the opening reply the next side's clock runs.",
+        "Before a side's own first-ever accepted move, cancellation aborts. Afterward it resigns, even if a takeback removed that move from the current line.",
+        "Implement mutual draw offers and exact-version takeback targets without refunding time or spent recovery budgets. Preserve discarded private archives and automatic draw rules.",
+        "Keep clocks running through generation, Stop/Retry, provider failure, control changes, navigation and peer disconnect. Reconcile expiry before accepting each intent; final results cannot be overwritten."
+      ],
+      "completionEvidence": [
+        "Use deterministic time and actual PostgreSQL races for opening clocks, Black-to-move FEN, increment duplication, late moves and lock waits crossing expiry.",
+        "Verify stale offers, takebacks and late model replies cannot change a later position or final result. Record terminal-result and cancellation coverage."
+      ]
+    },
+    {
+      "id": "KHA-69",
+      "url": "https://linear.app/kamkm/issue/KHA-69/deliver-finite-authenticated-updates-with-snapshot-and-polling",
+      "title": "Deliver finite authenticated updates with snapshot and polling recovery",
+      "parentId": "KHA-63",
+      "milestone": "Online foundations and offline preservation",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-67",
+        "KHA-68"
+      ],
+      "acceptanceIds": [
+        "ARC-05",
+        "ARC-07"
+      ],
+      "sources": [
+        "KHA-60"
+      ],
+      "outcome": "Clients recover the current online state after dropped events, token renewal, tab changes or API restarts.",
+      "scope": [
+        "Use direct authenticated HTTPS POST commands and fetch-SSE updates, with bounded polling fallback. Retain durable event cursors and canonical snapshots.",
+        "Limit each stream to at most 20 seconds or auth expiry. Acquire fresh credentials, send heartbeats and recheck membership on renewal.",
+        "Handle gaps, duplicates, slow readers and dropped acknowledgements without reapplying moves or regressing versions.",
+        "Release database connections while a stream is idle; preserve existing private sync behavior."
+      ],
+      "completionEvidence": [
+        "Simulate cursor gaps, duplicate/lost events, slow readers, auth expiry, revoked membership and API restart.",
+        "Verify SSE renewal and poll fallback converge on the same snapshot and idle streams do not reserve a database connection."
+      ]
+    },
+    {
+      "id": "KHA-70",
+      "url": "https://linear.app/kamkm/issue/KHA-70/implement-online-presence-and-optional-abandonment-claims",
+      "title": "Implement online presence and optional abandonment claims",
+      "parentId": "KHA-63",
+      "milestone": "Online foundations and offline preservation",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-68",
+        "KHA-69"
+      ],
+      "acceptanceIds": [
+        "MAT-05",
+        "MAT-06",
+        "MAT-07"
+      ],
+      "sources": [
+        "KHA-57",
+        "KHA-60"
+      ],
+      "outcome": "A connected opponent may use the full clock; a continuous minute offline enables an optional win claim.",
+      "scope": [
+        "Implement the approved five-second application heartbeat and 15-second liveness lease, with responsive background tabs eligible and suspended clients treated by lease state.",
+        "After both sides have moved and the opponent is continuously offline for 60 seconds, expose Claim win or Keep waiting. Waiting preserves the option and normal clock behavior.",
+        "Serialize reconnect, claim, clock expiry and normal endings. Reconnect accepted first clears eligibility; another disconnect starts a fresh minute.",
+        "Connected stalling never exposes a claim, including with the entire 20 minutes remaining. Consume the service-health boundary so a service outage cannot masquerade as opponent absence."
+      ],
+      "completionEvidence": [
+        "Test connected stalling, lease expiry, 59/60-second boundaries, Keep waiting, reconnect/claim races and earlier terminal outcomes.",
+        "Show the claim is absent during service unavailability and cannot bypass the opening abort rules."
+      ]
+    },
+    {
+      "id": "KHA-71",
+      "url": "https://linear.app/kamkm/issue/KHA-71/recover-online-service-interruptions-without-false-abandonment-results",
+      "title": "Recover online service interruptions without false abandonment results",
+      "parentId": "KHA-63",
+      "milestone": "Online foundations and offline preservation",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-68",
+        "KHA-69"
+      ],
+      "acceptanceIds": [
+        "ARC-11"
+      ],
+      "sources": [
+        "KHA-60"
+      ],
+      "outcome": "API or rules-service interruption preserves prior results and resumes unfinished games with one canonical recovery adjustment.",
+      "scope": [
+        "Persist planned suspension boundaries and durable health checkpoints for unexpected failures, using accepted activity to derive the conservative interruption interval.",
+        "Adjust unfinished active deadlines once according to the approved recovery contract; publish canonical state before accepting resumed actions.",
+        "Fence old service and runner epochs, invalidate stale work and preserve already final results.",
+        "Distinguish service unavailability from opponent offline presence in APIs and client state; retain original queue-cutoff recovery contracts."
+      ],
+      "completionEvidence": [
+        "Inject crashes before/after commit, restart twice and replay recovery. Prove adjustments happen once and old replies cannot commit.",
+        "Verify service interruption awards no peer-abandonment win, preserves terminal games and converges across both clients."
+      ]
+    },
+    {
+      "id": "KHA-72",
+      "url": "https://linear.app/kamkm/issue/KHA-72/build-public-usernames-avatars-and-explicit-guest-linking",
+      "title": "Build public usernames, avatars and explicit guest linking",
+      "parentId": "KHA-63",
+      "milestone": "Public profiles, history and data removal",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-67"
+      ],
+      "acceptanceIds": [
+        "HIS-01",
+        "HIS-02"
+      ],
+      "sources": [
+        "KHA-58"
+      ],
+      "outcome": "Accounts have a stable public profile identity without exposing their private sign-in identity.",
+      "scope": [
+        "Add stable public profile IDs, editable unique usernames and chosen avatars, with ownership-checked updates and public reads.",
+        "Never default to Clerk email, legal name or authentication IDs in public payloads or historical participant labels.",
+        "Keep guests labeled Guest without a profile. Account linking is an explicit action that proves ownership of the guest seat.",
+        "Provide the username lookup needed by named friend challenges; preserve existing sign-in and private account controls."
+      ],
+      "completionEvidence": [
+        "Test username uniqueness/edit races, avatar ownership and public payload allowlists.",
+        "Demonstrate signed-out profile reads and explicit verified guest linking, including rejection of another person's seat."
+      ]
+    },
+    {
+      "id": "KHA-73",
+      "url": "https://linear.app/kamkm/issue/KHA-73/run-browser-owned-online-agents-with-turn-leases-and-safe-handoffs",
+      "title": "Run browser-owned online agents with turn leases and safe handoffs",
+      "parentId": "KHA-63",
+      "milestone": "Friend play and browser-owned agents",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-70"
+      ],
+      "acceptanceIds": [
+        "MAT-08",
+        "MAT-09",
+        "MAT-10",
+        "ARC-08",
+        "ARC-09"
+      ],
+      "sources": [
+        "KHA-56",
+        "KHA-57",
+        "KHA-60"
+      ],
+      "outcome": "One current browser runner controls an agent seat for each turn, while separately requested games can run concurrently.",
+      "scope": [
+        "Reuse existing direct-provider adapters, model selection, history and classified-turn recovery. Keep credentials, private routes and conversations in the owner's browser.",
+        "Implement per-seat/per-turn runner leases and epochs. Duplicate tabs share the same game/entry; separate explicit games may use the same or different agents without an arbitrary owner cap.",
+        "Version human takeover, agent handoff and model/connection switches between accepted moves. Fence old provider replies and keep clocks and spent budgets.",
+        "Preserve four illegal attempts and the independent three automatic formatting corrections. Explicit model resignation concedes; transport failure alone does not.",
+        "After runner loss during uncertain billable work, offer explicit Retry, switch or takeover instead of automatically issuing another provider request."
+      ],
+      "completionEvidence": [
+        "Use synthetic providers for duplicate tabs, simultaneous games, late replies, revoked leases, control switches and independent retry budgets.",
+        "Show exactly-once accepted moves, honest uncertain-request recovery and no credentials/private conversation in shared commands or replay data."
+      ]
+    },
+    {
+      "id": "KHA-74",
+      "url": "https://linear.app/kamkm/issue/KHA-74/build-the-online-board-workspace-and-concurrent-game-navigation",
+      "title": "Build the online board workspace and concurrent-game navigation",
+      "parentId": "KHA-63",
+      "milestone": "Friend play and browser-owned agents",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-64",
+        "KHA-73"
+      ],
+      "acceptanceIds": [
+        "UX-03",
+        "UX-04",
+        "UX-06"
+      ],
+      "sources": [
+        "KHA-61",
+        "KHA-62"
+      ],
+      "outcome": "Accepted structure A supports online play and parallel games while the existing offline game remains intact.",
+      "scope": [
+        "Integrate canonical online snapshots, seats, clocks, reconnect status, results and control handoffs into the current Classic board/move workspace.",
+        "Add compact access to New play, concurrent Games and profile/history. Changing tabs/routes must not silently join another queue or lose a live game.",
+        "Use icon-only actions where meaning is clear, with accessible names, tooltips, visible focus and usable targets. Preserve the 20-word interface and 10-word engine-screen conventions, excluding game data.",
+        "Keep the separate Declared models per-move block absent. Show appropriate compact player/model identity, and keep review/simulation tooling out of production."
+      ],
+      "completionEvidence": [
+        "Exercise multiple live games, identity changes, reconnect, control handoff, results and navigation using the integrated service.",
+        "Record desktop/phone layout, keyboard/focus and icon-label checks against accepted prototype commit 367ad78069571ff053002e1aaf74e8aad4bf1ec1."
+      ]
+    },
+    {
+      "id": "KHA-75",
+      "url": "https://linear.app/kamkm/issue/KHA-75/implement-friend-invitations-account-challenges-and-mutual-rematches",
+      "title": "Implement friend invitations, account challenges and mutual rematches",
+      "parentId": "KHA-63",
+      "milestone": "Friend play and browser-owned agents",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-72",
+        "KHA-74"
+      ],
+      "acceptanceIds": [
+        "FRI-01",
+        "FRI-02",
+        "FRI-03",
+        "FRI-04"
+      ],
+      "sources": [
+        "KHA-55"
+      ],
+      "outcome": "Two people can arrange a casual friend game as humans or through their own agents, including guests joining by link.",
+      "scope": [
+        "Build one-use shareable links and account challenges, with 12-hour expiry, inviter cancellation and atomic consumption. Named challenges require accounts; link participants may be guests.",
+        "Each person chooses human or their own agent. The inviter chooses color, clock/increment and optional custom position, visible before acceptance.",
+        "Show public inviter name or Guest and the actual setup without inventing a final pairing. Do not offer a built-in Stockfish friend seat or a separate Ready approval step.",
+        "Connect acceptance to the canonical match and opening rules. Rematches require both participants, create a new game, reverse colors and retain setup unless changes are mutually agreed."
+      ],
+      "completionEvidence": [
+        "Run guest/account combinations and human/human, human/agent and agent/agent flows with real APIs and synthetic provider execution.",
+        "Test expired/cancelled links, concurrent acceptance, invalid positions, named-recipient isolation and duplicate rematch acceptance."
+      ]
+    },
+    {
+      "id": "KHA-76",
+      "url": "https://linear.app/kamkm/issue/KHA-76/match-compatible-queue-entries-atomically-at-the-ten-second-cutoff",
+      "title": "Match compatible queue entries atomically at the ten-second cutoff",
+      "parentId": "KHA-63",
+      "milestone": "Friend play and browser-owned agents",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-73"
+      ],
+      "acceptanceIds": [
+        "QUE-01",
+        "QUE-02",
+        "QUE-03",
+        "QUE-04",
+        "QUE-05",
+        "QUE-07",
+        "QUE-08",
+        "QUE-09",
+        "QUE-10",
+        "QUE-13",
+        "QUE-14",
+        "ARC-10"
+      ],
+      "sources": [
+        "KHA-56",
+        "KHA-60"
+      ],
+      "outcome": "Each signed-in ready queue entry commits exactly one compatible game or the agreed fallback assignment.",
+      "scope": [
+        "Require sign-in and explicit entry creation. Match different owners with identical starting time/increment and at least one agent seat, preferring the oldest eligible entry. Use random colors and the standard position.",
+        "Start the ten-second window on authoritative ready-entry acceptance, not during checks. Keep settings fixed; cancellation/rejoin after a change starts a fresh window.",
+        "Allow unlimited explicit concurrent entries/games. Opening the same entry in another tab creates no extra entry. Completing a game does not automatically requeue.",
+        "Serialize candidate selection, reservations, cancellation and engine fallback. A ready compatible candidate at exact cutoff equality wins; consume each entry once.",
+        "Resolve delayed deadline workers against original cutoffs and eligibility. Expire unresponsive waiting entries, require explicit rejoin and prevent late candidates or readiness from replacing an assigned opponent.",
+        "Support explicit Keep searching without an automatic cutoff and retry's final candidate recheck before fallback."
+      ],
+      "completionEvidence": [
+        "Use deterministic time plus competing PostgreSQL workers for exact equality, delayed timers, double reservation, cancel/assignment races and post-cutoff candidates.",
+        "Verify one entry produces one fixed opponent, no hidden approval step, no human/human or same-owner match and no custom-FEN leakage."
+      ]
+    },
+    {
+      "id": "KHA-77",
+      "url": "https://linear.app/kamkm/issue/KHA-77/build-queue-readiness-and-stockfish-fallback-flows",
+      "title": "Build queue readiness and Stockfish fallback flows",
+      "parentId": "KHA-63",
+      "milestone": "Friend play and browser-owned agents",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-74",
+        "KHA-76"
+      ],
+      "acceptanceIds": [
+        "QUE-05",
+        "QUE-06",
+        "QUE-07",
+        "QUE-08",
+        "QUE-11",
+        "QUE-12",
+        "QUE-13",
+        "QUE-14"
+      ],
+      "sources": [
+        "KHA-56",
+        "KHA-61"
+      ],
+      "outcome": "Play yourself and Watch your agent play reach an automatic match, with clear readiness and fallback recovery.",
+      "scope": [
+        "Integrate sign-in, selected clock, own-agent readiness and one explicit queue entry with the online workspace.",
+        "Failed agent readiness blocks entry and offers Retry or explicit Play yourself. A responsive background owner session remains eligible; a suspended/expired entry needs rejoin.",
+        "Prepare browser Stockfish 19 Lite during search. Preparation failure must not block agent matching. At cutoff, offer Retry or Keep searching if the engine is unavailable.",
+        "Retry readies the engine and checks for a compatible entry before committing fallback; Keep searching explicitly removes the cutoff.",
+        "Run the chosen human/agent seat against identified Stockfish with the same clock, random colors and standard position. Preserve the committed opponent across late events; show cancellation's canonical abort/resign result."
+      ],
+      "completionEvidence": [
+        "Exercise readiness failure, background suspension, engine download/startup failure, late readiness and retry/candidate races with synthetic provider traffic.",
+        "Demonstrate automatic start, one game per entry, explicit another-game creation and human/agent fallback against the actual browser engine."
+      ]
+    },
+    {
+      "id": "KHA-78",
+      "url": "https://linear.app/kamkm/issue/KHA-78/publish-allowlisted-online-history-and-public-replays",
+      "title": "Publish allowlisted online history and public replays",
+      "parentId": "KHA-63",
+      "milestone": "Public profiles, history and data removal",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-72",
+        "KHA-73"
+      ],
+      "acceptanceIds": [
+        "HIS-03",
+        "HIS-04",
+        "HIS-05",
+        "HIS-06",
+        "HIS-07",
+        "HIS-10",
+        "UX-06"
+      ],
+      "sources": [
+        "KHA-58",
+        "KHA-61"
+      ],
+      "outcome": "Completed online games have public results and replays with accurate declared control, while private local data stays private.",
+      "scope": [
+        "Project completed friend, queue and fallback games into profiles and public replay URLs. Count each account/game result once; label aborts unscored and exclude local/private/practice saves.",
+        "Allow signed-out final replay reads of starting position, accepted moves, time control, result, public participants and declared control metadata. Keep live reads participant-only.",
+        "Attribute control/model changes to their accepted moves and terminal actions without relabeling earlier play. Keep compact labels and remove the separate Declared models list.",
+        "Allowlist public model names or owner-chosen public labels for custom routing. Do not expose private routing IDs, secret-bearing aliases, connection nicknames, provider traffic or AI conversations.",
+        "Describe model and browser Stockfish attribution as declared rather than provider-verified."
+      ],
+      "completionEvidence": [
+        "Test idempotent projection/results and every included/excluded game type with signed-out and opponent requests.",
+        "Use secret-bearing routing/alias fixtures to prove they never enter public payloads. Exercise replay navigation, mixed control and the removed-list requirement."
+      ]
+    },
+    {
+      "id": "KHA-79",
+      "url": "https://linear.app/kamkm/issue/KHA-79/implement-account-anonymization-explicit-replay-erasure-and-safe",
+      "title": "Implement account anonymization, explicit replay erasure and safe restore",
+      "parentId": "KHA-63",
+      "milestone": "Public profiles, history and data removal",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-78"
+      ],
+      "acceptanceIds": [
+        "HIS-08",
+        "HIS-09",
+        "ARC-12"
+      ],
+      "sources": [
+        "KHA-58",
+        "KHA-60"
+      ],
+      "outcome": "Ordinary account deletion anonymizes shared games, while a verified removal request erases shared replays from both histories.",
+      "scope": [
+        "Extend the existing account deletion and encrypted backup/removal-ledger machinery for online tables, public projections and participant snapshots.",
+        "Ordinary deletion removes profile, identifying historical snapshots/aliases and service-held private owner data, retaining anonymized shared games as Deleted player.",
+        "Explicit verified removal also deletes shared replays from both histories and public URLs. Retain only anonymous opponent result aggregates. Support guest requests through their retained seat ownership credentials.",
+        "Remove live service data/projections within 24 hours of verification, and sanitize/remove recovery copies within 30 days. Reapply the newest removal ledger before restored data serves traffic.",
+        "Expose clear separate account-deletion and explicit-removal flows, with ownership checks and idempotent processing."
+      ],
+      "completionEvidence": [
+        "Exercise account and guest paths, both histories, public URLs, identifying aliases, repeated requests and anonymous opponent totals.",
+        "Restore an older backup with a newer removal ledger into an isolated database and prove erased data cannot reappear. Record live/recovery retention scheduling evidence."
+      ]
+    },
+    {
+      "id": "KHA-80",
+      "url": "https://linear.app/kamkm/issue/KHA-80/verify-integrated-online-races-recovery-and-privacy-boundaries",
+      "title": "Verify integrated online races, recovery and privacy boundaries",
+      "parentId": "KHA-63",
+      "milestone": "Online acceptance and staged rollout",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-71",
+        "KHA-75",
+        "KHA-77",
+        "KHA-79"
+      ],
+      "acceptanceIds": [
+        "QUE-09",
+        "QUE-10",
+        "QUE-13",
+        "MAT-02",
+        "MAT-03",
+        "MAT-04",
+        "MAT-07",
+        "MAT-09",
+        "MAT-10",
+        "MAT-11",
+        "MAT-12",
+        "HIS-10",
+        "ARC-02",
+        "ARC-03",
+        "ARC-04",
+        "ARC-05",
+        "ARC-06",
+        "ARC-07",
+        "ARC-08",
+        "ARC-09",
+        "ARC-10",
+        "ARC-11",
+        "ARC-12"
+      ],
+      "sources": [
+        "KHA-57",
+        "KHA-60",
+        "KHA-62"
+      ],
+      "outcome": "A reproducible local integration suite proves the shared contracts under competing clients, workers and failures.",
+      "scope": [
+        "Run real Go/PostgreSQL and the pinned rules worker with multiple browser clients and synthetic providers. Include all implemented friend, queue, fallback and removal paths.",
+        "Exercise competing matchmakers, late timers, lock waits, duplicate commands, lost receipts, stale tabs/epochs, control changes, uncertain provider work, disconnect claims and service restart.",
+        "Verify final-result immutability, continuous clocks, privacy/membership isolation and deletion-safe restore across both clients and public reads.",
+        "Publish a case-by-case evidence trace on the tested commit. Keep native accessibility, live-host measurements and rollout outcomes separate from local test results."
+      ],
+      "completionEvidence": [
+        "Record reproduction commands, versions/commit and expected/actual outcomes, including failure injection and recovery.",
+        "Run the relevant frontend checks, browser integration suite and Go/PostgreSQL tests; mark only scenarios actually exercised with passing evidence."
+      ]
+    },
+    {
+      "id": "KHA-81",
+      "url": "https://linear.app/kamkm/issue/KHA-81/verify-native-desktop-accessibility-and-offline-regression",
+      "title": "Verify native desktop accessibility and offline regression",
+      "parentId": "KHA-63",
+      "milestone": "Online acceptance and staged rollout",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-71",
+        "KHA-75",
+        "KHA-77",
+        "KHA-79"
+      ],
+      "acceptanceIds": [
+        "UX-02",
+        "UX-03",
+        "UX-04",
+        "UX-05",
+        "UX-06"
+      ],
+      "sources": [
+        "KHA-61",
+        "KHA-62"
+      ],
+      "outcome": "The implemented flows work with native desktop keyboard, pointer and screen readers.",
+      "scope": [
+        "Verify real Windows and macOS assistive-technology flows for offline play, friend join, both queue modes, concurrent games, control/recovery, profiles/replay and deletion/removal.",
+        "Check board navigation, clocks/status announcements, icon names/tooltips, focus restoration, dialogs and accessible confirmation actions.",
+        "Check the existing offline layout and keyboard/history/Undo behavior, short-copy limits, responsive widths and absence of the removed attribution block.",
+        "Use the completed MVP accessibility work as a baseline, not acceptance of the new flows. Record unavailable devices or failures honestly."
+      ],
+      "completionEvidence": [
+        "Provide native device/OS/browser/screen-reader versions and per-flow results on an identified build.",
+        "Resolve material failures or link corrective work before release; screenshots or an automated accessibility scan alone do not pass UX-02."
+      ]
+    },
+    {
+      "id": "KHA-82",
+      "url": "https://linear.app/kamkm/issue/KHA-82/verify-native-mobile-touch-and-screen-reader-online-play",
+      "title": "Verify native mobile touch and screen-reader online play",
+      "parentId": "KHA-63",
+      "milestone": "Online acceptance and staged rollout",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-71",
+        "KHA-75",
+        "KHA-77",
+        "KHA-79"
+      ],
+      "acceptanceIds": [
+        "UX-02",
+        "UX-03",
+        "UX-04",
+        "UX-05",
+        "UX-06"
+      ],
+      "sources": [
+        "KHA-61",
+        "KHA-62"
+      ],
+      "outcome": "The implemented offline and online flows are usable on iOS and Android with touch and native screen readers.",
+      "scope": [
+        "Run real iOS VoiceOver and Android TalkBack through board play, friend setup/join, both queue choices, concurrent games, agent recovery, replay and privacy actions.",
+        "Verify touch targets, icon names, logical focus, dialogs, status/clock announcements and move-history review across phone sizes.",
+        "Exercise backgrounding/suspension and reconnect without silent queue re-entry, duplicate provider work or lost game navigation.",
+        "Retain the offline layout/behavior, concise interface copy and removal of the separate model list."
+      ],
+      "completionEvidence": [
+        "Record device/OS/browser/assistive-technology versions and per-flow outcomes on the tested build.",
+        "Demonstrate touch and screen-reader play, including background recovery. Do not substitute viewport emulation for native acceptance."
+      ]
+    },
+    {
+      "id": "KHA-83",
+      "url": "https://linear.app/kamkm/issue/KHA-83/verify-online-hosting-credential-isolation-and-sustainable-capacity",
+      "title": "Verify online hosting, credential isolation and sustainable capacity",
+      "parentId": "KHA-63",
+      "milestone": "Online acceptance and staged rollout",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-80"
+      ],
+      "acceptanceIds": [
+        "ARC-05",
+        "ARC-06",
+        "ARC-12",
+        "ARC-13",
+        "ARC-14",
+        "HIS-06",
+        "HIS-07",
+        "HIS-10"
+      ],
+      "sources": [
+        "KHA-59",
+        "KHA-60"
+      ],
+      "outcome": "The existing Vercel/Apache/Go/PostgreSQL host is verified for the new online service before enablement.",
+      "scope": [
+        "Prepare the private Node rules process, additive migrations and least-privilege runtime grants on the existing host. Preserve the direct API path and existing private sync.",
+        "On an authorized staging environment, verify Apache flushing, finite SSE renewal/deadlines, poll fallback, CORS/CSP, TLS, auth expiry, private worker reachability and restart recovery.",
+        "Audit command/event/replay/log payloads for credentials, raw provider traffic and private routing/identity data. Verify backup coverage and erasure ledger application before restored traffic.",
+        "Measure sustainable clients/games, database pool use, CPU, memory, storage and connections. Include slow clients, agent workloads and deadline-worker delay under load.",
+        "Document measured limits, monitoring, rollback and overload behavior without adding arbitrary per-owner game/agent caps or promising unmeasured throughput. Use synthetic providers unless separate live usage is authorized."
+      ],
+      "completionEvidence": [
+        "Attach actual environment/configuration identifiers, sanitized results, load method and measured bottlenecks.",
+        "Demonstrate idle streams do not hold database connections, worker/DB access stays private and restore/removal protections still work. Record missing authorization or host constraints instead of claiming unrun checks."
+      ]
+    },
+    {
+      "id": "KHA-84",
+      "url": "https://linear.app/kamkm/issue/KHA-84/complete-online-acceptance-handoff-and-opt-in-friend-rollout",
+      "title": "Complete online acceptance handoff and opt-in friend rollout",
+      "parentId": "KHA-63",
+      "milestone": "Online acceptance and staged rollout",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-81",
+        "KHA-82",
+        "KHA-83"
+      ],
+      "acceptanceIds": [
+        "REL-02"
+      ],
+      "sources": [
+        "KHA-62"
+      ],
+      "outcome": "An evidence-backed, reversible opt-in friend release can be enabled after the recorded release decision.",
+      "scope": [
+        "Reconcile all 60 implementation scenarios with the preceding tickets, including native device, host/capacity, privacy/removal and recovery evidence. Keep UX-01 and REL-01 recorded as prior planning approvals.",
+        "Prepare the release candidate, feature enablement, monitoring, rollback and support/runbook handoff. Keep public queue disabled during the first friend cohort.",
+        "Present the concrete release packet for the separate approval required by the agreed specification. Creating this backlog or approving the prototype does not supply that approval.",
+        "After that recorded approval, enable the opt-in friend cohort and record actual join/play/reconnect/result/history/removal outcomes. Stop or roll back on material failures."
+      ],
+      "completionEvidence": [
+        "Publish the acceptance ledger and release decision with the exact commit/configuration.",
+        "Record rollout observations and rollback readiness. Leave this ticket open while approval, required evidence or enablement remains outstanding."
+      ]
+    },
+    {
+      "id": "KHA-85",
+      "url": "https://linear.app/kamkm/issue/KHA-85/enable-public-agent-matchmaking-after-friend-rollout-review",
+      "title": "Enable public agent matchmaking after friend rollout review",
+      "parentId": "KHA-63",
+      "milestone": "Online acceptance and staged rollout",
+      "statusAtCreation": "Backlog",
+      "assigneeAtCreation": null,
+      "blockedBy": [
+        "KHA-84"
+      ],
+      "acceptanceIds": [
+        "REL-02",
+        "QUE-01",
+        "QUE-03",
+        "QUE-09",
+        "QUE-11",
+        "QUE-12",
+        "ARC-14"
+      ],
+      "sources": [
+        "KHA-56",
+        "KHA-60",
+        "KHA-62"
+      ],
+      "outcome": "Public agent matchmaking is enabled only after the friend cohort and queue-specific operating evidence are accepted.",
+      "scope": [
+        "Review the opt-in friend cohort and resolve material findings. Reconfirm compatible pairing, one automatic game per explicit entry, unlimited explicit concurrency and cutoff/fallback behavior on the release candidate.",
+        "Check readiness failures, Stockfish preparation, offline runners, provider uncertainty and measured host headroom with no platform-funded AI usage.",
+        "Prepare the concrete public-queue enablement and rollback packet, and obtain the separate public-queue release decision required by the approved handoff.",
+        "After approval, enable the queue and monitor assignments, cutoffs, failures, fallback and capacity. Preserve friend/offline operation during rollback."
+      ],
+      "completionEvidence": [
+        "Record the public-queue release decision, enabled configuration and tested commit.",
+        "Capture actual queue/fallback/concurrent-game outcomes and operating observations; do not mark deployment complete from planning or local simulation alone."
+      ]
+    }
+  ],
+  "caseCoverage": [
+    {
+      "id": "FRI-01",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-75"
+      ]
+    },
+    {
+      "id": "FRI-02",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-75"
+      ]
+    },
+    {
+      "id": "FRI-03",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-75"
+      ]
+    },
+    {
+      "id": "FRI-04",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-75"
+      ]
+    },
+    {
+      "id": "QUE-01",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76",
+        "KHA-85"
+      ]
+    },
+    {
+      "id": "QUE-02",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76"
+      ]
+    },
+    {
+      "id": "QUE-03",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76",
+        "KHA-85"
+      ]
+    },
+    {
+      "id": "QUE-04",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76"
+      ]
+    },
+    {
+      "id": "QUE-05",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76",
+        "KHA-77"
+      ]
+    },
+    {
+      "id": "QUE-06",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-77"
+      ]
+    },
+    {
+      "id": "QUE-07",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76",
+        "KHA-77"
+      ]
+    },
+    {
+      "id": "QUE-08",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76",
+        "KHA-77"
+      ]
+    },
+    {
+      "id": "QUE-09",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76",
+        "KHA-80",
+        "KHA-85"
+      ]
+    },
+    {
+      "id": "QUE-10",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "QUE-11",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-77",
+        "KHA-85"
+      ]
+    },
+    {
+      "id": "QUE-12",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-77",
+        "KHA-85"
+      ]
+    },
+    {
+      "id": "QUE-13",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76",
+        "KHA-77",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "QUE-14",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76",
+        "KHA-77"
+      ]
+    },
+    {
+      "id": "MAT-01",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-68"
+      ]
+    },
+    {
+      "id": "MAT-02",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-68",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "MAT-03",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-68",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "MAT-04",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-68",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "MAT-05",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-70"
+      ]
+    },
+    {
+      "id": "MAT-06",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-70"
+      ]
+    },
+    {
+      "id": "MAT-07",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-70",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "MAT-08",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-68",
+        "KHA-73"
+      ]
+    },
+    {
+      "id": "MAT-09",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-73",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "MAT-10",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-73",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "MAT-11",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-68",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "MAT-12",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-68",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "HIS-01",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-72"
+      ]
+    },
+    {
+      "id": "HIS-02",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-72"
+      ]
+    },
+    {
+      "id": "HIS-03",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-78"
+      ]
+    },
+    {
+      "id": "HIS-04",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-78"
+      ]
+    },
+    {
+      "id": "HIS-05",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-78"
+      ]
+    },
+    {
+      "id": "HIS-06",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-78",
+        "KHA-83"
+      ]
+    },
+    {
+      "id": "HIS-07",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-78",
+        "KHA-83"
+      ]
+    },
+    {
+      "id": "HIS-08",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-79"
+      ]
+    },
+    {
+      "id": "HIS-09",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-79"
+      ]
+    },
+    {
+      "id": "HIS-10",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-78",
+        "KHA-80",
+        "KHA-83"
+      ]
+    },
+    {
+      "id": "ARC-01",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-66"
+      ]
+    },
+    {
+      "id": "ARC-02",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-65",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "ARC-03",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-65",
+        "KHA-68",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "ARC-04",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-65",
+        "KHA-68",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "ARC-05",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-67",
+        "KHA-69",
+        "KHA-80",
+        "KHA-83"
+      ]
+    },
+    {
+      "id": "ARC-06",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-67",
+        "KHA-80",
+        "KHA-83"
+      ]
+    },
+    {
+      "id": "ARC-07",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-69",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "ARC-08",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-73",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "ARC-09",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-73",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "ARC-10",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-76",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "ARC-11",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-71",
+        "KHA-80"
+      ]
+    },
+    {
+      "id": "ARC-12",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-79",
+        "KHA-80",
+        "KHA-83"
+      ]
+    },
+    {
+      "id": "ARC-13",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-83"
+      ]
+    },
+    {
+      "id": "ARC-14",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-83",
+        "KHA-85"
+      ]
+    },
+    {
+      "id": "UX-02",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-81",
+        "KHA-82"
+      ]
+    },
+    {
+      "id": "UX-03",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-64",
+        "KHA-74",
+        "KHA-81",
+        "KHA-82"
+      ]
+    },
+    {
+      "id": "UX-04",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-74",
+        "KHA-81",
+        "KHA-82"
+      ]
+    },
+    {
+      "id": "UX-05",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-64",
+        "KHA-81",
+        "KHA-82"
+      ]
+    },
+    {
+      "id": "UX-06",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-74",
+        "KHA-78",
+        "KHA-81",
+        "KHA-82"
+      ]
+    },
+    {
+      "id": "REL-02",
+      "statusAtCreation": "not_run",
+      "tickets": [
+        "KHA-84",
+        "KHA-85"
+      ]
+    }
+  ]
+}
