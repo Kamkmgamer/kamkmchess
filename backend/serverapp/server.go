@@ -15,6 +15,7 @@ import (
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
 	"github.com/Kamkmgamer/kamkmchess/backend/profile"
+	"github.com/Kamkmgamer/kamkmchess/backend/queue"
 	"github.com/Kamkmgamer/kamkmchess/backend/rulesworker"
 	"github.com/Kamkmgamer/kamkmchess/backend/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -68,6 +69,11 @@ type OnlineConfig struct {
 	// QueueEnabled opens the public matchmaking surface. It is off by
 	// default and independent of the friend surface.
 	QueueEnabled bool
+	// QueueSweepInterval is how often the server reconciles the queue
+	// cutoffs, the readiness leases and the pending allocations.
+	QueueSweepInterval time.Duration
+	// QueueSweepBatch bounds one queue reconciliation pass.
+	QueueSweepBatch int
 }
 
 // flag reads an optional boolean setting. A missing or malformed value keeps
@@ -97,6 +103,8 @@ func Load(getenv func(string) string) (Config, error) {
 			HealthCheckInterval:   duration(getenv, "ONLINE_HEALTH_CHECK_INTERVAL", DefaultHealthCheckInterval),
 			FriendEnabled:         flag(getenv, "ONLINE_FRIEND_ENABLED"),
 			QueueEnabled:          flag(getenv, "ONLINE_QUEUE_ENABLED"),
+			QueueSweepInterval:    duration(getenv, "ONLINE_QUEUE_SWEEP_INTERVAL", DefaultQueueSweepInterval),
+			QueueSweepBatch:       positiveInt(getenv, "ONLINE_QUEUE_SWEEP_BATCH", DefaultQueueSweepBatch),
 		},
 	}
 	if cfg.DatabaseURL == "" || len(cfg.Clerk.AllowedOrigins) == 0 {
@@ -240,6 +248,29 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		surface.Handle("GET /v1/online/matches/{matchID}/rematch", friendHandler)
 	}
 	root.Handle("/v1/online/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders, surface))
+	// The public queue is mounted only when its switch is on. A closed
+	// surface is not mounted at all, so its routes answer 404.
+	var queueService *queue.Service
+	if cfg.Online.QueueEnabled {
+		// The queue allocates matches through the shared writer. The writer
+		// owns the trusted allocation seam, so the queue never writes a
+		// match row itself.
+		allocator, ok := any(onlineService).(queue.MatchAllocator)
+		if !ok {
+			pool.Close()
+			return nil, nil, errors.New("the public queue needs the shared match allocator")
+		}
+		queueService, err = queue.Open(ctx, pool, queue.Options{
+			Allocator:   allocator,
+			Credentials: onlineauth.NewAllocator(authorizer),
+		})
+		if err != nil {
+			pool.Close()
+			return nil, nil, errors.New("public queue initialization failed")
+		}
+		root.Handle("/v1/online/queue/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders,
+			httpapi.NewQueue(queueService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins})))
+	}
 	// The public profile API is mounted under its own prefixes so it never
 	// widens the private single-owner sync API.
 	profileHandler := httpapi.CORSWithMethods(cfg.Clerk.AllowedOrigins, httpapi.ProfileRequestHeaders, "GET, POST, PUT, OPTIONS", httpapi.NewProfile(profileService, guestProofIssuer{allocator: onlineauth.NewAllocator(authorizer)}, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}))
@@ -259,11 +290,22 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// dependencies, so a service outage never looks like an absent
 	// opponent.
 	stopHealth := StartHealthMonitor(ctx, pool, health, onlineService, HealthMonitorConfig{Interval: cfg.Online.HealthCheckInterval})
+	// The queue reconciliation loop expires the unresponsive entries,
+	// resolves the cutoffs that passed and finishes the pending
+	// allocations. It only runs when the queue is open.
+	stopQueue := func() {}
+	if queueService != nil {
+		stopQueue = StartQueueReconciler(ctx, queueService, QueueSweepConfig{
+			Interval: cfg.Online.QueueSweepInterval,
+			Batch:    cfg.Online.QueueSweepBatch,
+		})
+	}
 	release := func() {
 		// The deadline loop stops before the pool closes, so no background
 		// sweep can use a closed connection.
 		stopDeadlines()
 		stopHealth()
+		stopQueue()
 		if closeWorker != nil {
 			closeWorker()
 		}
