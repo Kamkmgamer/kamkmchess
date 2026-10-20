@@ -70,6 +70,7 @@ import type {
 } from '../providers/protocols/index.js';
 import { fetchProvider } from '../providers/transport.js';
 import type { OnlineAction, Receipt, Seat } from './contracts';
+import type { OnlineMatchView } from './updates';
 
 /** The contract version the runner speaks. */
 export const ONLINE_RUNNER_SCHEMA_VERSION = 2;
@@ -633,6 +634,60 @@ export interface ProviderRunnerSnapshot {
   readonly seatEpoch?: number;
 }
 
+/** The options of the canonical conversion of a match view. */
+export interface ProviderRunnerSnapshotOptions {
+  /** The service epoch of the match, when the caller knows it. */
+  readonly serviceEpoch?: number;
+  /** The epoch of the seat binding, when the caller knows it. */
+  readonly seatEpoch?: number;
+}
+
+/**
+ * Converts the canonical match view of the service into the state the runner
+ * acts on.
+ *
+ * The conversion is the one place that reads the seat view, so the control
+ * epoch of the seat, the published label of the agent and the canonical
+ * counters of the turn always come from the same seat of the same view. A
+ * caller that builds the state by hand can name the wrong epoch, and the
+ * runner would then stand down for a controller it still owns.
+ */
+export function providerRunnerSnapshotFromView(
+  view: OnlineMatchView,
+  seat: Seat,
+  options: ProviderRunnerSnapshotOptions = {},
+): ProviderRunnerSnapshot {
+  const seatView = view.seats.find((candidate) => candidate.seat === seat);
+  if (seatView === undefined) {
+    throw new Error('The match view does not carry the seat of the runner.');
+  }
+  return {
+    matchId: view.matchId,
+    version: view.version,
+    controlEpoch: view.controlEpoch,
+    status: view.status,
+    // The side that owes the move is the seat of the opening reply window
+    // while it is open, and the seat whose clock runs otherwise.
+    sideToMove: view.status === 'active' ? (view.clock.replySeat ?? view.clock.activeSeat) : null,
+    positionFen: view.positionFen,
+    startingFen: view.startingFen,
+    moves: view.moves.map((move) => move.san),
+    clock: {
+      whiteMs: view.clock.whiteMs,
+      blackMs: view.clock.blackMs,
+      incrementMs: view.timeControl.incrementMs,
+    },
+    seatControl: seatView.control,
+    // The control epoch of the seat is the canonical answer to the question
+    // which controller plays the seat.
+    seatControlEpoch: seatView.controlEpoch,
+    illegalAttemptsSpent: seatView.illegalAttemptsSpent,
+    formatCorrectionsSpent: seatView.formatCorrectionsSpent,
+    ...(options.serviceEpoch === undefined ? {} : { serviceEpoch: options.serviceEpoch }),
+    ...(options.seatEpoch === undefined ? {} : { seatEpoch: options.seatEpoch }),
+  };
+}
+
 /** The options of one browser runner. */
 export interface ProviderRunnerOptions {
   readonly matchId: string;
@@ -1149,7 +1204,7 @@ function sameTurn(left: ProviderRunnerSnapshot, right: ProviderRunnerSnapshot): 
     (left.serviceEpoch ?? 0) === (right.serviceEpoch ?? 0) &&
     (left.seatEpoch ?? 0) === (right.seatEpoch ?? 0) &&
     left.seatControl.kind === right.seatControl.kind &&
-    left.seatControlEpoch === right.seatControlEpoch &&
+    seatControlEpochOf(left) === seatControlEpochOf(right) &&
     right.status === 'active';
 }
 
@@ -1162,6 +1217,18 @@ function sameTurn(left: ProviderRunnerSnapshot, right: ProviderRunnerSnapshot): 
  */
 function turnEnded(left: ProviderRunnerSnapshot, right: ProviderRunnerSnapshot): boolean {
   return left.sideToMove !== right.sideToMove || left.positionFen !== right.positionFen;
+}
+
+/**
+ * Reads the control epoch of the seat of one state.
+ *
+ * The epoch is unknown when a caller built the state without it. An unknown
+ * epoch never fences the runner, because the lease of the seat is the fence
+ * that protects the move.
+ */
+function seatControlEpochOf(snapshot: ProviderRunnerSnapshot): number | null {
+  const epoch = snapshot.seatControlEpoch;
+  return typeof epoch === 'number' && Number.isSafeInteger(epoch) && epoch > 0 ? epoch : null;
 }
 
 /** The outcome of one renewal of the lease. */
@@ -1552,18 +1619,28 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     if (current.sideToMove !== seat) return false;
     if (current.seatControl.kind !== 'agent') return false;
     if (superseded) return false;
-    if (boundSeatControlEpoch !== null) {
+    const epoch = seatControlEpochOf(current);
+    if (boundSeatControlEpoch !== null && epoch !== null) {
       // A snapshot of an older epoch of the seat is stale. The runner waits
       // for the state of the seat it is bound to.
-      if (current.seatControlEpoch < boundSeatControlEpoch) return false;
-      if (current.seatControlEpoch > boundSeatControlEpoch) return false;
+      if (epoch < boundSeatControlEpoch) return false;
+      if (epoch > boundSeatControlEpoch) return false;
     }
     return true;
   }
 
   /** Reports whether another controller took the seat. */
   function isSuperseded(current: ProviderRunnerSnapshot): boolean {
-    return boundSeatControlEpoch !== null && current.seatControlEpoch > boundSeatControlEpoch;
+    const epoch = seatControlEpochOf(current);
+    if (boundSeatControlEpoch === null || epoch === null) return false;
+    return epoch > boundSeatControlEpoch;
+  }
+
+  /** Binds the runner to the control epoch of the seat it plays. */
+  function bindSeatControlEpoch(current: ProviderRunnerSnapshot): void {
+    if (boundSeatControlEpoch !== null) return;
+    const epoch = seatControlEpochOf(current);
+    if (epoch !== null) boundSeatControlEpoch = epoch;
   }
 
   function positionOf(current: ProviderRunnerSnapshot): Position | null {
@@ -1682,7 +1759,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
       // The lease is bound to the control epoch of the seat. The epoch is the
       // canonical answer to the question which controller plays the seat.
-      if (boundSeatControlEpoch === null) boundSeatControlEpoch = current.seatControlEpoch;
+      bindSeatControlEpoch(current);
       const renewed = await renewLease();
       if (!renewed.ok) {
         if (renewed.state === 'unusable') {
@@ -1705,7 +1782,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
             if (phase !== 'uncertain') setPhase('waiting-lease', reacquired.detail);
             return;
           }
-          if (boundSeatControlEpoch === null) boundSeatControlEpoch = current.seatControlEpoch;
+          bindSeatControlEpoch(current);
         }
       }
       const position = positionOf(current);

@@ -19,6 +19,7 @@ import {
   buildRunnerLeaseBody,
   buildRunnerRequestBody,
   parseRunnerLeaseAnswer,
+  providerRunnerSnapshotFromView,
   ProviderRunnerServiceError,
 } from '../../src/online/provider-runner';
 import type {
@@ -27,6 +28,7 @@ import type {
   ProviderRunnerLeasePort,
 } from '../../src/online/provider-runner';
 import { OnlineAuthError } from '../../src/online/auth';
+import type { OnlineMatchView } from '../../src/online/updates';
 import {
   createFakeOnlineService,
   createFakeProvider,
@@ -531,6 +533,73 @@ describe('the online agent runner', () => {
 });
 
 describe('the published model binding of the runner', () => {
+  it('converts the canonical match view into the state of the runner', () => {
+    const view: OnlineMatchView = {
+      schemaVersion: 1,
+      matchId: 'match-0001',
+      variant: 'orthodox',
+      startingFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+      positionFen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+      timeControl: { startingTimeMs: 600000, incrementMs: 1000 },
+      version: 12,
+      controlEpoch: 3,
+      rulesPolicyVersion: 'online-rules/1',
+      status: 'active',
+      result: null,
+      seats: [
+        {
+          seat: 'white',
+          publicLabel: 'Owner',
+          control: { kind: 'agent', modelLabel: 'Custom model' },
+          // The control epoch of the seat is the canonical epoch of the
+          // controller of that seat.
+          controlEpoch: 7,
+          illegalAttemptsSpent: 1,
+          formatCorrectionsSpent: 2,
+        },
+        {
+          seat: 'black',
+          publicLabel: 'Guest',
+          control: { kind: 'human' },
+          controlEpoch: 1,
+          illegalAttemptsSpent: 0,
+          formatCorrectionsSpent: 0,
+        },
+      ],
+      clock: {
+        whiteMs: 590000,
+        blackMs: 600000,
+        activeSeat: 'black',
+        activeSince: '2026-10-21T00:00:00Z',
+        deadlineAt: '2026-10-21T00:10:00Z',
+        whiteMoved: true,
+        blackMoved: false,
+        turnNumber: 1,
+        replySeat: null,
+        replyDeadlineAt: null,
+      },
+      moves: [],
+      pendingOffers: [],
+      createdAt: '2026-10-21T00:00:00Z',
+      updatedAt: '2026-10-21T00:00:10Z',
+      completedAt: null,
+      yourSeat: 'white',
+    };
+
+    const snapshot = providerRunnerSnapshotFromView(view, 'white');
+    // The per-seat epoch, the published label and the canonical counters come
+    // from the seat view of the same view.
+    expect(snapshot.seatControlEpoch).toBe(7);
+    expect(snapshot.seatControl.modelLabel).toBe('Custom model');
+    expect(snapshot.illegalAttemptsSpent).toBe(1);
+    expect(snapshot.formatCorrectionsSpent).toBe(2);
+    expect(snapshot.sideToMove).toBe('black');
+    expect(snapshot.version).toBe(12);
+    expect(snapshot.controlEpoch).toBe(3);
+    expect(snapshot.clock.incrementMs).toBe(1000);
+    expect(() => providerRunnerSnapshotFromView(view, 'black')).not.toThrow();
+  });
+
   it('keeps playing after a switch to a label the service does not publish', async () => {
     const { service, provider, runner } = createHarness({});
     runner.applySnapshot(fakeSnapshot(service.match));

@@ -203,6 +203,14 @@ The runner acts on the canonical match state. The interface is
 | `illegalAttemptsSpent`, `formatCorrectionsSpent` | The seat view of the snapshot. The canonical counts of the current turn |
 | `serviceEpoch`, `seatEpoch` | Optional. The service epoch and the seat binding epoch |
 
+`providerRunnerSnapshotFromView(view, seat, options)` is the canonical
+conversion of the match view of the service. The UI uses it instead of
+building the state by hand, because the control epoch of the seat, the
+published label of the agent and the canonical counters of the turn all come
+from the same seat of the same view. A hand-built state that names the wrong
+epoch makes the runner stand down for a controller it still owns, and a state
+without the epoch never fences the runner at all.
+
 The runner is fed with `applySnapshot`. A snapshot that changes the position,
 the side to move, the control epoch, the service epoch, the seat epoch or the
 control epoch of the seat cancels the pending answer.
@@ -298,9 +306,10 @@ owner decides whether the work is paid twice.
    `turnVersion` has to accept `null`, because a runner that has not seen a
    snapshot yet does not know the turn.
 2. **The snapshot mapping.** The workspace delivers an `OnlineMatchView`. The
-   UI maps it to a `ProviderRunnerSnapshot` and hands it to the runner. The
-   mapping needs the control epoch of the seat, the published label of the seat
-   and the canonical counters of the seat.
+   UI converts it with `providerRunnerSnapshotFromView` and hands the result to
+   the runner. The conversion reads the seat view of the same view, so the
+   control epoch of the seat, the published label of the agent and the
+   canonical counters of the turn always belong together.
 3. **The provider client.** The UI resolves the connection profile and the
    credential of the agent, and it builds a `ProviderRunnerProviderPort`. The
    credential never leaves the browser. After a model switch the UI resolves
