@@ -1,7 +1,7 @@
 # KHA-68 authoritative online moves, clocks and match outcomes
 
 Locally verified on 2026-10-20 on `t3/automatic-deadline-reconciliation`.
-Tested source commit: `eda669f`.
+Tested source commit: `521e22e`.
 The branch starts at `c4a9b72`, which includes the KHA-64/65/66/67 foundations and
 the first KHA-68 implementation. The automatic deadline realisation is `b3b805b`.
 
@@ -313,6 +313,12 @@ the check.
 - The public replay projection carries the current line only. A takeback removes the discarded moves
   from the replay and keeps them in the shared tables.
 - Deployment, provider spending, staging verification and native accessibility were not performed.
+- The local PostgreSQL container steps its clock backwards by up to about 0.9 seconds every fifteen
+  seconds. The writer reads one authoritative database clock for every deadline decision, so the
+  participant path and the trusted path always agree, but an absolute deadline with a sub-second
+  window can be un-passed by the clock itself in that environment. A production host with a
+  synchronised clock does not show this behaviour, and no deadline decision in this slice depends
+  on the host wall clock.
 
 ## Review disposition
 
