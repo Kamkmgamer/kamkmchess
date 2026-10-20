@@ -20,7 +20,7 @@ clock. Restored counters retain the larger of the journalled allowance spent
 and the current allowance spent, and record that carried budget at the
 restored prefix. Both regressions and the focused offer/takeback/recovery
 PostgreSQL suite pass. `go vet ./backend/... ./cmd/...` also passes. Final
-combined verification follows integration of the other correction tasks.
+combined verification is recorded below.
 
 Integrated on 2026-10-20 on `feature/kha68-kha72-online-core`, based on
 `a1e069e` and the KHA-64/65/66/67 foundations. The takeback correction commits
@@ -30,6 +30,37 @@ are `379957f`, `6c311b5`, `ebff3f1`, `f5bb721`, `e66bda3`, `2cf24dc`,
 The automatic deadline implementation is `b3b805b`, with additional fixtures
 in `eda669f` and `521e22e`. Its isolated checks passed at `521e22e`.
 The combined source and final checks are recorded after integration below.
+
+## Final integrated verification
+
+The tested source is `9d2409d6f212ee9be4b39ca7dc20789ebeba98b8` on
+`feature/kha68-kha72-online-core`, verified on 2026-10-20. It includes the
+deadline merge `190ee98`, the offer and recovery-budget corrections, the
+profile corrections, and the bounded-scan rotation regression.
+
+- `go test -count=1 ./backend/... ./cmd/...` passed with required local
+  PostgreSQL and the real bundled rules worker. All 150 integration test
+  outcomes passed, including subtests; no individual test was skipped. The
+  integration package took 86.6 seconds.
+- `go vet ./backend/... ./cmd/...` passed on that source.
+- `pnpm check` passed on `190ee98`, with lint, both TypeScript projects,
+  all 806 tests across 71 files, the production build, the rules-worker
+  bundle and distribution notices. `9d2409d` changes Go and documentation
+  only, so the frontend source and its successful check remain unchanged.
+- The mounted account-switch Chromium regression passed on `190ee98`.
+  The interrupted save sent no PUT; the healthy save used the replacement
+  account's token. Its source is unchanged by `9d2409d`.
+
+These are local implementation checks. The acceptance matrix remains
+unchanged, and no deployment or paid provider request was performed.
+
+The final independent MiniMax deadline review confirmed the bounded-scan
+starvation defect on `190ee98` and cleared the transition, authorization,
+rules evaluation, lock checks, offer handling and lifecycle cleanup. The
+parent's `9d2409d` fixes that sole blocking finding with the failing-then-passing
+service regression described above. The narrow follow-up found no blockers,
+passed the focused PostgreSQL regression and vet, and verified scan rotation,
+wrap, concurrent-sweep safety and release of locks before external rules work.
 
 ## Merge note for the parallel corrections
 

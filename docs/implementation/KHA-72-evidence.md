@@ -13,19 +13,17 @@ identity fence, before asynchronous sign-out cleanup.
 
 The repository's mounted account-switch Chromium check passes on the
 integrated source. It sends no interrupted save and sends the healthy save
-with the replacement account's token. Full combined checks are recorded
-after the remaining match deadline correction is integrated.
+with the replacement account's token.
 
-Locally verified on 2026-10-20 on `t3/kha-72-profile-fixes`. The tested
-source commit is `50de6e1`. It continues `c3fb56d`, the compact profile
-controls, and the KHA-64 through KHA-68 foundations.
+Integrated on 2026-10-20 on `feature/kha68-kha72-online-core`. The tested
+source commit for the final profile review is `bd0f392`. The combined
+deadline integration is `190ee98`; its final checks are recorded below.
 
-The implementation commits are `fc814b2` (the service, the routes, the
-storage and the PostgreSQL fixtures), `b5baafb` (the browser boundary, the
-panel state machine and the interface), `cf222f0` (the browser check
-harness), `16cb69b` (the corrections an independent review found),
-`c3fb56d` (the compact profile controls), and `71e8a85`, `a20919c` and
-`50de6e1` (the corrections a second independent review found).
+The integrated implementation commits are `fd700fc` for the service, routes,
+storage and PostgreSQL fixtures, `c5e07bc` for the browser client and panel,
+`75bf589` for the initial review corrections, and `c3fb56d` for compact profile
+controls. The account-switch corrections are `99e122a`, `1391fa3`,
+`df0818c` and `bd0f392`. These commits are ancestors of the combined branch.
 
 ## Implemented contract
 
@@ -96,7 +94,7 @@ The new fixtures are:
   composition, the real authorization service and the real database.
 - 6 unit fixtures in `backend/profile/profile_test.go` for the public name
   and avatar rules and for the shared shape contract.
-- 57 browser fixtures in `src/profile/` for the wire contract, the client,
+- 58 browser fixtures in `src/profile/` for the wire contract, the client,
   the identity binding and the panel state machine.
 
 The integration fixtures cover:
@@ -357,13 +355,13 @@ avatar selection, explicit link and the disabled repeat-link action passed.
 Desktop and phone widths had no horizontal overflow or page errors. The
 linked-success view used 14 words of interface copy, excluding the chosen
 public name and numeric count. The manual Impeccable detector found no
-issues. These checks do not replace the pending account-switch review or
-the later live invitation and hosted acceptance runs.
+issues. The account-switch review is recorded below. The later live invitation
+and hosted acceptance runs remain separate.
 
 ## The account-switch review
 
-The pending account-switch review was carried out on the integrated source
-and its findings were corrected in `71e8a85`, `a20919c` and `50de6e1`. The
+The account-switch review was carried out on the integrated source
+and its findings were corrected in `99e122a`, `1391fa3`, `df0818c` and `bd0f392`. The
 profile surface is now bound to an identity binding, every credentialed
 stage of a call is fenced by it, and the panel is mounted for one binding,
 so a replaced account never receives the drafts, the requests or the
@@ -384,3 +382,28 @@ invitation flow exists.
 `HIS-01` and `HIS-02` remain `not_run` in the acceptance matrix. The
 fixtures and the browser check above are local evidence about the source,
 not evidence about the deployed product.
+
+The final independent MiniMax review at `bd0f392` found no blocking issues.
+It re-ran all 806 browser unit tests, the 58 profile tests, Go build and vet,
+and the mounted account-switch Chromium check. The remaining low finding was
+the evidence's reference to isolated commits; the integrated commit references
+above correct it.
+
+## Final integrated verification
+
+The tested combined source is `9d2409d6f212ee9be4b39ca7dc20789ebeba98b8`
+on `feature/kha68-kha72-online-core`, verified on 2026-10-20.
+
+`pnpm check` passed on the deadline merge `190ee98`: lint, both TypeScript
+projects, all 806 tests across 71 files, the production build, rules-worker
+bundle and distribution notices. The mounted Chromium account-switch check
+also passed, with no interrupted PUT and one healthy PUT under the replacement
+account's token. The later `9d2409d` changes Go deadline scanning and its
+regression only; the tested frontend source is unchanged.
+
+On `9d2409d`, `go vet ./backend/... ./cmd/...` and the full Go test suite passed
+with required PostgreSQL and the real rules worker. All 150 integration test
+outcomes passed, including subtests, with no individual test skipped. The
+profile service, ownership proof, public allowlist and identity regression
+checks are included. `HIS-01` and `HIS-02` remain `not_run` in the deployed
+acceptance matrix.
