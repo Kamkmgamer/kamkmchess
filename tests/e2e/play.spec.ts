@@ -22,16 +22,20 @@ async function provider(page: Page, moves: readonly string[], intercept?: (route
     await route.fulfill({ status: 200, contentType: 'text/event-stream', body: frames, headers: { 'access-control-allow-origin': '*' } }).catch(() => undefined);
   };
   const fixture = { calls, modelCalls, respond };
-  await page.route(`${apiEndpoint}/**`, async (route) => {
+  const handle = async (route: Route) => {
+    const relayed = new URL(route.request().url()).pathname === '/api/provider-relay';
+    const envelope = relayed ? route.request().postDataJSON() as { url: string; method: string; body?: string } : null;
+    const url = envelope?.url ?? route.request().url();
+    if (!url.startsWith(`${apiEndpoint}/`)) { await route.fallback(); return; }
     if (route.request().method() === 'OPTIONS') {
       await route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*', 'access-control-allow-headers': '*' } });
       return;
     }
-    if (route.request().url().endsWith('/models')) {
+    if (url.endsWith('/models')) {
       await route.fulfill({ json: { data: [{ id: 'offline-fixture' }, { id: 'offline-candidate' }, { id: 'another-model' }] } });
       return;
     }
-    const body: unknown = route.request().postDataJSON();
+    const body: unknown = envelope ? JSON.parse(envelope.body!) : route.request().postDataJSON();
     calls.push(body);
     const text = JSON.stringify(body);
     const marker = /KAMKM-COMPAT-[a-zA-Z0-9-]+/.exec(text)?.[0];
@@ -45,7 +49,9 @@ async function provider(page: Page, moves: readonly string[], intercept?: (route
     if (intercept) { await intercept(route, index, fixture); return; }
     const move = moves[index];
     await respond(route, move === 'resign' ? '{"resign":true}' : JSON.stringify({ move, plan: `retained plan ${index + 1}` }));
-  });
+  };
+  await page.route(`${apiEndpoint}/**`, handle);
+  await page.route('**/api/provider-relay', handle);
   return fixture;
 }
 
@@ -89,6 +95,24 @@ async function archivedText(page: Page) {
 }
 
 const movesOnBoard = (page: Page) => page.getByRole('table', { name: 'Committed moves' }).getByRole('button');
+
+test('a custom provider without browser CORS loads models, passes its check and plays through the site relay', async ({ page }) => {
+  await provider(page, ['e7e5']);
+  await page.route(`${endpoint}/**`, route => route.abort('blockedbyclient'));
+  const requests: Array<{ url: string; method: string; body?: string }> = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname === '/api/provider-relay') requests.push(request.postDataJSON());
+  });
+  await page.goto('/play');
+  await configure(page);
+  await move(page, 'e2e4');
+  await expect(movesOnBoard(page)).toHaveCount(2);
+  expect(requests.map(request => [request.method, request.url])).toEqual([
+    ['GET', `${endpoint}/models`],
+    ['POST', `${endpoint}/chat/completions`],
+    ['POST', `${endpoint}/chat/completions`],
+  ]);
+});
 
 test('a final AI result closes an open declaration and focuses the result', async ({ page }) => {
   let release: (() => void) | undefined;
@@ -489,11 +513,15 @@ test('plays through move 15 without proof workers', async ({ page }) => {
 test('a prefixed endpoint discovers models but blocks rejected credentials from play', async ({ page }) => {
   const apiEndpoint = 'https://offline-chess.example/proxy/v1';
   let attempts = 0;
-  await page.route(`${apiEndpoint}/models`, route => route.fulfill({ json: { data: [{ id: 'exact-routing-alias' }] } }));
-  await page.route(`${apiEndpoint}/chat/completions`, async route => {
+  await page.route('**/api/provider-relay', async route => {
+    const request = route.request().postDataJSON() as { url: string; headers: Record<string, string>; body?: string };
+    if (request.url === `${apiEndpoint}/models`) {
+      await route.fulfill({ json: { data: [{ id: 'exact-routing-alias' }] } }); return;
+    }
+    expect(request.url).toBe(`${apiEndpoint}/chat/completions`);
     attempts += 1;
-    expect(route.request().headers().authorization).toBe('Bearer offline-key');
-    expect(route.request().postDataJSON()).toMatchObject({ model: 'exact-routing-alias' });
+    expect(request.headers.authorization).toBe('Bearer offline-key');
+    expect(JSON.parse(request.body!)).toMatchObject({ model: 'exact-routing-alias' });
     await route.fulfill({ status: 401, json: { error: { message: 'Invalid API key.' } } });
   });
   await page.goto('/play');

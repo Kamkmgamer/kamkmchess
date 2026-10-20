@@ -3,7 +3,14 @@
 Vercel serves the frontend at `https://chess.khalil.mageed.net`. The Go API is
 `https://chess-api.agent.soft-magic.com`. The frontend calls that API directly;
 Vercel's `/v1/*` rewrite preserves compatibility with same-origin API clients.
-There is no Vercel API function or database credential.
+Vercel also runs the stateless `api/provider-relay.ts` Node function for remote
+custom AI endpoints that do not support browser CORS, such as Ollama Cloud.
+It forwards each request's API key and streams the provider response without
+storing or logging either. Public HTTPS destinations on port 443 are checked
+and pinned to public DNS addresses; local networks and redirects are rejected.
+The same handler runs in Vite development and preview. A static-only `dist/`
+deployment cannot serve the relay. No database credential or shared provider
+key is needed for this function, and the Go API deployment is unchanged.
 
 The server deployment directory is `/home/agentsoftmagic/kamkmchess`.
 Apache owns HTTPS and proxies the API's cPanel document root through
