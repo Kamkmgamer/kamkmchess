@@ -80,21 +80,43 @@ grant on a table the application does not use.
 
 ```sh
 node runtime-grants.mjs --check      # the policy against the migrations and the writer
+node runtime-grants.mjs --propose     # the entries a new migration still needs
 node runtime-grants.mjs --emit       # the SQL an operator reviews and runs
 node runtime-grants-probe.mjs        # the same grants executed against a real PostgreSQL
 ```
 
 The check fails when a migration creates a table the policy does not cover,
-when the writer uses a verb the policy does not grant, and when the policy
-grants a verb the writer never uses. The probe creates a throwaway role and
-schema, applies the grants and executes statements as that role, so a granted
-privilege is proven rather than assumed.
+when the writer uses a verb the policy does not grant, when the policy grants
+a verb the writer never uses, and when a migration grants privileges of its
+own outside the reviewed policy.
 
-The private rules process runs on the pinned Node 24 runtime with the bundled
-`worker.mjs`. It has no public endpoint, no provider access and no database
-access; the Go authority owns the lock, the clock and the commit. The
-`tools/onlinefixture` helper is behind the `onlinefixture` build tag and never
-ships in a production binary.
+The probe creates a throwaway role and schema in a local database, applies the
+migrations and the grants, and then executes real statements as that role:
+reads, inserts, updates and deletes on every table the policy covers, and the
+refusals on every table it does not. A granted privilege is proven, not
+assumed.
+
+### The image carries the private rules runtime
+
+The API image is built on the pinned Node 24 runtime and carries the private
+rules bundle. The Go match authority runs the bundle as a child process; it
+has no public endpoint, no provider access and no database access.
+
+```sh
+pnpm build:rules-worker                 # build/rules-worker/worker.mjs
+cp build/rules-worker/worker.mjs build/rules-worker/LICENSE.txt \
+   build/rules-worker/THIRD_PARTY_NOTICES.txt deploy/rules-worker/
+node verify-runtime-image.mjs           # build and inspect the image locally
+```
+
+`verify-runtime-image.mjs` builds the image from the deploy context and proves
+the runtime composition inside it: the pinned Node version, the bundle at its
+configured entry path, a real protocol request answered by the worker, the
+non-root user and the absence of any credential file. It builds and inspects a
+local image only. It never pushes and never deploys.
+
+The `tools/onlinefixture` helper is behind the `onlinefixture` build tag and
+never ships in a production binary.
 
 ## Backups and certificates
 
