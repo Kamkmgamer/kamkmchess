@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -558,6 +559,44 @@ func TestPostgresOnlineTakebackDoesNotReopenTheOpeningPhase(t *testing.T) {
 	if cancelled.Receipt.Result == nil || cancelled.Receipt.Result.Kind != online.ResultWin ||
 		cancelled.Receipt.Result.Winner == nil || *cancelled.Receipt.Result.Winner != online.SeatBlack {
 		t.Fatalf("the cancellation after the takeback = %+v, want a resignation", cancelled.Receipt.Result)
+	}
+}
+
+// A retried acceptance returns the stored receipt and never applies the
+// takeback a second time.
+func TestPostgresOnlineAcceptanceRetryReturnsTheStoredReceipt(t *testing.T) {
+	service, _ := onlineService(t, moveEvaluator{})
+	ctx := context.Background()
+	matchID := "match-takeback-retry"
+	createOnlineMatch(t, service, matchID, "op-retry-create")
+	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-retry-white-1", online.SeatWhite, 1, "e2e4")); err != nil {
+		t.Fatalf("opening move: %v", err)
+	}
+	if _, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-retry-black-1", online.SeatBlack, 2, "e7e5")); err != nil {
+		t.Fatalf("opening reply: %v", err)
+	}
+	if _, err := service.Execute(ctx, bob, offerTakebackOnlineCommand(matchID, "op-retry-offer", online.SeatBlack, 3, 1)); err != nil {
+		t.Fatalf("takeback offer: %v", err)
+	}
+	offer := pendingOffer(t, service, matchID, online.OfferTakeback)
+	accept := acceptTakebackOnlineCommand(matchID, "op-retry-accept", online.SeatWhite, 4, offer.OfferID)
+	accepted, err := service.Execute(ctx, alice, accept)
+	if err != nil {
+		t.Fatalf("takeback acceptance: %v", err)
+	}
+	retry, err := service.Execute(ctx, alice, accept)
+	if err != nil {
+		t.Fatalf("takeback acceptance retry: %v", err)
+	}
+	if !retry.Duplicate || !bytes.Equal(accepted.Raw, retry.Raw) {
+		t.Fatalf("the retried acceptance did not return the original receipt: %+v", retry.Receipt)
+	}
+	after, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Version != accepted.Receipt.Version || len(after.Moves) != 0 {
+		t.Fatalf("the retried acceptance changed the match: %+v", after)
 	}
 }
 

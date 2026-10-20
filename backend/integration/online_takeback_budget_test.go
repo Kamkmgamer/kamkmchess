@@ -1,6 +1,7 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -80,6 +81,43 @@ func TestPostgresOnlineTakebackRestoresTheSpentRecoveryBudget(t *testing.T) {
 		lost.Receipt.Result.Winner == nil || *lost.Receipt.Result.Winner != online.SeatBlack ||
 		lost.Receipt.Result.Reason != online.ReasonIllegalMove {
 		t.Fatalf("the fourth illegal attempt = %+v, want a loss", lost.Receipt.Result)
+	}
+}
+
+// A retried recovery report does not spend the allowance twice.
+func TestPostgresOnlineRecoveryAttemptRetryDoesNotSpendTwice(t *testing.T) {
+	service, _ := onlineService(t, moveEvaluator{})
+	ctx := context.Background()
+	matchID := "match-recovery-retry"
+	createOnlineMatch(t, service, matchID, "op-recovery-retry-create")
+	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-recovery-retry-white", online.SeatWhite, 1, "e2e4")); err != nil {
+		t.Fatalf("opening move: %v", err)
+	}
+	if _, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-recovery-retry-black", online.SeatBlack, 2, "e7e5")); err != nil {
+		t.Fatalf("opening reply: %v", err)
+	}
+	attempt := recoveryAttemptOnlineCommand(matchID, "op-recovery-retry-attempt", online.SeatWhite, 3, online.RecoveryIllegalMove)
+	spent, err := service.Execute(ctx, alice, attempt)
+	if err != nil {
+		t.Fatalf("recovery attempt: %v", err)
+	}
+	retry, err := service.Execute(ctx, alice, attempt)
+	if err != nil {
+		t.Fatalf("recovery attempt retry: %v", err)
+	}
+	if !retry.Duplicate || !bytes.Equal(spent.Raw, retry.Raw) {
+		t.Fatalf("the retried attempt did not return the original receipt: %+v", retry.Receipt)
+	}
+	after, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seat, _ := after.Seat(online.SeatWhite)
+	if seat.IllegalAttemptsSpent != 1 {
+		t.Fatalf("the retried attempt spent the allowance twice: %+v", seat)
+	}
+	if after.Version != spent.Receipt.Version {
+		t.Fatalf("the retried attempt advanced the match: %+v", after)
 	}
 }
 
