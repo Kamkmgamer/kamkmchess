@@ -209,9 +209,13 @@ command.
 - MAT-04: `TestPostgresOnlineTrustedReconciliationRacesAParticipantCommand` races the sweep with
   a late participant move. The late intent never becomes a move, the match ends as a timeout and
   exactly one timeout event exists.
-- MAT-04 and MAT-08: `TestPostgresOnlineTrustedReconciliationRacesACancellationAndAControlChange`
-  races the sweep with a cancellation and a control change. The expired clock still wins over
-  both, the control epoch does not move, and exactly one timeout event exists.
+- MAT-04 and MAT-08: `TestPostgresOnlineTrustedReconciliationRacesAResignationACancellationAndAControlChange`
+  races the sweep with a resignation, a cancellation and a control change. The expired clock still
+  wins over every intent, the control epoch does not move, and exactly one terminal event exists.
+- MAT-04 and ARC-03: `TestPostgresOnlineTrustedReconciliationEvaluatesTheRulesOutsideTheMatchLock`
+  proves that the flag fall is adjudicated outside the match row lock and outside every
+  transaction: while the rules process works, a second connection takes the match row lock at
+  once and the pool holds no connection of the sweep.
 - MAT-04: `TestPostgresOnlineTrustedReconciliationKeepsAnExpiredClockPendingWithoutATimeoutPolicy`
   reconciles without a timeout-capable rules process. The writer fails closed, the expiry stays
   pending, the match stays active, no timeout event is written and the scan still reports the
@@ -259,6 +263,9 @@ reconciliation settle nothing fails the timeout fixture, the opening abort fixtu
 sweep fixture, the two pending-expiry fixtures, the loop fixture, the server lifecycle fixture and
 the HTTP boundary fixture. In that state an expired match stays active with no participant
 command, which is the defect this correction removes. The stub was removed after the check.
+Opening the transaction before the flag fall is adjudicated fails the outside-lock fixture, which
+reports the pooled connection the sweep held during the rules work. The change was reverted after
+the check.
 
 ## Acceptance boundaries and limitations
 

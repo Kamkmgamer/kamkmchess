@@ -366,9 +366,10 @@ func TestPostgresOnlineTrustedReconciliationRacesAParticipantCommand(t *testing.
 	}
 }
 
-// MAT-04 and MAT-08: a sweep that races a cancellation and a control change
-// settles the match once, and the expired clock still wins over both.
-func TestPostgresOnlineTrustedReconciliationRacesACancellationAndAControlChange(t *testing.T) {
+// MAT-04 and MAT-08: a sweep that races a resignation, a cancellation and a
+// control change settles the match once, and the expired clock still wins
+// over every intent.
+func TestPostgresOnlineTrustedReconciliationRacesAResignationACancellationAndAControlChange(t *testing.T) {
 	service, pool := onlineService(t, realRulesEvaluator(t))
 	ctx := context.Background()
 	matchID := "match-deadline-race-cancel"
@@ -381,11 +382,16 @@ func TestPostgresOnlineTrustedReconciliationRacesACancellationAndAControlChange(
 	expireMainClock(t, pool, matchID)
 
 	var wg sync.WaitGroup
-	errs := make(chan error, 3)
-	wg.Add(3)
+	errs := make(chan error, 4)
+	wg.Add(4)
 	go func() {
 		defer wg.Done()
 		_, err := service.Execute(ctx, bob, cancelOnlineCommand(matchID, "op-deadline-race-cancel-cancel", online.SeatBlack, 3))
+		errs <- err
+	}()
+	go func() {
+		defer wg.Done()
+		_, err := service.Execute(ctx, bob, resignOnlineCommand(matchID, "op-deadline-race-cancel-resign", online.SeatBlack, 3))
 		errs <- err
 	}()
 	go func() {
@@ -421,8 +427,68 @@ func TestPostgresOnlineTrustedReconciliationRacesACancellationAndAControlChange(
 	if after.ControlEpoch != before.ControlEpoch {
 		t.Fatalf("the control epoch = %d, want %d", after.ControlEpoch, before.ControlEpoch)
 	}
-	if events := countRows(t, pool, `SELECT count(*) FROM online_events WHERE match_id=$1 AND event_kind='timeout'`, matchID); events != 1 {
-		t.Fatalf("timeout events = %d, want 1", events)
+	terminal := countRows(t, pool, `SELECT count(*) FROM online_events WHERE match_id=$1 AND event_kind IN ('timeout','resign','cancel','abort','draw_agreement','illegal_move_loss')`, matchID)
+	if terminal != 1 {
+		t.Fatalf("terminal events = %d, want exactly one", terminal)
+	}
+}
+
+// MAT-04 and ARC-03: the rules evaluation of a flag fall runs outside the
+// match row lock and outside every transaction, so a second writer can take
+// the row while the rules process works.
+func TestPostgresOnlineTrustedReconciliationEvaluatesTheRulesOutsideTheMatchLock(t *testing.T) {
+	var pool *pgxpool.Pool
+	var lockErr error
+	var heldConnections int32
+	service, opened := onlineService(t, timeoutEvaluator{
+		winnerFor: timeoutWinForOpponent,
+		observe: func(input online.RulesInput, _ online.Seat) {
+			// The sweep must hold neither the match row nor a pooled
+			// connection while the rules process works.
+			heldConnections = pool.Stat().AcquiredConns()
+			conn, err := pool.Acquire(context.Background())
+			if err != nil {
+				lockErr = err
+				return
+			}
+			defer conn.Release()
+			tx, err := conn.Begin(context.Background())
+			if err != nil {
+				lockErr = err
+				return
+			}
+			defer tx.Rollback(context.Background())
+			var matchID string
+			// A lock that is already taken fails at once.
+			lockErr = tx.QueryRow(context.Background(), `SELECT match_id FROM online_matches WHERE match_id=$1 FOR UPDATE NOWAIT`, input.MatchID).Scan(&matchID)
+		},
+	})
+	pool = opened
+	ctx := context.Background()
+	matchID := "match-deadline-outside-lock"
+	createOnlineMatch(t, service, matchID, "op-deadline-outside-lock-create")
+	playOpeningExchange(t, service, matchID, "op-deadline-outside-lock")
+	expireMainClock(t, pool, matchID)
+
+	sweep, err := service.ReconcileDeadlines(ctx, 10)
+	if err != nil {
+		t.Fatalf("reconcile deadlines: %v", err)
+	}
+	if lockErr != nil {
+		t.Fatalf("the rules evaluation held the match row lock: %v", lockErr)
+	}
+	if heldConnections != 0 {
+		t.Fatalf("the rules evaluation held %d pooled connections, want none", heldConnections)
+	}
+	if sweep.Settled != 1 {
+		t.Fatalf("sweep report = %+v", sweep)
+	}
+	after, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != online.MatchCompleted || after.Result == nil || after.Result.Reason != online.ReasonTimeout {
+		t.Fatalf("the settled match = %+v", after)
 	}
 }
 
