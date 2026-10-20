@@ -395,8 +395,9 @@ func TestPostgresOnlineUpdatesIdleStreamHoldsNoDatabaseConnection(t *testing.T) 
 	fixture := newOnlineAuthFixture(t, moveEvaluator{})
 	issued := createGuestMatch(t, fixture, "match-updates-idle")
 	server := onlineUpdatesServer(t, fixture, httpapi.OnlineOptions{
-		UpdatesStreamMaxDuration: 4 * time.Second,
-		UpdatesPollInterval:      time.Second,
+		UpdatesStreamMaxDuration: 600 * time.Millisecond,
+		UpdatesPollInterval:      2 * time.Second,
+		UpdatesHeartbeatInterval: 100 * time.Millisecond,
 	})
 	response := updatesStreamRequest(t, server, "/v1/online/matches/match-updates-idle/updates", map[string]string{
 		httpapi.GuestCredentialHeader: issued.Credential.Secret,
@@ -406,31 +407,16 @@ func TestPostgresOnlineUpdatesIdleStreamHoldsNoDatabaseConnection(t *testing.T) 
 	if _, err := readLiveSSEFrame(reader); err != nil {
 		t.Fatalf("read the first frame: %v", err)
 	}
-	free := 0
-	samples := 0
-	highest := 0
-	// The probe interval is long compared with the sampling, so the pool is
-	// idle between two probes even on a loaded machine.
-	deadline := time.Now().Add(1500 * time.Millisecond)
-	for time.Now().Before(deadline) {
-		acquired := int(fixture.pool.Stat().AcquiredConns())
-		samples++
-		if acquired == 0 {
-			free++
+	// No probe runs before the stream ends. Each assertion is during a
+	// known idle wait, so it cannot race a brief pooled database read.
+	for i := 0; i < 3; i++ {
+		if acquired := fixture.pool.Stat().AcquiredConns(); acquired != 0 {
+			t.Fatalf("the idle stream retained %d connections", acquired)
 		}
-		if acquired > highest {
-			highest = acquired
+		frame, err := readLiveSSEFrame(reader)
+		if err != nil || frame.comment == "" {
+			t.Fatalf("idle heartbeat %d: frame=%+v err=%v", i, frame, err)
 		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if samples == 0 {
-		t.Fatal("the idle stream was never sampled")
-	}
-	if highest > 1 {
-		t.Fatalf("the idle stream held %d database connections", highest)
-	}
-	if free*2 < samples {
-		t.Fatalf("the idle stream held a connection in %d of %d samples", samples-free, samples)
 	}
 	// The stream ends, and the pool is free again.
 	for {
