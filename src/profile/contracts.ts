@@ -261,6 +261,18 @@ export const PROFILE_RESERVED_USERNAMES = [
 ] as const;
 
 /**
+ * Reports whether a public name is reserved.
+ *
+ * A reserved name is refused because of what it says, not because of how it
+ * is spelled, so the interface answers with its own sentence instead of the
+ * shape guidance. The service stays authoritative; this check only lets the
+ * interface answer before the request leaves.
+ */
+export function isReservedUsername(value: string): boolean {
+  return (PROFILE_RESERVED_USERNAMES as readonly string[]).includes(value.trim().toLowerCase());
+}
+
+/**
  * Reports whether a public name is acceptable.
  *
  * The service stays authoritative. This check only lets the interface answer
@@ -269,7 +281,7 @@ export const PROFILE_RESERVED_USERNAMES = [
 export function isAcceptableUsername(value: string): boolean {
   const trimmed = value.trim();
   if (trimmed.length < 3 || trimmed.length > 24 || !USERNAME_PATTERN.test(trimmed)) return false;
-  return !(PROFILE_RESERVED_USERNAMES as readonly string[]).includes(trimmed.toLowerCase());
+  return !isReservedUsername(trimmed);
 }
 
 /**

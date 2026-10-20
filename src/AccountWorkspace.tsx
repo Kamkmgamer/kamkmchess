@@ -12,6 +12,8 @@ import { MatchComposition } from './ui/match-composition.js';
 import type { LocalGameSession } from './ui/match-composition.js';
 import { createProfileClient } from './profile/client.js';
 import type { GuestSeatBinding } from './profile/client.js';
+import { createProfileIdentityTracker } from './profile/identity.js';
+import type { ProfileIdentityBinding, ProfileIdentityTracker } from './profile/identity.js';
 import { createParticipantSession } from './online/session.js';
 import type { ParticipantSession } from './online/session.js';
 import type { GuestOnlineCredential } from './online/auth.js';
@@ -60,6 +62,10 @@ export function AccountWorkspace(initialView: WorkspaceView) {
   const participantSession = useRef<ParticipantSession | null>(null);
   const identityGeneration = useRef(0);
   const activeView = useRef(view);
+  const profileIdentities = useRef<ProfileIdentityTracker | null>(null);
+  const identityRef = useRef<AccountIdentity | null>(null);
+  const guestCredentialRef = useRef<GuestOnlineCredential | null>(null);
+  const [profileIdentity, setProfileIdentity] = useState<ProfileIdentityBinding | null>(null);
   useEffect(() => { activeView.current = view; }, [view]);
 
   useEffect(() => {
@@ -88,6 +94,30 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       initialized = created;
       accountSession.current = created;
       setSession(created);
+      // The profile surface is bound to the signed-in account and to the
+      // guest seat this browser holds. A new account makes a new binding and
+      // fences the old one, so a call started under the previous account is
+      // settled and discarded instead of publishing under the new one.
+      const identities = createProfileIdentityTracker();
+      profileIdentities.current = identities;
+      const publishIdentity = () => {
+        if (cancelled) return;
+        setProfileIdentity(identities.update(identityRef.current, guestCredentialRef.current));
+      };
+      // The account subscription is registered first, so a session change
+      // reaches the binding before the participant session reports it.
+      unsubscribe = created.subscribe((next) => {
+        if (cancelled) return;
+        identityGeneration.current += 1;
+        for (const request of activeRequests.current) request.abort();
+        identityRef.current = next;
+        setIdentity(next);
+        setGames([]);
+        setConflicts({});
+        setView(guestResumeView.current);
+        setRevision((value) => value + 1);
+        publishIdentity();
+      });
       // The participant session holds the guest seat credential, if this
       // browser controls one. It never merges into the signed-in account.
       const participants = createParticipantSession({ accountSession: created });
@@ -95,17 +125,9 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       unsubscribeParticipant = participants.subscribe((state) => {
         if (cancelled) return;
         const credential = state.credential;
-        setGuestCredential(credential && credential.kind === 'guest' ? credential : null);
-      });
-      unsubscribe = created.subscribe((next) => {
-        if (cancelled) return;
-        identityGeneration.current += 1;
-        for (const request of activeRequests.current) request.abort();
-        setIdentity(next);
-        setGames([]);
-        setConflicts({});
-        setView(guestResumeView.current);
-        setRevision((value) => value + 1);
+        guestCredentialRef.current = credential && credential.kind === 'guest' ? credential : null;
+        setGuestCredential(guestCredentialRef.current);
+        publishIdentity();
       });
     })().catch((error: unknown) => { if (!cancelled) setMessage(errorText(error)); });
     return () => {
@@ -117,33 +139,43 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       initialized?.dispose();
       identityGeneration.current += 1;
       for (const request of requests) request.abort();
+      // Disposing the workspace fences every profile call that is still in
+      // flight, so a pending answer settles instead of hanging.
+      profileIdentities.current?.dispose();
+      profileIdentities.current = null;
       void releaseAccountCompositions().catch(() => undefined);
     };
   }, [guestView]);
 
-  // The public profile client. It needs the service origin and the signed-in
-  // account; without them there is no profile surface to show.
+  // The public profile client. It needs the service origin and the identity
+  // binding it acts for; without them there is no profile surface to show.
+  // The client is bound to the binding, so a new account makes a new client
+  // and the old one can never answer for the new account.
   const profileClient = useMemo(() => {
-    if (!publicConfig.apiBaseUrl || !session) return null;
-    return createProfileClient({
-      baseUrl: publicConfig.apiBaseUrl,
-      accountToken: async () => {
-        const active = session.identity;
-        if (!active) throw new Error('Sign in to edit your profile.');
-        return active.token();
-      },
-      guestSeatToken: async () => {
-        if (!guestCredential) throw new Error('No guest seat is open in this browser.');
-        return guestCredential.issue();
-      },
-    });
-  }, [session, guestCredential]);
+    if (!publicConfig.apiBaseUrl || !profileIdentity?.account) return null;
+    return createProfileClient({ baseUrl: publicConfig.apiBaseUrl, identity: profileIdentity });
+  }, [profileIdentity]);
 
   // The guest seat this browser controls, when there is one.
   const guestSeat = useMemo<GuestSeatBinding | null>(
     () => (guestCredential ? { matchId: guestCredential.matchId, seat: guestCredential.seat } : null),
     [guestCredential],
   );
+
+  /**
+   * What the profile page shows.
+   *
+   * A signed-out browser and a browser in the middle of a session change ask
+   * for a sign-in. Only a build without a service origin says that the
+   * profile service is not configured.
+   */
+  const profileSurface = !publicConfig.apiBaseUrl
+    ? <p>The profile service is not configured.</p>
+    : !session
+      ? <p>Loading…</p>
+      : profileClient
+        ? <ProfilePanel key={profileIdentity?.generation ?? 'signed-out'} client={profileClient} guestSeat={guestSeat} />
+        : <p>Sign in to edit your profile.</p>;
 
   useEffect(() => {
     if (!identity) return;
@@ -279,7 +311,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
     {accountPage && <section className="focus-page account-workspace" aria-label="Account and saved games">
       <div className="panel-heading"><IconButton icon="back" label="Back" onClick={() => setAccountPage('account')} disabled={accountPage === 'account'} /><IconButton icon="close" label="Close account" onClick={() => setAccountPage(null)} /></div>
       {accountPage === 'account' ? session ? <AccountPanel session={session} guestImport={repositories} onIdentityChanged={() => setRevision(value => value + 1)} onOpenGames={() => { setGamePage(0); setAccountPage('games'); }} onOpenProfile={profileClient ? () => setAccountPage('profile') : undefined} /> : <p>Loading…</p>
-        : accountPage === 'profile' ? (profileClient ? <ProfilePanel client={profileClient} guestSeat={guestSeat} /> : <p>The profile service is not configured.</p>) : <>
+        : accountPage === 'profile' ? profileSurface : <>
         <h2>Saved games</h2>
         <div className="account-actions">
           <IconButton icon="plus" label="New account game" disabled={busy} onClick={() => void openAccountGame()} />

@@ -78,6 +78,55 @@ describe('profile panel', () => {
     expect(panel.getSnapshot().message).toBe('Use 3 to 24 letters, digits, dashes.');
   });
 
+  it('refuses a reserved name with its own sentence, before the request leaves', async () => {
+    const updateOwnProfile = vi.fn(async () => ownProfile);
+    const panel = createProfilePanel({ client: clientStub({ updateOwnProfile }) });
+    await panel.load();
+
+    panel.setUsernameDraft('admin');
+    await panel.save();
+
+    expect(updateOwnProfile).not.toHaveBeenCalled();
+    expect(panel.getSnapshot().message).toBe('That name is reserved.');
+  });
+
+  it('asks the user to sign in when the account session expired', async () => {
+    const panel = createProfilePanel({
+      client: clientStub({ updateOwnProfile: vi.fn(async () => { throw new ProfileRequestError('Sign in to edit your profile.', 401, 'not_signed_in'); }) }),
+    });
+    await panel.load();
+
+    panel.setUsernameDraft('Bobby');
+    await panel.save();
+
+    expect(panel.getSnapshot().message).toBe('Sign in to edit your profile.');
+  });
+
+  it('does not claim that the guest seat is gone when the link was refused', async () => {
+    const panel = createProfilePanel({
+      client: clientStub({ linkGuestSeat: vi.fn(async () => { throw new ProfileRequestError('The link was refused.', 401, 'link_unauthorized'); }) }),
+      guestSeat: { matchId: 'match_alpha', seat: 'white' },
+    });
+    await panel.load();
+
+    await panel.linkGuestSeat();
+
+    expect(panel.getSnapshot().message).toBe('Link refused. Sign in again or rejoin the seat.');
+    expect(panel.getSnapshot().message).not.toMatch(/no longer yours/);
+  });
+
+  it('reports that the signed-in account changed under a call', async () => {
+    const panel = createProfilePanel({
+      client: clientStub({ updateOwnProfile: vi.fn(async () => { throw new ProfileRequestError('The signed-in account changed.', 409, 'account_changed'); }) }),
+    });
+    await panel.load();
+
+    panel.setUsernameDraft('Bobby');
+    await panel.save();
+
+    expect(panel.getSnapshot().message).toBe('The signed-in account changed.');
+  });
+
   it('reports a name that another profile already owns', async () => {
     const panel = createProfilePanel({
       client: clientStub({ updateOwnProfile: vi.fn(async () => { throw new ProfileRequestError('That name is already taken.', 409, 'username_taken'); }) }),

@@ -15,7 +15,7 @@
  */
 import type { ProfileClient, GuestSeatBinding } from './client';
 import { ProfileRequestError } from './client';
-import { isAcceptableAvatar, isAcceptableUsername } from './contracts';
+import { isAcceptableAvatar, isAcceptableUsername, isReservedUsername } from './contracts';
 import type { OwnProfile } from './contracts';
 
 export type ProfilePanelStatus = 'idle' | 'loading' | 'ready' | 'saving' | 'linking' | 'error';
@@ -87,6 +87,10 @@ export function createProfilePanel(options: ProfilePanelOptions): ProfilePanel {
 
   async function save(): Promise<void> {
     const username = state.usernameDraft.trim();
+    if (username.length > 0 && isReservedUsername(username)) {
+      publish({ status: 'ready', message: 'That name is reserved.' });
+      return;
+    }
     if (username.length > 0 && !isAcceptableUsername(username)) {
       publish({ status: 'ready', message: 'Use 3 to 24 letters, digits, dashes.' });
       return;
@@ -154,6 +158,10 @@ export function createProfilePanel(options: ProfilePanelOptions): ProfilePanel {
  * chosen from the code and never read out of an English message. The message
  * names the problem and the recovery. It never carries a status code, a URL,
  * or a service detail.
+ *
+ * A refusal that does not say which part was refused keeps its own copy: the
+ * link route carries the account session and the ownership proof, so it never
+ * claims that the guest seat is gone when the session may be the cause.
  */
 function messageFor(error: unknown, fallback: string): string {
   const code = error instanceof ProfileRequestError ? error.code : '';
@@ -162,9 +170,12 @@ function messageFor(error: unknown, fallback: string): string {
   if (error instanceof Error) {
     const detail = error.message;
     if (/taken/i.test(detail)) return BY_CODE.get('username_taken') ?? fallback;
+    if (/reserved/i.test(detail)) return BY_CODE.get('reserved_username') ?? fallback;
     if (/not allowed/i.test(detail)) return BY_CODE.get('invalid_username') ?? fallback;
     if (/already linked/i.test(detail)) return BY_CODE.get('seat_already_linked') ?? fallback;
-    if (/no longer yours/i.test(detail)) return BY_CODE.get('unauthorized') ?? fallback;
+    if (/no longer yours/i.test(detail)) return BY_CODE.get('guest_seat_unauthorized') ?? fallback;
+    if (/link was refused/i.test(detail)) return BY_CODE.get('link_unauthorized') ?? fallback;
+    if (/account changed/i.test(detail)) return BY_CODE.get('account_changed') ?? fallback;
     if (/sign in/i.test(detail)) return BY_CODE.get('not_signed_in') ?? fallback;
     if (/unavailable|invalid response/i.test(detail)) return fallback;
   }
@@ -175,11 +186,14 @@ function messageFor(error: unknown, fallback: string): string {
 const BY_CODE = new Map<string, string>([
   ['username_taken', 'That name is already taken.'],
   ['invalid_username', 'Use 3 to 24 letters, digits, dashes.'],
+  ['reserved_username', 'That name is reserved.'],
   ['invalid_avatar', 'Choose an avatar from the list.'],
   ['seat_already_linked', 'That guest seat is already linked.'],
   ['proof_already_used', 'That ownership proof was already used.'],
   ['proof_seat_mismatch', 'That proof names another seat.'],
-  ['unauthorized', 'That guest seat is no longer yours.'],
+  ['guest_seat_unauthorized', 'That guest seat is no longer yours.'],
+  ['link_unauthorized', 'Link refused. Sign in again or rejoin the seat.'],
+  ['account_changed', 'The signed-in account changed.'],
   ['not_signed_in', 'Sign in to edit your profile.'],
   ['no_guest_seat', 'No guest seat is open in this browser.'],
   ['temporarily_unavailable', 'The profile service is unavailable. Retry.'],

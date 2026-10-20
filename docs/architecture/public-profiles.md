@@ -178,6 +178,31 @@ interface unsubscribes when it goes away, and a late answer then reaches
 nobody. The interface reads the service error code, never an English
 message, to choose its one status sentence.
 
+### The identity binding
+
+`src/profile/identity.ts` binds the profile surface to the account it loaded.
+A binding names one signed-in account and the guest seat this browser holds,
+and it carries the signal that fires when either of them changes. The tracker
+makes a new binding when the account changes, when the Clerk session is
+replaced, when the guest seat credential changes and when the workspace is
+disposed; the same identity object reported again is not a new owner, so a
+refresh keeps the binding.
+
+Every credentialed stage of a call checks the binding. A session token that
+was minted for a replaced account is discarded, a request that has not left
+the browser is never sent, and a response that arrives after the account
+changed is released instead of published. A call whose account changed is
+settled with `account_changed`; it never carries the answer of another
+account, and a pending call settles instead of hanging. The workspace owns
+the tracker, so disposing the workspace fences every profile call.
+
+The interface binds the panel to the binding as well: the client is made for
+one binding, and the panel is remounted when the binding changes, so the
+drafts of a replaced account are never shown and the new account loads its own
+profile. A signed-out browser and a browser in the middle of a session change
+ask for a sign-in. Only a build without a service origin says that the
+profile service is not configured.
+
 ## Boundaries
 
 - The public history, the public replay, the control attribution and the
@@ -199,3 +224,16 @@ message, to choose its one status sentence.
   it exists the account workspace never holds one, and the panel says that
   linking needs an open guest seat. The service path, the client path and the
   proof of ownership are complete and exercised.
+- The linked guest seats of one account are listed without a limit, so the
+  payload of `GET /v1/account/profile` grows with the number of links. The
+  interface shows a count rather than the list, and the wire contract stays
+  complete, because the panel decides whether the current seat is already
+  linked from the full set. A bounded paging contract belongs to the public
+  history work of KHA-78 and KHA-83; this slice does not truncate the answer
+  and does not cap the number of seats an account may link.
+- The migration `0005_public_profiles.sql` refuses every delete on
+  `online_public_profiles`, because a profile that still owns a guest link
+  must not disappear. The ordinary account-deletion path of KHA-79 will have
+  to narrow that guard to the profiles that have no live link. The guard is
+  unconditional today and is recorded here so the deletion work does not
+  treat the migration as final.

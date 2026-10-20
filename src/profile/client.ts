@@ -4,10 +4,19 @@
  * The client has two kinds of call, and they never mix:
  *
  * - a **public read**, which needs no credential at all. A signed-out visitor
- *   can read a public profile and look a public name up.
+ *   can read a public profile and look a public name up. A public read names
+ *   no owner, so it is not fenced by the identity binding.
  * - an **account call**, which needs the verified session of the signed-in
  *   account. The account is never named in a request body: the service takes
  *   it from the credential it verified.
+ *
+ * Every credentialed call is bound to the identity it started under. The
+ * binding names the account and the guest seat, and its signal fires when
+ * either of them changes. Each asynchronous stage checks the binding again:
+ * a token minted for a replaced account is discarded, a request that has not
+ * left the browser is never sent, and a response that arrives too late is
+ * released instead of published. A call whose account changed is settled
+ * with `account_changed`; it never carries the answer of another account.
  *
  * The guest link is a deliberate two-step action. The browser first proves
  * that it controls a guest seat by minting an ownership proof from the seat
@@ -23,10 +32,11 @@ import {
   createProfileUpdateBody,
   parseGuestLink,
   parseGuestOwnershipProof,
-  parseOwnProfile,
   parsePublicProfile,
+  parseOwnProfile,
 } from './contracts';
 import type { GuestOwnershipProof, OwnProfile, ProfileGuestLink, ProfileUpdate, PublicProfile } from './contracts';
+import type { ProfileIdentityBinding } from './identity';
 
 /** The seat a guest seat credential is bound to. */
 export type ProfileSeat = 'white' | 'black';
@@ -40,10 +50,14 @@ export interface GuestSeatBinding {
 export interface ProfileClientOptions {
   /** The trusted service origin. A credential is never sent outside it. */
   readonly baseUrl: string;
-  /** The session token of the signed-in account. */
-  readonly accountToken: () => Promise<string>;
-  /** The private guest seat credential of the seat this browser controls. */
-  readonly guestSeatToken?: () => Promise<string>;
+  /**
+   * The account and the guest seat this client acts for.
+   *
+   * The binding is the fence of the whole slice. Every credentialed stage of
+   * a call checks it, so a call that started under one account is settled
+   * and discarded instead of publishing under another.
+   */
+  readonly identity: ProfileIdentityBinding;
   readonly fetch?: typeof fetch;
 }
 
@@ -65,25 +79,86 @@ export interface ProfileClient {
 /** The catalog of chosen avatars, for an interface that offers the choice. */
 export const PROFILE_AVATARS = PROFILE_AVATAR_CHOICES;
 
+/** The header the account session token travels in. */
+const ACCOUNT_CREDENTIAL_HEADER = 'Authorization';
+/** The header the private guest seat credential travels in. */
+const GUEST_CREDENTIAL_HEADER = 'X-Guest-Seat-Token';
+/** The header the guest ownership proof travels in. */
+const GUEST_PROOF_HEADER = 'X-Guest-Ownership-Proof';
+
 export function createProfileClient(options: ProfileClientOptions): ProfileClient {
   const base = parseBaseUrl(options.baseUrl);
   const fetcher = options.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init));
+  const identity = options.identity;
+
+  /**
+   * The refusal of a call whose account changed under it.
+   *
+   * The code is one of the client's own, so the interface never mistakes it
+   * for a refusal by the service.
+   */
+  function accountChanged(): ProfileRequestError {
+    return new ProfileRequestError('The signed-in account changed.', 409, 'account_changed');
+  }
+
+  /** Refuses a call that no longer belongs to the active account. */
+  function assertLive(): void {
+    if (identity.signal.aborted) throw accountChanged();
+  }
+
+  /**
+   * Settles a stage as soon as the account changes.
+   *
+   * The work keeps running when the transport ignores the abort signal, but
+   * its answer has nowhere to land: the caller is settled with the fence,
+   * and the late result is dropped.
+   */
+  async function fenced<T>(work: Promise<T>): Promise<T> {
+    const signal = identity.signal;
+    if (signal.aborted) throw accountChanged();
+    let onAbort: (() => void) | undefined;
+    try {
+      return await new Promise<T>((resolve, reject) => {
+        onAbort = () => { reject(accountChanged()); };
+        signal.addEventListener('abort', onAbort, { once: true });
+        work.then(
+          (value) => { resolve(value); },
+          (error: unknown) => { reject(signal.aborted ? accountChanged() : error); },
+        );
+      });
+    } finally {
+      if (onAbort) signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  /**
+   * Builds the request headers.
+   *
+   * The credential header slot belongs to the boundary. The caller headers
+   * are applied first and the credential is written last, so a caller header
+   * can never replace the credential or add a second spelling of it. The only
+   * caller header is the ownership proof, and its name is fixed.
+   */
+  function buildHeaders(init: {
+    credential?: { kind: 'account' | 'guest'; token: string };
+    proof?: string;
+  }): Record<string, string> {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (init.proof !== undefined) headers[GUEST_PROOF_HEADER] = init.proof;
+    if (init.credential) {
+      if (init.credential.kind === 'account') headers[ACCOUNT_CREDENTIAL_HEADER] = `Bearer ${init.credential.token}`;
+      else headers[GUEST_CREDENTIAL_HEADER] = init.credential.token;
+    }
+    return headers;
+  }
 
   async function request(
     path: string,
-    init: { method?: string; body?: unknown; credential?: { kind: 'account' | 'guest'; token: string }; headers?: Record<string, string> } = {},
+    init: { method?: string; body?: unknown; credential?: { kind: 'account' | 'guest'; token: string }; proof?: string } = {},
   ): Promise<{ status: number; data: unknown }> {
     const url = resolveUrl(base, path);
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (init.credential) {
-      // The credential header slot belongs to the boundary. A caller header
-      // never overrides it.
-      if (init.credential.kind === 'account') headers.Authorization = `Bearer ${init.credential.token}`;
-      else headers['X-Guest-Seat-Token'] = init.credential.token;
-    }
-    for (const [name, value] of Object.entries(init.headers ?? {})) {
-      headers[name] = value;
-    }
+    const guarded = init.credential !== undefined;
+    const headers = buildHeaders(init);
     const requestInit: RequestInit = {
       method: init.method ?? 'GET',
       headers,
@@ -91,12 +166,27 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
       redirect: 'error',
       cache: 'no-store',
     };
+    if (guarded) {
+      // The transport may honour the signal; the fence below does not depend
+      // on it, so a late response is still discarded.
+      requestInit.signal = identity.signal;
+      assertLive();
+    }
     if (init.body !== undefined) {
       headers['Content-Type'] = 'application/json';
       requestInit.body = JSON.stringify(init.body);
     }
     const response = await fetcher(url, requestInit);
-    const text = await response.text();
+    let text: string;
+    try {
+      text = guarded
+        ? await fenced(response.text())
+        : await response.text();
+    } catch (error) {
+      // A body that was released too late is not left open.
+      void response.body?.cancel().catch(() => undefined);
+      throw error;
+    }
     let data: unknown = null;
     if (text.length > 0) {
       try {
@@ -108,22 +198,51 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
     return { status: response.status, data };
   }
 
+  /**
+   * Runs an account call.
+   *
+   * The token is minted under the bound account and checked against the
+   * binding again before it is used, so a token that belongs to a replaced
+   * account is discarded instead of being sent.
+   */
   async function accountRequest(
     path: string,
-    init: { method?: string; body?: unknown; headers?: Record<string, string> } = {},
+    init: { method?: string; body?: unknown; proof?: string } = {},
   ): Promise<{ status: number; data: unknown }> {
-    const token = await options.accountToken();
+    const account = identity.account;
+    if (!account) throw new ProfileRequestError('Sign in to edit your profile.', 401, 'not_signed_in');
+    assertLive();
+    let token: string;
+    try {
+      token = await fenced(account.token());
+    } catch (error) {
+      if (identity.signal.aborted) throw accountChanged();
+      if (error instanceof ProfileRequestError) throw error;
+      // The account refused to mint a token, so the session is gone.
+      throw new ProfileRequestError('Sign in to edit your profile.', 401, 'not_signed_in');
+    }
+    // The token is discarded when the account changed while it was minted.
+    assertLive();
     if (typeof token !== 'string' || token.trim() === '') {
-      throw new ProfileRequestError('Sign in before changing your profile.', 401, 'not_signed_in');
+      throw new ProfileRequestError('Sign in to edit your profile.', 401, 'not_signed_in');
     }
     return request(path, { ...init, credential: { kind: 'account', token } });
   }
 
+  /** Mints an ownership proof from the guest seat credential of this browser. */
   async function mintOwnershipProof(): Promise<GuestOwnershipProof> {
-    if (!options.guestSeatToken) {
+    const guestSeat = identity.guestSeat;
+    if (!guestSeat) throw new ProfileRequestError('No guest seat is open in this browser.', 400, 'no_guest_seat');
+    assertLive();
+    let token: string;
+    try {
+      token = await fenced(guestSeat.issue());
+    } catch (error) {
+      if (identity.signal.aborted) throw accountChanged();
+      if (error instanceof ProfileRequestError) throw error;
       throw new ProfileRequestError('No guest seat is open in this browser.', 400, 'no_guest_seat');
     }
-    const token = await options.guestSeatToken();
+    assertLive();
     if (typeof token !== 'string' || token.trim() === '') {
       throw new ProfileRequestError('No guest seat is open in this browser.', 400, 'no_guest_seat');
     }
@@ -131,7 +250,7 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
       method: 'POST',
       credential: { kind: 'guest', token },
     });
-    if (result.status === 401) throw new ProfileRequestError('That guest seat is no longer yours.', 401, errorCode(result.data));
+    if (result.status === 401) throw new ProfileRequestError('That guest seat is no longer yours.', 401, 'guest_seat_unauthorized');
     if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
     return parseGuestOwnershipProof(result.data);
   }
@@ -151,11 +270,13 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
     },
     async readOwnProfile() {
       const result = await accountRequest('/v1/account/profile');
+      if (result.status === 401) throw new ProfileRequestError('Sign in to edit your profile.', 401, 'not_signed_in');
       if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
       return parseOwnProfile(result.data);
     },
     async updateOwnProfile(update) {
       const result = await accountRequest('/v1/account/profile', { method: 'PUT', body: createProfileUpdateBody(update) });
+      if (result.status === 401) throw new ProfileRequestError('Sign in to edit your profile.', 401, 'not_signed_in');
       if (result.status === 409) throw new ProfileRequestError('That name is already taken.', 409, errorCode(result.data));
       if (result.status === 400) throw new ProfileRequestError('That name or avatar is not allowed.', 400, errorCode(result.data));
       if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
@@ -163,19 +284,24 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
     },
     mintOwnershipProof,
     async linkGuestSeat(seat) {
+      assertLive();
       // The proof is minted from the seat credential first, so the link never
       // runs on a shareable invitation.
       const proof = await mintOwnershipProof();
+      // The proof belongs to the account that was active when it was minted.
+      assertLive();
       if (proof.matchId !== seat.matchId || proof.seat !== seat.seat) {
         throw new ProfileRequestError('That proof names another seat.', 409, 'proof_seat_mismatch');
       }
       const result = await accountRequest('/v1/account/profile/guest-links', {
         method: 'POST',
         body: { matchId: seat.matchId, seat: seat.seat },
-        headers: { 'X-Guest-Ownership-Proof': proof.secret },
+        proof: proof.secret,
       });
       if (result.status === 409) throw new ProfileRequestError('That guest seat is already linked.', 409, errorCode(result.data));
-      if (result.status === 401) throw new ProfileRequestError('That guest seat is no longer yours.', 401, errorCode(result.data));
+      // The link route carries the account session and the ownership proof, so
+      // its refusal does not say which of the two was refused.
+      if (result.status === 401) throw new ProfileRequestError('The link was refused.', 401, 'link_unauthorized');
       if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
       return parseGuestLink(result.data);
     },
@@ -195,7 +321,17 @@ function errorCode(data: unknown): string {
   return typeof code === 'string' ? code : '';
 }
 
-/** A failed profile request. */
+/**
+ * A failed profile request.
+ *
+ * The code is the stable part of a refusal. It is the service error code
+ * when the service answered, and one of the client's own codes when the
+ * request never reached the service: `not_signed_in` when the account
+ * session is gone, `account_changed` when the account changed under the
+ * call, `no_guest_seat` when the browser holds no guest seat,
+ * `guest_seat_unauthorized` when the guest seat credential was refused, and
+ * `link_unauthorized` when the link route refused the request.
+ */
 export class ProfileRequestError extends Error {
   readonly status: number;
   /** The service error code, or an empty string when the service gave none. */

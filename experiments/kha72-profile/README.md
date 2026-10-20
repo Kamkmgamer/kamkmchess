@@ -17,3 +17,24 @@ It does not reach a network service, a hosted account, a provider, or a
 deployed bundle. It does not certify native accessibility, other browsers, or
 devices, and it is not production acceptance. The product acceptance scenarios
 `HIS-01` and `HIS-02` remain `not_run` in the acceptance matrix.
+
+## The account switch check
+
+The second page mounts the same real panel with the real client, the real
+state machine and the real identity binding. Only the profile service is a
+local stand-in, and it records every request it receives.
+
+```
+pnpm dev --port 5186 --strictPort
+node experiments/kha72-profile/check-switch.mjs http://127.0.0.1:5186
+```
+
+The check starts a save under one account, replaces the account while the
+session token is still being minted, and then starts a save that is not
+interrupted. It shows that the interrupted save never reaches the service,
+that the new account sees its own profile instead of the previous drafts,
+and that an uninterrupted save is sent under the account it started under.
+
+Like the panel preview, this check reaches no network service, no hosted
+account and no provider. It is not product acceptance, and the product
+acceptance scenarios `HIS-01` and `HIS-02` remain `not_run`.
