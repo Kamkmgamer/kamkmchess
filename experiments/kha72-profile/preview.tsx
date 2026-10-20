@@ -46,11 +46,12 @@ const client = {
   async updateOwnProfile(update) {
     const name = update.username ?? null;
     if (name === TAKEN_NAME) throw new Error('That name is already taken.');
-    return {
+    Object.assign(profile, {
       ...profile,
       username: name,
       avatar: { kind: 'chosen', value: update.avatar || 'harbor' },
-    };
+    });
+    return profile;
   },
   async mintOwnershipProof() {
     return {

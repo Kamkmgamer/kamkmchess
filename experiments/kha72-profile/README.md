@@ -9,9 +9,9 @@ fixture profile, refuses the name `rookie` the way the service refuses a name
 another profile already owns, and accepts a guest link.
 
 The check confirms the interface behaviour that the service fixtures cannot
-show: the loaded profile and its public identifier, the name field, the avatar
+show: the loaded profile, the name field, the avatar
 choice, the saved state, the name-conflict status, the guest-link status, and
-the linked guest seat in the list.
+the linked guest-seat count.
 
 It does not reach a network service, a hosted account, a provider, or a
 deployed bundle. It does not certify native accessibility, other browsers, or

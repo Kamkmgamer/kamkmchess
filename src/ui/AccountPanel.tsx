@@ -94,7 +94,7 @@ export function AccountPanel({ session, guestImport, onIdentityChanged, onOpenGa
         <button onClick={() => void signIn()} disabled={busy}>Sign in</button>
       </>}
       {identity && <div className="account-panel-actions">
-        {onOpenProfile && <button onClick={onOpenProfile} disabled={busy}>Profile</button>}
+        {onOpenProfile && <IconButton icon="account" label="Public profile" onClick={onOpenProfile} disabled={busy} />}
         {onOpenGames && <button onClick={onOpenGames} disabled={busy}>Games</button>}
         {guestImport && <button onClick={() => { setPage(0); void beginImport(); }} disabled={busy}>Import</button>}
         <button onClick={() => void signOut()} disabled={busy}>Sign out</button>

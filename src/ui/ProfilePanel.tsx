@@ -2,6 +2,7 @@ import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { createProfilePanel } from '../profile/panel.js';
 import { PROFILE_AVATAR_CHOICES } from '../profile/contracts.js';
 import type { ProfileClient, GuestSeatBinding } from '../profile/client.js';
+import { IconButton } from './Icon.js';
 import '../profile-panel.css';
 
 export interface ProfilePanelProps {
@@ -39,14 +40,14 @@ export function ProfilePanel({ client, guestSeat = null }: ProfilePanelProps) {
   }, [panel]);
   const state = useSyncExternalStore(panel.subscribe, panel.getSnapshot, panel.getSnapshot);
   const busy = state.status === 'saving' || state.status === 'linking' || state.status === 'loading';
+  const linked = state.profile?.guestLinks.some(link => link.matchId === guestSeat?.matchId && link.seat === guestSeat.seat) ?? false;
 
   return <section className="profile-panel" aria-labelledby="profile-panel-title">
     <h2 id="profile-panel-title">Public profile</h2>
     <div className="profile-identity">
       <ProfileAvatar kind={state.profile?.avatar.kind ?? 'generated'} value={state.profile?.avatar.value ?? ''} profileId={state.profile?.profileId ?? ''} />
       <div className="profile-identity-text">
-        <p className="profile-name">{state.profile?.username ?? 'No public name yet'}</p>
-        {state.profile && <p className="profile-identifier">Profile {state.profile.profileId}</p>}
+        <p className="profile-name">{state.profile?.username ?? 'Unnamed'}</p>
       </div>
     </div>
 
@@ -80,21 +81,20 @@ export function ProfilePanel({ client, guestSeat = null }: ProfilePanelProps) {
     </fieldset>
 
     <div className="account-panel-actions">
-      <button type="button" className="button primary" disabled={busy} onClick={() => void panel.save()}>Save profile</button>
+      <IconButton icon="save" label="Save profile" className="button primary icon-button" disabled={busy || !state.profile} onClick={() => void panel.save()} />
+      {state.status === 'error' && <IconButton icon="change" label="Retry profile" onClick={() => void panel.load()} />}
     </div>
 
     <section className="profile-guest-seats" aria-labelledby="profile-guest-title">
       <h3 id="profile-guest-title">Guest seats</h3>
       {state.profile && state.profile.guestLinks.length > 0
-        ? <ul>{state.profile.guestLinks.map(link => <li key={link.linkId}>
-          <span>{link.matchId} · {link.seat}</span>
-        </li>)}</ul>
-        : <p className="muted">No guest seat is linked yet.</p>}
+        ? <p>{state.profile.guestLinks.length} linked</p>
+        : <p className="muted">{guestSeat ? 'No linked seats.' : 'Guest seat required.'}</p>}
       {guestSeat
         ? <div className="account-panel-actions">
-          <button type="button" className="button secondary" disabled={busy} onClick={() => void panel.linkGuestSeat()}>Link guest seat</button>
+          <IconButton icon="link" label={linked ? 'Guest seat linked' : 'Link guest seat'} disabled={busy || !state.profile || linked} onClick={() => void panel.linkGuestSeat()} />
         </div>
-        : <p className="muted">Open a guest seat to link it to this account.</p>}
+        : null}
     </section>
 
     <p className="profile-status" role="status">{state.message}</p>

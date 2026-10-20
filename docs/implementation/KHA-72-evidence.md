@@ -237,3 +237,25 @@ covered by the fixtures and the browser check above.
 OpenCode `opencode/minimax-m3.1-flash-free` handled the implementation, the
 fixtures, the independent review and the browser check. The parent reviewed
 the findings, the integration and the tracker updates.
+
+## Parent integration checks
+
+The KHA-68 and KHA-72 commits were combined on
+`feature/kha68-kha72-online-core`. TypeScript and the full Go suite passed
+with required PostgreSQL and the real rules worker after integration.
+
+The profile panel now uses the shared icon buttons for save, link and profile
+navigation. It shows the public name and avatar, a linked-seat count and one
+status message. Opaque profile and match identifiers are kept out of this
+settings view. A linked seat cannot be linked again through the button, save
+is disabled until the profile loads, and a failed load offers Retry.
+
+T3 preview navigation and snapshots timed out. No alternate browser was
+available through CUA, so the repository's Playwright Chromium checked the
+real component against its local service stand-in. Name conflict, save,
+avatar selection, explicit link and the disabled repeat-link action passed.
+Desktop and phone widths had no horizontal overflow or page errors. The
+linked-success view used 14 words of interface copy, excluding the chosen
+public name and numeric count. The manual Impeccable detector found no
+issues. These checks do not replace the pending account-switch review or
+the later live invitation and hosted acceptance runs.
