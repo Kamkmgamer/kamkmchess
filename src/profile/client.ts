@@ -176,7 +176,17 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
       headers['Content-Type'] = 'application/json';
       requestInit.body = JSON.stringify(init.body);
     }
-    const response = await fetcher(url, requestInit);
+    const pending = Promise.resolve(fetcher(url, requestInit));
+    let response: Response;
+    try {
+      response = guarded ? await fenced(pending) : await pending;
+    } catch (error) {
+      // The transport may ignore the abort and still deliver a response. That
+      // late response owns an open body, so it is released instead of being
+      // left behind a cancelled call.
+      void pending.then((late) => { void late.body?.cancel().catch(() => undefined); }, () => undefined);
+      throw error;
+    }
     let text: string;
     try {
       text = guarded
