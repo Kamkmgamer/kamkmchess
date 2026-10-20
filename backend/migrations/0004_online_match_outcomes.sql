@@ -27,6 +27,12 @@ ALTER TABLE online_clocks ADD CONSTRAINT online_clocks_reply_seat_check CHECK (r
 ALTER TABLE online_clocks DROP CONSTRAINT IF EXISTS online_clocks_one_deadline_check;
 ALTER TABLE online_clocks ADD CONSTRAINT online_clocks_one_deadline_check CHECK (NOT (active_seat IS NOT NULL AND reply_seat IS NOT NULL));
 
+-- The trusted deadline reconciliation scans the matches whose armed deadline
+-- has passed. These partial indexes keep that bounded scan off a sequential
+-- read of every stored clock. They add no constraint and rewrite no row.
+CREATE INDEX IF NOT EXISTS online_clocks_deadline ON online_clocks(deadline_at) WHERE deadline_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS online_clocks_reply_deadline ON online_clocks(reply_deadline_at) WHERE reply_deadline_at IS NOT NULL;
+
 -- Shared recovery budgets. The counters hold what the current turn has already
 -- spent. The policy limits live in the versioned contract; the stored bounds
 -- here are a hard ceiling only.

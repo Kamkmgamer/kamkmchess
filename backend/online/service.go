@@ -1002,6 +1002,12 @@ func (s *Service) resolveOpeningExpired(ctx context.Context, actor ParticipantRe
 		return CommandResult{}, err
 	}
 	match.Clock = clock
+	// The accepted line belongs to the terminal state, to the stored rules
+	// input hash and to the published projection, so it is read under the
+	// same lock.
+	if match.Moves, err = loadMoves(ctx, tx, cmd.MatchID); err != nil {
+		return CommandResult{}, err
+	}
 	seat, ok := match.Seat(cmd.Seat)
 	if !ok || seat.Participant != actor {
 		return CommandResult{}, ErrNotAuthorized
@@ -1021,6 +1027,39 @@ func (s *Service) resolveOpeningExpired(ctx context.Context, actor ParticipantRe
 	return s.commitOpeningAbort(ctx, tx, cmd, fingerprint, match, clock, decision)
 }
 
+// applyDeadlineResult ends a match with a deadline outcome.
+//
+// The caller holds the match row lock and has sampled a decision time at or
+// after the deadline. The terminal state, the append-only event and the public
+// projection are written in the caller's transaction, so the transition is
+// atomic. The match row lock also makes it idempotent: a second sweep of the
+// same match finds the terminal result and writes nothing.
+//
+// The transition is shared by the participant path and by the trusted
+// deadline reconciliation, so both produce the same event, the same result
+// and the same projection.
+func (s *Service) applyDeadlineResult(ctx context.Context, tx pgx.Tx, match Match, clock ClockState, decision time.Time, kind EventKind, seat Seat, result *Result) (Event, error) {
+	nextVersion := match.Version + 1
+	match.Version = nextVersion
+	match.Status = terminalStatus(result)
+	match.Result = result
+	completed := decision
+	match.CompletedAt = &completed
+	match.Clock = terminalClock(clock, decision)
+	match.UpdatedAt = decision
+	if err := s.updateMatch(ctx, tx, match, decision); err != nil {
+		return Event{}, err
+	}
+	event := Event{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, Version: nextVersion, Kind: kind, Seat: &seat, ControlEpoch: match.ControlEpoch, DecisionAt: decision, AcceptedAt: decision, Result: result}
+	if err := insertEvent(ctx, tx, event); err != nil {
+		return Event{}, err
+	}
+	if err := s.publishProjection(ctx, tx, match); err != nil {
+		return Event{}, err
+	}
+	return event, nil
+}
+
 // commitOpeningAbort ends the match because the opening reply window closed
 // without an accepted reply.
 //
@@ -1033,30 +1072,16 @@ func (s *Service) commitOpeningAbort(ctx context.Context, tx pgx.Tx, cmd Command
 	}
 	expired := *clock.ReplySeat
 	result := &Result{Kind: ResultAbort, Reason: ReasonOpeningReplyTimeout}
-	nextVersion := match.Version + 1
-	match.Version = nextVersion
-	match.Status = MatchAborted
-	match.Result = result
-	completed := decision
-	match.CompletedAt = &completed
-	match.Clock = terminalClock(clock, decision)
-	match.UpdatedAt = decision
-	if err := s.updateMatch(ctx, tx, match, decision); err != nil {
+	event, err := s.applyDeadlineResult(ctx, tx, match, clock, decision, EventAbort, expired, result)
+	if err != nil {
 		return CommandResult{}, err
 	}
-	event := &Event{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, Version: nextVersion, Kind: EventAbort, Seat: &expired, ControlEpoch: match.ControlEpoch, DecisionAt: decision, AcceptedAt: decision, Result: result}
-	if err := insertEvent(ctx, tx, *event); err != nil {
-		return CommandResult{}, err
-	}
-	if err := s.publishProjection(ctx, tx, match); err != nil {
-		return CommandResult{}, err
-	}
-	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeOpeningExpired, Version: nextVersion, ControlEpoch: match.ControlEpoch, DecidedAt: decision, Event: event, Result: result}
+	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeOpeningExpired, Version: event.Version, ControlEpoch: match.ControlEpoch, DecidedAt: decision, Event: &event, Result: result}
 	raw, err := marshalReceipt(receipt)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if err := insertReceipt(ctx, tx, cmd, fingerprint[:], raw, nextVersion, match.ControlEpoch, decision); err != nil {
+	if err := insertReceipt(ctx, tx, cmd, fingerprint[:], raw, event.Version, match.ControlEpoch, decision); err != nil {
 		return CommandResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1069,30 +1094,16 @@ func (s *Service) commitOpeningAbort(ctx context.Context, tx pgx.Tx, cmd Command
 // holds the match row lock and has confirmed the decision time is past the
 // deadline for the expired seat.
 func (s *Service) commitTimeout(ctx context.Context, tx pgx.Tx, cmd Command, fingerprint [32]byte, match Match, expired Seat, decision time.Time, result *Result) (CommandResult, error) {
-	nextVersion := match.Version + 1
-	match.Version = nextVersion
-	match.Status = terminalStatus(result)
-	match.Result = result
-	completed := decision
-	match.CompletedAt = &completed
-	match.Clock = terminalClock(match.Clock, decision)
-	match.UpdatedAt = decision
-	if err := s.updateMatch(ctx, tx, match, decision); err != nil {
+	event, err := s.applyDeadlineResult(ctx, tx, match, match.Clock, decision, EventTimeout, expired, result)
+	if err != nil {
 		return CommandResult{}, err
 	}
-	event := &Event{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, Version: nextVersion, Kind: EventTimeout, Seat: &expired, ControlEpoch: match.ControlEpoch, DecisionAt: decision, AcceptedAt: decision, Result: result}
-	if err := insertEvent(ctx, tx, *event); err != nil {
-		return CommandResult{}, err
-	}
-	if err := s.publishProjection(ctx, tx, match); err != nil {
-		return CommandResult{}, err
-	}
-	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeDeadlineExpired, Version: nextVersion, ControlEpoch: match.ControlEpoch, DecidedAt: decision, Event: event, Result: result}
+	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeDeadlineExpired, Version: event.Version, ControlEpoch: match.ControlEpoch, DecidedAt: decision, Event: &event, Result: result}
 	raw, err := marshalReceipt(receipt)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if err := insertReceipt(ctx, tx, cmd, fingerprint[:], raw, nextVersion, match.ControlEpoch, decision); err != nil {
+	if err := insertReceipt(ctx, tx, cmd, fingerprint[:], raw, event.Version, match.ControlEpoch, decision); err != nil {
 		return CommandResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
