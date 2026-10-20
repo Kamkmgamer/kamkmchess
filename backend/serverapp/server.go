@@ -4,6 +4,7 @@ package serverapp
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -56,6 +57,9 @@ type OnlineConfig struct {
 	DeadlineSweepInterval time.Duration
 	// DeadlineSweepBatch bounds one reconciliation pass.
 	DeadlineSweepBatch int
+	// HealthCheckInterval is how often the server refreshes the durable
+	// service health.
+	HealthCheckInterval time.Duration
 }
 
 // Load reads only server configuration. Its errors never include configured values.
@@ -76,6 +80,7 @@ func Load(getenv func(string) string) (Config, error) {
 			RulesWorkerEntry:      strings.TrimSpace(getenv("ONLINE_RULES_WORKER_ENTRY")),
 			DeadlineSweepInterval: duration(getenv, "ONLINE_DEADLINE_SWEEP_INTERVAL", DefaultDeadlineSweepInterval),
 			DeadlineSweepBatch:    positiveInt(getenv, "ONLINE_DEADLINE_SWEEP_BATCH", DefaultDeadlineSweepBatch),
+			HealthCheckInterval:   duration(getenv, "ONLINE_HEALTH_CHECK_INTERVAL", DefaultHealthCheckInterval),
 		},
 	}
 	if cfg.DatabaseURL == "" || len(cfg.Clerk.AllowedOrigins) == 0 {
@@ -115,6 +120,32 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		pool.Close()
 		return nil, nil, err
 	}
+	// The durable health boundary. A service without a rules process cannot
+	// evaluate online play, so it reports itself unavailable and never
+	// offers an abandonment claim.
+	health := online.NewHealthReporter(pool)
+	if evaluator == nil {
+		if err = health.ReportDependency(ctx, online.DependencyRules, online.HealthUnavailable, "no rules worker is configured"); err != nil {
+			if closeWorker != nil {
+				closeWorker()
+			}
+			pool.Close()
+			return nil, nil, errors.New("online health initialization failed")
+		}
+	} else if err = health.ReportDependency(ctx, online.DependencyRules, online.HealthHealthy, "the rules process is configured"); err != nil {
+		if closeWorker != nil {
+			closeWorker()
+		}
+		pool.Close()
+		return nil, nil, errors.New("online health initialization failed")
+	}
+	if err = health.ReportDependency(ctx, online.DependencyDatabase, online.HealthHealthy, "the shared state is reachable"); err != nil {
+		if closeWorker != nil {
+			closeWorker()
+		}
+		pool.Close()
+		return nil, nil, errors.New("online health initialization failed")
+	}
 	authorizer, err := onlineauth.Open(ctx, pool, verifier, onlineauth.Options{
 		GuestCredentialTTL: cfg.Online.GuestCredentialTTL,
 		OwnershipProofTTL:  cfg.Online.OwnershipProofTTL,
@@ -129,13 +160,23 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	}
 	// The authorization service is the participant authorizer. The writer
 	// re-checks it inside every acceptance transaction.
-	onlineService, err := online.Open(ctx, pool, evaluator, online.WithSeatAuthorizer(authorizer))
+	onlineService, err := online.Open(ctx, pool, evaluator,
+		online.WithSeatAuthorizer(authorizer),
+		online.WithHealthReporter(health),
+		online.WithRecoveryGate(),
+	)
 	if err != nil {
 		if closeWorker != nil {
 			closeWorker()
 		}
 		pool.Close()
 		return nil, nil, errors.New("online service initialization failed")
+	}
+	// The canonical recovery runs before the service accepts traffic. The
+	// adjusted deadlines of the unfinished matches are published first, and
+	// the mutation path stays closed until the recovery completed.
+	if _, err = onlineService.RecoverFromInterruption(ctx); err != nil {
+		slog.Default().Error("online recovery failed; mutations stay closed", "error", err)
 	}
 	// The public profile service owns the stable public identity of an
 	// account and the explicit guest link. It writes only its own tables.
@@ -164,10 +205,15 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		Interval: cfg.Online.DeadlineSweepInterval,
 		Batch:    cfg.Online.DeadlineSweepBatch,
 	})
+	// The health monitor keeps the durable health in step with the
+	// dependencies, so a service outage never looks like an absent
+	// opponent.
+	stopHealth := StartHealthMonitor(ctx, pool, health, onlineService, HealthMonitorConfig{Interval: cfg.Online.HealthCheckInterval})
 	release := func() {
 		// The deadline loop stops before the pool closes, so no background
 		// sweep can use a closed connection.
 		stopDeadlines()
+		stopHealth()
 		if closeWorker != nil {
 			closeWorker()
 		}

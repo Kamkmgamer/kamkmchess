@@ -679,8 +679,22 @@ func TestPostgresOnlineRecoveryBudgetsSurviveControlChangesAndTakebacks(t *testi
 		t.Fatalf("the control change reset the spent budget: %+v", seat)
 	}
 	// The accepted move of that seat starts the budget again. The control
-	// change raised the control epoch, so the commands carry it.
-	if _, err = service.Execute(ctx, alice, moveOnlineCommandAt(matchID, "op-recovery-white-2", online.SeatWhite, 5, 2, "g1f3")); err != nil {
+	// change raised the control epoch, so the commands carry it. The seat is
+	// an agent seat now, so the move carries the lease of that seat.
+	lease, err := service.AcquireRunnerLease(ctx, alice, online.RunnerLeaseRequest{
+		SchemaVersion: online.ContractsSchemaVersion,
+		MatchID:       matchID,
+		Seat:          online.SeatWhite,
+		RunnerID:      "runner-recovery-01",
+		TurnVersion:   5,
+		ControlEpoch:  2,
+	})
+	if err != nil {
+		t.Fatalf("acquire the runner lease: %v", err)
+	}
+	whiteMove := moveOnlineCommandAt(matchID, "op-recovery-white-2", online.SeatWhite, 5, 2, "g1f3")
+	whiteMove.LeaseID = lease.LeaseID
+	if _, err = service.Execute(ctx, alice, whiteMove); err != nil {
 		t.Fatalf("accepted move: %v", err)
 	}
 	afterMove, err := service.GetMatch(ctx, matchID)

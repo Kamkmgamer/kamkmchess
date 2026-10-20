@@ -203,7 +203,7 @@ func (s *Service) settleOpeningExpiry(ctx context.Context, snapshot Match) (Dead
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	match, clock, _, err := lockMatch(ctx, tx, snapshot.MatchID)
+	match, clock, _, err := s.lockMatch(ctx, tx, snapshot.MatchID)
 	if err != nil {
 		return "", err
 	}
@@ -216,7 +216,7 @@ func (s *Service) settleOpeningExpiry(ctx context.Context, snapshot Match) (Dead
 	if match.Moves, err = loadMoves(ctx, tx, snapshot.MatchID); err != nil {
 		return "", err
 	}
-	decision, err := sampleDecision(ctx, tx, match.UpdatedAt)
+	decision, err := s.sampleDecision(ctx, tx, match.UpdatedAt)
 	if err != nil {
 		return "", err
 	}
@@ -275,7 +275,7 @@ func (s *Service) settleClockExpiry(ctx context.Context, snapshot Match) (Deadli
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	match, clock, _, err := lockMatch(ctx, tx, snapshot.MatchID)
+	match, clock, _, err := s.lockMatch(ctx, tx, snapshot.MatchID)
 	if err != nil {
 		return "", err
 	}
@@ -289,7 +289,7 @@ func (s *Service) settleClockExpiry(ctx context.Context, snapshot Match) (Deadli
 	// The decision time is re-sampled after every lock is held, so a sweep
 	// that waited for a busy match is judged against the time it acquired the
 	// lock.
-	decision, err := sampleDecision(ctx, tx, match.UpdatedAt)
+	decision, err := s.sampleDecision(ctx, tx, match.UpdatedAt)
 	if err != nil {
 		return "", err
 	}

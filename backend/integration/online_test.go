@@ -572,7 +572,22 @@ func TestPostgresOnlineAbortAndControlEpoch(t *testing.T) {
 	if _, err = service.Execute(ctx, alice, moveOnlineCommand(controlMatch, "op-control-stale", online.SeatWhite, 2, "e2e4")); !errors.Is(err, online.ErrConflict) {
 		t.Fatalf("old-epoch move error = %v, want ErrConflict", err)
 	}
-	accepted, err := service.Execute(ctx, alice, moveOnlineCommandAt(controlMatch, "op-control-move", online.SeatWhite, 2, 2, "e2e4"))
+	// An agent seat acts through a browser runner, so the accepted move
+	// carries the lease of that seat.
+	lease, err := service.AcquireRunnerLease(ctx, alice, online.RunnerLeaseRequest{
+		SchemaVersion: online.ContractsSchemaVersion,
+		MatchID:       controlMatch,
+		Seat:          online.SeatWhite,
+		RunnerID:      "runner-control-01",
+		TurnVersion:   2,
+		ControlEpoch:  2,
+	})
+	if err != nil {
+		t.Fatalf("acquire the runner lease: %v", err)
+	}
+	currentMove := moveOnlineCommandAt(controlMatch, "op-control-move", online.SeatWhite, 2, 2, "e2e4")
+	currentMove.LeaseID = lease.LeaseID
+	accepted, err := service.Execute(ctx, alice, currentMove)
 	if err != nil {
 		t.Fatalf("current-epoch move: %v", err)
 	}

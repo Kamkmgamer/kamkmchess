@@ -68,7 +68,10 @@ type onlineAPI struct {
 	// an authenticator without one still opens a bounded window that ends
 	// at the expiry of the presented credential.
 	streamAuthorizer OnlineStreamAuthorizer
-	options          OnlineOptions
+	// presence is the presence, claim and runner lease seam. It is optional:
+	// a service without it never exposes the routes that need it.
+	presence OnlinePresenceService
+	options  OnlineOptions
 }
 
 // NewOnline returns the participant-authorized online API.
@@ -96,6 +99,18 @@ func NewOnline(service OnlineService, authenticator OnlineAuthenticator, options
 	mux.HandleFunc("GET /v1/online/matches/{matchID}/updates", api.updates)
 	mux.HandleFunc("GET /v1/online/matches/{matchID}/operations/{operationID}", api.operation)
 	mux.HandleFunc("POST /v1/online/matches/{matchID}/commands", api.command)
+	// The presence, claim and runner lease routes exist only when the
+	// service implements their seam.
+	if presence, ok := service.(OnlinePresenceService); ok {
+		api.presence = presence
+		mux.HandleFunc("GET /v1/online/matches/{matchID}/presence", api.presenceView)
+		mux.HandleFunc("POST /v1/online/matches/{matchID}/presence", api.heartbeat)
+		mux.HandleFunc("POST /v1/online/matches/{matchID}/presence/keep-waiting", api.keepWaiting)
+		mux.HandleFunc("POST /v1/online/matches/{matchID}/claim", api.claim)
+		mux.HandleFunc("GET /v1/online/matches/{matchID}/runner/lease", api.readLease)
+		mux.HandleFunc("POST /v1/online/matches/{matchID}/runner/lease", api.writeLease)
+		mux.HandleFunc("POST /v1/online/matches/{matchID}/runner/request", api.runnerRequest)
+	}
 	return mux
 }
 
