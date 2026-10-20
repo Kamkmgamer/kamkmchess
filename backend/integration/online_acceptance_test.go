@@ -213,15 +213,15 @@ func TestPostgresOnlineAcceptedSetupRetrySurvivesUnavailableWorker(t *testing.T)
 }
 
 func TestPostgresOnlineTerminalClockChargesElapsedTime(t *testing.T) {
-	for _, action := range []string{"resign", "abort", "timeout"} {
+	for _, action := range []string{"resign", "cancel", "timeout"} {
 		t.Run(action, func(t *testing.T) {
 			ctx := context.Background()
 			service, pool := onlineService(t, timeoutEvaluator{winnerFor: timeoutWinForOpponent})
 			const matchID = "match-terminal-clock"
 			createOnlineMatch(t, service, matchID, "op-terminal-create")
-			if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-terminal-move", online.SeatWhite, 1, "e2e4")); err != nil {
-				t.Fatal(err)
-			}
+			// The opening exchange closes the reply window, so the side to
+			// move now runs a main clock.
+			playOpeningExchange(t, service, matchID, "op-terminal")
 			elapsed := 10 * time.Second
 			if action == "timeout" {
 				elapsed = 6 * time.Minute
@@ -233,18 +233,21 @@ func TestPostgresOnlineTerminalClockChargesElapsedTime(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			command := resignOnlineCommand(matchID, "op-terminal-result", online.SeatBlack, 2)
-			if action == "abort" {
-				command = abortOnlineCommand(matchID, "op-terminal-result", online.SeatBlack, 2)
+			if before.Clock.ActiveSeat == nil || *before.Clock.ActiveSeat != online.SeatWhite {
+				t.Fatalf("the opening reply did not start White's main clock: %+v", before.Clock)
+			}
+			command := resignOnlineCommand(matchID, "op-terminal-result", online.SeatBlack, 3)
+			if action == "cancel" {
+				command = cancelOnlineCommand(matchID, "op-terminal-result", online.SeatBlack, 3)
 			}
 			accepted, err := service.Execute(ctx, bob, command)
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := max(int64(0), before.Clock.BlackMs-accepted.Receipt.DecidedAt.Sub(*before.Clock.ActiveSince).Milliseconds())
+			want := max(int64(0), before.Clock.WhiteMs-accepted.Receipt.DecidedAt.Sub(*before.Clock.ActiveSince).Milliseconds())
 			after, err := service.GetMatch(ctx, matchID)
-			if err != nil || after.Clock.BlackMs != want || after.Clock.WhiteMs != before.Clock.WhiteMs {
-				t.Fatalf("final banks = %+v, want Black=%d and White=%d: %v", after.Clock, want, before.Clock.WhiteMs, err)
+			if err != nil || after.Clock.WhiteMs != want || after.Clock.BlackMs != before.Clock.BlackMs {
+				t.Fatalf("final banks = %+v, want White=%d and Black=%d: %v", after.Clock, want, before.Clock.BlackMs, err)
 			}
 			if after.Clock.ActiveSeat != nil || after.Clock.ActiveSince != nil || after.Clock.DeadlineAt != nil {
 				t.Fatalf("terminal clock is still running: %+v", after.Clock)
@@ -254,7 +257,7 @@ func TestPostgresOnlineTerminalClockChargesElapsedTime(t *testing.T) {
 				t.Fatalf("terminal retry changed receipt: %v", err)
 			}
 			again, err := service.GetMatch(ctx, matchID)
-			if err != nil || again.Clock.BlackMs != want {
+			if err != nil || again.Clock.WhiteMs != want {
 				t.Fatalf("retry charged elapsed time again: %+v, %v", again.Clock, err)
 			}
 		})

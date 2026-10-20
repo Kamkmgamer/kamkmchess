@@ -241,6 +241,37 @@ func TestOnlineEvaluatorWithBuiltWorker(t *testing.T) {
 	}
 }
 
+// A refused proposal stays a participant error, and an internal history
+// disagreement is reported as an unavailable rules service instead of a
+// conflict the participant can fix.
+func TestTranslateRejectionSeparatesRefusalsFromInternalDisagreement(t *testing.T) {
+	refused := map[string]error{
+		"illegal-move":      online.ErrActionNotAllowed,
+		"position-terminal": online.ErrActionNotAllowed,
+		"invalid-fen":       online.ErrInvalidContract,
+	}
+	for code, want := range refused {
+		err := translateRejection(&RejectionError{Code: code, Message: "refused"})
+		if !errors.Is(err, want) {
+			t.Errorf("%s error = %v, want %v", code, err, want)
+		}
+	}
+	for _, code := range []string{"invalid-history", "history-mismatch"} {
+		err := translateRejection(&RejectionError{Code: code, Message: "history"})
+		if !errors.Is(err, online.ErrUnavailable) {
+			t.Errorf("%s error = %v, want ErrUnavailable", code, err)
+		}
+		if errors.Is(err, online.ErrActionNotAllowed) || errors.Is(err, online.ErrStaleCandidate) || errors.Is(err, online.ErrConflict) {
+			t.Errorf("%s error = %v, want an unavailable service instead of a participant error", code, err)
+		}
+	}
+	other := translateRejection(&RejectionError{Code: "unknown-code", Message: "unknown"})
+	var rejected *RejectionError
+	if !errors.As(other, &rejected) {
+		t.Errorf("an unknown refusal code = %v, want the rejection unchanged", other)
+	}
+}
+
 func seatPtr(seat online.Seat) *online.Seat {
 	return &seat
 }

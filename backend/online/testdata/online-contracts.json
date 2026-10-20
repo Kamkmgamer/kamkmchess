@@ -1,7 +1,7 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "command": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "matchId": "match-contract-01",
     "operationId": "op-contract-0001",
     "expectedVersion": 0,
@@ -28,6 +28,79 @@
       }
     }
   },
+  "cancelCommand": {
+    "schemaVersion": 2,
+    "matchId": "match-contract-01",
+    "operationId": "op-contract-0002",
+    "expectedVersion": 3,
+    "seat": "white",
+    "controlEpoch": 1,
+    "action": { "kind": "cancel" }
+  },
+  "offerDrawCommand": {
+    "schemaVersion": 2,
+    "matchId": "match-contract-01",
+    "operationId": "op-contract-0003",
+    "expectedVersion": 3,
+    "seat": "white",
+    "controlEpoch": 1,
+    "action": { "kind": "offer_draw" }
+  },
+  "acceptDrawCommand": {
+    "schemaVersion": 2,
+    "matchId": "match-contract-01",
+    "operationId": "op-contract-0004",
+    "expectedVersion": 3,
+    "seat": "black",
+    "controlEpoch": 1,
+    "action": { "kind": "accept_draw", "offerId": "offer-contract-draw-01" }
+  },
+  "offerTakebackCommand": {
+    "schemaVersion": 2,
+    "matchId": "match-contract-01",
+    "operationId": "op-contract-0005",
+    "expectedVersion": 4,
+    "seat": "white",
+    "controlEpoch": 1,
+    "action": { "kind": "offer_takeback", "targetVersion": 3 }
+  },
+  "acceptTakebackCommand": {
+    "schemaVersion": 2,
+    "matchId": "match-contract-01",
+    "operationId": "op-contract-0006",
+    "expectedVersion": 4,
+    "seat": "black",
+    "controlEpoch": 1,
+    "action": { "kind": "accept_takeback", "offerId": "offer-contract-takeback-01" }
+  },
+  "recoveryAttemptCommand": {
+    "schemaVersion": 2,
+    "matchId": "match-contract-01",
+    "operationId": "op-contract-0007",
+    "expectedVersion": 4,
+    "seat": "white",
+    "controlEpoch": 1,
+    "action": { "kind": "record_recovery_attempt", "attempt": "illegal_move" }
+  },
+  "offerEvent": {
+    "schemaVersion": 2,
+    "matchId": "match-contract-01",
+    "version": 5,
+    "kind": "offer_created",
+    "seat": "white",
+    "controlEpoch": 1,
+    "decisionAt": "2026-10-20T10:00:05Z",
+    "acceptedAt": "2026-10-20T10:00:05Z",
+    "offer": {
+      "offerId": "offer-contract-takeback-01",
+      "matchId": "match-contract-01",
+      "kind": "takeback",
+      "seat": "white",
+      "targetVersion": 3,
+      "baseVersion": 5,
+      "createdAt": "2026-10-20T10:00:05Z"
+    }
+  },
   "candidate": {
     "schemaVersion": 1,
     "evaluatedVersion": 1,
@@ -50,7 +123,7 @@
     "winner": "white"
   },
   "receipt": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "matchId": "match-contract-01",
     "operationId": "op-contract-0001",
     "outcome": "accepted",
@@ -58,7 +131,7 @@
     "controlEpoch": 1,
     "decidedAt": "2026-10-20T10:00:00Z",
     "event": {
-      "schemaVersion": 1,
+      "schemaVersion": 2,
       "matchId": "match-contract-01",
       "version": 1,
       "kind": "match_created",
@@ -85,7 +158,7 @@
     "completedAt": "2026-10-20T10:02:00Z"
   },
   "queueEntry": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "entryId": "queue-contract-01",
     "owner": { "kind": "account", "id": "user_a" },
     "control": { "kind": "agent", "modelLabel": "Declared Model" },
@@ -99,7 +172,7 @@
     "updatedAt": "2026-10-20T10:00:00Z"
   },
   "runnerLease": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "leaseId": "lease-contract-01",
     "matchId": "match-contract-01",
     "seat": "white",
@@ -112,7 +185,7 @@
     "revokedAt": null
   },
   "deletionMarker": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "markerId": "op-contract-remove",
     "kind": "replay_removal",
     "subjectKind": "match",

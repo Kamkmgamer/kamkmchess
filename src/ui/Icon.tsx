@@ -12,6 +12,8 @@ const paths = {
   draw: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 3v18M7 7.5h3M6.5 11h3.5M7 14.5h3M6.5 18h3.5',
   resign: 'M6 21V4M6 4h10l-2 4 2 4H6',
   account: 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0M4 21v-2a8 8 0 0 1 16 0v2',
+  save: 'M3 3h14l4 4v14H3zM7 3v6h10V3M7 21v-8h10v8',
+  link: 'M10 13a5 5 0 0 0 7 .5l3-3a5 5 0 0 0-7-7l-2 2m3 5a5 5 0 0 0-7-.5l-3 3a5 5 0 0 0 7 7l2-2',
   plus: 'M12 4v16M4 12h16', check: 'm5 12 4 4L19 6',
 } as const;
 export type IconName = keyof typeof paths;

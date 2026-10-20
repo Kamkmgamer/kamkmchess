@@ -12,15 +12,22 @@ import (
 )
 
 type contractFixture struct {
-	SchemaVersion    int              `json:"schemaVersion"`
-	Command          json.RawMessage  `json:"command"`
-	Candidate        Candidate        `json:"candidate"`
-	TimeoutFacts     TimeoutFacts     `json:"timeoutFacts"`
-	Receipt          Receipt          `json:"receipt"`
-	PublicProjection PublicProjection `json:"publicProjection"`
-	QueueEntry       QueueEntry       `json:"queueEntry"`
-	RunnerLease      RunnerLease      `json:"runnerLease"`
-	DeletionMarker   DeletionMarker   `json:"deletionMarker"`
+	SchemaVersion         int              `json:"schemaVersion"`
+	Command               json.RawMessage  `json:"command"`
+	CancelCommand         json.RawMessage  `json:"cancelCommand"`
+	OfferDrawCommand      json.RawMessage  `json:"offerDrawCommand"`
+	AcceptDrawCommand     json.RawMessage  `json:"acceptDrawCommand"`
+	OfferTakebackCommand  json.RawMessage  `json:"offerTakebackCommand"`
+	AcceptTakebackCommand json.RawMessage  `json:"acceptTakebackCommand"`
+	RecoveryAttemptCmd    json.RawMessage  `json:"recoveryAttemptCommand"`
+	OfferEvent            Event            `json:"offerEvent"`
+	Candidate             Candidate        `json:"candidate"`
+	TimeoutFacts          TimeoutFacts     `json:"timeoutFacts"`
+	Receipt               Receipt          `json:"receipt"`
+	PublicProjection      PublicProjection `json:"publicProjection"`
+	QueueEntry            QueueEntry       `json:"queueEntry"`
+	RunnerLease           RunnerLease      `json:"runnerLease"`
+	DeletionMarker        DeletionMarker   `json:"deletionMarker"`
 }
 
 func loadFixture(t *testing.T) contractFixture {
@@ -47,6 +54,64 @@ func TestGoldenContractFixtureRoundTrips(t *testing.T) {
 	}
 	if cmd.Action.Kind != ActionCreateMatch || cmd.MatchID != "match-contract-01" {
 		t.Fatalf("fixture command = %+v", cmd)
+	}
+	for name, raw := range map[string]json.RawMessage{
+		"cancel":           fixture.CancelCommand,
+		"offer draw":       fixture.OfferDrawCommand,
+		"accept draw":      fixture.AcceptDrawCommand,
+		"offer takeback":   fixture.OfferTakebackCommand,
+		"accept takeback":  fixture.AcceptTakebackCommand,
+		"recovery attempt": fixture.RecoveryAttemptCmd,
+	} {
+		parsed, err := ParseCommand(raw)
+		if err != nil {
+			t.Fatalf("parse fixture %s command: %v", name, err)
+		}
+		if parsed.SchemaVersion != ContractsSchemaVersion {
+			t.Fatalf("fixture %s command schema version = %d", name, parsed.SchemaVersion)
+		}
+	}
+	takeback, err := ParseCommand(fixture.OfferTakebackCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if takeback.Action.Kind != ActionOfferTakeback || takeback.Action.OfferTakeback.TargetVersion != 3 {
+		t.Fatalf("fixture takeback command = %+v", takeback.Action)
+	}
+	recovery, err := ParseCommand(fixture.RecoveryAttemptCmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovery.Action.Kind != ActionRecordRecoveryAttempt || recovery.Action.Recovery.Attempt != RecoveryIllegalMove {
+		t.Fatalf("fixture recovery command = %+v", recovery.Action)
+	}
+	// The acceptance names the exact offer it consents to.
+	acceptDraw, err := ParseCommand(fixture.AcceptDrawCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acceptDraw.Action.Kind != ActionAcceptDraw || acceptDraw.Action.AcceptOffer.OfferID != "offer-contract-draw-01" {
+		t.Fatalf("fixture accept draw command = %+v", acceptDraw.Action)
+	}
+	acceptTakeback, err := ParseCommand(fixture.AcceptTakebackCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acceptTakeback.Action.Kind != ActionAcceptTakeback || acceptTakeback.Action.AcceptOffer.OfferID != "offer-contract-takeback-01" {
+		t.Fatalf("fixture accept takeback command = %+v", acceptTakeback.Action)
+	}
+	// The offer event carries the exact offer it created.
+	if fixture.OfferEvent.Kind != EventOfferCreated || fixture.OfferEvent.Offer == nil {
+		t.Fatalf("fixture offer event = %+v", fixture.OfferEvent)
+	}
+	if fixture.OfferEvent.Offer.OfferID != "offer-contract-takeback-01" || fixture.OfferEvent.Offer.Kind != OfferTakeback {
+		t.Fatalf("fixture offer event payload = %+v", fixture.OfferEvent.Offer)
+	}
+	if fixture.OfferEvent.Offer.TargetVersion == nil || *fixture.OfferEvent.Offer.TargetVersion != 3 {
+		t.Fatalf("fixture offer event target = %+v", fixture.OfferEvent.Offer)
+	}
+	if fixture.OfferEvent.Offer.BaseVersion != fixture.OfferEvent.Version {
+		t.Fatalf("the offer is not bound to the version it produced: %+v", fixture.OfferEvent.Offer)
 	}
 	if err = fixture.Candidate.Validate(); err != nil {
 		t.Fatalf("candidate: %v", err)
@@ -83,13 +148,21 @@ func TestGoldenContractFixtureRoundTrips(t *testing.T) {
 
 func TestActionAndCommandRejectUnknownOrChangedPayloads(t *testing.T) {
 	cases := []string{
-		`{"schemaVersion":1,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"resign","sql":"delete from online_matches"}}`,
-		`{"schemaVersion":1,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4","fen":"arbitrary"}}`,
-		`{"schemaVersion":1,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"unknown"}}`,
-		`{"schemaVersion":1,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"create_match","setup":{"variant":"orthodox","startingFen":"x","timeControl":{"startingTimeMs":1,"incrementMs":0},"seats":{}}},"state":{"apiKey":"secret"}}`,
-		`{"schemaVersion":1,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"submit_move","move":"E2E4"}}`,
-		`{"schemaVersion":1,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"set_control","control":{"kind":"agent","modelLabel":"owner@example.com"}}}`,
-		`{"schemaVersion":1,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"resign"}} trailing`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"resign","sql":"delete from online_matches"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4","fen":"arbitrary"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"unknown"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"create_match","setup":{"variant":"orthodox","startingFen":"x","timeControl":{"startingTimeMs":1,"incrementMs":0},"seats":{}}},"state":{"apiKey":"secret"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"submit_move","move":"E2E4"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"set_control","control":{"kind":"agent","modelLabel":"owner@example.com"}}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"resign"}} trailing`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"cancel","reason":"resign"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"offer_takeback","targetVersion":0}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"record_recovery_attempt","attempt":"anything"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"accept_draw"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"black","controlEpoch":1,"action":{"kind":"accept_takeback"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"black","controlEpoch":1,"action":{"kind":"accept_takeback","offerId":"short"}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"black","controlEpoch":1,"action":{"kind":"accept_takeback","offerId":"offer-contract-takeback-01","targetVersion":3}}`,
+		`{"schemaVersion":2,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"black","controlEpoch":1,"action":{"kind":"accept_draw","offerId":"offer-contract-draw-01","sql":"delete from online_offers"}}`,
 	}
 	for i, raw := range cases {
 		if _, err := ParseCommand([]byte(raw)); !errors.Is(err, ErrInvalidContract) {
@@ -133,6 +206,30 @@ func TestCommandFingerprintIsStableAndActorBound(t *testing.T) {
 	}
 	if first == third {
 		t.Fatal("changed expected version produced the same fingerprint")
+	}
+}
+
+// The consent is bound to the exact offered identity, so a changed offer
+// cannot reuse an accepted operation ID.
+func TestCommandFingerprintCoversTheAcceptedOffer(t *testing.T) {
+	fixture := loadFixture(t)
+	accept, err := ParseCommand(fixture.AcceptTakebackCommand)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice := ParticipantRef{Kind: ParticipantAccount, ID: "user_a"}
+	first, err := CommandFingerprint(alice, accept)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := accept
+	other.Action = Action{Kind: ActionAcceptTakeback, AcceptOffer: &AcceptOfferAction{OfferID: "offer-contract-takeback-02"}}
+	second, err := CommandFingerprint(alice, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("a changed offered identity produced the same fingerprint")
 	}
 }
 
@@ -338,21 +435,33 @@ func TestApplyAcceptedMoveUsesDecisionTimeAndArmsOpponent(t *testing.T) {
 	if afterWhite.WhiteMs != 11_000 {
 		t.Fatalf("white increment = %d", afterWhite.WhiteMs)
 	}
-	if afterWhite.ActiveSeat == nil || *afterWhite.ActiveSeat != SeatBlack {
-		t.Fatalf("active seat = %v", afterWhite.ActiveSeat)
+	// The opening move arms the reply window instead of a main clock. No bank
+	// runs before its side's first accepted move.
+	if afterWhite.ActiveSeat != nil || afterWhite.ActiveSince != nil || afterWhite.DeadlineAt != nil {
+		t.Fatalf("the opening move started a main clock: %+v", afterWhite)
 	}
-	if afterWhite.DeadlineAt == nil || !afterWhite.DeadlineAt.Equal(start.Add(10*time.Second)) {
-		t.Fatalf("deadline = %v", afterWhite.DeadlineAt)
+	if afterWhite.ReplySeat == nil || *afterWhite.ReplySeat != SeatBlack {
+		t.Fatalf("reply seat = %v", afterWhite.ReplySeat)
+	}
+	if afterWhite.ReplyDeadlineAt == nil || !afterWhite.ReplyDeadlineAt.Equal(start.Add(15*time.Second)) {
+		t.Fatalf("reply deadline = %v", afterWhite.ReplyDeadlineAt)
 	}
 	if !afterWhite.WhiteMoved || afterWhite.BlackMoved {
 		t.Fatalf("moved flags = %v/%v", afterWhite.WhiteMoved, afterWhite.BlackMoved)
 	}
 	afterBlack := ApplyAcceptedMove(afterWhite, tc, SeatBlack, start.Add(3*time.Second), false)
-	if afterBlack.BlackMs != 8_000 {
-		t.Fatalf("black bank after 3s = %d", afterBlack.BlackMs)
+	// The responder's bank never ran, so the reply costs no time.
+	if afterBlack.BlackMs != 11_000 {
+		t.Fatalf("black bank after the reply = %d", afterBlack.BlackMs)
+	}
+	if afterBlack.ReplySeat != nil || afterBlack.ReplyDeadlineAt != nil {
+		t.Fatalf("the reply left the window armed: %+v", afterBlack)
 	}
 	if afterBlack.ActiveSeat == nil || *afterBlack.ActiveSeat != SeatWhite {
 		t.Fatalf("active seat after black = %v", afterBlack.ActiveSeat)
+	}
+	if afterBlack.DeadlineAt == nil || !afterBlack.DeadlineAt.Equal(start.Add(3*time.Second).Add(11*time.Second)) {
+		t.Fatalf("deadline = %v", afterBlack.DeadlineAt)
 	}
 	if !afterBlack.BlackMoved {
 		t.Fatal("black moved flag not set")
@@ -360,6 +469,47 @@ func TestApplyAcceptedMoveUsesDecisionTimeAndArmsOpponent(t *testing.T) {
 	terminal := ApplyAcceptedMove(afterBlack, tc, SeatWhite, start.Add(4*time.Second), true)
 	if terminal.ActiveSeat != nil || terminal.DeadlineAt != nil {
 		t.Fatal("terminal move left an active deadline")
+	}
+}
+
+// MAT-01: the opening phase of a match. No main bank runs before its side's
+// first accepted move, the first move arms a fifteen second reply window, and
+// the reply starts the next side's main clock.
+func TestOpeningPhaseRunsNoMainBankBeforeTheFirstMove(t *testing.T) {
+	tc := TimeControl{StartingTimeMs: 60_000, IncrementMs: 2_000}
+	clock := InitialClock(tc)
+	start := time.Date(2026, 10, 20, 10, 0, 0, 0, time.UTC)
+	if clock.ActiveSeat != nil || clock.DeadlineAt != nil || clock.ReplySeat != nil {
+		t.Fatalf("a new match armed a deadline: %+v", clock)
+	}
+	afterOpen := ApplyAcceptedMove(clock, tc, SeatBlack, start, false)
+	if afterOpen.BlackMs != 62_000 {
+		t.Fatalf("the opening move did not add the increment once: %d", afterOpen.BlackMs)
+	}
+	if afterOpen.WhiteMs != 60_000 {
+		t.Fatalf("the responder's bank changed before its first move: %d", afterOpen.WhiteMs)
+	}
+	if afterOpen.ActiveSeat != nil || afterOpen.DeadlineAt != nil {
+		t.Fatalf("the opening move started a main clock: %+v", afterOpen)
+	}
+	if afterOpen.ReplySeat == nil || *afterOpen.ReplySeat != SeatWhite {
+		t.Fatalf("the reply window names the wrong seat: %v", afterOpen.ReplySeat)
+	}
+	afterReply := ApplyAcceptedMove(afterOpen, tc, SeatWhite, start.Add(12*time.Second), false)
+	if afterReply.WhiteMs != 62_000 {
+		t.Fatalf("the reply charged the responder's bank: %d", afterReply.WhiteMs)
+	}
+	if afterReply.ActiveSeat == nil || *afterReply.ActiveSeat != SeatBlack {
+		t.Fatalf("the reply did not start the next side's clock: %v", afterReply.ActiveSeat)
+	}
+	if afterReply.ActiveSince == nil || !afterReply.ActiveSince.Equal(start.Add(12*time.Second)) {
+		t.Fatalf("the main clock started at %v", afterReply.ActiveSince)
+	}
+	if afterReply.DeadlineAt == nil || !afterReply.DeadlineAt.Equal(start.Add(12*time.Second).Add(62*time.Second)) {
+		t.Fatalf("deadline = %v", afterReply.DeadlineAt)
+	}
+	if afterReply.TurnNumber != 2 {
+		t.Fatalf("turn number = %d, want one accepted move per turn", afterReply.TurnNumber)
 	}
 }
 

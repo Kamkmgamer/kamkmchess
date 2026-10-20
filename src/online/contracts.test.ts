@@ -18,6 +18,13 @@ import {
 const fixture = JSON.parse(fixtureRaw) as {
   schemaVersion: number;
   command: unknown;
+  cancelCommand: unknown;
+  offerDrawCommand: unknown;
+  acceptDrawCommand: unknown;
+  offerTakebackCommand: unknown;
+  acceptTakebackCommand: unknown;
+  recoveryAttemptCommand: unknown;
+  offerEvent: unknown;
   candidate: unknown;
   timeoutFacts: unknown;
   receipt: unknown;
@@ -85,6 +92,115 @@ describe('online shared contracts', () => {
     const marker = parseDeletionMarker(fixture.deletionMarker);
     expect(marker.kind).toBe('replay_removal');
     expect(marker.matchId).toBe('match-contract-01');
+  });
+
+  it('parses the shared cancel, draw, takeback and recovery commands', () => {
+    const cancel = parseCommand(fixture.cancelCommand);
+    expect(cancel.action.kind).toBe('cancel');
+
+    const offerDraw = parseCommand(fixture.offerDrawCommand);
+    expect(offerDraw.action.kind).toBe('offer_draw');
+
+    const acceptDraw = parseCommand(fixture.acceptDrawCommand);
+    expect(acceptDraw.action.kind).toBe('accept_draw');
+    expect(acceptDraw.seat).toBe('black');
+    if (acceptDraw.action.kind === 'accept_draw') {
+      expect(acceptDraw.action.offerId).toBe('offer-contract-draw-01');
+    }
+
+    const offerTakeback = parseCommand(fixture.offerTakebackCommand);
+    expect(offerTakeback.action.kind).toBe('offer_takeback');
+    if (offerTakeback.action.kind === 'offer_takeback') {
+      expect(offerTakeback.action.targetVersion).toBe(3);
+    }
+
+    const acceptTakeback = parseCommand(fixture.acceptTakebackCommand);
+    expect(acceptTakeback.action.kind).toBe('accept_takeback');
+    if (acceptTakeback.action.kind === 'accept_takeback') {
+      expect(acceptTakeback.action.offerId).toBe('offer-contract-takeback-01');
+    }
+
+    const recovery = parseCommand(fixture.recoveryAttemptCommand);
+    expect(recovery.action.kind).toBe('record_recovery_attempt');
+    if (recovery.action.kind === 'record_recovery_attempt') {
+      expect(recovery.action.attempt).toBe('illegal_move');
+    }
+  });
+
+  it('rejects an unknown or unsafe payload for the new actions', () => {
+    const takeback = fixture.offerTakebackCommand as Record<string, unknown>;
+    expect(() =>
+      parseCommand({
+        ...takeback,
+        action: { kind: 'offer_takeback', targetVersion: 0 },
+      }),
+    ).toThrow(OnlineContractError);
+    expect(() =>
+      parseCommand({
+        ...takeback,
+        action: { kind: 'offer_takeback', targetVersion: 3, position: 'arbitrary' },
+      }),
+    ).toThrow(OnlineContractError);
+    const recovery = fixture.recoveryAttemptCommand as Record<string, unknown>;
+    expect(() =>
+      parseCommand({
+        ...recovery,
+        action: { kind: 'record_recovery_attempt', attempt: 'anything' },
+      }),
+    ).toThrow(OnlineContractError);
+    expect(() =>
+      parseCommand({
+        ...recovery,
+        action: { kind: 'record_recovery_attempt', attempt: 'illegal_move', token: 'secret' },
+      }),
+    ).toThrow(OnlineContractError);
+    const cancel = fixture.cancelCommand as Record<string, unknown>;
+    expect(() =>
+      parseCommand({
+        ...cancel,
+        action: { kind: 'cancel', reason: 'resign' },
+      }),
+    ).toThrow(OnlineContractError);
+  });
+
+  it('requires the exact offered identity for a consent', () => {
+    const acceptTakeback = fixture.acceptTakebackCommand as Record<string, unknown>;
+    expect(() =>
+      parseCommand({
+        ...acceptTakeback,
+        action: { kind: 'accept_takeback' },
+      }),
+    ).toThrow(OnlineContractError);
+    expect(() =>
+      parseCommand({
+        ...acceptTakeback,
+        action: { kind: 'accept_takeback', offerId: 'short' },
+      }),
+    ).toThrow(OnlineContractError);
+    expect(() =>
+      parseCommand({
+        ...acceptTakeback,
+        action: { kind: 'accept_takeback', offerId: 'offer-contract-takeback-01', targetVersion: 3 },
+      }),
+    ).toThrow(OnlineContractError);
+    const acceptDraw = fixture.acceptDrawCommand as Record<string, unknown>;
+    expect(() =>
+      parseCommand({
+        ...acceptDraw,
+        action: { kind: 'accept_draw' },
+      }),
+    ).toThrow(OnlineContractError);
+  });
+
+  it('parses the offer event of the shared fixture', () => {
+    const receipt = parseReceipt({
+      ...(fixture.receipt as Record<string, unknown>),
+      event: fixture.offerEvent,
+    });
+    expect(receipt.event?.kind).toBe('offer_created');
+    expect(receipt.event?.offer?.offerId).toBe('offer-contract-takeback-01');
+    expect(receipt.event?.offer?.kind).toBe('takeback');
+    expect(receipt.event?.offer?.targetVersion).toBe(3);
   });
 
   it('is stable across a JSON round trip', () => {
@@ -183,7 +299,7 @@ describe('online shared contracts', () => {
 
   it('rejects unsupported versions and malformed hashes', () => {
     const command = fixture.command as Record<string, unknown>;
-    expect(() => parseCommand({ ...command, schemaVersion: 2 })).toThrow(OnlineContractError);
+    expect(() => parseCommand({ ...command, schemaVersion: 3 })).toThrow(OnlineContractError);
     const candidate = fixture.candidate as Record<string, unknown>;
     expect(() => parseCandidate({ ...candidate, evaluatedInputHash: 'not-a-hash' })).toThrow(OnlineContractError);
     expect(() => parseCandidate({ ...candidate, schemaVersion: 2 })).toThrow(OnlineContractError);

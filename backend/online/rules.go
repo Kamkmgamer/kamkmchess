@@ -14,33 +14,86 @@ func InitialClock(tc TimeControl) ClockState {
 	}
 }
 
-// ApplyAcceptedMove updates clock banks with authoritative decision time. It
-// never uses a client timestamp. When the move is terminal, no next deadline is
-// armed; otherwise the opponent receives the remaining bank and deadline.
+// ApplyAcceptedMove settles the clocks for one accepted move.
+//
+// The opening of a match is a distinct phase. Before the first accepted move
+// no clock runs at all. That first accepted move does not start the other
+// side's main clock either: it arms a 15 second reply window instead. The
+// responder's accepted reply closes the window, and only then does the main
+// clock of the side to move start. Every accepted move adds the configured
+// increment exactly once, including the opening move.
+//
+// The mover's own bank is charged for the time that ran before this
+// decision. A bank that never started running is never charged.
 func ApplyAcceptedMove(clock ClockState, tc TimeControl, seat Seat, decision time.Time, terminal bool) ClockState {
 	next := chargeActiveClock(clock, decision)
 	next.setBank(seat, next.Bank(seat)+tc.IncrementMs)
 	next.setMoved(seat)
 	next.TurnNumber++
 	if terminal {
-		next.ActiveSeat = nil
-		next.ActiveSince = nil
-		next.DeadlineAt = nil
-		return next
+		return stopClock(next)
 	}
 	opponent, ok := seat.Other()
 	if !ok {
-		next.ActiveSeat = nil
-		next.ActiveSince = nil
-		next.DeadlineAt = nil
-		return next
+		return stopClock(next)
 	}
-	since := decision.UTC()
-	deadline := since.Add(time.Duration(next.Bank(opponent)) * time.Millisecond)
-	next.ActiveSeat = &opponent
-	next.ActiveSince = &since
-	next.DeadlineAt = &deadline
+	switch {
+	case clock.AwaitingOpeningReply():
+		// The responder answered inside the window. The window closes and the
+		// side to move starts its main clock.
+		next.ReplySeat = nil
+		next.ReplyDeadlineAt = nil
+		next.armMainClock(opponent, decision)
+	case clock.ActiveSeat == nil:
+		// The opening move. No main clock runs yet.
+		next.armReplyWindow(opponent, decision)
+	default:
+		next.armMainClock(opponent, decision)
+	}
 	return next
+}
+
+// takebacksAllowed reports whether the match left the opening exchange.
+//
+// A takeback needs a completed opening exchange, so the fifteen second reply
+// window, its deadline and the first-move flags of a match are never touched
+// by a takeback request. The flags are historical: a takeback that restores
+// the starting position does not reopen the opening phase.
+func takebacksAllowed(clock ClockState) bool {
+	return clock.Moved(SeatWhite) && clock.Moved(SeatBlack)
+}
+
+// armMainClock starts one side's main clock from the authoritative decision
+// time. The deadline is absolute, so a later decision charges the whole
+// elapsed time at once.
+func (c *ClockState) armMainClock(seat Seat, decision time.Time) {
+	since := decision.UTC()
+	deadline := since.Add(time.Duration(c.Bank(seat)) * time.Millisecond)
+	c.ActiveSeat = &seat
+	c.ActiveSince = &since
+	c.DeadlineAt = &deadline
+}
+
+// armReplyWindow starts the opening reply window instead of a main clock.
+func (c *ClockState) armReplyWindow(seat Seat, decision time.Time) {
+	since := decision.UTC()
+	deadline := since.Add(time.Duration(OpeningReplyWindowMs) * time.Millisecond)
+	c.ActiveSeat = nil
+	c.ActiveSince = nil
+	c.DeadlineAt = nil
+	c.ReplySeat = &seat
+	c.ReplyDeadlineAt = &deadline
+}
+
+// stopClock clears every armed deadline. It ends the match's clocks without
+// changing the banks.
+func stopClock(clock ClockState) ClockState {
+	clock.ActiveSeat = nil
+	clock.ActiveSince = nil
+	clock.DeadlineAt = nil
+	clock.ReplySeat = nil
+	clock.ReplyDeadlineAt = nil
+	return clock
 }
 
 // chargeActiveClock settles only elapsed playing time, without adding an

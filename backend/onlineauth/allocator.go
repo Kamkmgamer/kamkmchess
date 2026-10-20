@@ -101,11 +101,11 @@ func (a *Allocator) AcceptInvitation(ctx context.Context, request AcceptInvitati
 	if err != nil {
 		return IssuedSeatCredentials{}, err
 	}
-	credentialID, err := newIdentifier()
+	credentialID, err := newIdentifier("kg")
 	if err != nil {
 		return IssuedSeatCredentials{}, err
 	}
-	proofID, err := newIdentifier()
+	proofID, err := newIdentifier("kgp_")
 	if err != nil {
 		return IssuedSeatCredentials{}, err
 	}
@@ -201,7 +201,7 @@ func (a *Allocator) IssueOwnershipProof(ctx context.Context, seatSecret, origin 
 	if err != nil {
 		return IssuedOwnershipProof{}, err
 	}
-	proofID, err := newIdentifier()
+	proofID, err := newIdentifier("kgp_")
 	if err != nil {
 		return IssuedOwnershipProof{}, err
 	}
@@ -278,61 +278,7 @@ func (a *Allocator) IssueOwnershipProof(ctx context.Context, seatSecret, origin 
 // linking transaction, so a proof stays usable until that transaction
 // commits.
 func (s *Service) VerifyOwnershipProof(ctx context.Context, secret, origin string) (OwnershipProof, error) {
-	if !secretShape(secret, proofPrefix) {
-		return OwnershipProof{}, ErrUnauthenticated
-	}
-	if origin == "" {
-		return OwnershipProof{}, ErrOriginRequired
-	}
-	var (
-		proofID                string
-		guestID                string
-		matchID                string
-		seat                   string
-		issuedAt               time.Time
-		expiresAt              time.Time
-		proofRevokedAt         *time.Time
-		credentialGuestID      string
-		credentialMatchID      string
-		credentialSeat         string
-		credentialOrigin       string
-		credentialExpiresAt    time.Time
-		credentialRevokedAt    *time.Time
-		credentialSupersededAt *time.Time
-		seatOwnerKind          string
-		seatOwnerID            string
-	)
-	// The seat join makes a proof for a seat that no longer exists fail the
-	// same way an unknown proof fails.
-	err := s.db.QueryRow(ctx, `SELECT p.proof_id,p.guest_id,p.match_id,p.seat,p.issued_at,p.expires_at,p.revoked_at,c.guest_id,c.match_id,c.seat,c.origin,c.expires_at,c.revoked_at,c.superseded_at,s.owner_kind,s.owner_id FROM online_guest_ownership_proofs p JOIN online_guest_seat_credentials c ON c.credential_id=p.credential_id JOIN online_seats s ON s.match_id=p.match_id AND s.seat=p.seat WHERE p.proof_hash=$1`,
-		hashSecret("ownership-proof", secret)).Scan(&proofID, &guestID, &matchID, &seat, &issuedAt, &expiresAt, &proofRevokedAt, &credentialGuestID, &credentialMatchID, &credentialSeat, &credentialOrigin, &credentialExpiresAt, &credentialRevokedAt, &credentialSupersededAt, &seatOwnerKind, &seatOwnerID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return OwnershipProof{}, ErrUnauthenticated
-		}
-		return OwnershipProof{}, err
-	}
-	if proofRevokedAt != nil || !s.now().Before(expiresAt.UTC()) {
-		return OwnershipProof{}, ErrUnauthenticated
-	}
-	// The parent credential must still be live. A dead credential invalidates
-	// every proof it issued.
-	if credentialRevokedAt != nil || credentialSupersededAt != nil || !s.now().Before(credentialExpiresAt.UTC()) {
-		return OwnershipProof{}, ErrUnauthenticated
-	}
-	// The proof must name the seat and the guest of its credential.
-	if credentialGuestID != guestID || credentialMatchID != matchID || credentialSeat != seat {
-		return OwnershipProof{}, ErrUnauthenticated
-	}
-	// The credential is origin scoped.
-	if credentialOrigin != origin {
-		return OwnershipProof{}, ErrUnauthenticated
-	}
-	// The seat must still belong to the guest the proof names.
-	if seatOwnerKind != string(online.ParticipantGuest) || seatOwnerID != guestID {
-		return OwnershipProof{}, ErrUnauthenticated
-	}
-	return OwnershipProof{ProofID: proofID, GuestID: guestID, MatchID: matchID, Seat: online.Seat(seat), IssuedAt: issuedAt.UTC(), ExpiresAt: expiresAt.UTC()}, nil
+	return s.readLiveProof(ctx, s.db, secret, origin)
 }
 
 // AuthorizeGuestLink verifies an ownership proof for an explicit account link.
@@ -355,7 +301,7 @@ func (s *Service) AuthorizeGuestLink(ctx context.Context, proofSecret, origin st
 	if origin == "" {
 		return GuestLinkAuthorization{}, ErrOriginRequired
 	}
-	if err := s.authorizeAccountPrincipal(ctx, account, origin); err != nil {
+	if err := s.authorizeAccountPrincipal(ctx, s.db, account, origin); err != nil {
 		return GuestLinkAuthorization{}, err
 	}
 	proof, err := s.VerifyOwnershipProof(ctx, proofSecret, origin)
@@ -381,7 +327,12 @@ func (s *Service) AuthorizeGuestLink(ctx context.Context, proofSecret, origin st
 // revoked must not authorize a link even when its token would still verify.
 // Every failure returns the same error so a caller cannot learn which part of
 // the account identity failed.
-func (s *Service) authorizeAccountPrincipal(ctx context.Context, account Principal, origin string) error {
+//
+// The revocation read runs against the caller's querier, so a caller that
+// holds the account lock checks the revocation inside the same transaction
+// that performs the action. A revocation that commits while the caller waits
+// for the lock is therefore visible to this check.
+func (s *Service) authorizeAccountPrincipal(ctx context.Context, q online.Querier, account Principal, origin string) error {
 	if account.Kind != online.ParticipantAccount {
 		return ErrUnauthenticated
 	}
@@ -399,7 +350,7 @@ func (s *Service) authorizeAccountPrincipal(ctx context.Context, account Princip
 	if !s.now().Before(account.ExpiresAt.UTC()) {
 		return ErrUnauthenticated
 	}
-	revoked, err := s.sessionRevoked(ctx, s.db, account.Subject, account.SessionID)
+	revoked, err := s.sessionRevoked(ctx, q, account.Subject, account.SessionID)
 	if err != nil {
 		return err
 	}
@@ -491,12 +442,15 @@ func seatOwnedByGuest(ctx context.Context, q online.Querier, matchID string, sea
 }
 
 // newIdentifier returns a random, non-secret identifier for a stored row.
-func newIdentifier() (string, error) {
+//
+// The prefix separates the identifier kinds, so a proof identifier can never
+// be mistaken for a seat credential identifier.
+func newIdentifier(prefix string) (string, error) {
 	raw := make([]byte, 12)
 	if _, err := rand.Read(raw); err != nil {
 		return "", errors.New("onlineauth: secure random source unavailable")
 	}
-	return "kg" + base64.RawURLEncoding.EncodeToString(raw), nil
+	return prefix + base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func matchIDShape(value string) bool {

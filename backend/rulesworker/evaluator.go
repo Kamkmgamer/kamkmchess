@@ -162,7 +162,7 @@ func (e *OnlineEvaluator) Evaluate(ctx context.Context, input online.RulesInput)
 		RulesPolicyVersion: input.RulesPolicyVersion,
 	})
 	if err != nil {
-		return online.Candidate{}, err
+		return online.Candidate{}, translateRejection(err)
 	}
 	if response.Candidate == nil {
 		return online.Candidate{}, fmt.Errorf("%w: move response has no candidate", ErrInvalidRulesInput)
@@ -186,6 +186,32 @@ func (e *OnlineEvaluator) Evaluate(ctx context.Context, input online.RulesInput)
 		return online.Candidate{}, err
 	}
 	return candidate, nil
+}
+
+// translateRejection maps a rules-process refusal to the shared online
+// contract. An illegal or terminal proposal is a refused intent, not an
+// unavailable service.
+//
+// A history that does not match the evaluated position is different: the
+// writer and the rules process disagree about the position itself. That is an
+// internal consistency failure, not a conflict the participant can fix, so it
+// is reported as an unavailable rules service instead of a user-fixable
+// stale candidate.
+func translateRejection(err error) error {
+	var rejected *RejectionError
+	if !errors.As(err, &rejected) {
+		return err
+	}
+	switch rejected.Code {
+	case "illegal-move", "position-terminal":
+		return fmt.Errorf("%w: %s", online.ErrActionNotAllowed, rejected.Message)
+	case "invalid-history", "history-mismatch":
+		return fmt.Errorf("%w: %s", online.ErrUnavailable, rejected.Message)
+	case "invalid-fen":
+		return fmt.Errorf("%w: %s", online.ErrInvalidContract, rejected.Message)
+	default:
+		return err
+	}
 }
 
 // positionHistory builds the ordered FEN history the worker needs to derive

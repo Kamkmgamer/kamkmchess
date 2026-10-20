@@ -444,14 +444,14 @@ func TestPostgresOnlinePendingSessionRevocationRejectsTheWaitingCreateReplay(t *
 	}
 }
 
-// TestPostgresOnlineCommandThatWaitsPastTheDeadlineTimesOut proves that a
-// command which waits for the participant lock past the active deadline is
-// adjudicated as a timeout instead of being accepted.
+// TestPostgresOnlineCommandThatWaitsPastTheReplyDeadlineAborts proves that a
+// command which waits for the participant lock past the opening reply
+// deadline is adjudicated as the opening abort instead of being accepted.
 //
 // The participant lock is held by another connection without revoking
 // anything. The command samples its decision time before it waits, so the
 // decision time must be re-sampled after the lock is acquired.
-func TestPostgresOnlineCommandThatWaitsPastTheDeadlineTimesOut(t *testing.T) {
+func TestPostgresOnlineCommandThatWaitsPastTheReplyDeadlineAborts(t *testing.T) {
 	fixture := newOnlineAuthFixture(t, timeoutEvaluator{winnerFor: timeoutWinForOpponent})
 	issued := createGuestMatch(t, fixture, "match-deadline-wait")
 	ctx := context.Background()
@@ -460,19 +460,20 @@ func TestPostgresOnlineCommandThatWaitsPastTheDeadlineTimesOut(t *testing.T) {
 	if _, err := fixture.service.Execute(guestCtx, principal.Participant, guestMoveCommand("match-deadline-wait", "op-deadline-guest")); err != nil {
 		t.Fatalf("guest move: %v", err)
 	}
-	// The guest's move armed the account's deadline. Shorten it so the
-	// deadline is reached while the command waits for the participant lock.
-	if _, err := fixture.pool.Exec(ctx, `UPDATE online_clocks SET active_since=clock_timestamp(),deadline_at=clock_timestamp()+$1::interval WHERE match_id=$2`, "2500 milliseconds", "match-deadline-wait"); err != nil {
+	// The guest's move armed the account's opening reply window. Shorten it so
+	// the deadline is reached while the command waits for the participant
+	// lock.
+	if _, err := fixture.pool.Exec(ctx, `UPDATE online_clocks SET reply_deadline_at=clock_timestamp()+$1::interval WHERE match_id=$2`, "2500 milliseconds", "match-deadline-wait"); err != nil {
 		t.Fatal(err)
 	}
 	state, err := fixture.service.GetMatch(ctx, "match-deadline-wait")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Clock.DeadlineAt == nil {
-		t.Fatal("the account deadline was not armed")
+	if state.Clock.ReplyDeadlineAt == nil || state.Clock.ReplySeat == nil {
+		t.Fatal("the account reply window was not armed")
 	}
-	deadline := *state.Clock.DeadlineAt
+	deadline := *state.Clock.ReplyDeadlineAt
 
 	probe := newLockProbe(2)
 	commandPool := probedPool(t, fixture, probe)
@@ -531,11 +532,11 @@ func TestPostgresOnlineCommandThatWaitsPastTheDeadlineTimesOut(t *testing.T) {
 	if got.err != nil {
 		t.Fatalf("blocked command: %v", got.err)
 	}
-	if got.result.Receipt.Outcome != online.OutcomeDeadlineExpired {
-		t.Fatalf("outcome = %q, want %q", got.result.Receipt.Outcome, online.OutcomeDeadlineExpired)
+	if got.result.Receipt.Outcome != online.OutcomeOpeningExpired {
+		t.Fatalf("outcome = %q, want %q", got.result.Receipt.Outcome, online.OutcomeOpeningExpired)
 	}
-	if got.result.Receipt.Result == nil || got.result.Receipt.Result.Reason != online.ReasonTimeout {
-		t.Fatalf("timeout result = %+v", got.result.Receipt.Result)
+	if got.result.Receipt.Result == nil || got.result.Receipt.Result.Reason != online.ReasonOpeningReplyTimeout {
+		t.Fatalf("opening abort result = %+v", got.result.Receipt.Result)
 	}
 	if got.result.Receipt.DecidedAt.Before(deadline) {
 		t.Fatalf("decision time %s predates the deadline %s", got.result.Receipt.DecidedAt, deadline)
@@ -545,6 +546,131 @@ func TestPostgresOnlineCommandThatWaitsPastTheDeadlineTimesOut(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(after.Moves) != 1 {
+		t.Fatalf("the late move was accepted after the deadline: moves=%d", len(after.Moves))
+	}
+	if after.Status != online.MatchAborted || after.Result == nil || after.Result.Reason != online.ReasonOpeningReplyTimeout {
+		t.Fatalf("match after the blocked command = %+v", after)
+	}
+}
+
+// TestPostgresOnlineCommandThatWaitsPastTheMainDeadlineTimesOut proves that a
+// command which waits for the participant lock past the main clock deadline is
+// adjudicated as a timeout instead of being accepted.
+//
+// The match first reaches normal play, so the account owes a main clock rather
+// than the opening reply window.
+func TestPostgresOnlineCommandThatWaitsPastTheMainDeadlineTimesOut(t *testing.T) {
+	fixture := newOnlineAuthFixture(t, timeoutEvaluator{winnerFor: timeoutWinForOpponent})
+	issued := createGuestMatch(t, fixture, "match-main-deadline-wait")
+	ctx := context.Background()
+	principal := guestParticipant(t, fixture, issued)
+	guestCtx := onlineauth.WithPrincipal(ctx, principal)
+	accountCtx := accountContext("user_a", "session-alice")
+	account := online.ParticipantRef{Kind: online.ParticipantAccount, ID: "user_a"}
+	// The guest opens, the account replies, and the guest moves again, so the
+	// account's main clock is the armed deadline.
+	if _, err := fixture.service.Execute(guestCtx, principal.Participant, guestMoveCommand("match-main-deadline-wait", "op-main-guest-open")); err != nil {
+		t.Fatalf("guest opening move: %v", err)
+	}
+	if _, err := fixture.service.Execute(accountCtx, account, online.Command{
+		SchemaVersion:   online.ContractsSchemaVersion,
+		MatchID:         "match-main-deadline-wait",
+		OperationID:     "op-main-account-reply",
+		ExpectedVersion: 2,
+		Seat:            online.SeatBlack,
+		ControlEpoch:    1,
+		Action:          online.Action{Kind: online.ActionSubmitMove, SubmitMove: &online.SubmitMoveAction{UCI: "e7e5"}},
+	}); err != nil {
+		t.Fatalf("account reply: %v", err)
+	}
+	if _, err := fixture.service.Execute(guestCtx, principal.Participant, online.Command{
+		SchemaVersion:   online.ContractsSchemaVersion,
+		MatchID:         "match-main-deadline-wait",
+		OperationID:     "op-main-guest-second",
+		ExpectedVersion: 3,
+		Seat:            online.SeatWhite,
+		ControlEpoch:    1,
+		Action:          online.Action{Kind: online.ActionSubmitMove, SubmitMove: &online.SubmitMoveAction{UCI: "g1f3"}},
+	}); err != nil {
+		t.Fatalf("guest second move: %v", err)
+	}
+	// The account's main clock expires while its command waits for the
+	// participant lock.
+	if _, err := fixture.pool.Exec(ctx, `UPDATE online_clocks SET active_since=clock_timestamp(),deadline_at=clock_timestamp()+$1::interval WHERE match_id=$2`, "2500 milliseconds", "match-main-deadline-wait"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := fixture.service.GetMatch(ctx, "match-main-deadline-wait")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Clock.DeadlineAt == nil || state.Clock.ActiveSeat == nil || *state.Clock.ActiveSeat != online.SeatBlack {
+		t.Fatalf("the account main clock is not armed: %+v", state.Clock)
+	}
+	deadline := *state.Clock.DeadlineAt
+
+	probe := newLockProbe(2)
+	commandPool := probedPool(t, fixture, probe)
+	commander, err := online.Open(ctx, commandPool, timeoutEvaluator{winnerFor: timeoutWinForOpponent}, online.WithSeatAuthorizer(fixture.authorizer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	move := online.Command{
+		SchemaVersion:   online.ContractsSchemaVersion,
+		MatchID:         "match-main-deadline-wait",
+		OperationID:     "op-main-account-late",
+		ExpectedVersion: 4,
+		Seat:            online.SeatBlack,
+		ControlEpoch:    1,
+		Action:          online.Action{Kind: online.ActionSubmitMove, SubmitMove: &online.SubmitMoveAction{UCI: "b8c6"}},
+	}
+	type outcome struct {
+		result online.CommandResult
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		result, executeErr := commander.Execute(accountCtx, account, move)
+		done <- outcome{result: result, err: executeErr}
+	}()
+	waitSignal(t, probe.entered, "the participant lock request")
+	defer probe.Release()
+	var beforeDeadline bool
+	if err = fixture.pool.QueryRow(ctx, `SELECT clock_timestamp() < $1::timestamptz`, deadline).Scan(&beforeDeadline); err != nil {
+		t.Fatal(err)
+	}
+	if !beforeDeadline {
+		t.Fatal("the command did not reach the participant lock before the deadline")
+	}
+	release := holdParticipantLock(t, fixture.pool, probe.LockKey(t))
+	defer release()
+	waitForDatabaseTime(t, fixture.pool, deadline)
+	probe.Release()
+	waitForLockWait(t, fixture.pool)
+	release()
+
+	var got outcome
+	select {
+	case got = <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the blocked command never completed")
+	}
+	if got.err != nil {
+		t.Fatalf("blocked command: %v", got.err)
+	}
+	if got.result.Receipt.Outcome != online.OutcomeDeadlineExpired {
+		t.Fatalf("outcome = %q, want %q", got.result.Receipt.Outcome, online.OutcomeDeadlineExpired)
+	}
+	if got.result.Receipt.Result == nil || got.result.Receipt.Result.Reason != online.ReasonTimeout {
+		t.Fatalf("timeout result = %+v", got.result.Receipt.Result)
+	}
+	if got.result.Receipt.DecidedAt.Before(deadline) {
+		t.Fatalf("decision time %s predates the deadline %s", got.result.Receipt.DecidedAt, deadline)
+	}
+	after, err := fixture.service.GetMatch(ctx, "match-main-deadline-wait")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Moves) != 3 {
 		t.Fatalf("the late move was accepted after the deadline: moves=%d", len(after.Moves))
 	}
 	if after.Status != online.MatchCompleted || after.Result == nil || after.Result.Reason != online.ReasonTimeout {

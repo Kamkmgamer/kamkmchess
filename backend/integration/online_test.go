@@ -34,8 +34,10 @@ func fakePositionFEN(sideToMove online.Seat) string {
 }
 
 func (moveEvaluator) Evaluate(_ context.Context, input online.RulesInput) (online.Candidate, error) {
+	// The seat to move is read from the evaluated position, so a custom
+	// position with Black to move starts with Black.
 	seat := online.SeatWhite
-	if len(input.Moves)%2 == 1 {
+	if fields := strings.Fields(input.PositionFEN); len(fields) > 1 && fields[1] == "b" {
 		seat = online.SeatBlack
 	}
 	next, _ := seat.Other()
@@ -150,7 +152,9 @@ func moveOnlineCommandAt(matchID, operationID string, seat online.Seat, version,
 	}
 }
 
-func abortOnlineCommand(matchID, operationID string, seat online.Seat, version int64) online.Command {
+// cancelOnlineCommand cancels a match for one seat. The writer aborts the
+// match while that seat has never had an accepted move and resigns afterwards.
+func cancelOnlineCommand(matchID, operationID string, seat online.Seat, version int64) online.Command {
 	return online.Command{
 		SchemaVersion:   online.ContractsSchemaVersion,
 		MatchID:         matchID,
@@ -158,7 +162,100 @@ func abortOnlineCommand(matchID, operationID string, seat online.Seat, version i
 		ExpectedVersion: version,
 		Seat:            seat,
 		ControlEpoch:    1,
-		Action:          online.Action{Kind: online.ActionAbort},
+		Action:          online.Action{Kind: online.ActionCancel},
+	}
+}
+
+func offerDrawOnlineCommand(matchID, operationID string, seat online.Seat, version int64) online.Command {
+	return online.Command{
+		SchemaVersion:   online.ContractsSchemaVersion,
+		MatchID:         matchID,
+		OperationID:     operationID,
+		ExpectedVersion: version,
+		Seat:            seat,
+		ControlEpoch:    1,
+		Action:          online.Action{Kind: online.ActionOfferDraw},
+	}
+}
+
+func acceptDrawOnlineCommand(matchID, operationID string, seat online.Seat, version int64, offerID string) online.Command {
+	return acceptDrawOnlineCommandAt(matchID, operationID, seat, version, 1, offerID)
+}
+
+func acceptDrawOnlineCommandAt(matchID, operationID string, seat online.Seat, version, controlEpoch int64, offerID string) online.Command {
+	return online.Command{
+		SchemaVersion:   online.ContractsSchemaVersion,
+		MatchID:         matchID,
+		OperationID:     operationID,
+		ExpectedVersion: version,
+		Seat:            seat,
+		ControlEpoch:    controlEpoch,
+		Action:          online.Action{Kind: online.ActionAcceptDraw, AcceptOffer: &online.AcceptOfferAction{OfferID: offerID}},
+	}
+}
+
+func offerTakebackOnlineCommand(matchID, operationID string, seat online.Seat, version int64, target int64) online.Command {
+	return offerTakebackOnlineCommandAt(matchID, operationID, seat, version, 1, target)
+}
+
+func offerTakebackOnlineCommandAt(matchID, operationID string, seat online.Seat, version, controlEpoch, target int64) online.Command {
+	return online.Command{
+		SchemaVersion:   online.ContractsSchemaVersion,
+		MatchID:         matchID,
+		OperationID:     operationID,
+		ExpectedVersion: version,
+		Seat:            seat,
+		ControlEpoch:    controlEpoch,
+		Action:          online.Action{Kind: online.ActionOfferTakeback, OfferTakeback: &online.OfferTakebackAction{TargetVersion: target}},
+	}
+}
+
+func acceptTakebackOnlineCommand(matchID, operationID string, seat online.Seat, version int64, offerID string) online.Command {
+	return acceptTakebackOnlineCommandAt(matchID, operationID, seat, version, 1, offerID)
+}
+
+func acceptTakebackOnlineCommandAt(matchID, operationID string, seat online.Seat, version, controlEpoch int64, offerID string) online.Command {
+	return online.Command{
+		SchemaVersion:   online.ContractsSchemaVersion,
+		MatchID:         matchID,
+		OperationID:     operationID,
+		ExpectedVersion: version,
+		Seat:            seat,
+		ControlEpoch:    controlEpoch,
+		Action:          online.Action{Kind: online.ActionAcceptTakeback, AcceptOffer: &online.AcceptOfferAction{OfferID: offerID}},
+	}
+}
+
+// pendingOffer returns the pending offer of one kind. A consent names the
+// exact offer it accepts, so the fixture reads the identity it was given.
+func pendingOffer(t *testing.T, service *online.Service, matchID string, kind online.OfferKind) online.Offer {
+	t.Helper()
+	match, err := service.GetMatch(context.Background(), matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, offer := range match.Offers {
+		if offer.Kind == kind {
+			return offer
+		}
+	}
+	t.Fatalf("match %s has no pending %s offer", matchID, kind)
+	return online.Offer{}
+}
+
+func recoveryAttemptOnlineCommand(matchID, operationID string, seat online.Seat, version int64, attempt online.RecoveryAttemptKind) online.Command {
+	return recoveryAttemptOnlineCommandAt(matchID, operationID, seat, version, 1, attempt)
+}
+
+func recoveryAttemptOnlineCommandAt(matchID, operationID string, seat online.Seat, version, controlEpoch int64, attempt online.RecoveryAttemptKind) online.Command {
+	return online.Command{
+		SchemaVersion:   online.ContractsSchemaVersion,
+		MatchID:         matchID,
+		OperationID:     operationID,
+		ExpectedVersion: version,
+		Seat:            seat,
+		ControlEpoch:    controlEpoch,
+		Action:          online.Action{Kind: online.ActionRecordRecoveryAttempt, Recovery: &online.RecordRecoveryAttemptAction{Attempt: attempt}},
 	}
 }
 
@@ -224,7 +321,7 @@ func TestPostgresOnlineMigrationTablesTriggersAndIsolation(t *testing.T) {
 		t.Fatalf("apply migrations: %v", err)
 	}
 	ctx := context.Background()
-	for _, table := range []string{"online_matches", "online_seats", "online_clocks", "online_moves", "online_events", "online_operation_receipts", "online_queue_entries", "online_runner_leases", "online_public_projections", "online_deletion_markers", "online_session_revocations", "online_guest_seat_credentials", "online_guest_ownership_proofs"} {
+	for _, table := range []string{"online_matches", "online_seats", "online_clocks", "online_moves", "online_events", "online_operation_receipts", "online_queue_entries", "online_runner_leases", "online_public_projections", "online_deletion_markers", "online_session_revocations", "online_guest_seat_credentials", "online_guest_ownership_proofs", "online_offers", "online_discarded_moves", "online_turn_budgets"} {
 		var exists bool
 		if err := pool.QueryRow(ctx, `SELECT to_regclass($1) IS NOT NULL`, table).Scan(&exists); err != nil {
 			t.Fatal(err)
@@ -234,11 +331,11 @@ func TestPostgresOnlineMigrationTablesTriggersAndIsolation(t *testing.T) {
 		}
 	}
 	var versions int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM kamkmchess_schema_migrations WHERE version IN (1,2,3)`).Scan(&versions); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM kamkmchess_schema_migrations WHERE version IN (1,2,3,4,5,6)`).Scan(&versions); err != nil {
 		t.Fatal(err)
 	}
-	if versions != 3 {
-		t.Fatalf("applied migration versions = %d, want 1, 2 and 3", versions)
+	if versions != 6 {
+		t.Fatalf("applied migration versions = %d, want 1, 2, 3, 4, 5 and 6", versions)
 	}
 	var triggers int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE NOT t.tgisinternal AND n.nspname=current_schema() AND t.tgname IN ('online_moves_immutable','online_events_immutable','online_receipts_immutable','online_matches_guard','online_matches_immutable_delete','online_seats_guard','online_projections_guard')`).Scan(&triggers); err != nil {
@@ -421,15 +518,16 @@ func TestPostgresOnlineAbortAndControlEpoch(t *testing.T) {
 	service, _ := onlineService(t, moveEvaluator{})
 	ctx := context.Background()
 
-	// A side that has not moved may abort even after the opponent moved.
+	// A side that has not moved may cancel even after the opponent moved. The
+	// cancellation aborts the match.
 	abortMatch := "match-abort-01"
 	createOnlineMatch(t, service, abortMatch, "op-abort-create")
 	if _, err := service.Execute(ctx, alice, moveOnlineCommand(abortMatch, "op-abort-white", online.SeatWhite, 1, "e2e4")); err != nil {
 		t.Fatalf("white move: %v", err)
 	}
-	aborted, err := service.Execute(ctx, bob, abortOnlineCommand(abortMatch, "op-abort-black", online.SeatBlack, 2))
+	aborted, err := service.Execute(ctx, bob, cancelOnlineCommand(abortMatch, "op-abort-black", online.SeatBlack, 2))
 	if err != nil {
-		t.Fatalf("abort: %v", err)
+		t.Fatalf("cancel: %v", err)
 	}
 	if aborted.Receipt.Result == nil || aborted.Receipt.Result.Kind != online.ResultAbort || aborted.Receipt.Result.Reason != online.ReasonAbort {
 		t.Fatalf("abort receipt = %+v", aborted.Receipt)
@@ -491,15 +589,13 @@ func TestPostgresOnlineLockWaitCrossesClockExpiry(t *testing.T) {
 	if _, err := service.Execute(context.Background(), alice, create); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Execute(context.Background(), alice, moveOnlineCommand(matchID, "op-lock-white", online.SeatWhite, 1, "e2e4")); err != nil {
-		t.Fatal(err)
-	}
+	playOpeningExchange(t, service, matchID, "op-lock")
 	before, err := service.GetMatch(context.Background(), matchID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if before.Clock.DeadlineAt == nil {
-		t.Fatal("white move did not arm black deadline")
+	if before.Clock.DeadlineAt == nil || before.Clock.ActiveSeat == nil || *before.Clock.ActiveSeat != online.SeatWhite {
+		t.Fatalf("the opening reply did not start White's main clock: %+v", before.Clock)
 	}
 
 	holder, err := pool.Acquire(context.Background())
@@ -523,17 +619,21 @@ func TestPostgresOnlineLockWaitCrossesClockExpiry(t *testing.T) {
 	done := make(chan outcome, 1)
 	go func() {
 		close(started)
-		result, err := service.Execute(context.Background(), bob, moveOnlineCommand(matchID, "op-lock-black", online.SeatBlack, 2, "e7e5"))
+		result, err := service.Execute(context.Background(), alice, moveOnlineCommand(matchID, "op-lock-white-again", online.SeatWhite, 3, "g1f3"))
 		done <- outcome{result: result, err: err}
 	}()
 	<-started
-	time.Sleep(750 * time.Millisecond)
+	// The deadline passes while the command waits for the match row. The wait
+	// follows the database clock and reaches past the deadline, so the
+	// fixture does not depend on the host wall clock, and a step of the
+	// database clock cannot take the deadline back.
+	waitForDatabaseTime(t, pool, (*before.Clock.DeadlineAt).Add(2*time.Second))
 	if err = tx.Commit(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	got := <-done
 	if got.err != nil {
-		t.Fatalf("blocked black command: %v", got.err)
+		t.Fatalf("blocked command: %v", got.err)
 	}
 	if got.result.Receipt.Outcome != online.OutcomeDeadlineExpired {
 		t.Fatalf("outcome = %q, want deadline_expired", got.result.Receipt.Outcome)
@@ -551,10 +651,10 @@ func TestPostgresOnlineLockWaitCrossesClockExpiry(t *testing.T) {
 	if match.Status != online.MatchCompleted || match.Result == nil || match.Result.Reason != online.ReasonTimeout {
 		t.Fatalf("match after lock wait = %+v", match)
 	}
-	if len(match.Moves) != 1 {
+	if len(match.Moves) != 2 {
 		t.Fatalf("late move was accepted after expiry: moves=%d", len(match.Moves))
 	}
-	retried, err := service.Execute(context.Background(), bob, moveOnlineCommand(matchID, "op-lock-black", online.SeatBlack, 2, "e7e5"))
+	retried, err := service.Execute(context.Background(), alice, moveOnlineCommand(matchID, "op-lock-white-again", online.SeatWhite, 3, "g1f3"))
 	if err != nil {
 		t.Fatalf("retry expired command: %v", err)
 	}
@@ -625,11 +725,41 @@ func TestPostgresOnlineWorkerCandidateFencing(t *testing.T) {
 	}
 }
 
-func expireOnlineMatch(t *testing.T, service *online.Service, matchID, prefix, startingFEN, whiteUCI string) {
+// playOpeningExchange accepts the opening move and its reply. The match then
+// runs a main clock for the side to move.
+func playOpeningExchange(t *testing.T, service *online.Service, matchID, prefix string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, prefix+"-white", online.SeatWhite, 1, "e2e4")); err != nil {
+		t.Fatalf("opening move: %v", err)
+	}
+	if _, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, prefix+"-black", online.SeatBlack, 2, "e7e5")); err != nil {
+		t.Fatalf("opening reply: %v", err)
+	}
+}
+
+// expireMainClock moves the armed main clock deadline into the past so the
+// next intent reconciles a real expiry without waiting for wall-clock time.
+func expireMainClock(t *testing.T, pool *pgxpool.Pool, matchID string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `UPDATE online_clocks SET active_since=active_since-$1::interval,deadline_at=deadline_at-$1::interval WHERE match_id=$2 AND deadline_at IS NOT NULL`, "1 hour", matchID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// expireReplyWindow moves the opening reply window into the past.
+func expireReplyWindow(t *testing.T, pool *pgxpool.Pool, matchID string) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(), `UPDATE online_clocks SET reply_deadline_at=reply_deadline_at-$1::interval WHERE match_id=$2 AND reply_deadline_at IS NOT NULL`, "1 minute", matchID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func expireOnlineMatch(t *testing.T, service *online.Service, pool *pgxpool.Pool, matchID, prefix, startingFEN, whiteUCI string) {
 	t.Helper()
 	ctx := context.Background()
 	create := createOnlineCommand(matchID, prefix+"-create")
-	create.Action.CreateMatch.TimeControl = online.TimeControl{StartingTimeMs: 120}
+	create.Action.CreateMatch.TimeControl = online.TimeControl{StartingTimeMs: 60_000}
 	if startingFEN != "" {
 		create.Action.CreateMatch.StartingFEN = startingFEN
 	}
@@ -639,15 +769,21 @@ func expireOnlineMatch(t *testing.T, service *online.Service, matchID, prefix, s
 	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, prefix+"-white", online.SeatWhite, 1, whiteUCI)); err != nil {
 		t.Fatalf("white move: %v", err)
 	}
-	time.Sleep(300 * time.Millisecond)
+	if _, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, prefix+"-black", online.SeatBlack, 2, "e7e5")); err != nil {
+		t.Fatalf("black reply: %v", err)
+	}
+	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, prefix+"-white-again", online.SeatWhite, 3, whiteUCI)); err != nil {
+		t.Fatalf("second white move: %v", err)
+	}
+	expireMainClock(t, pool, matchID)
 }
 
 func TestPostgresOnlineTimeoutFailsClosedWithoutPolicy(t *testing.T) {
 	service, pool := onlineService(t, moveEvaluator{})
 	matchID := "match-timeout-closed"
-	expireOnlineMatch(t, service, matchID, "op-closed", "", "e2e4")
+	expireOnlineMatch(t, service, pool, matchID, "op-closed", "", "e2e4")
 	ctx := context.Background()
-	_, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-closed-move", online.SeatBlack, 2, "e7e5"))
+	_, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-closed-move", online.SeatBlack, 4, "e7e5"))
 	if !errors.Is(err, online.ErrTimeoutPolicyUnavailable) {
 		t.Fatalf("flag fall without timeout policy = %v, want ErrTimeoutPolicyUnavailable", err)
 	}
@@ -655,15 +791,15 @@ func TestPostgresOnlineTimeoutFailsClosedWithoutPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if match.Status != online.MatchActive || match.Result != nil || match.Version != 2 || len(match.Moves) != 1 {
+	if match.Status != online.MatchActive || match.Result != nil || match.Version != 4 || len(match.Moves) != 3 {
 		t.Fatalf("fail-closed flag fall changed match: status=%q version=%d moves=%d result=%+v", match.Status, match.Version, len(match.Moves), match.Result)
 	}
 	var receipts, timeoutEvents int
 	if err = pool.QueryRow(ctx, `SELECT count(*) FROM online_operation_receipts WHERE scope_id=$1`, matchID).Scan(&receipts); err != nil {
 		t.Fatal(err)
 	}
-	if receipts != 2 {
-		t.Fatalf("receipts after fail-closed flag fall = %d, want create and move only", receipts)
+	if receipts != 4 {
+		t.Fatalf("receipts after fail-closed flag fall = %d, want create and three moves only", receipts)
 	}
 	if err = pool.QueryRow(ctx, `SELECT count(*) FROM online_events WHERE match_id=$1 AND event_kind='timeout'`, matchID).Scan(&timeoutEvents); err != nil {
 		t.Fatal(err)
@@ -674,13 +810,13 @@ func TestPostgresOnlineTimeoutFailsClosedWithoutPolicy(t *testing.T) {
 }
 
 func TestPostgresOnlineTimeoutWithInsufficientMaterialIsDraw(t *testing.T) {
-	service, _ := onlineService(t, timeoutEvaluator{winnerFor: timeoutInsufficientMaterial})
+	service, pool := onlineService(t, timeoutEvaluator{winnerFor: timeoutInsufficientMaterial})
 	matchID := "match-timeout-draw"
 	// Bare kings: the sleeping side has no mating material, so a flag fall is a
 	// draw rather than a win for the side that did not flag.
-	expireOnlineMatch(t, service, matchID, "op-draw", "8/8/8/8/8/8/8/K6k w - - 0 1", "a1a2")
+	expireOnlineMatch(t, service, pool, matchID, "op-draw", "8/8/8/8/8/8/8/K6k w - - 0 1", "a1a2")
 	ctx := context.Background()
-	result, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-draw-black", online.SeatBlack, 2, "h1h2"))
+	result, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-draw-late", online.SeatBlack, 4, "h1h2"))
 	if err != nil {
 		t.Fatalf("insufficient-material flag fall: %v", err)
 	}
@@ -694,7 +830,7 @@ func TestPostgresOnlineTimeoutWithInsufficientMaterialIsDraw(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if match.Status != online.MatchCompleted || match.Result == nil || match.Result.Kind != online.ResultDraw || len(match.Moves) != 1 {
+	if match.Status != online.MatchCompleted || match.Result == nil || match.Result.Kind != online.ResultDraw || len(match.Moves) != 3 {
 		t.Fatalf("match after insufficient-material timeout = status %q result %+v moves %d", match.Status, match.Result, len(match.Moves))
 	}
 	projection, err := service.GetPublicProjection(ctx, matchID)
@@ -720,13 +856,13 @@ func TestPostgresOnlineTimeoutFactsAreFencedByRelock(t *testing.T) {
 	})
 	pool = opened
 	matchID := "match-timeout-fence"
-	expireOnlineMatch(t, service, matchID, "op-timeout-fence", "", "e2e4")
+	expireOnlineMatch(t, service, pool, matchID, "op-timeout-fence", "", "e2e4")
 	ctx := context.Background()
-	if _, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-timeout-fence-black", online.SeatBlack, 2, "e7e5")); !errors.Is(err, online.ErrStaleCandidate) {
+	if _, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-timeout-fence-late", online.SeatBlack, 4, "e7e5")); !errors.Is(err, online.ErrStaleCandidate) {
 		t.Fatalf("timeout facts evaluated before a concurrent change = %v, want ErrStaleCandidate", err)
 	}
 	var receipts, timeoutEvents int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM online_operation_receipts WHERE operation_id='op-timeout-fence-black'`).Scan(&receipts); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM online_operation_receipts WHERE operation_id='op-timeout-fence-late'`).Scan(&receipts); err != nil {
 		t.Fatal(err)
 	}
 	if receipts != 0 {
@@ -743,31 +879,31 @@ func TestPostgresOnlineTimeoutFactsAreFencedByRelock(t *testing.T) {
 func TestPostgresOnlineUnauthorizedActorCannotTriggerTimeout(t *testing.T) {
 	service, pool := onlineService(t, timeoutEvaluator{winnerFor: timeoutWinForOpponent})
 	matchID := "match-timeout-auth"
-	expireOnlineMatch(t, service, matchID, "op-timeout-auth", "", "e2e4")
+	expireOnlineMatch(t, service, pool, matchID, "op-timeout-auth", "", "e2e4")
 	ctx := context.Background()
 	charlie := online.ParticipantRef{Kind: online.ParticipantAccount, ID: "user_c"}
-	if _, err := service.Execute(ctx, charlie, moveOnlineCommand(matchID, "op-intruder-move", online.SeatWhite, 2, "d2d4")); !errors.Is(err, online.ErrNotAuthorized) {
+	if _, err := service.Execute(ctx, charlie, moveOnlineCommand(matchID, "op-intruder-move", online.SeatWhite, 4, "d2d4")); !errors.Is(err, online.ErrNotAuthorized) {
 		t.Fatalf("intruder move = %v, want ErrNotAuthorized", err)
 	}
-	if _, err := service.Execute(ctx, charlie, resignOnlineCommand(matchID, "op-intruder-resign", online.SeatWhite, 2)); !errors.Is(err, online.ErrNotAuthorized) {
+	if _, err := service.Execute(ctx, charlie, resignOnlineCommand(matchID, "op-intruder-resign", online.SeatWhite, 4)); !errors.Is(err, online.ErrNotAuthorized) {
 		t.Fatalf("intruder resign = %v, want ErrNotAuthorized", err)
 	}
 	candidate := online.Candidate{
 		SchemaVersion:      online.RulesInputSchemaVersion,
-		EvaluatedVersion:   2,
+		EvaluatedVersion:   4,
 		EvaluatedInputHash: strings.Repeat("a", 64),
 		ControlEpoch:       1,
 		Move:               &online.Move{Seat: online.SeatWhite, UCI: "d2d4", SAN: "d4", ResultingFEN: fakePositionFEN(online.SeatBlack)},
 	}
-	if _, err := service.ApplyWorkerCandidate(ctx, charlie, moveOnlineCommand(matchID, "op-intruder-candidate", online.SeatWhite, 2, "d2d4"), candidate); !errors.Is(err, online.ErrNotAuthorized) {
+	if _, err := service.ApplyWorkerCandidate(ctx, charlie, moveOnlineCommand(matchID, "op-intruder-candidate", online.SeatWhite, 4, "d2d4"), candidate); !errors.Is(err, online.ErrNotAuthorized) {
 		t.Fatalf("intruder candidate = %v, want ErrNotAuthorized", err)
 	}
 	var receipts, timeoutEvents int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM online_operation_receipts WHERE scope_id=$1`, matchID).Scan(&receipts); err != nil {
 		t.Fatal(err)
 	}
-	if receipts != 2 {
-		t.Fatalf("intruder wrote receipts: %d rows, want create and white move only", receipts)
+	if receipts != 4 {
+		t.Fatalf("intruder wrote receipts: %d rows, want create and three moves only", receipts)
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM online_events WHERE match_id=$1 AND event_kind='timeout'`, matchID).Scan(&timeoutEvents); err != nil {
 		t.Fatal(err)
@@ -779,11 +915,11 @@ func TestPostgresOnlineUnauthorizedActorCannotTriggerTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if match.Status != online.MatchActive || match.Version != 2 {
+	if match.Status != online.MatchActive || match.Version != 4 {
 		t.Fatalf("intruder changed match: status=%q version=%d", match.Status, match.Version)
 	}
 	// The seat owner can still adjudicate the same expired clock.
-	authorized, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-timeout-auth-black", online.SeatBlack, 2, "e7e5"))
+	authorized, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-timeout-auth-late", online.SeatBlack, 4, "e7e5"))
 	if err != nil {
 		t.Fatalf("authorized flag fall: %v", err)
 	}

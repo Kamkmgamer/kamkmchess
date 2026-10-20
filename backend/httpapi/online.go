@@ -6,8 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
@@ -50,9 +48,8 @@ type OnlineOptions struct {
 }
 
 type onlineAPI struct {
-	service       OnlineService
-	authenticator OnlineAuthenticator
-	options       OnlineOptions
+	service OnlineService
+	auth    participantAuthenticator
 }
 
 // NewOnline returns the participant-authorized online API.
@@ -66,8 +63,10 @@ type onlineAPI struct {
 //
 // There is no route that creates a match. Creating a match is a trusted
 // allocator operation, and an invitation link never becomes a control token.
+// The explicit guest-link path, including the guest ownership proof, belongs
+// to the public profile API.
 func NewOnline(service OnlineService, authenticator OnlineAuthenticator, options OnlineOptions) http.Handler {
-	api := &onlineAPI{service: service, authenticator: authenticator, options: options}
+	api := &onlineAPI{service: service, auth: newParticipantAuthenticator(authenticator, options)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/online/matches/{matchID}/replay", api.replay)
 	mux.HandleFunc("GET /v1/online/matches/{matchID}", api.live)
@@ -173,97 +172,33 @@ func (a *onlineAPI) command(w http.ResponseWriter, r *http.Request) {
 // request, so the request origin is resolved from the configured origins by
 // request host. A cross-site request is rejected.
 func (a *onlineAPI) participant(w http.ResponseWriter, r *http.Request, mutation bool) (onlineauth.Principal, bool) {
-	origin, ok := a.requestOrigin(r, mutation)
-	if !ok {
-		writeError(w, http.StatusForbidden, "origin_required")
-		return onlineauth.Principal{}, false
-	}
-	authorization := r.Header.Values("Authorization")
-	guest := r.Header.Values(GuestCredentialHeader)
-	if len(authorization) > 1 || len(guest) > 1 {
-		writeError(w, http.StatusBadRequest, "invalid_request")
-		return onlineauth.Principal{}, false
-	}
-	if len(authorization) == 1 && len(guest) == 1 {
-		writeError(w, http.StatusBadRequest, "invalid_request")
-		return onlineauth.Principal{}, false
-	}
-	if len(authorization) == 1 {
-		fields := strings.Fields(authorization[0])
-		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return onlineauth.Principal{}, false
-		}
-		principal, err := a.authenticator.AuthenticateAccount(r.Context(), fields[1], origin)
-		if err != nil {
-			writeOnlineError(w, err)
-			return onlineauth.Principal{}, false
-		}
-		return principal, true
-	}
-	if len(guest) == 1 {
-		principal, err := a.authenticator.AuthenticateGuest(r.Context(), guest[0], origin)
-		if err != nil {
-			writeOnlineError(w, err)
-			return onlineauth.Principal{}, false
-		}
-		return principal, true
-	}
-	writeError(w, http.StatusUnauthorized, "unauthorized")
-	return onlineauth.Principal{}, false
-}
-
-// requestOrigin resolves the origin of a request.
-//
-// An explicit Origin header always wins. A mutation must carry one. A read
-// may omit it, and then the origin is resolved from the configured origins by
-// request host, which only succeeds for a same-origin deployment.
-func (a *onlineAPI) requestOrigin(r *http.Request, mutation bool) (string, bool) {
-	origins := r.Header.Values("Origin")
-	if len(origins) > 1 {
-		return "", false
-	}
-	if len(origins) == 1 {
-		origin := strings.TrimSpace(origins[0])
-		if origin == "" {
-			return "", false
-		}
-		return origin, true
-	}
-	if mutation {
-		return "", false
-	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
-		return "", false
-	}
-	return a.sameOrigin(r)
-}
-
-// sameOrigin resolves the request origin from the configured origins by
-// request host. It never trusts a forwarded scheme header.
-func (a *onlineAPI) sameOrigin(r *http.Request) (string, bool) {
-	if r.Host == "" {
-		return "", false
-	}
-	for _, candidate := range a.options.AllowedOrigins {
-		parsed, err := url.Parse(candidate)
-		if err != nil || parsed.Host == "" {
-			continue
-		}
-		if parsed.Host == r.Host {
-			return candidate, true
-		}
-	}
-	return "", false
+	return a.auth.participant(w, r, mutation)
 }
 
 // onlineSeatResponse is the allowlisted seat view. The participant reference
 // is an authorization identity and never leaves the server.
 type onlineSeatResponse struct {
-	Seat         online.Seat        `json:"seat"`
-	PublicLabel  string             `json:"publicLabel"`
-	Control      online.SeatControl `json:"control"`
-	ControlEpoch int64              `json:"controlEpoch"`
+	Seat                   online.Seat        `json:"seat"`
+	PublicLabel            string             `json:"publicLabel"`
+	Control                online.SeatControl `json:"control"`
+	ControlEpoch           int64              `json:"controlEpoch"`
+	IllegalAttemptsSpent   int                `json:"illegalAttemptsSpent"`
+	FormatCorrectionsSpent int                `json:"formatCorrectionsSpent"`
+}
+
+// onlineOfferResponse is the allowlisted pending offer view. An offer carries
+// no participant reference and no private data.
+//
+// The offer identity is part of the view because a participant consents to an
+// exact offer: the acceptance names this identity, so a replaced or consumed
+// offer can never be accepted in its place.
+type onlineOfferResponse struct {
+	OfferID       string           `json:"offerId"`
+	Kind          online.OfferKind `json:"kind"`
+	Seat          online.Seat      `json:"seat"`
+	TargetVersion *int64           `json:"targetVersion"`
+	BaseVersion   int64            `json:"baseVersion"`
+	CreatedAt     time.Time        `json:"createdAt"`
 }
 
 // onlineMatchResponse is the participant live state.
@@ -272,24 +207,25 @@ type onlineSeatResponse struct {
 // credential, token, or hash. The opponent's seat is described by its public
 // label and declared control only.
 type onlineMatchResponse struct {
-	SchemaVersion      int                  `json:"schemaVersion"`
-	MatchID            string               `json:"matchId"`
-	Variant            string               `json:"variant"`
-	StartingFEN        string               `json:"startingFen"`
-	PositionFEN        string               `json:"positionFen"`
-	TimeControl        online.TimeControl   `json:"timeControl"`
-	Version            int64                `json:"version"`
-	ControlEpoch       int64                `json:"controlEpoch"`
-	RulesPolicyVersion string               `json:"rulesPolicyVersion"`
-	Status             online.MatchStatus   `json:"status"`
-	Result             *online.Result       `json:"result"`
-	Seats              []onlineSeatResponse `json:"seats"`
-	Clock              online.ClockState    `json:"clock"`
-	Moves              []online.Move        `json:"moves"`
-	CreatedAt          time.Time            `json:"createdAt"`
-	UpdatedAt          time.Time            `json:"updatedAt"`
-	CompletedAt        *time.Time           `json:"completedAt"`
-	YourSeat           *online.Seat         `json:"yourSeat"`
+	SchemaVersion      int                   `json:"schemaVersion"`
+	MatchID            string                `json:"matchId"`
+	Variant            string                `json:"variant"`
+	StartingFEN        string                `json:"startingFen"`
+	PositionFEN        string                `json:"positionFen"`
+	TimeControl        online.TimeControl    `json:"timeControl"`
+	Version            int64                 `json:"version"`
+	ControlEpoch       int64                 `json:"controlEpoch"`
+	RulesPolicyVersion string                `json:"rulesPolicyVersion"`
+	Status             online.MatchStatus    `json:"status"`
+	Result             *online.Result        `json:"result"`
+	Seats              []onlineSeatResponse  `json:"seats"`
+	Clock              online.ClockState     `json:"clock"`
+	Moves              []online.Move         `json:"moves"`
+	PendingOffers      []onlineOfferResponse `json:"pendingOffers"`
+	CreatedAt          time.Time             `json:"createdAt"`
+	UpdatedAt          time.Time             `json:"updatedAt"`
+	CompletedAt        *time.Time            `json:"completedAt"`
+	YourSeat           *online.Seat          `json:"yourSeat"`
 }
 
 func toOnlineMatch(match online.Match, principal onlineauth.Principal) onlineMatchResponse {
@@ -297,15 +233,28 @@ func toOnlineMatch(match online.Match, principal onlineauth.Principal) onlineMat
 	var yourSeat *online.Seat
 	for _, seat := range match.Seats {
 		seats = append(seats, onlineSeatResponse{
-			Seat:         seat.Seat,
-			PublicLabel:  seat.PublicLabel,
-			Control:      seat.Control,
-			ControlEpoch: seat.ControlEpoch,
+			Seat:                   seat.Seat,
+			PublicLabel:            seat.PublicLabel,
+			Control:                seat.Control,
+			ControlEpoch:           seat.ControlEpoch,
+			IllegalAttemptsSpent:   seat.IllegalAttemptsSpent,
+			FormatCorrectionsSpent: seat.FormatCorrectionsSpent,
 		})
 		if seat.Participant == principal.Participant {
 			own := seat.Seat
 			yourSeat = &own
 		}
+	}
+	offers := make([]onlineOfferResponse, 0, len(match.Offers))
+	for _, offer := range match.Offers {
+		offers = append(offers, onlineOfferResponse{
+			OfferID:       offer.OfferID,
+			Kind:          offer.Kind,
+			Seat:          offer.Seat,
+			TargetVersion: offer.TargetVersion,
+			BaseVersion:   offer.BaseVersion,
+			CreatedAt:     offer.CreatedAt.UTC(),
+		})
 	}
 	return onlineMatchResponse{
 		SchemaVersion:      match.SchemaVersion,
@@ -322,6 +271,7 @@ func toOnlineMatch(match online.Match, principal onlineauth.Principal) onlineMat
 		Seats:              seats,
 		Clock:              match.Clock,
 		Moves:              match.Moves,
+		PendingOffers:      offers,
 		CreatedAt:          match.CreatedAt.UTC(),
 		UpdatedAt:          match.UpdatedAt.UTC(),
 		CompletedAt:        match.CompletedAt,

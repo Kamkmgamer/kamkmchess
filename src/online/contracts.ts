@@ -6,7 +6,7 @@
  * Nothing here accepts arbitrary state, SQL, credentials, or private routes.
  */
 
-export const ONLINE_CONTRACTS_SCHEMA_VERSION = 1;
+export const ONLINE_CONTRACTS_SCHEMA_VERSION = 2;
 export const ONLINE_RULES_INPUT_SCHEMA_VERSION = 1;
 export const ONLINE_PUBLIC_PROJECTION_SCHEMA_VERSION = 1;
 export const ONLINE_DEFAULT_RULES_POLICY_VERSION = 'online-rules/1';
@@ -26,18 +26,28 @@ export type ResultReason =
   | 'fifty_move'
   | 'insufficient_material'
   | 'agreement'
-  | 'abort';
+  | 'abort'
+  | 'opening_reply_timeout'
+  | 'illegal_move';
 export type EventKind =
   | 'match_created'
   | 'move'
   | 'resign'
   | 'abort'
+  | 'cancel'
   | 'control_change'
   | 'timeout'
-  | 'replay_removed';
-export type ReceiptOutcome = 'accepted' | 'deadline_expired' | 'replay_removed';
+  | 'replay_removed'
+  | 'draw_agreement'
+  | 'takeback_accepted'
+  | 'offer_created'
+  | 'recovery_attempt'
+  | 'illegal_move_loss';
+export type ReceiptOutcome = 'accepted' | 'deadline_expired' | 'replay_removed' | 'opening_expired';
 export type QueueStatus = 'waiting' | 'cancelled' | 'assigned';
 export type LeaseStatus = 'active' | 'revoked' | 'expired';
+export type OfferKind = 'draw' | 'takeback';
+export type RecoveryAttemptKind = 'illegal_move' | 'formatting_correction';
 
 export interface ParticipantRef {
   kind: ParticipantKind;
@@ -64,6 +74,14 @@ export interface ClockState {
   whiteMoved: boolean;
   blackMoved: boolean;
   turnNumber: number;
+  /**
+   * The seat that owes the opening reply. It is set only between the first
+   * accepted move of the match and the responder's first accepted reply.
+   * While it is set no main clock runs.
+   */
+  replySeat: Seat | null;
+  /** The end of the opening reply window. */
+  replyDeadlineAt: string | null;
 }
 
 export interface Result {
@@ -92,6 +110,12 @@ export interface Event {
   move?: Move;
   result?: Result;
   control?: SeatControl;
+  /** The pending offer an `offer_created` event created. */
+  offer?: Offer;
+  /** The exact position an accepted takeback restored. */
+  takebackTargetVersion?: number;
+  /** The spent recovery attempt an event records. */
+  recoveryAttempt?: RecoveryAttemptKind;
 }
 
 export interface CreateSeat {
@@ -107,13 +131,23 @@ export interface CreateMatchSetup {
   seats: { white: CreateSeat; black: CreateSeat };
 }
 
+/**
+ * `cancel` aborts the match while the seat has never had an accepted move and
+ * resigns afterwards. A takeback that removes the move from the current line
+ * does not turn a later cancellation back into an abort.
+ */
 export type OnlineAction =
   | { kind: 'create_match'; setup: CreateMatchSetup }
   | { kind: 'submit_move'; move: string }
   | { kind: 'resign' }
-  | { kind: 'abort' }
+  | { kind: 'cancel' }
   | { kind: 'set_control'; control: SeatControl }
-  | { kind: 'remove_public_replay'; reason: 'owner_request' | 'erasure_request' };
+  | { kind: 'remove_public_replay'; reason: 'owner_request' | 'erasure_request' }
+  | { kind: 'offer_draw' }
+  | { kind: 'accept_draw'; offerId: string }
+  | { kind: 'offer_takeback'; targetVersion: number }
+  | { kind: 'accept_takeback'; offerId: string }
+  | { kind: 'record_recovery_attempt'; attempt: RecoveryAttemptKind };
 
 export interface Command {
   schemaVersion: number;
@@ -143,6 +177,26 @@ export interface MatchSeat {
   publicLabel: string;
   control: SeatControl;
   controlEpoch: number;
+  /** The recovery budget already spent in this seat's current turn. */
+  illegalAttemptsSpent: number;
+  formatCorrectionsSpent: number;
+}
+
+/**
+ * A pending draw or takeback offer. An offer is part of the versioned match
+ * state: creating it advances the match version without changing the
+ * position, the turn or the clocks.
+ */
+export interface Offer {
+  offerId: string;
+  matchId: string;
+  kind: OfferKind;
+  seat: Seat;
+  /** The exact position a takeback offer would restore. */
+  targetVersion: number | null;
+  /** The match version the offer produced. */
+  baseVersion: number;
+  createdAt: string;
 }
 
 /**
@@ -164,6 +218,7 @@ export interface MatchSnapshot {
   seats: MatchSeat[];
   clock: ClockState;
   moves: Move[];
+  offers: Offer[];
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
@@ -448,7 +503,21 @@ function parseParticipant(value: unknown, path: string): ParticipantRef {
 
 function parseEventKind(value: unknown, path: string): EventKind {
   const kind = stringValue(value, path);
-  const allowed: readonly EventKind[] = ['match_created', 'move', 'resign', 'abort', 'control_change', 'timeout', 'replay_removed'];
+  const allowed: readonly EventKind[] = [
+    'match_created',
+    'move',
+    'resign',
+    'abort',
+    'cancel',
+    'control_change',
+    'timeout',
+    'replay_removed',
+    'draw_agreement',
+    'takeback_accepted',
+    'offer_created',
+    'recovery_attempt',
+    'illegal_move_loss',
+  ];
   if (!allowed.includes(kind as EventKind)) {
     throw new OnlineContractError('invalid event kind', path);
   }
@@ -492,7 +561,7 @@ function parseResult(value: unknown, path: string): Result {
   const reason = stringValue(objectValue.reason, `${path}.reason`);
   const winner = objectValue.winner === null ? null : seatValue(objectValue.winner, `${path}.winner`);
   if (kind === 'win') {
-    if (winner === null || !['checkmate', 'resignation', 'timeout', 'abandonment'].includes(reason)) {
+    if (winner === null || !['checkmate', 'resignation', 'timeout', 'abandonment', 'illegal_move'].includes(reason)) {
       throw new OnlineContractError('invalid win result', path);
     }
     return { kind, winner, reason: reason as ResultReason };
@@ -504,7 +573,7 @@ function parseResult(value: unknown, path: string): Result {
     return { kind, winner, reason: reason as ResultReason };
   }
   if (kind === 'abort') {
-    if (winner !== null || reason !== 'abort') {
+    if (winner !== null || (reason !== 'abort' && reason !== 'opening_reply_timeout')) {
       throw new OnlineContractError('invalid abort result', path);
     }
     return { kind, winner, reason };
@@ -529,9 +598,35 @@ function parseMove(value: unknown, path: string): Move {
   };
 }
 
+function parseOffer(value: unknown, path: string): Offer {
+  const objectValue = object(value, path);
+  onlyKeys(objectValue, ['offerId', 'matchId', 'kind', 'seat', 'targetVersion', 'baseVersion', 'createdAt'], path);
+  requiredKeys(objectValue, ['offerId', 'matchId', 'kind', 'seat', 'baseVersion', 'createdAt'], path);
+  const kind = stringValue(objectValue.kind, `${path}.kind`);
+  if (kind !== 'draw' && kind !== 'takeback') {
+    throw new OnlineContractError('invalid offer kind', `${path}.kind`);
+  }
+  const targetVersion =
+    objectValue.targetVersion === null || objectValue.targetVersion === undefined
+      ? null
+      : positiveInteger(objectValue.targetVersion, `${path}.targetVersion`);
+  if ((kind === 'takeback') !== (targetVersion !== null)) {
+    throw new OnlineContractError('offer kind does not match its target version', path);
+  }
+  return {
+    offerId: idValue(objectValue.offerId, `${path}.offerId`),
+    matchId: idValue(objectValue.matchId, `${path}.matchId`),
+    kind,
+    seat: seatValue(objectValue.seat, `${path}.seat`),
+    targetVersion,
+    baseVersion: positiveInteger(objectValue.baseVersion, `${path}.baseVersion`),
+    createdAt: timestampValue(objectValue.createdAt, `${path}.createdAt`),
+  };
+}
+
 function parseEvent(value: unknown, path: string): Event {
   const objectValue = object(value, path);
-  onlyKeys(objectValue, ['schemaVersion', 'matchId', 'version', 'kind', 'seat', 'controlEpoch', 'decisionAt', 'acceptedAt', 'move', 'result', 'control'], path);
+  onlyKeys(objectValue, ['schemaVersion', 'matchId', 'version', 'kind', 'seat', 'controlEpoch', 'decisionAt', 'acceptedAt', 'move', 'result', 'control', 'offer', 'takebackTargetVersion', 'recoveryAttempt'], path);
   requiredKeys(objectValue, ['schemaVersion', 'matchId', 'version', 'kind', 'controlEpoch', 'decisionAt', 'acceptedAt'], path);
   const event: Event = {
     schemaVersion: positiveInteger(objectValue.schemaVersion, `${path}.schemaVersion`),
@@ -554,6 +649,19 @@ function parseEvent(value: unknown, path: string): Event {
   }
   if (objectValue.control !== undefined) {
     event.control = parseControl(objectValue.control, `${path}.control`);
+  }
+  if (objectValue.offer !== undefined) {
+    event.offer = parseOffer(objectValue.offer, `${path}.offer`);
+  }
+  if (objectValue.takebackTargetVersion !== undefined) {
+    event.takebackTargetVersion = positiveInteger(objectValue.takebackTargetVersion, `${path}.takebackTargetVersion`);
+  }
+  if (objectValue.recoveryAttempt !== undefined) {
+    const attempt = stringValue(objectValue.recoveryAttempt, `${path}.recoveryAttempt`);
+    if (attempt !== 'illegal_move' && attempt !== 'formatting_correction') {
+      throw new OnlineContractError('invalid recovery attempt', `${path}.recoveryAttempt`);
+    }
+    event.recoveryAttempt = attempt;
   }
   return event;
 }
@@ -611,14 +719,36 @@ function parseAction(value: unknown, path: string): OnlineAction {
       return { kind, move };
     }
     case 'resign':
-    case 'abort': {
+    case 'cancel':
+    case 'offer_draw': {
       onlyKeys(objectValue, ['kind'], path);
-      return { kind };
+      return { kind } as OnlineAction;
+    }
+    case 'accept_draw':
+    case 'accept_takeback': {
+      onlyKeys(objectValue, ['kind', 'offerId'], path);
+      requiredKeys(objectValue, ['offerId'], path);
+      return { kind, offerId: idValue(objectValue.offerId, `${path}.offerId`) } as OnlineAction;
     }
     case 'set_control': {
       onlyKeys(objectValue, ['kind', 'control'], path);
       requiredKeys(objectValue, ['control'], path);
       return { kind, control: parseControl(objectValue.control, `${path}.control`) };
+    }
+    case 'offer_takeback': {
+      onlyKeys(objectValue, ['kind', 'targetVersion'], path);
+      requiredKeys(objectValue, ['targetVersion'], path);
+      const targetVersion = positiveInteger(objectValue.targetVersion, `${path}.targetVersion`);
+      return { kind, targetVersion };
+    }
+    case 'record_recovery_attempt': {
+      onlyKeys(objectValue, ['kind', 'attempt'], path);
+      requiredKeys(objectValue, ['attempt'], path);
+      const attempt = stringValue(objectValue.attempt, `${path}.attempt`);
+      if (attempt !== 'illegal_move' && attempt !== 'formatting_correction') {
+        throw new OnlineContractError('invalid recovery attempt', `${path}.attempt`);
+      }
+      return { kind, attempt };
     }
     case 'remove_public_replay': {
       onlyKeys(objectValue, ['kind', 'reason'], path);
@@ -670,7 +800,7 @@ export function parseReceipt(value: unknown): Receipt {
     throw new OnlineContractError('unsupported schema version', `${path}.schemaVersion`);
   }
   const outcome = stringValue(objectValue.outcome, `${path}.outcome`);
-  if (outcome !== 'accepted' && outcome !== 'deadline_expired' && outcome !== 'replay_removed') {
+  if (outcome !== 'accepted' && outcome !== 'deadline_expired' && outcome !== 'replay_removed' && outcome !== 'opening_expired') {
     throw new OnlineContractError('invalid receipt outcome', `${path}.outcome`);
   }
   const receipt: Receipt = {

@@ -30,9 +30,10 @@ Membership failures and missing matches both return 404. Invalid credentials ret
 requests 400, missing mutation origin 403, version/operation conflicts 409 and unavailable rules or
 storage 503. JSON responses use `Cache-Control: no-store`.
 
-The live response contains position, clocks, accepted moves, public labels, declared controls and
-`yourSeat`. It omits participant references, Clerk subjects, guest IDs, session IDs, credential IDs
-and hashes. Public replay reads use the existing completed-game allowlist and respect removal.
+The live response contains position, clocks, accepted moves, public labels, declared controls,
+pending draw and takeback offers, the spent recovery budget of each seat and `yourSeat`. It omits
+participant references, Clerk subjects, guest IDs, session IDs, credential IDs and hashes. Public
+replay reads use the existing completed-game allowlist and respect removal.
 
 ## Credentials and revocation
 
@@ -69,6 +70,13 @@ for an authenticated account principal. It does not change seat ownership or mer
 KHA-72 owns explicit linking, must consume or bind the proof within its linking transaction, and
 must preserve the original actor used in operation fingerprints.
 
+KHA-72 implements that link. The public profile service re-verifies the account session, the
+proof, the parent credential, the seat ownership and every expiry inside the link transaction,
+under the account lock and the guest seat lock, and consumes the proof there. The seat owner, the
+guest actor and the accepted fingerprints are unchanged. `VerifyLinkSeat` is the in-transaction
+verification the link uses, and the advisory lock helpers let the link take the same locks the
+revocation paths take. See [the public profile contract](public-profiles.md).
+
 A verified guest can use its participant authority to request replay removal through the existing
 command contract. Trusted removal handling can revoke the guest seat's credentials. Full erasure,
 anonymization, retention and restore handling remain KHA-79.
@@ -99,6 +107,8 @@ heartbeats, cursors, snapshots or polling. KHA-69 owns that transport and its in
 
 Server-only optional settings are `ONLINE_RULES_WORKER_ENTRY`, `ONLINE_GUEST_CREDENTIAL_TTL`
 with a 12-hour default, `ONLINE_OWNERSHIP_PROOF_TTL` with a 15-minute default, and
-`ONLINE_STREAM_MAX_DURATION`, capped at 20 seconds. Build the private artifact with
-`pnpm build:rules-worker`. An absent worker entry leaves rules-dependent commands unavailable.
-Apply migrations separately through `cmd/migrate`; server startup never migrates the database.
+`ONLINE_STREAM_MAX_DURATION`, capped at 20 seconds. The trusted deadline reconciliation reads
+`ONLINE_DEADLINE_SWEEP_INTERVAL`, with a one-second default, and `ONLINE_DEADLINE_SWEEP_BATCH`,
+with a batch of one hundred. Build the private artifact with `pnpm build:rules-worker`. An absent
+worker entry leaves rules-dependent commands unavailable. Apply migrations separately through
+`cmd/migrate`; server startup never migrates the database.
