@@ -33,13 +33,36 @@ import type {
   ProviderRunnerPrompt,
   ProviderRunnerProviderPort,
   ProviderRunnerSnapshot,
+  ProviderRunnerTimers,
   RunnerLeaseRequestBody,
   RunnerRequestRequestBody,
 } from '../../src/online/provider-runner';
-import type { OnlineAction, Receipt, Seat } from '../../src/online/contracts';
+import type { Event, OnlineAction, Receipt, Result, Seat } from '../../src/online/contracts';
 
 /** The standard position every fixture starts from. */
 export const FAKE_START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+/** The label the service publishes for a label it does not know. */
+export const FAKE_NEUTRAL_MODEL_LABEL = 'Custom model';
+
+/**
+ * The allowlist of the fixture.
+ *
+ * The service resolves a declared label to a publishable one before it
+ * accepts it, and an unknown label resolves to the neutral label. The
+ * fixture models that resolution, so a runner that compares a declared label
+ * with a published label fails here the same way it fails in production.
+ */
+export const FAKE_PUBLISHED_LABELS: Readonly<Record<string, string>> = {
+  'test agent': 'Test Agent',
+  'second agent': 'Second Agent',
+  'stockfish 19 lite (browser)': 'Stockfish 19 Lite (browser)',
+};
+
+/** Resolves a declared label to the label the service publishes. */
+export function resolveFakePublishedLabel(label: string): string {
+  return FAKE_PUBLISHED_LABELS[label.trim().toLowerCase()] ?? FAKE_NEUTRAL_MODEL_LABEL;
+}
 
 /** The declared control of the fake seat. */
 export interface FakeSeatControl {
@@ -53,12 +76,15 @@ export interface FakeMatch {
   seat: Seat;
   version: number;
   controlEpoch: number;
+  /** The control epoch of the seat. It changes with the control of the seat. */
+  seatControlEpoch: number;
   positionFen: string;
   sideToMove: Seat;
+  /** The published control of the seat. */
   control: FakeSeatControl;
   illegalAttemptsSpent: number;
   formatCorrectionsSpent: number;
-  result: { readonly kind: 'win' | 'draw' | 'abort'; readonly winner: Seat | null; readonly reason: string } | null;
+  result: Result | null;
 }
 
 /** One command the runner sent. */
@@ -143,6 +169,17 @@ function parseUci(uci: string): CoordinateMove {
   return promotion === undefined ? { from, to } : { from, to, promotion };
 }
 
+/**
+ * How the fixture fences the commands of an agent seat.
+ *
+ * The service of today fences the acceptance of a move with the runner
+ * lease. The mutation that can end the match, the spent recovery attempt,
+ * and the resignation are not fenced by the service yet. The fixture models
+ * the service of today, so the fixtures never claim a fence the service does
+ * not apply.
+ */
+export type FakeLeaseFence = 'moves-only' | 'agent-commands';
+
 /** Creates the fake online service of one match. */
 export function createFakeOnlineService(options: {
   readonly matchId?: string;
@@ -152,12 +189,15 @@ export function createFakeOnlineService(options: {
   readonly controlEpoch?: number;
   readonly positionFen?: string;
   readonly sideToMove?: Seat;
+  readonly leaseFence?: FakeLeaseFence;
 } = {}): FakeOnlineService {
+  const leaseFence = options.leaseFence ?? 'moves-only';
   const match: FakeMatch = {
     matchId: options.matchId ?? 'match-0001',
     seat: options.seat ?? 'white',
     version: options.version ?? 1,
     controlEpoch: options.controlEpoch ?? 1,
+    seatControlEpoch: options.controlEpoch ?? 1,
     positionFen: options.positionFen ?? FAKE_START_FEN,
     sideToMove: options.sideToMove ?? 'white',
     control: options.control ?? { kind: 'agent', modelLabel: 'Test Agent' },
@@ -294,19 +334,28 @@ export function createFakeOnlineService(options: {
       const stored = receipts.get(operationId);
       if (stored !== undefined) return stored;
       const leaseId = submitOptions?.leaseId;
-      if (leaseId !== undefined) {
+      const fenced = leaseFence === 'agent-commands' ||
+        action.kind === 'submit_move';
+      if (fenced && leaseId !== undefined) {
         const current = lease;
         if (current === null || current.leaseId !== leaseId || current.status !== 'active') {
-          throw conflict('The lease does not accept a command.');
+          // The service answers a fenced lease with a missing resource.
+          throw notFound('The lease does not accept a command.');
         }
         if (current.turnVersion !== submitOptions?.expectedVersion) {
           throw conflict('The lease is bound to another turn.');
         }
       }
+      if (fenced && leaseId === undefined && match.control.kind !== 'human') {
+        // An agent seat acts through a browser runner, and the runner holds
+        // the lease of the seat.
+        throw notFound('The seat needs the lease of its runner.');
+      }
       const expectedVersion = submitOptions?.expectedVersion ?? 0;
       if (expectedVersion !== match.version) throw conflict('The expected version moved on.');
       if (match.result !== null) throw conflict('The match has ended.');
       const outcome: Receipt['outcome'] = 'accepted';
+      let event: Event | undefined;
       if (action.kind === 'submit_move') {
         if (match.sideToMove !== match.seat) throw conflict('The seat does not owe the move.');
         const position = parsePosition(match.positionFen);
@@ -325,12 +374,11 @@ export function createFakeOnlineService(options: {
       } else if (action.kind === 'resign') {
         match.result = { kind: 'win', winner: otherSeat(match.seat), reason: 'resignation' };
         match.version += 1;
-      } else if (action.kind === 'record_recovery_attempt') {
-        if (match.sideToMove !== match.seat) throw conflict('The seat does not owe the move.');
+      } else if (action.kind === 'record_recovery_attempt') {        if (match.sideToMove !== match.seat) throw conflict('The seat does not owe the move.');
         if (action.attempt === 'illegal_move') {
           match.illegalAttemptsSpent += 1;
           if (match.illegalAttemptsSpent >= 4) {
-            match.result = { kind: 'win', winner: otherSeat(match.seat), reason: 'illegal-move' };
+            match.result = { kind: 'win', winner: otherSeat(match.seat), reason: 'illegal_move' };
           }
         } else {
           if (match.formatCorrectionsSpent >= 3) throw conflict('The formatting budget is spent.');
@@ -339,8 +387,28 @@ export function createFakeOnlineService(options: {
         match.version += 1;
       } else if (action.kind === 'set_control') {
         match.controlEpoch += 1;
-        match.control = action.control;
+        // The control change of a seat sets the control epoch of that seat.
+        match.seatControlEpoch = match.controlEpoch;
+        // The service resolves the declared label to a publishable one before
+        // it accepts the change.
+        match.control = {
+          kind: action.control.kind,
+          ...(action.control.modelLabel === undefined
+            ? {}
+            : { modelLabel: resolveFakePublishedLabel(action.control.modelLabel) }),
+        };
         match.version += 1;
+        event = {
+          schemaVersion: 2,
+          matchId: match.matchId,
+          version: match.version,
+          kind: 'control_change',
+          seat: match.seat,
+          controlEpoch: match.controlEpoch,
+          decisionAt: new Date().toISOString(),
+          acceptedAt: new Date().toISOString(),
+          control: match.control,
+        };
         if (lease !== null && lease.status === 'active') {
           lease.status = 'revoked';
           lease.revokedAt = new Date().toISOString();
@@ -355,6 +423,8 @@ export function createFakeOnlineService(options: {
         version: match.version,
         controlEpoch: match.controlEpoch,
         decidedAt: new Date().toISOString(),
+        ...(event === undefined ? {} : { event }),
+        ...(match.result === null ? {} : { result: match.result }),
       };
       receipts.set(operationId, receipt);
       if (loseAcknowledgement) {
@@ -473,6 +543,49 @@ export function createFakeOnlineService(options: {
   };
 }
 
+/** One armed timer of the fixture. */
+export interface FakeTimer {
+  readonly id: number;
+  readonly callback: () => void;
+  readonly delayMs: number;
+}
+
+/** The deterministic timers of the fixture. */
+export interface FakeTimers extends ProviderRunnerTimers {
+  /** The armed timers. */
+  readonly armed: readonly FakeTimer[];
+  /** Fires the oldest armed timer, or the timer with the given identifier. */
+  fire(id?: number): void;
+}
+
+/** Creates the deterministic timers of the fixture. */
+export function createFakeTimers(): FakeTimers {
+  const armed: FakeTimer[] = [];
+  let nextId = 1;
+  return {
+    armed,
+    setTimeout(callback, delayMs) {
+      const id = nextId;
+      nextId += 1;
+      armed.push({ id, callback, delayMs });
+      return id;
+    },
+    clearTimeout(id) {
+      const index = armed.findIndex((timer) => timer.id === id);
+      if (index >= 0) armed.splice(index, 1);
+    },
+    fire(id) {
+      const index = id === undefined
+        ? 0
+        : armed.findIndex((timer) => timer.id === id);
+      const timer = index >= 0 ? armed[index] : undefined;
+      if (timer === undefined) throw new Error('No timer is armed.');
+      armed.splice(index, 1);
+      timer.callback();
+    },
+  };
+}
+
 /** Creates the in-memory pending record of a seat. */
 export function createMemoryPendingStore(): ProviderRunnerPendingStore {
   const records = new Map<string, ProviderRunnerPendingRecord>();
@@ -506,6 +619,7 @@ export function fakeSnapshot(
     moves: [],
     clock: { whiteMs: 60000, blackMs: 60000, incrementMs: 1000 },
     seatControl: match.control,
+    seatControlEpoch: match.seatControlEpoch,
     illegalAttemptsSpent: match.illegalAttemptsSpent,
     formatCorrectionsSpent: match.formatCorrectionsSpent,
     ...overrides,

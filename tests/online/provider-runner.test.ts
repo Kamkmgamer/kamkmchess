@@ -21,10 +21,16 @@ import {
   parseRunnerLeaseAnswer,
   ProviderRunnerServiceError,
 } from '../../src/online/provider-runner';
-import type { OnlineProviderRunner } from '../../src/online/provider-runner';
+import type {
+  OnlineProviderRunner,
+  ProviderRunnerCommandPort,
+  ProviderRunnerLeasePort,
+} from '../../src/online/provider-runner';
+import { OnlineAuthError } from '../../src/online/auth';
 import {
   createFakeOnlineService,
   createFakeProvider,
+  createFakeTimers,
   createMemoryPendingStore,
   fakeSnapshot,
 } from '../support/online-runner';
@@ -287,7 +293,7 @@ describe('the online agent runner', () => {
     expect(service.match.illegalAttemptsSpent).toBe(4);
     // The service ends the match on the fourth illegal attempt. The runner
     // never concedes by itself.
-    expect(service.match.result?.reason).toBe('illegal-move');
+    expect(service.match.result?.reason).toBe('illegal_move');
     expect(service.recordedCommands.some((command) => command.action.kind === 'resign')).toBe(false);
     await until(() => runner.state.phase === 'idle', 'the runner stops after the fourth attempt');
   });
@@ -521,5 +527,351 @@ describe('the online agent runner', () => {
     expect(lease.runnerEpoch).toBe(4);
     expect(lease.pendingRequestId).toBe('request-1');
     expect(() => parseRunnerLeaseAnswer({ leaseId: 'lease-1' }, 'match-0002', 'white')).toThrow(ProviderRunnerServiceError);
+  });
+});
+
+describe('the published model binding of the runner', () => {
+  it('keeps playing after a switch to a label the service does not publish', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => service.recordedCommands.length === 1, 'the move is accepted');
+
+    await runner.switchModel('My Private Route v2');
+    await until(() => service.match.control.modelLabel === 'Custom model', 'the service publishes its own label');
+
+    // The runner adopts the published label of the service.
+    expect(runner.state.publicModelLabel).toBe('Custom model');
+
+    // The seat still owes the move and the runner plays it, although the
+    // published label is not the label the owner declared.
+    service.opponentMove('e7e5');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => provider.prompts.length === 2, 'the runner plays the next turn');
+    provider.answer('{"move":"d2d4"}');
+    await until(
+      () => service.recordedCommands.some((command) => command.action.kind === 'submit_move' && command.action.move === 'd2d4'),
+      'the second move is accepted',
+    );
+  });
+
+  it('adopts the published label of the seat view of the snapshot', async () => {
+    const service = createFakeOnlineService({
+      control: { kind: 'agent', modelLabel: 'Custom model' },
+    });
+    const provider = createFakeProvider();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      // The owner declared a label the service does not publish.
+      publicModelLabel: 'My Private Route v2',
+      leases: service.leasePort('runner-a'),
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    expect(runner.state.publicModelLabel).toBe('Custom model');
+  });
+
+  it('stops when another controller takes the seat', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => service.recordedCommands.length === 1, 'the move is accepted');
+
+    // Another controller takes the seat. The control epoch of the seat
+    // changes, and the runner of the old controller never plays again.
+    service.match.seatControlEpoch += 1;
+    service.match.control = { kind: 'agent', modelLabel: 'Second Agent' };
+    service.opponentMove('e7e5');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    expect(provider.prompts).toHaveLength(1);
+    expect(runner.state.superseded).toBe(true);
+    expect(runner.state.lastError).toContain('Another controller');
+    expect(service.recordedCommands).toHaveLength(1);
+  });
+});
+
+describe('the per turn recovery budget of the runner', () => {
+  it('follows the canonical counts of the service at the turn boundary', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('I would like to play e4 in this position.');
+    await until(() => provider.prompts.length === 2, 'the first correction');
+    provider.answer('I would like to play e4 in this position.');
+    await until(() => provider.prompts.length === 3, 'the second correction');
+    provider.answer('I would like to play e4 in this position.');
+    await until(() => provider.prompts.length === 4, 'the third correction');
+    provider.answer('{"move":"e2e4"}');
+    await until(() => service.recordedCommands.some((command) => command.action.kind === 'submit_move'), 'the move is accepted');
+
+    // The service resets the budget of the seat with the accepted move.
+    expect(service.match.formatCorrectionsSpent).toBe(0);
+    expect(runner.state.formatCorrectionsSpent).toBe(0);
+
+    // The next turn starts with the full budget of the service.
+    service.opponentMove('e7e5');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => provider.prompts.length === 5, 'the next turn starts');
+    provider.answer('I would like to play e4 in this position.');
+    await until(() => service.match.formatCorrectionsSpent === 1, 'the first correction of the new turn');
+    expect(runner.state.formatCorrectionsSpent).toBe(1);
+    expect(runner.state.phase).not.toBe('paused');
+  });
+
+  it('numbers the attempts of the current turn like the service', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e7e5"}');
+    await until(() => service.match.illegalAttemptsSpent === 1, 'the first attempt is spent');
+    expect(runner.state.illegalAttemptsSpent).toBe(1);
+    provider.answer('{"move":"e2e4"}');
+    await until(() => service.recordedCommands.some((command) => command.action.kind === 'submit_move'), 'the move is accepted');
+
+    // The next turn counts from one again.
+    service.opponentMove('e7e5');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => provider.prompts.length === 3, 'the next turn starts');
+    provider.answer('{"move":"e7e5"}');
+    await until(() => service.match.illegalAttemptsSpent === 1, 'the attempt of the new turn is spent');
+    expect(runner.state.illegalAttemptsSpent).toBe(1);
+  });
+
+  it('keeps the spent budget of the turn across a control change', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e7e5"}');
+    await until(() => service.match.illegalAttemptsSpent === 1, 'the attempt is spent');
+
+    // A control change does not end the turn, so the spent budget stays.
+    await runner.switchModel('Second Agent');
+    await until(() => service.match.control.modelLabel === 'Second Agent', 'the agent is switched');
+    expect(service.match.illegalAttemptsSpent).toBe(1);
+    expect(runner.state.illegalAttemptsSpent).toBe(1);
+  });
+});
+
+describe('the heartbeat of the lease', () => {
+  it('arms the next renewal after a transient failure', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const port = service.leasePort('runner-a');
+    let renewals = 0;
+    const failing: ProviderRunnerLeasePort = {
+      ...port,
+      runnerId: port.runnerId,
+      async renew(input) {
+        renewals += 1;
+        if (renewals === 2) throw new Error('the network failed');
+        return port.renew(input);
+      },
+    };
+    const timers = createFakeTimers();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: failing,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+      timers,
+      renewIntervalMs: 1000,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    expect(renewals).toBe(1);
+    expect(timers.armed).toHaveLength(1);
+
+    timers.fire();
+    await until(() => renewals === 2, 'the heartbeat renewal ran');
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // The heartbeat is armed again, so one failed renewal never ends it.
+    expect(timers.armed.length).toBeGreaterThan(0);
+    expect(runner.state.phase).toBe('generating');
+  });
+
+  it('fails closed when the lease is about to expire', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const port = service.leasePort('runner-a');
+    let renewals = 0;
+    const failing: ProviderRunnerLeasePort = {
+      ...port,
+      runnerId: port.runnerId,
+      async renew(input) {
+        renewals += 1;
+        // The first renewal is the one the runner makes before the provider
+        // request. The heartbeat that follows fails.
+        if (renewals === 2) throw new Error('the network failed');
+        return port.renew(input);
+      },
+    };
+    const timers = createFakeTimers();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: failing,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+      timers,
+      renewIntervalMs: 1000,
+      // The lease of the service lives for thirty seconds. The runner is
+      // close to the end of it.
+      now: () => Date.now() + 29_000,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    expect(timers.armed).toHaveLength(1);
+
+    timers.fire();
+    await until(() => runner.state.phase === 'waiting-lease' || runner.state.phase === 'uncertain', 'the runner fails closed');
+    expect(timers.armed).toHaveLength(0);
+  });
+});
+
+describe('the stop of the runner', () => {
+  it('plays again after the owner stopped the runner', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => service.recordedCommands.some((command) => command.action.kind === 'submit_move'), 'the move is accepted');
+    await until(() => runner.state.phase === 'idle', 'the turn ends');
+
+    await runner.stop();
+    expect(runner.state.phase).toBe('stopped');
+    expect(runner.state.decisions).toContain('retry');
+
+    // The owner starts the runner again and the seat is to move.
+    service.opponentMove('e7e5');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await runner.start();
+    await until(() => provider.prompts.length === 2, 'the runner plays again');
+    expect(runner.state.phase).toBe('generating');
+  });
+
+  it('keeps the uncertainty of a running request when the owner stops the runner', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    await runner.stop();
+    expect(runner.state.phase).toBe('uncertain');
+    expect(runner.state.decisions).toContain('retry');
+
+    // The aborted provider request settles afterwards.
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    expect(runner.state.phase).toBe('uncertain');
+    expect(runner.state.uncertainty).not.toBeNull();
+    expect(runner.state.decisions).toContain('retry');
+  });
+});
+
+describe('the failures of the participant boundary', () => {
+  it('stops the runner when the credential was refused', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    let attempts = 0;
+    const commands: ProviderRunnerCommandPort = {
+      async submit() {
+        attempts += 1;
+        throw new OnlineAuthError('credential-cleared', 'The credential was cleared.');
+      },
+      setControlEpoch() {
+        // The fake service owns the epoch.
+      },
+      setVersion() {
+        // The fake service owns the version.
+      },
+    };
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => runner.state.phase === 'stopped', 'the runner stops');
+
+    // The command is not sent again and the runner does not ask for a lease
+    // on every snapshot.
+    expect(attempts).toBe(1);
+    expect(runner.state.lastError).toContain('credential');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(attempts).toBe(1);
+  });
+});
+
+describe('the terminal state of the match', () => {
+  it('releases the lease when the match is over', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+
+    // The match ends without an accepted move of the seat.
+    service.match.result = { kind: 'win', winner: 'black', reason: 'timeout' };
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(
+      () => service.recordedLeaseBodies.some((body) => body.action === 'release'),
+      'the lease is released',
+    );
+    expect(runner.state.phase).toBe('idle');
+  });
+});
+
+describe('a fenced command of the runner', () => {
+  it('reports a fenced lease as a fence and spends no attempt', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands: ProviderRunnerCommandPort = {
+      async submit() {
+        // The service answers a fenced lease with a missing resource.
+        throw new ProviderRunnerServiceError('not-found', 'The lease does not accept a command.', 404);
+      },
+      setControlEpoch() {
+        // The fake service owns the epoch.
+      },
+      setVersion() {
+        // The fake service owns the version.
+      },
+    };
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e7e5"}');
+    await until(() => runner.state.phase === 'idle', 'the runner reports the fence');
+
+    // The fence is not a rules refusal, so no attempt is spent.
+    expect(runner.state.lastError).toContain('lease');
+    expect(runner.state.illegalAttemptsSpent).toBe(0);
+    expect(service.match.illegalAttemptsSpent).toBe(0);
   });
 });

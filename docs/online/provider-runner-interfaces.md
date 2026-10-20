@@ -18,11 +18,21 @@ the control changes and the spent recovery attempts.
   first provider request, renews it while it works and before it submits an
   answer, and releases it when the turn ends. A second runner of the same seat
   is refused by the service, so a duplicate tab shares the game.
+- The heartbeat of the lease survives a transient failure. A failed renewal is
+  armed again with a bounded backoff, and the runner fails closed before the
+  lease of the service expires.
 - The service owns the outcome. The runner proposes a move, a resignation, a
   control change or a spent recovery attempt. It never decides a result.
-- The budgets are the service's. Four illegal attempts and three automatic
-  formatting corrections are counted by the service. A retry, a switch or a
-  takeover never refills a spent budget.
+- The budgets are the service's and they are per turn. Four illegal attempts
+  and three automatic formatting corrections are counted by the service. The
+  browser follows the canonical counts of the current turn: a retry, a switch
+  or a takeover never refills a spent budget, and the next turn starts with the
+  budget of the service.
+- The controller of the seat is the control epoch of the seat, never a label.
+  A runner of a superseded controller stands down and never submits a move.
+- The published label of the agent is the label the service resolves, never the
+  label the owner declared. The runner adopts it from the receipt of a control
+  change and from the seat view of the snapshot.
 - A provider failure never concedes. It produces an explicit owner decision.
 - Uncertain billable work is never repeated by itself. The runner leaves the
   request identifier behind in the service lease and in the browser-local
@@ -31,6 +41,15 @@ the control changes and the spent recovery attempts.
   move or an epoch cancels the pending answer.
 - Exactly one accepted move. Every command carries an operation identifier, and
   a lost acknowledgement is retried with the same identifier.
+- A fenced command is not a rules refusal. A command the service refuses
+  because the lease no longer accepts it drops the lease and waits, and it
+  never spends a recovery attempt.
+- A refused credential stops the runner. It is not a lost acknowledgement and
+  it is never retried.
+- A finished match keeps no lease. The runner gives the lease back and stops
+  the heartbeat when the match ends.
+- A stopped runner is resumable. The owner may stop an agent and start it
+  again, and an uncertainty that is open is never swallowed by a stop.
 - Nothing private is shared. The credential, the provider route and the model
   conversation stay in the browser.
 
@@ -92,14 +111,19 @@ so a change of the contract lands in one place.
 | Status | Meaning | Runner behaviour |
 | --- | --- | --- |
 | 400 | The body or the contract was refused | The runner stops and reports the failure |
-| 404 | The match, the seat or the lease does not exist | The runner stops |
+| 404 | The match, the seat or the lease does not exist | The runner drops the lease and waits. A command that carried a lease was fenced by the lease, not refused by the rules |
 | 409 | A stale version, a stale epoch, a held seat, a revoked lease | The runner gives the lease up and waits |
 | 401 / 403 | The credential was refused | The runner stops |
 | 503 | The service could not serve the request | The runner retries the same operation |
 
 `classifyProviderRunnerError` maps a failure of any client onto these kinds. A
-failure that carries only an HTTP status is mapped by the table; a failure that
-carries a `kind` is taken as it is.
+failure that carries only an HTTP status is mapped by the table, a failure that
+carries an authentication `code` is mapped with the codes of the participant
+boundary, and a failure that carries a `kind` is taken as it is.
+
+The codes of the participant boundary matter. A cleared, expired or changed
+credential is not a lost acknowledgement: the runner stops instead of sending
+the command again, and it never asks for a lease on every snapshot.
 
 ## The ports the UI injects
 
@@ -120,6 +144,12 @@ export interface ProviderRunnerLeasePort {
 The client owns the runner identifier. Two tabs of one owner must not share
 it, because the service refuses a second runner of a seat that a live lease
 holds. The client is per match and per seat.
+
+The lease answer has to carry the whole lease record. The runner reads
+`pendingRequestId`, because it is the field that tells a new runner that a
+previous runner may still have started billable work, and it reads
+`runnerEpoch`, `revokedReason` and `lastRenewedAt`, because they explain the
+state of the lease. The shared parser of the module reads all of them.
 
 ### The command client
 
@@ -168,13 +198,14 @@ The runner acts on the canonical match state. The interface is
 | `sideToMove` | `clock.replySeat ?? clock.activeSeat` |
 | `positionFen`, `startingFen`, `moves` | The snapshot |
 | `clock` | `clock.whiteMs`, `clock.blackMs`, `timeControl.incrementMs` |
-| `seatControl` | The seat view of the snapshot |
-| `illegalAttemptsSpent`, `formatCorrectionsSpent` | The seat view of the snapshot |
+| `seatControl` | The seat view of the snapshot. The label it carries is the published one |
+| `seatControlEpoch` | `seatView.controlEpoch`. The canonical answer to the question which controller plays the seat |
+| `illegalAttemptsSpent`, `formatCorrectionsSpent` | The seat view of the snapshot. The canonical counts of the current turn |
 | `serviceEpoch`, `seatEpoch` | Optional. The service epoch and the seat binding epoch |
 
 The runner is fed with `applySnapshot`. A snapshot that changes the position,
 the side to move, the control epoch, the service epoch, the seat epoch or the
-declared control of the seat cancels the pending answer.
+control epoch of the seat cancels the pending answer.
 
 ## The phases of the runner
 
@@ -187,10 +218,16 @@ declared control of the seat cancels the pending answer.
 | `uncertain` | Uncertain billable work waits for an explicit owner decision |
 | `paused` | The automatic formatting budget is spent. The owner recovers |
 | `failed` | The provider or the transport failed. The owner recovers |
-| `stopped` | The runner was stopped on purpose |
+| `stopped` | The runner was stopped on purpose, or the credential was refused |
 
-The `uncertain`, `paused` and `failed` phases offer the decisions `retry`,
-`switch-model` and `takeover`. The runner never leaves one of them by itself.
+The `uncertain`, `paused`, `failed` and `stopped` phases offer the decisions
+`retry`, `switch-model` and `takeover`. The runner never leaves one of them by
+itself, and `start()` and `resume()` start a stopped runner again.
+
+The state of the runner also carries `publicModelLabel`, the label the service
+publishes for the agent, `boundSeatControlEpoch`, the control epoch of the seat
+the runner is bound to, and `superseded`, which is true when another
+controller took the seat.
 
 ## The explicit owner decisions
 
@@ -199,9 +236,12 @@ The `uncertain`, `paused` and `failed` phases offer the decisions `retry`,
   work may be paid twice. The spent budgets stay spent.
 - `switchModel(publicModelLabel)` sends `set_control` with a new public label.
   The control epoch advances, the lease of the seat is revoked and the runner
-  continues with the new agent.
+  continues with the new agent. The service resolves the declared label to a
+  publishable one, so the runner adopts the published label of the receipt and
+  binds the new control epoch of the seat.
 - `takeover()` sends `set_control` with the human control. The seat belongs to
   the owner and the runner stops.
+- `start()` and `resume()` start a stopped runner again.
 
 A public label is a chosen name. `isPublicModelLabel` refuses a label that
 could name a route, and `assertSharedActionSafe` refuses a shared action with
@@ -213,7 +253,8 @@ an unknown field.
    request, or a browser-local pending record, stops the runner: the previous
    runner may have started billable work.
 2. The runner renews the lease, records the request with `begin` and asks the
-   provider.
+   provider. A request that the service could not record is never sent, because
+   a billable request without a record hides the uncertainty of a lost runner.
 3. The answer is read with the shared classified decoder. A move, an explicit
    resignation, a formatting failure or an illegal move.
 4. The runner renews the lease again, because a lease that expired during a
@@ -222,12 +263,23 @@ an unknown field.
    `record_recovery_attempt` with `illegal_move` and the turn continues with a
    correction. A formatting failure is reported as `record_recovery_attempt`
    with `formatting_correction`. A resignation is submitted as `resign`.
-6. The lease is released when the turn ends.
+6. The lease is released when the turn ends, and the accepted move resets the
+   recovery budget of the seat, exactly like the service does.
 
 The expected version of every command is the version the lease is bound to.
 The service checks that the lease of an agent seat is live and bound to the
 turn of the command, so a reply of a superseded runner can never become an
 accepted move.
+
+## The renewal of the lease
+
+The lease of the service lives for thirty seconds and the runner renews it
+every five seconds. A renewal that fails is armed again with a bounded
+backoff, so a single transient failure never ends the heartbeat of the seat.
+The runner fails closed when the lease is about to expire, because the seat
+belongs to another runner from that moment on, and it fails closed when the
+credential was refused. A lease that was revoked or that expired is given up
+and taken again, at most a few times per turn.
 
 ## The uncertainty of a lost runner
 
@@ -240,20 +292,26 @@ owner decides whether the work is paid twice.
 
 ## What the UI has to change
 
-1. **The lease client.** `src/online/runner-lease.ts` currently sends
-   `POST`/`PUT`/`DELETE` with a `generation` field. The service accepts one
-   `POST` with an `action` field and refuses an unknown field. The client has
-   to use `buildRunnerLeaseBody` and `buildRunnerRequestBody` and to speak
-   `acquire`, `renew`, `release`, `begin` and `clear`.
+1. **The lease client.** The wire of `src/online/runner-lease.ts` is the wire
+   of the service now. It has to use the shared builders and the shared parser
+   of the module, it has to answer the whole lease record, and its
+   `turnVersion` has to accept `null`, because a runner that has not seen a
+   snapshot yet does not know the turn.
 2. **The snapshot mapping.** The workspace delivers an `OnlineMatchView`. The
-   UI maps it to a `ProviderRunnerSnapshot` and hands it to the runner.
+   UI maps it to a `ProviderRunnerSnapshot` and hands it to the runner. The
+   mapping needs the control epoch of the seat, the published label of the seat
+   and the canonical counters of the seat.
 3. **The provider client.** The UI resolves the connection profile and the
    credential of the agent, and it builds a `ProviderRunnerProviderPort`. The
    credential never leaves the browser. After a model switch the UI resolves
    the provider target of the new agent again, because the runner keeps the
-   public label and the provider client owns the route.
+   published label and the provider client owns the route.
 4. **The owner decisions.** The interface shows the decisions of the runner
-   state and calls `retry`, `switchModel` or `takeover`.
+   state and calls `retry`, `switchModel` or `takeover`, and it starts a
+   stopped runner again with `start()` or `resume()`.
+5. **A superseded controller.** When the state of the runner reports
+   `superseded`, the seat belongs to another controller. The UI binds the agent
+   it wants to the seat or it leaves the seat to its owner.
 
 ## The evidence
 
@@ -261,7 +319,9 @@ owner decides whether the work is paid twice.
 API with a deterministic provider, a deterministic lease client and a
 deterministic command client. The lease client speaks the exact wire of the
 service and applies the documented rules of the service, so the runner is
-exercised against the contract and not against a private shortcut.
+exercised against the contract and not against a private shortcut. The fixture
+resolves a declared label to a published one and it resets the counters of the
+seat with an accepted move, exactly like the service does.
 
 | Case | Fixture |
 | --- | --- |
@@ -272,7 +332,7 @@ exercised against the contract and not against a private shortcut.
 | ARC-09 | A pending request of a previous runner asks the owner |
 | ARC-09 | A pending request of the browser survives a reload |
 | ARC-09 | A lost acknowledgement recovers the original receipt and accepts one move |
-| MAT-08 | The spent budgets survive a control change |
+| MAT-08 | The spent budgets survive a control change of the same turn |
 | MAT-09 | The answer of a superseded turn is dropped |
 | MAT-09 | The late reply of a superseded controller is fenced |
 | MAT-09 | A takeover hands the seat to the owner, a switch names a new public label |
@@ -280,6 +340,13 @@ exercised against the contract and not against a private shortcut.
 | MAT-10 | Three formatting corrections pause the turn and wait for the owner |
 | MAT-10 | A provider failure never resigns and never repeats the request |
 | — | The shared commands carry no credential, no route and no conversation |
+| — | The published label of the seat is the identity of the agent |
+| — | The budget of the browser follows the canonical counts of the turn |
+| — | The heartbeat of the lease survives a transient failure and fails closed near the lease expiry |
+| — | A stopped runner plays again and keeps an open uncertainty |
+| — | A refused credential stops the runner instead of retrying |
+| — | A finished match keeps no lease |
+| — | A fenced command is reported as a fence and spends no attempt |
 
 The fixtures send no provider request and need no credential, no account and no
 paid request. They are deterministic evidence of the behaviour, not of the
@@ -298,3 +365,31 @@ live readiness of the service.
 - A new lease carries the pending request of the previous lease of the seat.
   That is the honest record of uncertain billable work, and the runner honours
   it.
+- The service fences the acceptance of a move with the runner lease. The
+  spent recovery attempt and the resignation are not fenced by the service yet,
+  and the fixtures do not claim a fence the service does not apply.
+- The service resolves a declared label to a publishable one before it accepts
+  it, and an unknown label resolves to a neutral label. The runner therefore
+  never compares a declared label with a published one, and the control epoch
+  of the seat is the canonical answer to the question which controller plays
+  the seat.
+
+## Open items of the peers
+
+These items are outside the module. They are recorded here because the runner
+depends on them.
+
+- **The foundation fences the agent mutations.** The service checks the runner
+  lease when it accepts a move. The spent recovery attempt, which can end the
+  match with an illegal-move loss, and the resignation are not fenced. The
+  runner sends the lease with every command, and the fixtures model the
+  service of today instead of claiming a fence that does not exist.
+- **The lease client answers the whole lease record.** The runner reads
+  `pendingRequestId` to know that a previous runner may have started billable
+  work, and it reads `runnerEpoch`, `revokedReason` and `lastRenewedAt` to
+  explain the state of the lease. A client that drops those fields cannot be
+  wired to the runner, and a runner without the pending request identifier
+  would silently issue a second paid request after a runner loss.
+- **The engine seat releases its lease.** A disposed engine seat that keeps its
+  lease blocks the seat for the whole life of the lease. The release has to
+  happen before the requester is disposed.
