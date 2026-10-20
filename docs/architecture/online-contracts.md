@@ -58,7 +58,9 @@ Migration `backend/migrations/0002_online.sql` is additive and versioned through
 Migration `backend/migrations/0004_online_match_outcomes.sql` is additive and adds the opening reply
 window columns, the shared recovery budget counters, `online_offers` (pending draw and takeback
 offers) and `online_discarded_moves` (accepted moves that a takeback removed from the current line).
-It relaxes the match schema version check to accept version `2`. It changes no existing row.
+It relaxes the match schema version check to accept version `2`. It changes no existing row. Two
+partial indexes over the armed deadline columns keep the bounded deadline scan off a sequential
+read of every stored clock.
 
 Migration `backend/migrations/0006_online_offer_consent.sql` is additive and adds the offer payload of
 an event, the `offer_created` event kind and `online_turn_budgets`, the journal of what a seat spent
@@ -264,6 +266,37 @@ READ COMMITTED while holding the match row FOR SHARE across match, seat, clock, 
 reads. This blocks the writer while allowing a revocation committed during an authorization-lock
 wait to become visible to the subsequent credential check.
 
+## Automatic deadline reconciliation
+
+A match arms at most one deadline, so a match that nobody touches still has to end. The writer owns
+a trusted deadline boundary that realises the deadline without a participant command.
+
+- `backend/online/deadline.go` is the boundary. `DueDeadlineMatchIDs` is a bounded scan that
+  returns identifiers only, so no connection waits idle between two passes and none is held while
+  the rules process works. `ReconcileDeadline` settles one match. `ReconcileDeadlines` is one
+  bounded pass and reports how many matches were due, settled, skipped and left pending.
+- The boundary is trusted, not public. It never fabricates an account or guest identity and it
+  never spends a participant-chosen operation ID, so the trusted transition writes no operation
+  receipt. The participant API keeps its narrow reader and writer interface, so no HTTP route and
+  no unauthenticated caller reaches it. There is no public cron endpoint.
+- Each reconciliation re-locks the match row, re-samples the authoritative database clock after
+  the lock, and re-checks the version, the control epoch, the rules input hash and the expired
+  seat. The terminal state, the append-only event and the public projection are written in one
+  transaction, so the transition is atomic, and the row lock makes it idempotent: a second sweep
+  of the same match finds the terminal result and writes nothing.
+- A main clock expiry needs the bounded timeout policy, so it is evaluated outside every
+  transaction and every lock and is then fenced by the re-lock. Without a timeout-capable rules
+  process, or while the rules service is unavailable, the expiry stays pending for a later pass
+  and no result is invented. The opening reply abort needs no chess rules and is committed under
+  one lock.
+- The participant path and the trusted path share one transition, so they produce the same event,
+  the same result and the same projection. A participant intent still reconciles the expiry
+  before any other refusal, so a late intent and a sweep agree on the terminal state.
+- `backend/serverapp/deadlines.go` owns the cadence. `StartDeadlineReconciler` binds the loop to
+  the server context and to its stop function, and the stop function waits for the loop to finish
+  before the database pool closes. The interval and the batch size come from
+  `ONLINE_DEADLINE_SWEEP_INTERVAL` and `ONLINE_DEADLINE_SWEEP_BATCH`.
+
 ## Public projection and removal
 
 `BuildPublicProjection` emits only the allowlisted replay fields: starting position, time control,
@@ -323,8 +356,6 @@ guest actor, the accepted receipts and the accepted fingerprints are left untouc
 - Finite fetch-SSE delivery, durable cursors and polling recovery (KHA-69).
 - Queue allocation, lease acquisition/revocation commands, matchmaking, cutoffs, and fallback.
 - The abandonment claim after one continuous minute offline, and the reconnection window.
-- A deadline worker that realises the opening reply abort and the main clock timeout without waiting
-  for the next intent. Today both are reconciled when the next authenticated intent arrives.
 - The browser agent runner that produces the recovery attempt reports and the per-move declared
   control timeline.
 - Per-move declared-control timeline in replays and public attribution presentation.

@@ -15,10 +15,14 @@ restored prefix. Both regressions and the focused offer/takeback/recovery
 PostgreSQL suite pass. `go vet ./backend/... ./cmd/...` also passes. Final
 combined verification follows integration of the other correction tasks.
 
-Locally verified on 2026-10-20 on `t3/authoritative-online-match-outcomes`.
-Tested source commit: `1d442aa`. The correction commits are `379957f`, `6c311b5`, `ebff3f1`, `f5bb721`,
-`e66bda3`, `2cf24dc` and `1d442aa`; the documentation commit that records them follows.
-The branch starts at `a1e069e`, which includes the KHA-64/65/66/67 foundations.
+Integrated on 2026-10-20 on `feature/kha68-kha72-online-core`, based on
+`a1e069e` and the KHA-64/65/66/67 foundations. The takeback correction commits
+are `379957f`, `6c311b5`, `ebff3f1`, `f5bb721`, `e66bda3`, `2cf24dc`,
+`1d442aa` and the parent continuity correction `27f9420`.
+
+The automatic deadline implementation is `b3b805b`, with additional fixtures
+in `eda669f` and `521e22e`. Its isolated checks passed at `521e22e`.
+The combined source and final checks are recorded after integration below.
 
 ## Merge note for the parallel corrections
 
@@ -128,6 +132,53 @@ and authorization locks are held and is re-sampled after external rules work, so
 crosses a deadline is judged against the time the locks were acquired. A final result cannot be
 overwritten by a later intent, a stale offer, a late rules candidate or direct SQL.
 
+### Automatic deadline realisation
+
+An opened match arms exactly one deadline: the opening reply window or the main clock. The
+expiry is no longer realised only by the next participant intent. The writer owns a trusted
+deadline boundary that settles a due match with no participant command at all.
+
+`backend/online/deadline.go` is the boundary.
+
+- `DueDeadlineMatchIDs` is a bounded scan. It returns identifiers only, so no connection waits
+  idle between two passes and no connection is held while the rules process works.
+- `ReconcileDeadline` settles one match. It reads one consistent snapshot, decides which
+  deadline applies, and then re-locks the match row, re-samples the authoritative database clock
+  after the lock, and re-checks the version, the control epoch, the rules input hash and the
+  expired seat before it writes.
+- `ReconcileDeadlines` is one bounded pass over the due matches. It reports how many were due,
+  settled, skipped and left pending.
+
+The boundary is trusted, not public. It never fabricates an account or guest identity and it
+never spends a participant-chosen operation ID: the trusted transition writes no
+`online_operation_receipts` row. The terminal state, the append-only event and the public
+projection are written in one transaction under the match row lock, so the transition is atomic,
+and the lock makes it idempotent: a second sweep of the same match finds the terminal result and
+writes nothing. The participant path and the trusted path share one transition, so they produce
+the same event, the same result and the same projection.
+
+A main clock expiry needs the bounded timeout policy, so it is evaluated outside every
+transaction and every lock and is then fenced by the re-lock. Without a timeout-capable rules
+process, or while the rules service is unavailable, the expiry stays pending for a later pass
+and no result is invented. The opening reply abort needs no chess rules, so it is committed
+under one lock.
+
+`backend/serverapp/deadlines.go` owns the cadence. `StartDeadlineReconciler` runs the loop and
+binds it to the server context and to the returned stop function, and the stop function waits
+for the loop to finish so the caller can close its database pool without a background sweep
+still using it. `backend/serverapp/server.go` starts the loop in `Open` and stops it in
+`release`. The interval and the batch size are read from `ONLINE_DEADLINE_SWEEP_INTERVAL` and
+`ONLINE_DEADLINE_SWEEP_BATCH`; an unparsable value falls back to the default instead of failing
+the boot.
+
+The participant API keeps its narrow reader and writer interface, so the trusted mutation is not
+reachable from any HTTP route and there is no public cron endpoint.
+
+One correctness fix came with the shared transition. The participant path of the opening abort
+read the match without its accepted line, so the published replay of a participant-triggered
+opening abort carried no moves and the stored rules input hash described an empty line. The
+accepted line is now read under the match lock on that path too.
+
 ### Contract and schema changes
 
 `backend/online/contracts.go` and `src/online/contracts.ts` moved from schema version 1 to 2.
@@ -145,7 +196,9 @@ The correction commits keep schema version 2 and change the shape of two payload
 
 Migration `backend/migrations/0004_online_match_outcomes.sql` is additive. It adds the reply
 window columns, the seat recovery budget counters, `online_offers` and `online_discarded_moves`, and
-relaxes the match schema version check to accept version 2. It rewrites no existing row.
+relaxes the match schema version check to accept version 2. It rewrites no existing row. It also
+adds two partial indexes over the armed deadline columns so the bounded deadline scan does not
+read every stored clock.
 
 Migration `backend/migrations/0006_online_offer_consent.sql` is additive. It adds the offer payload
 of an event, the `offer_created` event kind and `online_turn_budgets`, the journal of what a seat
@@ -190,6 +243,9 @@ afterwards:
   while the reply window is open.
 - Removing the withdrawal of the stale offers fails the stale takeback fixture and the withdrawn
   draw offer fixture: the inapplicable offer stays pending.
+
+The isolated deadline correction also passed all three commands, with the real private rules
+process and the booted server composition. Combined verification follows integration.
 
 ### New Go fixtures
 
@@ -288,12 +344,80 @@ that identity is rejected before it reaches the writer.
 `backend/rulesworker/evaluator_test.go` asserts that a refused proposal keeps its own answer and
 that an internal history disagreement is an unavailable service instead of a participant error.
 
+### New automatic deadline fixtures
+
+`backend/integration/online_deadline_test.go` covers the trusted deadline boundary against real
+PostgreSQL. Every fixture moves the stored deadline into the past and then invokes the trusted
+reconciliation once, so no fixture waits for wall-clock time and no fixture needs a participant
+command.
+
+- MAT-04: `TestPostgresOnlineTrustedReconciliationSettlesAnExpiredMainClockWithoutAParticipantCommand`
+  expires the main clock of an opened match and reconciles it with the real private rules process.
+  The match ends as a timeout, the flagged bank is zero, the version advances exactly once, no
+  increment is minted, the public replay carries the accepted line and the timeout, exactly one
+  timeout event is written, and no participant receipt is written. A second reconciliation settles
+  nothing.
+- MAT-01 and MAT-04: `TestPostgresOnlineTrustedReconciliationAbortsAnUnansweredOpeningReplyWithoutAParticipantCommand`
+  expires the opening reply window and reconciles it. The match aborts unscored with the reason
+  `opening_reply_timeout`, the responder's bank is untouched, and exactly one abort event is
+  written.
+- MAT-12 and ARC-03: `TestPostgresOnlineTrustedReconciliationIsIdempotentUnderConcurrentSweeps`
+  runs four concurrent sweeps over one expired match. Exactly one sweep settles it, the version
+  advances exactly once, exactly one timeout event and one public projection exist, and no
+  increment is minted.
+- MAT-04: `TestPostgresOnlineTrustedReconciliationRacesAParticipantCommand` races the sweep with
+  a late participant move. The late intent never becomes a move, the match ends as a timeout and
+  exactly one timeout event exists.
+- MAT-04 and MAT-08: `TestPostgresOnlineTrustedReconciliationRacesAResignationACancellationAndAControlChange`
+  races the sweep with a resignation, a cancellation and a control change. The expired clock still
+  wins over every intent, the control epoch does not move, and exactly one terminal event exists.
+- MAT-04 and ARC-03: `TestPostgresOnlineTrustedReconciliationEvaluatesTheRulesOutsideTheMatchLock`
+  proves that the flag fall is adjudicated outside the match row lock and outside every
+  transaction: while the rules process works, a second connection takes the match row lock at
+  once and the pool holds no connection of the sweep.
+- MAT-04: `TestPostgresOnlineTrustedReconciliationKeepsAnExpiredClockPendingWithoutATimeoutPolicy`
+  reconciles without a timeout-capable rules process. The writer fails closed, the expiry stays
+  pending, the match stays active, no timeout event is written and the scan still reports the
+  match.
+- MAT-04: `TestPostgresOnlineTrustedReconciliationKeepsAnExpiredClockPendingWhileTheRulesServiceIsUnavailable`
+  reconciles while the rules process fails. The expiry stays pending and no result is invented. The
+  policy recovers and the next pass settles the same expiry.
+- MAT-04: `TestPostgresOnlineDueDeadlineScanIsBoundedAndReturnsIdentifiers` proves the scan is
+  bounded, reports due matches only, and never reports a match without an armed deadline.
+- MAT-04: `TestPostgresOnlineDeadlineReconcilerSettlesADueMatchAndStopsOnRelease` runs the server
+  loop against real PostgreSQL. The loop settles a due match with no participant command, and the
+  released loop settles nothing afterwards.
+- Production wiring: `TestPostgresOnlineServerLifecycleSettlesADueMatchAndStopsOnRelease` boots
+  the real server composition over an isolated schema with the real rules worker. The booted
+  server settles a due match with no participant command, and the released server settles nothing
+  afterwards.
+- Authorization boundary: `TestPostgresOnlineHTTPCannotInvokeTheTrustedDeadlineReconciliation`
+  proves that the participant HTTP surface exposes no route that reaches the trusted mutation and
+  that an unauthenticated request never settles an expired match.
+
+`backend/serverapp/server_test.go` covers the loop itself without a database. The release stops the
+background work, the server context stops it, the stop function is idempotent, a composition
+without a reconciler starts nothing, and the sweep settings are read from the environment with a
+fallback to the default.
+
 ### Deterministic time and real races
 
 Deadlines are moved into the past with a direct update of the stored clock rows, so the expiry
 fixtures do not depend on wall-clock sleeps. The lock-wait fixture keeps a real PostgreSQL race: a
 second connection holds the match row, the command waits, and the deadline passes during the wait.
 The participant-lock race fixture holds the credential lock across the deadline in the same way.
+The deadline fixtures use the same deterministic deadline shift, and the concurrent sweeps and the
+sweeps against a participant command are real PostgreSQL races over the same match row.
+
+The local PostgreSQL container used for this verification steps its clock backwards by up to about
+0.9 seconds roughly every fifteen seconds, while the host clock stays steady. A probe over 241
+seconds recorded sixteen such steps. An absolute deadline with a sub-second window can therefore
+be un-passed by the clock itself, so the lock-wait fixture waits for the database clock to reach
+past the deadline instead of sleeping for a fixed duration. The deadline fixtures of this
+correction move the deadline an hour into the past, so a clock step cannot reach them. The
+underlying clock behaviour is an environment property of the local container, not of the writer:
+the writer reads one authoritative database clock for every deadline decision, and the participant
+path and the trusted path read the same clock.
 
 ### Red evidence
 
@@ -302,6 +426,15 @@ The new fixtures were checked against the behaviour they replace. Removing the o
 Removing the ever-moved check of the cancellation fails both cancellation fixtures. Adding an
 increment to the takeback acceptance fails the takeback fixture. The removed code was restored
 after each check.
+
+The automatic deadline fixtures were checked against the missing behaviour. Making the trusted
+reconciliation settle nothing fails the timeout fixture, the opening abort fixture, the concurrent
+sweep fixture, the two pending-expiry fixtures, the loop fixture, the server lifecycle fixture and
+the HTTP boundary fixture. In that state an expired match stays active with no participant
+command, which is the defect this correction removes. The stub was removed after the check.
+Opening the transaction before the flag fall is adjudicated fails the outside-lock fixture, which
+reports the pooled connection the sweep held during the rules work. The change was reverted after
+the check.
 
 ## Acceptance boundaries and limitations
 
@@ -315,9 +448,12 @@ after each check.
   for the main clock and by
   `TestPostgresOnlineCommandThatWaitsPastTheReplyDeadlineAborts` for the opening reply window.
 - ARC-04 has local evidence for the existing actions and for the new offer actions.
-- The fifteen second reply abort and the main clock timeout are realised when the next
-  authenticated intent arrives. A deadline worker that realises them without an intent is deferred
-  work, together with the finite SSE delivery of KHA-69.
+- MAT-04 has local evidence for the automatic realisation of both deadlines. The opening reply
+  abort and the main clock timeout are settled by the trusted reconciliation with no participant
+  command, through the real private rules process and through the booted server composition.
+- The trusted reconciliation is a server capability. It has no HTTP route, it fabricates no
+  participant identity, and it writes no participant operation receipt. Its interval and batch
+  size are server settings.
 - The browser agent runner that produces the recovery attempt reports is not implemented. The shared
   writer owns the budget, the reset rule and the illegal move loss; the runner that detects an
   illegal move in a model reply is downstream work.
@@ -333,6 +469,11 @@ after each check.
 - The public replay projection carries the current line only. A takeback removes the discarded moves
   from the replay and keeps them in the shared tables.
 - Deployment, provider spending, staging verification and native accessibility were not performed.
+- The local PostgreSQL container steps its clock backwards by up to about 0.9 seconds every fifteen
+  seconds. The writer reads one authoritative database clock for every deadline decision, so the
+  participant path and the trusted path always agree, but an absolute deadline with a sub-second
+  window can be un-passed by the clock itself in that environment. Production clock behaviour
+  was not measured here. No deadline decision in this slice depends on the host wall clock.
 
 ## Review disposition
 
@@ -360,8 +501,8 @@ findings. Their dispositions are:
   increment. The ruling of the parent is applied and documented in `6c311b5`.
 - A takeback during the opening reply window cancelled the window. Fixed in `6c311b5`: takebacks
   are unavailable until the opening exchange is complete.
-- The read path does not reconcile an expired clock. Not corrected here: the automatic deadline
-  settlement belongs to the separate deadline correction.
+- The read path returns stored state. Automatic deadline settlement is now integrated through
+  `b3b805b`, so expiry is realised independently of participant commands and reads.
 - The browser agent runner that produces the recovery reports is not implemented. It is the
   downstream runner ticket, and the illegal move loss stays unreachable until it lands.
 - An internal history disagreement was reported as a user-fixable conflict. Fixed in `f5bb721`.
@@ -371,4 +512,5 @@ findings. Their dispositions are:
   of an old receipt unchanged.
 
 OpenCode `opencode/minimax-m3.1-flash-free` handled the implementation and the verification of this
-slice. The parent reviewed the contract change, the migration and the evidence.
+slice, and of the automatic deadline correction. The parent reviewed the contract change, the
+migration and the evidence.

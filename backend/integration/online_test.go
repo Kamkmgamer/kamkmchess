@@ -623,7 +623,11 @@ func TestPostgresOnlineLockWaitCrossesClockExpiry(t *testing.T) {
 		done <- outcome{result: result, err: err}
 	}()
 	<-started
-	time.Sleep(750 * time.Millisecond)
+	// The deadline passes while the command waits for the match row. The wait
+	// follows the database clock and reaches past the deadline, so the
+	// fixture does not depend on the host wall clock, and a step of the
+	// database clock cannot take the deadline back.
+	waitForDatabaseTime(t, pool, (*before.Clock.DeadlineAt).Add(2*time.Second))
 	if err = tx.Commit(context.Background()); err != nil {
 		t.Fatal(err)
 	}

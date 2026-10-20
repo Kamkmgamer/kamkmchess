@@ -51,6 +51,11 @@ type OnlineConfig struct {
 	// service still answers reads but rejects commands that need the rules
 	// policy.
 	RulesWorkerEntry string
+	// DeadlineSweepInterval is how often the server reconciles the match
+	// deadlines that have passed.
+	DeadlineSweepInterval time.Duration
+	// DeadlineSweepBatch bounds one reconciliation pass.
+	DeadlineSweepBatch int
 }
 
 // Load reads only server configuration. Its errors never include configured values.
@@ -65,10 +70,12 @@ func Load(getenv func(string) string) (Config, error) {
 			AllowedOrigins:    csv(getenv("APP_ALLOWED_ORIGINS")),
 		},
 		Online: OnlineConfig{
-			GuestCredentialTTL: duration(getenv, "ONLINE_GUEST_CREDENTIAL_TTL", onlineauth.DefaultGuestCredentialTTL),
-			OwnershipProofTTL:  duration(getenv, "ONLINE_OWNERSHIP_PROOF_TTL", onlineauth.DefaultOwnershipProofTTL),
-			StreamMaxDuration:  duration(getenv, "ONLINE_STREAM_MAX_DURATION", onlineauth.DefaultStreamMaxDuration),
-			RulesWorkerEntry:   strings.TrimSpace(getenv("ONLINE_RULES_WORKER_ENTRY")),
+			GuestCredentialTTL:    duration(getenv, "ONLINE_GUEST_CREDENTIAL_TTL", onlineauth.DefaultGuestCredentialTTL),
+			OwnershipProofTTL:     duration(getenv, "ONLINE_OWNERSHIP_PROOF_TTL", onlineauth.DefaultOwnershipProofTTL),
+			StreamMaxDuration:     duration(getenv, "ONLINE_STREAM_MAX_DURATION", onlineauth.DefaultStreamMaxDuration),
+			RulesWorkerEntry:      strings.TrimSpace(getenv("ONLINE_RULES_WORKER_ENTRY")),
+			DeadlineSweepInterval: duration(getenv, "ONLINE_DEADLINE_SWEEP_INTERVAL", DefaultDeadlineSweepInterval),
+			DeadlineSweepBatch:    positiveInt(getenv, "ONLINE_DEADLINE_SWEEP_BATCH", DefaultDeadlineSweepBatch),
 		},
 	}
 	if cfg.DatabaseURL == "" || len(cfg.Clerk.AllowedOrigins) == 0 {
@@ -149,7 +156,18 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	root.Handle("/v1/account/", profileHandler)
 	root.Handle("/v1/guest-seats/", profileHandler)
 	root.Handle("/", httpapi.CORS(cfg.Clerk.AllowedOrigins, httpapi.NewAuthenticated(store, verifier)))
+	// The trusted deadline reconciliation loop settles the matches whose
+	// opening reply window or main clock has passed, without waiting for a
+	// participant command. It is bound to the server context and to the
+	// release function.
+	stopDeadlines := StartDeadlineReconciler(ctx, onlineService, DeadlineSweepConfig{
+		Interval: cfg.Online.DeadlineSweepInterval,
+		Batch:    cfg.Online.DeadlineSweepBatch,
+	})
 	release := func() {
+		// The deadline loop stops before the pool closes, so no background
+		// sweep can use a closed connection.
+		stopDeadlines()
 		if closeWorker != nil {
 			closeWorker()
 		}
