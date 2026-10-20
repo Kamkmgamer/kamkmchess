@@ -834,6 +834,28 @@ func TestPostgresOnlineGetMatchReturnsConsistentSnapshot(t *testing.T) {
 	wg.Wait()
 }
 
+func TestPostgresOnlineParticipantReadsHideNonMembers(t *testing.T) {
+	service, _ := onlineService(t, moveEvaluator{})
+	ctx := context.Background()
+	create := createOnlineCommand("match-participant-read", "op-create-participant-read")
+	if _, err := service.Execute(ctx, create.Action.CreateMatch.Seats.White.Participant, create); err != nil {
+		t.Fatal(err)
+	}
+	outsider := online.ParticipantRef{Kind: online.ParticipantAccount, ID: "user_outsider"}
+	if _, err := service.GetMatchForParticipant(ctx, create.MatchID, outsider); !errors.Is(err, online.ErrNotFound) {
+		t.Fatalf("outsider match read error = %v, want ErrNotFound", err)
+	}
+	if _, err := service.GetMatchForParticipant(ctx, create.MatchID, create.Action.CreateMatch.Seats.White.Participant); err != nil {
+		t.Fatalf("participant match read: %v", err)
+	}
+	if _, err := service.GetReceiptForParticipant(ctx, create.MatchID, create.OperationID, outsider); !errors.Is(err, online.ErrNotFound) {
+		t.Fatalf("outsider receipt read error = %v, want ErrNotFound", err)
+	}
+	if _, err := service.GetReceiptForParticipant(ctx, create.MatchID, create.OperationID, create.Action.CreateMatch.Seats.Black.Participant); err != nil {
+		t.Fatalf("participant receipt read: %v", err)
+	}
+}
+
 func TestPostgresOnlineAnonymizationAndReplayRedaction(t *testing.T) {
 	service, pool := onlineService(t, moveEvaluator{})
 	ctx := context.Background()

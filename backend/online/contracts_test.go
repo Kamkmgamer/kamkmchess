@@ -89,6 +89,7 @@ func TestActionAndCommandRejectUnknownOrChangedPayloads(t *testing.T) {
 		`{"schemaVersion":1,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"create_match","setup":{"variant":"orthodox","startingFen":"x","timeControl":{"startingTimeMs":1,"incrementMs":0},"seats":{}}},"state":{"apiKey":"secret"}}`,
 		`{"schemaVersion":1,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"submit_move","move":"E2E4"}}`,
 		`{"schemaVersion":1,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"set_control","control":{"kind":"agent","modelLabel":"owner@example.com"}}}`,
+		`{"schemaVersion":1,"matchId":"match-contract-01","operationId":"op-contract-0001","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"resign"}} trailing`,
 	}
 	for i, raw := range cases {
 		if _, err := ParseCommand([]byte(raw)); !errors.Is(err, ErrInvalidContract) {
@@ -230,6 +231,15 @@ func TestCandidateMustLeaveOpponentToMoveAndCannotMisdeclareOutcome(t *testing.T
 	legal.Result = &Result{Kind: ResultWin, Winner: &white, Reason: ReasonCheckmate}
 	if err := legal.Validate(); err != nil {
 		t.Fatalf("legal mating candidate: %v", err)
+	}
+	for _, san := range []string{"", "e4\nprivate", "verylongsannotation"} {
+		candidate := base
+		move := *base.Move
+		move.SAN = san
+		candidate.Move = &move
+		if err := candidate.Validate(); !errors.Is(err, ErrInvalidContract) {
+			t.Errorf("invalid SAN %q error = %v", san, err)
+		}
 	}
 }
 

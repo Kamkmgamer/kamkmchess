@@ -43,6 +43,7 @@ describe('online shared contracts', () => {
     expect(() => parseCandidate({ ...mate, result: { ...mate.result, winner: 'black' } })).toThrow(OnlineContractError);
     expect(() => parseCandidate({ ...mate, result: { ...mate.result, reason: 'resignation' } })).toThrow(OnlineContractError);
     expect(() => parseCandidate({ ...mate, move: { ...mate.move, resultingFen: '6k1/6Q1/5K2/8/8/8/8/8 w - - 1 1' } })).toThrow(OnlineContractError);
+    expect(() => parseCandidate({ ...mate, move: { ...mate.move, san: 'e4\nprivate' } })).toThrow(OnlineContractError);
   });
 
   it('parses the shared Go/TypeScript fixture', () => {

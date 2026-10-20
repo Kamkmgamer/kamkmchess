@@ -277,7 +277,9 @@ func TestRejectedOrMismatchedOutputCannotReturnACandidate(t *testing.T) {
 }
 
 func TestTimeoutKillsTheWorkerAndTheNextRequestRestartsIt(t *testing.T) {
-	client := testClient(t, 150*time.Millisecond)
+	// Include cold Node startup under CI load, while staying below the fake
+	// worker's five-second stall and the two-second elapsed-time assertion.
+	client := testClient(t, 500*time.Millisecond)
 	started := time.Now()
 	response, err := client.Evaluate(context.Background(), request("slow"))
 	if !errors.Is(err, ErrTimeout) {

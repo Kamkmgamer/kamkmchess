@@ -112,6 +112,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     setSnapshot(next);
     if (next.checkpoint.result.kind === 'final') {
       // A final result can arrive while the confirmation is open, for example on an AI checkmate.
+      resultConfirmed.current = true;
       setResultPrompt(null);
       setFeedback(statusLabel(next));
     }
@@ -316,9 +317,11 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         } finally {
           service?.producingReplySettled();
           if (generationController.current === abort) generationController.current = null;
-          if (sessionRef.current.gameId === session.gameId && abort?.signal.aborted) setGenerationState('stopped');
           if (sessionRef.current.gameId === session.gameId) {
             const latest = session.controller.snapshot();
+            if (abort?.signal.aborted) {
+              setGenerationState(latest.checkpoint.result.kind === 'final' ? 'idle' : 'stopped');
+            }
             const latestQueued = latest.modelHandoff.queued?.selection;
             const latestQueuedIdentity = latestQueued
               ? [latestQueued.connectionId, latestQueued.configurationRevision,

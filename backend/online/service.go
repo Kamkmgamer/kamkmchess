@@ -687,9 +687,40 @@ func (s *Service) GetMatch(ctx context.Context, matchID string) (Match, error) {
 	return loadMatchConsistent(ctx, s.db, matchID)
 }
 
+// GetMatchForParticipant returns the live match only to one of its participants.
+// Missing and non-member matches share ErrNotFound to avoid existence leaks.
+func (s *Service) GetMatchForParticipant(ctx context.Context, matchID string, participant ParticipantRef) (Match, error) {
+	if err := participant.Validate(); err != nil || !idPattern.MatchString(matchID) {
+		return Match{}, ErrInvalidArgument
+	}
+	match, err := loadMatchConsistent(ctx, s.db, matchID)
+	if err != nil {
+		return Match{}, err
+	}
+	if !match.HasParticipant(participant) {
+		return Match{}, ErrNotFound
+	}
+	return match, nil
+}
+
 func (s *Service) GetReceipt(ctx context.Context, matchID, operationID string) (CommandResult, error) {
 	if !idPattern.MatchString(matchID) || !idPattern.MatchString(operationID) {
 		return CommandResult{}, ErrInvalidArgument
+	}
+	return loadReceiptWithoutHash(ctx, s.db, matchID, operationID)
+}
+
+// GetReceiptForParticipant avoids exposing receipt bytes to unrelated callers.
+func (s *Service) GetReceiptForParticipant(ctx context.Context, matchID, operationID string, participant ParticipantRef) (CommandResult, error) {
+	if err := participant.Validate(); err != nil || !idPattern.MatchString(matchID) || !idPattern.MatchString(operationID) {
+		return CommandResult{}, ErrInvalidArgument
+	}
+	match, err := loadMatchConsistent(ctx, s.db, matchID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if !match.HasParticipant(participant) {
+		return CommandResult{}, ErrNotFound
 	}
 	return loadReceiptWithoutHash(ctx, s.db, matchID, operationID)
 }
@@ -700,7 +731,8 @@ func (s *Service) GetPublicProjection(ctx context.Context, matchID string) (Publ
 	}
 	var raw []byte
 	var revoked *time.Time
-	err := s.db.QueryRow(ctx, `SELECT projection_json,revoked_at FROM online_public_projections WHERE match_id=$1`, matchID).Scan(&raw, &revoked)
+	var storedHash []byte
+	err := s.db.QueryRow(ctx, `SELECT projection_json,result_hash,revoked_at FROM online_public_projections WHERE match_id=$1`, matchID).Scan(&raw, &storedHash, &revoked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PublicProjection{}, ErrNotFound
 	}
@@ -715,6 +747,13 @@ func (s *Service) GetPublicProjection(ctx context.Context, matchID string) (Publ
 		return PublicProjection{}, ErrInvalidContract
 	}
 	if projection.SchemaVersion != PublicProjectionSchemaVersion {
+		return PublicProjection{}, ErrInvalidContract
+	}
+	if projection.MatchID != matchID {
+		return PublicProjection{}, ErrInvalidContract
+	}
+	hash, err := ResultHash(projection.Result)
+	if err != nil || !bytes.Equal(storedHash, hash[:]) {
 		return PublicProjection{}, ErrInvalidContract
 	}
 	return projection, nil

@@ -66,6 +66,7 @@ test('a resignation names the side and records the opposing win after reload', a
 
   await dialog.getByRole('button', { name: 'Resign', exact: true }).click();
   await expect(page.locator('.status-heading')).toHaveText('Black wins');
+  await expect(page.getByRole('heading', { name: 'Black wins', exact: true })).toBeFocused();
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
 
   await page.reload();

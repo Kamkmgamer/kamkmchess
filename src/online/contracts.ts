@@ -415,6 +415,14 @@ function publicLabelValue(value: unknown, path: string): string {
   return text;
 }
 
+function sanValue(value: unknown, path: string): string {
+  const text = stringValue(value, path);
+  if (text.length < 1 || text.length > 16 || !/^[a-hA-Z1-8=+#xO-]+$/.test(text)) {
+    throw new OnlineContractError('invalid SAN', path);
+  }
+  return text;
+}
+
 function fenValue(value: unknown, path: string): string {
   const text = stringValue(value, path);
   if (text.length < 4 || text.length > 128 || text.split(' ').length < 6) {
@@ -516,7 +524,7 @@ function parseMove(value: unknown, path: string): Move {
     version: positiveInteger(objectValue.version, `${path}.version`),
     seat: seatValue(objectValue.seat, `${path}.seat`),
     uci,
-    san: publicLabelValue(objectValue.san, `${path}.san`),
+    san: sanValue(objectValue.san, `${path}.san`),
     resultingFen: fenValue(objectValue.resultingFen, `${path}.resultingFen`),
   };
 }
@@ -727,7 +735,7 @@ export function parsePublicProjection(value: unknown): PublicProjection {
       version: positiveInteger(item.version, `${movePath}.version`),
       seat: seatValue(item.seat, `${movePath}.seat`),
       uci,
-      san: publicLabelValue(item.san, `${movePath}.san`),
+      san: sanValue(item.san, `${movePath}.san`),
     };
   });
   return {

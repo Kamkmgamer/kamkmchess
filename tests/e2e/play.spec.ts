@@ -90,6 +90,24 @@ async function archivedText(page: Page) {
 
 const movesOnBoard = (page: Page) => page.getByRole('table', { name: 'Committed moves' }).getByRole('button');
 
+test('a final AI result closes an open declaration and focuses the result', async ({ page }) => {
+  let release: (() => void) | undefined;
+  await provider(page, [], async (route, _index, fixture) => {
+    await new Promise<void>(resolve => { release = resolve; });
+    await fixture.respond(route, '{"resign":true}');
+  });
+  await page.goto('/play');
+  await configure(page);
+  await move(page, 'e2e4');
+  await expect.poll(() => release !== undefined).toBe(true);
+  await page.getByRole('button', { name: 'Agree a draw', exact: true }).click();
+  await expect(page.getByRole('alertdialog')).toBeVisible();
+  release?.();
+  await expect(page.getByRole('alertdialog')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'White wins', exact: true })).toBeFocused();
+  await expect(movesOnBoard(page)).toHaveCount(1);
+});
+
 for (const action of ['draw', 'resignation'] as const) {
   test(`a confirmed ${action} fences a delayed AI reply and its recovery controls`, async ({ page }) => {
     let release: (() => void) | undefined;

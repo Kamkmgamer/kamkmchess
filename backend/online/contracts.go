@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"time"
@@ -252,6 +253,15 @@ func (m Match) Seat(seat Seat) (MatchSeat, bool) {
 		}
 	}
 	return MatchSeat{}, false
+}
+
+func (m Match) HasParticipant(participant ParticipantRef) bool {
+	for _, seat := range m.Seats {
+		if seat.Participant == participant {
+			return true
+		}
+	}
+	return false
 }
 
 type ActionKind string
@@ -643,7 +653,7 @@ func (c Candidate) Validate() error {
 	if c.Move.Seat != SeatWhite && c.Move.Seat != SeatBlack {
 		return fmt.Errorf("%w: candidate seat", ErrInvalidContract)
 	}
-	if !uciPattern.MatchString(c.Move.UCI) || !publicLabelShape(c.Move.SAN) || !fenShape(c.Move.ResultingFEN) {
+	if !uciPattern.MatchString(c.Move.UCI) || !sanShape(c.Move.SAN) || !fenShape(c.Move.ResultingFEN) {
 		return fmt.Errorf("%w: candidate move shape", ErrInvalidContract)
 	}
 	opponent, _ := c.Move.Seat.Other()
@@ -867,6 +877,19 @@ func publicLabelShape(label string) bool {
 	return !strings.Contains(label, "@") && !strings.Contains(label, "://")
 }
 
+func sanShape(san string) bool {
+	if len(san) == 0 || len(san) > 16 {
+		return false
+	}
+	for _, r := range san {
+		if !((r >= 'a' && r <= 'h') || (r >= 'A' && r <= 'Z') ||
+			(r >= '1' && r <= '8') || strings.ContainsRune("=+#x-O", r)) {
+			return false
+		}
+	}
+	return true
+}
+
 func isLowerHex(value string) bool {
 	for _, r := range value {
 		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
@@ -883,8 +906,11 @@ func decodeStrict(raw []byte, dst any) error {
 		return err
 	}
 	var extra any
-	if err := dec.Decode(&extra); err == nil {
-		return fmt.Errorf("trailing data")
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("trailing data")
+		}
+		return err
 	}
 	return nil
 }

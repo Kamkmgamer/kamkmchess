@@ -61,10 +61,11 @@ export class BoundedLineReader {
       const newline = pending.indexOf('\n');
       const segment = newline < 0 ? pending : pending.slice(0, newline);
       const rest = newline < 0 ? '' : pending.slice(newline + 1);
-      const line = this.buffer + segment;
+      const overLimit = this.bufferedBytes + Buffer.byteLength(segment, 'utf8') > this.options.maxBytes;
+      const line = overLimit ? '' : this.buffer + segment;
       this.buffer = '';
 
-      if (Buffer.byteLength(line, 'utf8') > this.options.maxBytes) {
+      if (overLimit) {
         // An unterminated oversized line keeps the discard flag until the next
         // newline arrives; a terminated one resumes immediately.
         this.discarding = newline < 0;

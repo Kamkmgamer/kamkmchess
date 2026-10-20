@@ -53,6 +53,10 @@ class WorkerProcess {
     return this.next();
   }
 
+  write(text: string): void {
+    this.child.stdin.write(text);
+  }
+
   next(timeoutMs = 10_000): Promise<string> {
     const line = this.lines.shift();
     if (line !== undefined) return Promise.resolve(line);
@@ -134,6 +138,27 @@ describe('[KHA-66] private worker process protocol', () => {
       const valid = JSON.parse(await worker.send(requestLine())) as Record<string, unknown>;
       expect(valid.status).toBe('ok');
       expect(valid.candidate).toBeNull();
+    } finally {
+      await worker.close();
+    }
+  });
+
+  it('discards a streamed oversized line without buffering it and resumes at the next newline', async () => {
+    const worker = new WorkerProcess(workerEntry);
+    try {
+      // Leave the oversized line unterminated across several writes. The
+      // worker should reject it once, then discard its remainder until the
+      // newline before processing another request.
+      worker.write('x'.repeat(150 * 1024));
+      worker.write('x'.repeat(150 * 1024));
+      const oversized = JSON.parse(await worker.next()) as Record<string, unknown>;
+      expect(oversized).toMatchObject({ status: 'rejected', code: 'request-too-large' });
+      expect(oversized).not.toHaveProperty('candidate');
+
+      worker.write('\n');
+      const valid = JSON.parse(await worker.send(requestLine())) as Record<string, unknown>;
+      expect(valid.status).toBe('ok');
+      expect(valid.requestId).toBe('process-1');
     } finally {
       await worker.close();
     }
