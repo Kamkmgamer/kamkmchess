@@ -1,9 +1,9 @@
 # KHA-68 authoritative online moves, clocks and match outcomes
 
 Locally verified on 2026-10-20 on `t3/automatic-deadline-reconciliation`.
-Tested source commit: `b3b805b`.
+Tested source commit: `eda669f`.
 The branch starts at `c4a9b72`, which includes the KHA-64/65/66/67 foundations and
-the first KHA-68 implementation.
+the first KHA-68 implementation. The automatic deadline realisation is `b3b805b`.
 
 ## Implemented contract
 
