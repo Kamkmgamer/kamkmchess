@@ -281,6 +281,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		}
 		queueService, err = queue.Open(ctx, pool, queue.Options{
 			Allocator:   allocator,
+			Labels:      invite.NewAccountLabelResolver(pool),
 			Credentials: onlineauth.NewAllocator(authorizer),
 		})
 		if err != nil {
