@@ -901,6 +901,25 @@ func (s *Service) mintSeatCredential(ctx context.Context, matchID string, seat o
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
+	credential, err := s.mintSeatCredentialInTx(ctx, tx, matchID, seat, guestID, origin)
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return credential, nil
+}
+
+// mintSeatCredentialInTx mints a guest seat credential inside the caller's
+// transaction.
+//
+// The credential and the state that records it commit together, so a
+// credential is never minted without the acceptance that owns it.
+func (s *Service) mintSeatCredentialInTx(ctx context.Context, tx pgx.Tx, matchID string, seat online.Seat, guestID, origin string) (*GuestCredential, error) {
+	if guestID == "" {
+		return nil, ErrInvalidArgument
+	}
 	issued, err := s.credentials.AcceptInvitationTx(ctx, tx, onlineauth.AcceptInvitationRequest{
 		MatchID: matchID,
 		Seat:    seat,
@@ -909,9 +928,6 @@ func (s *Service) mintSeatCredential(ctx context.Context, matchID string, seat o
 		TTL:     s.options.GuestCredentialTTL,
 	})
 	if err != nil {
-		return nil, err
-	}
-	if err = tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return &GuestCredential{
@@ -1082,10 +1098,10 @@ func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchReques
 		TimeControl: offer.TimeControl,
 		Seats:       online.CreateMatchSeats{White: white, Black: black},
 	}
+	// The actor of the allocation is fixed by the offer, not by the
+	// accepter. The match identifier is derived from the actor and the
+	// offer, so a retry of the acceptance always names the same match.
 	actor := white.Participant
-	if black.Participant == request.Acceptor {
-		actor = black.Participant
-	}
 	cmd, err := online.NewAllocationCommand(actor, setup, "rmt"+offer.RematchID)
 	if err != nil {
 		return RematchResult{}, err
@@ -1113,7 +1129,7 @@ func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchReques
 		accepted.Seat = reversedSeat(seat)
 	}
 	if request.Acceptor.Kind == online.ParticipantGuest {
-		credential, mintErr := s.mintSeatCredential(ctx, matchID, accepted.Seat, request.Acceptor.ID, request.Origin)
+		credential, mintErr := s.mintSeatCredentialInTx(ctx, tx, matchID, accepted.Seat, request.Acceptor.ID, request.Origin)
 		if mintErr != nil {
 			return RematchResult{}, mintErr
 		}

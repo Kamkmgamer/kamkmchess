@@ -775,6 +775,103 @@ func TestPostgresFriendMutualRematchReversesColorsAndKeepsTheSetup(t *testing.T)
 	}
 }
 
+// TestPostgresFriendRematchGivesBothGuestsTheirOwnCredential covers the
+// guest rematch.
+//
+// A rematch is a new match, so the credential of the finished match cannot
+// authorize it. Both guest players need a credential of the new match, and
+// each of them receives its own.
+func TestPostgresFriendRematchGivesBothGuestsTheirOwnCredential(t *testing.T) {
+	fixture := newFriendFixture(t, moveEvaluator{})
+	ctx := context.Background()
+
+	created, err := fixture.friends.Create(ctx, invite.CreateRequest{
+		Seat:        online.SeatWhite,
+		TimeControl: online.TimeControl{StartingTimeMs: 300_000, IncrementMs: 0},
+		Control:     online.SeatControl{Kind: online.ControlHuman},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	accepted, err := fixture.friends.Accept(ctx, invite.AcceptRequest{
+		InvitationID:  created.Invitation.InvitationID,
+		AcceptanceKey: acceptanceKey("guest-rematch"),
+		Acceptor:      nil,
+		Control:       online.SeatControl{Kind: online.ControlHuman},
+		Origin:        friendOrigin,
+	})
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	inviter, err := fixture.friends.SeatCredential(ctx, invite.SeatCredentialRequest{
+		InvitationID: created.Invitation.InvitationID,
+		OwnerToken:   created.OwnerToken,
+		Origin:       friendOrigin,
+	})
+	if err != nil {
+		t.Fatalf("claim the inviter credential: %v", err)
+	}
+	authorizer, err := onlineauth.Open(ctx, fixture.pool, nil, onlineauth.Options{GuestCredentialTTL: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inviterPrincipal, err := authorizer.AuthenticateGuest(ctx, inviter.GuestCredential.Token, friendOrigin)
+	if err != nil {
+		t.Fatalf("authenticate the inviter credential: %v", err)
+	}
+	// The finished match ends.
+	resign := resignOnlineCommand(accepted.MatchID, "guest-rematch-resign-op", online.SeatWhite, 1)
+	inviterContext := onlineauth.WithPrincipal(ctx, inviterPrincipal)
+	if _, err = fixture.service.Execute(inviterContext, inviterPrincipal.Participant, resign); err != nil {
+		t.Fatalf("resign: %v", err)
+	}
+
+	// The guest inviter proposes the rematch.
+	proposal, err := fixture.friends.ProposeRematch(ctx, invite.RematchRequest{
+		MatchID:       accepted.MatchID,
+		Proposer:      inviterPrincipal.Participant,
+		ProposerLabel: invite.GuestLabel,
+	})
+	if err != nil {
+		t.Fatalf("propose: %v", err)
+	}
+	// The guest invitee accepts it and receives its own credential of the
+	// new match.
+	result, err := fixture.friends.AcceptRematch(ctx, invite.AcceptRematchRequest{
+		RematchID: proposal.RematchID,
+		Acceptor:  online.ParticipantRef{Kind: online.ParticipantGuest, ID: accepted.GuestCredential.GuestID},
+		Origin:    friendOrigin,
+	})
+	if err != nil {
+		t.Fatalf("accept the rematch: %v", err)
+	}
+	if result.GuestCredential == nil {
+		t.Fatal("the guest acceptor received no credential of the new match")
+	}
+	if result.GuestCredential.MatchID != result.MatchID {
+		t.Fatalf("the credential of the new match names %q, want %q", result.GuestCredential.MatchID, result.MatchID)
+	}
+	// The guest proposer claims its own credential of the new match.
+	claimed, err := fixture.friends.RematchSeatCredential(ctx, invite.RematchSeatCredentialRequest{
+		RematchID: proposal.RematchID,
+		Proposer:  inviterPrincipal.Participant,
+		Origin:    friendOrigin,
+	})
+	if err != nil {
+		t.Fatalf("claim the proposer credential: %v", err)
+	}
+	if claimed.GuestCredential == nil || claimed.GuestCredential.MatchID != result.MatchID {
+		t.Fatalf("the proposer credential = %+v", claimed)
+	}
+	if claimed.Seat == result.Seat {
+		t.Fatal("both guests received the same seat of the new match")
+	}
+	// The credential of the finished match cannot authorize the new match.
+	if _, err = fixture.service.GetMatchForParticipant(ctx, result.MatchID, inviterPrincipal.Participant); err == nil {
+		t.Fatal("the credential of the finished match authorized the new match")
+	}
+}
+
 // stringPointer returns a pointer to a copy of the value.
 func stringPointer(value string) *string {
 	return &value
