@@ -206,6 +206,8 @@ export interface OnlineCursorScope {
  * A caller that owns durable storage supplies its own adapter, scoped to the
  * match and the participant identity. The default adapter keeps cursors in
  * memory for the lifetime of the page.
+ * Shared adapters must atomically retain the greater cursor when subscribers
+ * write out of order, including writes from separate tabs.
  */
 export interface OnlineCursorStorage {
   read(scope: OnlineCursorScope): number | null | Promise<number | null>;
@@ -278,7 +280,8 @@ export function createMemoryCursorStorage(): OnlineCursorStorage {
       return store.get(cursorScopeKey(scope)) ?? null;
     },
     write(scope, cursor) {
-      store.set(cursorScopeKey(scope), cursor);
+      const key = cursorScopeKey(scope);
+      store.set(key, Math.max(store.get(key) ?? 0, cursor));
     },
   };
 }
@@ -290,7 +293,8 @@ const defaultCursorStorage: OnlineCursorStorage = {
     return sharedMemoryCursors.get(cursorScopeKey(scope)) ?? null;
   },
   write(scope, cursor) {
-    sharedMemoryCursors.set(cursorScopeKey(scope), cursor);
+    const key = cursorScopeKey(scope);
+    sharedMemoryCursors.set(key, Math.max(sharedMemoryCursors.get(key) ?? 0, cursor));
   },
 };
 
