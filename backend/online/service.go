@@ -479,7 +479,7 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 // An offer is part of the shared match state: it advances the match version
 // and is recorded as its own event, so a durable event stream can rebuild
 // which offer is pending. It never changes the position, the turn or the
-// clocks, so it does not interrupt a move the other participant is preparing.
+// clocks. An in-flight candidate must still use the new canonical version.
 // The offer is written under the match lock, after the same authorization and
 // expiry checks every other intent passes, and it is bound to the version it
 // produces.
@@ -774,7 +774,6 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		if !ok {
 			return CommandResult{}, ErrInvalidContract
 		}
-		clock.armMainClock(sideToMove, decision)
 		clock.TurnNumber = int64(len(match.Moves))
 		// The increment that was credited to every discarded accepted move
 		// is removed again. The elapsed time that was already charged stays
@@ -783,6 +782,7 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		for _, discardedMove := range discarded {
 			clock.setBank(discardedMove.Seat, clock.Bank(discardedMove.Seat)-match.TimeControl.IncrementMs)
 		}
+		clock.armMainClock(sideToMove, decision)
 		// The restored turn keeps the recovery budget it had already spent,
 		// so a takeback never hands a seat a fresh attempt allowance.
 		if err = restoreTurnBudgets(ctx, tx, match, turnPrefixKey(match.Moves), decision); err != nil {

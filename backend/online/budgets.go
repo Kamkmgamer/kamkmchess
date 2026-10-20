@@ -69,6 +69,8 @@ func loadTurnBudgets(ctx context.Context, q queryer, matchID, prefixKey string) 
 // A takeback restores a turn that was already paid for, so it must not hand a
 // seat a fresh attempt allowance. The restored turn is the one the restored
 // prefix starts, and the journal holds what that turn had already spent.
+// Attempts spent in the current turn also survive: rewinding to an earlier
+// turn with a smaller journal entry must not replenish that allowance.
 func restoreTurnBudgets(ctx context.Context, tx pgx.Tx, match Match, prefixKey string, at time.Time) error {
 	budgets, err := loadTurnBudgets(ctx, tx, match.MatchID, prefixKey)
 	if err != nil {
@@ -77,10 +79,15 @@ func restoreTurnBudgets(ctx context.Context, tx pgx.Tx, match Match, prefixKey s
 	for index := range match.Seats {
 		seat := &match.Seats[index]
 		budget := budgets[seat.Seat]
+		budget.IllegalAttemptsSpent = max(budget.IllegalAttemptsSpent, seat.IllegalAttemptsSpent)
+		budget.FormatCorrectionsSpent = max(budget.FormatCorrectionsSpent, seat.FormatCorrectionsSpent)
 		seat.IllegalAttemptsSpent = budget.IllegalAttemptsSpent
 		seat.FormatCorrectionsSpent = budget.FormatCorrectionsSpent
 		if _, err = tx.Exec(ctx, `UPDATE online_seats SET illegal_attempts_spent=$1,format_corrections_spent=$2,updated_at=$3 WHERE match_id=$4 AND seat=$5`,
 			seat.IllegalAttemptsSpent, seat.FormatCorrectionsSpent, at.UTC(), match.MatchID, string(seat.Seat)); err != nil {
+			return err
+		}
+		if err = recordTurnBudget(ctx, tx, match.MatchID, seat.Seat, int64(len(match.Moves)), prefixKey, budget, at); err != nil {
 			return err
 		}
 	}

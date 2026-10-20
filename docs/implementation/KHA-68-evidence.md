@@ -1,5 +1,20 @@
 # KHA-68 authoritative online moves, clocks and match outcomes
 
+## Parent continuity regressions
+
+Integration review added two service-boundary PostgreSQL regressions. The
+first failed because the takeback armed its deadline before removing the
+discarded increments, leaving an extra two seconds on a two-second-increment
+clock. The second failed because restoring an earlier turn with no journal
+entry erased three attempts already spent in the current turn.
+
+The writer now removes discarded increments before arming the restored
+clock. Restored counters retain the larger of the journalled allowance spent
+and the current allowance spent, and record that carried budget at the
+restored prefix. Both regressions and the focused offer/takeback/recovery
+PostgreSQL suite pass. `go vet ./backend/... ./cmd/...` also passes. Final
+combined verification follows integration of the other correction tasks.
+
 Locally verified on 2026-10-20 on `t3/authoritative-online-match-outcomes`.
 Tested source commit: `1d442aa`. The correction commits are `379957f`, `6c311b5`, `ebff3f1`, `f5bb721`,
 `e66bda3`, `2cf24dc` and `1d442aa`; the documentation commit that records them follows.
