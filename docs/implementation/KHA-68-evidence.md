@@ -1,8 +1,8 @@
 # KHA-68 authoritative online moves, clocks and match outcomes
 
 Locally verified on 2026-10-20 on `t3/authoritative-online-match-outcomes`.
-Tested source commit: `f5bb721` (the correction commits `379957f`, `6c311b5`, `ebff3f1` and
-`f5bb721`; the documentation commit follows them).
+Tested source commit: `1d442aa`. The correction commits are `379957f`, `6c311b5`, `ebff3f1`, `f5bb721`,
+`e66bda3`, `2cf24dc` and `1d442aa`; the documentation commit that records them follows.
 The branch starts at `a1e069e`, which includes the KHA-64/65/66/67 foundations.
 
 ## Merge note for the parallel corrections
@@ -141,7 +141,7 @@ every new action and the offer event, and both the Go and the TypeScript suite p
 
 ## Verification
 
-`pnpm check` passed ESLint, both TypeScript projects, 746 tests across 67 files, the browser production
+`pnpm check` passed ESLint, both TypeScript projects, 785 tests across 70 files, the browser production
 build, the private rules-worker build and the distribution notices.
 
 PostgreSQL 17.11 ran in the isolated local `kamkmchess-kha67-local` container on loopback port
@@ -151,12 +151,30 @@ PostgreSQL 17.11 ran in the isolated local `kamkmchess-kha67-local` container on
 $env:KHA41_TEST_DATABASE_URL='postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable'
 $env:KHA41_REQUIRE_POSTGRES='1'
 $env:KHA66_WORKER_ENTRY=Join-Path (Get-Location).Path 'build/rules-worker/worker.mjs'
-go test -count=1 ./backend/... ./cmd/...
 go vet ./backend/... ./cmd/...
+go test -count=1 ./backend/... ./cmd/...
+pnpm check
 ```
 
-Both commands passed. The full integration package took about 55 seconds. The checks used the real
-private Node rules artifact and required PostgreSQL rather than skipping absent-database fixtures.
+All three commands passed. The full integration package took about 240 seconds. The checks used the
+real private Node rules artifact and required PostgreSQL rather than skipping absent-database
+fixtures.
+
+### Red evidence of the corrections
+
+Each correction was checked against the behaviour it replaces, and the removed code was restored
+afterwards:
+
+- Accepting any pending offer of the kind instead of the named one makes the replaced-offer fixture
+  and the draw consent fixture fail: the replaced offer is accepted and the match rewinds.
+- Removing the turn journal restore fails the two budget fixtures: the restored turn starts again
+  with an empty allowance.
+- Removing the increment removal fails the increment fixture: the bank keeps the increment of the
+  discarded move.
+- Allowing a takeback during the opening exchange fails both opening fixtures: the offer is accepted
+  while the reply window is open.
+- Removing the withdrawal of the stale offers fails the stale takeback fixture and the withdrawn
+  draw offer fixture: the inapplicable offer stays pending.
 
 ### New Go fixtures
 
