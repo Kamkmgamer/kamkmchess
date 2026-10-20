@@ -67,10 +67,34 @@ docker compose -f postgres.compose.yml -f api.compose.yml up -d --build --wait
 
 `postgres.env`, `runtime.env`, `api.env`, and `backup.env` have mode 0600 and
 remain on the server. Provisioning preserves existing credentials. The runtime
-role can read and mutate only the five application tables; it cannot own the
+role can read and mutate only the application tables; it cannot own the
 schema, create roles or databases, or bypass row security. The API uses a pool
 of at most four connections. A browser build receives only the three public
 `KAMKM_PUBLIC_*` settings from `.env.example`.
+
+## Runtime grants and the private rules runtime
+
+`runtime-grants.policy.json` lists the privileges of the runtime role table by
+table. It is explicit: there is no blanket grant, no default privilege and no
+grant on a table the application does not use.
+
+```sh
+node runtime-grants.mjs --check      # the policy against the migrations and the writer
+node runtime-grants.mjs --emit       # the SQL an operator reviews and runs
+node runtime-grants-probe.mjs        # the same grants executed against a real PostgreSQL
+```
+
+The check fails when a migration creates a table the policy does not cover,
+when the writer uses a verb the policy does not grant, and when the policy
+grants a verb the writer never uses. The probe creates a throwaway role and
+schema, applies the grants and executes statements as that role, so a granted
+privilege is proven rather than assumed.
+
+The private rules process runs on the pinned Node 24 runtime with the bundled
+`worker.mjs`. It has no public endpoint, no provider access and no database
+access; the Go authority owns the lock, the clock and the commit. The
+`tools/onlinefixture` helper is behind the `onlinefixture` build tag and never
+ships in a production binary.
 
 ## Backups and certificates
 

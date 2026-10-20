@@ -60,6 +60,17 @@ Browser files are in `dist/`. The build includes the application license and pro
 | `pnpm test:browser` | Run Chromium playthroughs against the built app with an offline provider fixture. Run `pnpm build` first and install Chromium with `pnpm exec playwright install chromium`. |
 | `node --test scripts/release/readiness-audit.test.mjs` | Verify the offline release audit and synthetic secret scanner. |
 | `node scripts/release/readiness-audit.mjs` | Inspect the actual distribution and hosting files for release blockers. |
+| `node --test deploy/runtime-grants.test.mjs scripts/online/online-ops.test.mjs` | Verify the online operations tooling. |
+| `pnpm run grants:check` | Compare the least-privilege runtime grant policy with the migrations and the writer's statements. |
+| `pnpm run grants:probe` | Execute the runtime role grants against a real local PostgreSQL and probe what the role can do. |
+| `pnpm run online:wiring` | Prove the server, not the browser, owns the online feature switches. |
+| `pnpm run online:backup` | Audit the backup coverage and the removal ledger of a restore. |
+| `pnpm run online:fixture` | Start the real service composition on loopback with an isolated schema and its own signing key. |
+| `pnpm run online:integration` | Run the local integration suite against a real database and record the evidence. |
+| `pnpm run online:load` | Run the synthetic local load harness and write the measurement report. |
+| `pnpm run online:evidence` | Rebuild the evidence ledger from the recorded evidence. |
+| `pnpm run online:gates` | Evaluate the friend release gate. |
+| `pnpm run online:packet` | Print the reversible friend rollout packet. |
 | `go test ./backend/... ./cmd/...` | Compile the Go API and run its offline fixtures. PostgreSQL integration fixtures require a separate local database. |
 | `go vet ./backend/... ./cmd/...` | Check production Go source for common errors. |
 

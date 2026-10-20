@@ -1,0 +1,32 @@
+{
+  "manifestVersion": 2,
+  "provisional": false,
+  "source": "docs/online/matching-interfaces.md (KHA-75/KHA-76 route contract) and docs/architecture/online-updates.md",
+  "note": "Route names the operational tooling probes. A closed surface answers 404, so the tooling reads GET /v1/online/features first and reports a closed surface as 'disabled', never as a passed scenario.",
+  "routes": [
+    { "id": "features", "method": "GET", "path": "/v1/online/features", "family": "features", "state": "existing" },
+
+    { "id": "friend-invitation-create", "method": "POST", "path": "/v1/online/invitations", "family": "friend", "state": "existing" },
+    { "id": "friend-invitation-read", "method": "GET", "path": "/v1/online/invitations/{invitationId}", "family": "friend", "state": "existing" },
+    { "id": "friend-invitation-accept", "method": "POST", "path": "/v1/online/invitations/{invitationId}/accept", "family": "friend", "state": "existing" },
+    { "id": "friend-invitation-cancel", "method": "POST", "path": "/v1/online/invitations/{invitationId}/cancel", "family": "friend", "state": "existing" },
+    { "id": "friend-seat-credential", "method": "POST", "path": "/v1/online/invitations/{invitationId}/seat-credential", "family": "friend", "state": "existing" },
+    { "id": "rematch-propose", "method": "POST", "path": "/v1/online/rematches", "family": "friend", "state": "existing" },
+    { "id": "rematch-accept", "method": "POST", "path": "/v1/online/rematches/{rematchId}/accept", "family": "friend", "state": "existing" },
+    { "id": "rematch-read", "method": "GET", "path": "/v1/online/matches/{matchId}/rematch", "family": "friend", "state": "existing" },
+
+    { "id": "queue-entry-create", "method": "POST", "path": "/v1/online/queue/entries", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-read", "method": "GET", "path": "/v1/online/queue/entries/{entryId}", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-ready", "method": "POST", "path": "/v1/online/queue/entries/{entryId}/ready", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-cancel", "method": "POST", "path": "/v1/online/queue/entries/{entryId}/cancel", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-keep-searching", "method": "POST", "path": "/v1/online/queue/entries/{entryId}/keep-searching", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-match", "method": "POST", "path": "/v1/online/queue/entries/{entryId}/match", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-fallback", "method": "POST", "path": "/v1/online/queue/entries/{entryId}/fallback", "family": "queue", "state": "existing" },
+
+    { "id": "match-command", "method": "POST", "path": "/v1/online/matches/{matchID}/commands", "family": "match", "state": "existing" },
+    { "id": "match-live", "method": "GET", "path": "/v1/online/matches/{matchID}", "family": "match", "state": "existing" },
+    { "id": "match-updates", "method": "GET", "path": "/v1/online/matches/{matchID}/updates", "family": "match", "state": "existing" },
+    { "id": "match-replay", "method": "GET", "path": "/v1/online/matches/{matchID}/replay", "family": "match", "state": "existing" },
+    { "id": "match-operation", "method": "GET", "path": "/v1/online/matches/{matchID}/operations/{operationID}", "family": "match", "state": "existing" }
+  ]
+}

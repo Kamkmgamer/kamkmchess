@@ -3,6 +3,7 @@
 The migration binary must already be in ./bin. Credentials are generated in
 owner-only files and never printed. Run from the server deployment directory.
 """
+import json
 import os
 from pathlib import Path
 import secrets
@@ -62,10 +63,24 @@ def main():
 REVOKE ALL ON DATABASE kamkmchess FROM PUBLIC;
 GRANT CONNECT ON DATABASE kamkmchess TO kamkmchess_runtime;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO kamkmchess_runtime;
-GRANT SELECT, INSERT, UPDATE, DELETE ON games, archive_chunks, archive_events,
- operations, deletion_tombstones TO kamkmchess_runtime;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
 ''')
+    # The runtime grants come from the reviewed policy. Every table is listed
+    # explicitly, so a later migration cannot widen the role by accident and a
+    # removed table cannot keep a stale grant.
+    policy = json.loads(Path('runtime-grants.policy.json').read_text())
+    if policy.get('role') != 'kamkmchess_runtime':
+        raise RuntimeError('Runtime grant policy names an unexpected role')
+    statements = []
+    for table, privileges in sorted(policy['privileges'].items()):
+        if not table.replace('_', '').isalnum():
+            raise RuntimeError('Runtime grant policy names an unexpected table')
+        statements.append('REVOKE ALL ON TABLE public.' + table + ' FROM kamkmchess_runtime;')
+        statements.append('GRANT ' + ', '.join(sorted(privileges)) +
+                          ' ON TABLE public.' + table + ' TO kamkmchess_runtime;')
+    sql('\n'.join(statements))
     backup_env = Path('backup.env')
     if 'DATABASE_URL=' not in backup_env.read_text():
         settings = dict(line.split('=', 1) for line in Path('postgres.env').read_text().splitlines())
