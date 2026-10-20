@@ -112,7 +112,7 @@ func newOnlineHandler(t *testing.T) (http.Handler, *stubOnlineService, *stubAuth
 			Clock: online.ClockState{WhiteMs: 1000, BlackMs: 1000},
 			Moves: []online.Move{},
 		},
-		receipt: online.CommandResult{Raw: []byte(`{"schemaVersion":1,"matchId":"match-live","operationId":"op-one-1","outcome":"accepted"}`)},
+		receipt: online.CommandResult{Raw: []byte(`{"schemaVersion":2,"matchId":"match-live","operationId":"op-one-1","outcome":"accepted"}`)},
 	}
 	authenticator := &stubAuthenticator{
 		account: map[string]onlineauth.Principal{"account-token": accountParticipant("user_secret_1")},
@@ -201,7 +201,7 @@ func TestOnlineLiveStateRequiresAParticipantAndRedactsAuthorizationIdentities(t 
 
 func TestOnlineRequiresAnExplicitOriginOnMutations(t *testing.T) {
 	handler, _, _ := newOnlineHandler(t)
-	body := `{"schemaVersion":1,"matchId":"match-live","operationId":"op-move-1","expectedVersion":3,"seat":"black","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`
+	body := `{"schemaVersion":2,"matchId":"match-live","operationId":"op-move-1","expectedVersion":3,"seat":"black","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`
 	response := onlineRequest(t, handler, http.MethodPost, "/v1/online/matches/match-live/commands", "", map[string]string{GuestCredentialHeader: "guest-token"}, body)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
@@ -286,7 +286,7 @@ func TestOnlineHasNoPublicMatchCreationRoute(t *testing.T) {
 
 func TestOnlineRejectsCreateMatchCommands(t *testing.T) {
 	handler, service, _ := newOnlineHandler(t)
-	body := `{"schemaVersion":1,"matchId":"match-live","operationId":"op-create","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"create_match","setup":{"variant":"orthodox","startingFEN":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1","timeControl":{"startingTimeMs":60000,"incrementMs":0},"seats":{"white":{"participant":{"kind":"account","id":"user_secret_1"},"publicLabel":"Alice","control":{"kind":"human"}},"black":{"participant":{"kind":"guest","id":"guest_secret_2"},"publicLabel":"Guest","control":{"kind":"human"}}}}}}`
+	body := `{"schemaVersion":2,"matchId":"match-live","operationId":"op-create","expectedVersion":0,"seat":"white","controlEpoch":1,"action":{"kind":"create_match","setup":{"variant":"orthodox","startingFEN":"rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1","timeControl":{"startingTimeMs":60000,"incrementMs":0},"seats":{"white":{"participant":{"kind":"account","id":"user_secret_1"},"publicLabel":"Alice","control":{"kind":"human"}},"black":{"participant":{"kind":"guest","id":"guest_secret_2"},"publicLabel":"Guest","control":{"kind":"human"}}}}}}`
 	response := onlineRequest(t, handler, http.MethodPost, "/v1/online/matches/match-live/commands", testOrigin, map[string]string{"Authorization": "Bearer account-token"}, body)
 	if response.Code != http.StatusForbidden {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
@@ -301,7 +301,7 @@ func TestOnlineRejectsCreateMatchCommands(t *testing.T) {
 
 func TestOnlineRejectsCommandsForAnotherSeat(t *testing.T) {
 	handler, service, _ := newOnlineHandler(t)
-	body := `{"schemaVersion":1,"matchId":"match-live","operationId":"op-move-1","expectedVersion":3,"seat":"white","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`
+	body := `{"schemaVersion":2,"matchId":"match-live","operationId":"op-move-1","expectedVersion":3,"seat":"white","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`
 	response := onlineRequest(t, handler, http.MethodPost, "/v1/online/matches/match-live/commands", testOrigin, map[string]string{GuestCredentialHeader: "guest-token"}, body)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
@@ -313,7 +313,7 @@ func TestOnlineRejectsCommandsForAnotherSeat(t *testing.T) {
 
 func TestOnlineCommandUsesTheAuthenticatedActorAndReturnsTheStoredReceipt(t *testing.T) {
 	handler, service, _ := newOnlineHandler(t)
-	body := `{"schemaVersion":1,"matchId":"match-live","operationId":"op-move-1","expectedVersion":3,"seat":"black","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`
+	body := `{"schemaVersion":2,"matchId":"match-live","operationId":"op-move-1","expectedVersion":3,"seat":"black","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`
 	response := onlineRequest(t, handler, http.MethodPost, "/v1/online/matches/match-live/commands", testOrigin, map[string]string{GuestCredentialHeader: "guest-token"}, body)
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
@@ -332,7 +332,7 @@ func TestOnlineCommandUsesTheAuthenticatedActorAndReturnsTheStoredReceipt(t *tes
 func TestOnlineMapsServiceFailuresWithoutLeakingDetails(t *testing.T) {
 	handler, service, _ := newOnlineHandler(t)
 	service.executeErr = online.ErrNotAuthorized
-	body := `{"schemaVersion":1,"matchId":"match-live","operationId":"op-move-1","expectedVersion":3,"seat":"black","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`
+	body := `{"schemaVersion":2,"matchId":"match-live","operationId":"op-move-1","expectedVersion":3,"seat":"black","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`
 	response := onlineRequest(t, handler, http.MethodPost, "/v1/online/matches/match-live/commands", testOrigin, map[string]string{GuestCredentialHeader: "guest-token"}, body)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
@@ -350,9 +350,9 @@ func TestOnlineMapsServiceFailuresWithoutLeakingDetails(t *testing.T) {
 func TestOnlineRejectsMalformedCommandBodies(t *testing.T) {
 	handler, service, _ := newOnlineHandler(t)
 	for name, body := range map[string]string{
-		"duplicate fields": `{"schemaVersion":1,"schemaVersion":1,"matchId":"match-live","operationId":"op-one-1","expectedVersion":3,"seat":"black","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`,
-		"unknown field":    `{"schemaVersion":1,"matchId":"match-live","operationId":"op-one-1","expectedVersion":3,"seat":"black","controlEpoch":1,"apiKey":"canary","action":{"kind":"submit_move","move":"e2e4"}}`,
-		"wrong match":      `{"schemaVersion":1,"matchId":"other-match","operationId":"op-one-1","expectedVersion":3,"seat":"black","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`,
+		"duplicate fields": `{"schemaVersion":2,"schemaVersion":2,"matchId":"match-live","operationId":"op-one-1","expectedVersion":3,"seat":"black","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`,
+		"unknown field":    `{"schemaVersion":2,"matchId":"match-live","operationId":"op-one-1","expectedVersion":3,"seat":"black","controlEpoch":1,"apiKey":"canary","action":{"kind":"submit_move","move":"e2e4"}}`,
+		"wrong match":      `{"schemaVersion":2,"matchId":"other-match","operationId":"op-one-1","expectedVersion":3,"seat":"black","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			response := onlineRequest(t, handler, http.MethodPost, "/v1/online/matches/match-live/commands", testOrigin, map[string]string{GuestCredentialHeader: "guest-token"}, body)

@@ -122,11 +122,11 @@ func TestPostgresOnlineWorkerTimeoutUsesMatingMaterial(t *testing.T) {
 		t.Skip("set KHA66_WORKER_ENTRY to the built private worker")
 	}
 	for _, tc := range []struct {
-		name, fen, whiteMove, blackMove string
-		kind                            online.ResultKind
+		name, fen, whiteMove, blackMove, whiteSecondMove, blackLateMove string
+		kind                                                            online.ResultKind
 	}{
-		{"mating material wins", "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "e2e4", "e7e5", online.ResultWin},
-		{"bare king draws", "7k/7p/8/8/8/8/8/K7 w - - 0 1", "a1a2", "h7h6", online.ResultDraw},
+		{"mating material wins", "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", "e2e4", "e7e5", "g1f3", "g8f6", online.ResultWin},
+		{"bare king draws", "7k/7p/8/8/8/8/8/K7 w - - 0 1", "a1a2", "h7h6", "a2a3", "h6h5", online.ResultDraw},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client, err := rulesworker.New(rulesworker.Config{Entry: entry, RequestTimeout: 3 * time.Second})
@@ -138,19 +138,28 @@ func TestPostgresOnlineWorkerTimeoutUsesMatingMaterial(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			service, _ := onlineService(t, evaluator)
+			service, pool := onlineService(t, evaluator)
 			ctx := context.Background()
 			create := createOnlineCommand("worker-timeout-game", "worker-create-op")
 			create.Action.CreateMatch.StartingFEN = tc.fen
-			create.Action.CreateMatch.TimeControl = online.TimeControl{StartingTimeMs: 1}
-			if _, err = service.Execute(ctx, alice, create); err != nil {
+			create.Action.CreateMatch.TimeControl = online.TimeControl{StartingTimeMs: 60_000}
+			if _, err := service.Execute(ctx, alice, create); err != nil {
 				t.Fatal(err)
 			}
-			if _, err = service.Execute(ctx, alice, moveOnlineCommand(create.MatchID, "worker-white-op", online.SeatWhite, 1, tc.whiteMove)); err != nil {
+			// The opening exchange closes the reply window, so the side to
+			// move then runs a main clock.
+			if _, err := service.Execute(ctx, alice, moveOnlineCommand(create.MatchID, "worker-white-op", online.SeatWhite, 1, tc.whiteMove)); err != nil {
 				t.Fatal(err)
 			}
-			time.Sleep(10 * time.Millisecond)
-			result, err := service.Execute(ctx, bob, moveOnlineCommand(create.MatchID, "worker-black-op", online.SeatBlack, 2, tc.blackMove))
+			if _, err := service.Execute(ctx, bob, moveOnlineCommand(create.MatchID, "worker-black-op", online.SeatBlack, 2, tc.blackMove)); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.Execute(ctx, alice, moveOnlineCommand(create.MatchID, "worker-white-second-op", online.SeatWhite, 3, tc.whiteSecondMove)); err != nil {
+				t.Fatal(err)
+			}
+			// Black's main clock expires before Black's next intent.
+			expireMainClock(t, pool, create.MatchID)
+			result, err := service.Execute(ctx, bob, moveOnlineCommand(create.MatchID, "worker-black-late-op", online.SeatBlack, 4, tc.blackLateMove))
 			if err != nil {
 				t.Fatalf("reconcile expired Black clock using pinned rules: %v", err)
 			}
@@ -161,7 +170,7 @@ func TestPostgresOnlineWorkerTimeoutUsesMatingMaterial(t *testing.T) {
 				t.Fatalf("Black flagged with White mating material: %+v", result.Receipt.Result)
 			}
 			match, err := service.GetMatch(ctx, create.MatchID)
-			if err != nil || len(match.Moves) != 1 || match.Status != online.MatchCompleted {
+			if err != nil || len(match.Moves) != 3 || match.Status != online.MatchCompleted {
 				t.Fatalf("late move was accepted after flag fall: %+v, %v", match, err)
 			}
 		})

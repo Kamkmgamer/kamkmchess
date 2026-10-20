@@ -66,6 +66,8 @@ func (s *Service) Execute(ctx context.Context, actor ParticipantRef, cmd Command
 		return s.createMatch(ctx, actor, cmd)
 	case ActionSubmitMove:
 		return s.submitMove(ctx, actor, cmd)
+	case ActionOfferDraw, ActionOfferTakeback:
+		return s.executeOffer(ctx, actor, cmd)
 	default:
 		return s.executeMutation(ctx, actor, cmd)
 	}
@@ -125,8 +127,9 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 			{Seat: SeatWhite, Participant: setup.Seats.White.Participant, PublicLabel: setup.Seats.White.PublicLabel, Control: setup.Seats.White.Control, ControlEpoch: 1},
 			{Seat: SeatBlack, Participant: setup.Seats.Black.Participant, PublicLabel: setup.Seats.Black.PublicLabel, Control: setup.Seats.Black.Control, ControlEpoch: 1},
 		},
-		Clock: InitialClock(setup.TimeControl),
-		Moves: []Move{},
+		Clock:  InitialClock(setup.TimeControl),
+		Moves:  []Move{},
+		Offers: []Offer{},
 	}
 	if s.evaluator == nil {
 		return CommandResult{}, ErrUnavailable
@@ -180,7 +183,7 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 			return CommandResult{}, err
 		}
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO online_clocks(match_id,white_ms,black_ms,active_seat,active_since,deadline_at,white_moved,black_moved,turn_number,updated_at) VALUES($1,$2,$3,NULL,NULL,NULL,false,false,0,$4)`,
+	if _, err = tx.Exec(ctx, `INSERT INTO online_clocks(match_id,white_ms,black_ms,active_seat,active_since,deadline_at,white_moved,black_moved,turn_number,reply_seat,reply_deadline_at,updated_at) VALUES($1,$2,$3,NULL,NULL,NULL,false,false,0,NULL,NULL,$4)`,
 		match.MatchID, match.Clock.WhiteMs, match.Clock.BlackMs, decision); err != nil {
 		return CommandResult{}, err
 	}
@@ -263,6 +266,11 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 	// External rules evaluation happens with no database lock or transaction held.
 	candidate, err := s.evaluator.Evaluate(ctx, input)
 	if err != nil {
+		// A refused proposal is a contract outcome, not an unavailable
+		// service. The refusal reason decides the answer.
+		if errors.Is(err, ErrActionNotAllowed) || errors.Is(err, ErrStaleCandidate) || errors.Is(err, ErrInvalidContract) {
+			return CommandResult{}, err
+		}
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	if err = candidate.Validate(); err != nil {
@@ -365,6 +373,11 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
 		return CommandResult{}, err
 	}
+	// The opening reply window is reconciled before any other deadline. An
+	// unanswered reply ends the match, so a late intent cannot become a move.
+	if clock.ReplyExpired(decision) && match.Status == MatchActive {
+		return s.commitOpeningAbort(ctx, tx, cmd, fingerprint, match, clock, decision)
+	}
 	if clock.IsExpired(decision) && match.Status == MatchActive {
 		_ = tx.Rollback(ctx)
 		return s.resolveExpiredMatch(ctx, actor, cmd, fingerprint, match)
@@ -397,6 +410,12 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 	clock = ApplyAcceptedMove(clock, match.TimeControl, cmd.Seat, decision, candidate.Result != nil)
 	if _, err = tx.Exec(ctx, `INSERT INTO online_moves(match_id,version,seat,uci,san,resulting_fen,decision_at,accepted_at) VALUES($1,$2,$3,$4,$5,$6,$7,$7)`,
 		match.MatchID, move.Version, string(move.Seat), move.UCI, move.SAN, move.ResultingFEN, decision); err != nil {
+		return CommandResult{}, err
+	}
+	// An accepted move ends the mover's turn, so the mover's recovery budget
+	// starts again. No other seat's budget changes.
+	if _, err = tx.Exec(ctx, `UPDATE online_seats SET illegal_attempts_spent=0,format_corrections_spent=0,updated_at=$1 WHERE match_id=$2 AND seat=$3`,
+		decision, match.MatchID, string(cmd.Seat)); err != nil {
 		return CommandResult{}, err
 	}
 	match.PositionFEN = move.ResultingFEN
@@ -434,6 +453,131 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 		return CommandResult{}, err
 	}
 	return CommandResult{Receipt: receipt, Raw: raw}, nil
+}
+
+// executeOffer records a pending draw or takeback offer.
+//
+// An offer is a request, not a match transition. It never changes the
+// position, the turn or the clocks, so it does not advance the match version
+// and it does not interrupt a move the other participant is preparing. The
+// offer is still ordered against the match: it is written under the match
+// lock, after the same authorization and expiry checks every other intent
+// passes, and it keeps the match version it was made against.
+func (s *Service) executeOffer(ctx context.Context, actor ParticipantRef, cmd Command) (CommandResult, error) {
+	fingerprint, err := CommandFingerprint(actor, cmd)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	match, clock, decision, err := lockMatch(ctx, tx, cmd.MatchID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if err = s.authorizeCredential(ctx, tx, cmd.MatchID, actor); err != nil {
+		return CommandResult{}, err
+	}
+	if duplicate, err := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
+		return duplicate, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return CommandResult{}, err
+	}
+	match.Clock = clock
+	if match.Moves, err = loadMoves(ctx, tx, cmd.MatchID); err != nil {
+		return CommandResult{}, err
+	}
+	seat, ok := match.Seat(cmd.Seat)
+	if !ok || seat.Participant != actor {
+		return CommandResult{}, ErrNotAuthorized
+	}
+	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
+		return CommandResult{}, err
+	}
+	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+		return CommandResult{}, err
+	}
+	if clock.ReplyExpired(decision) && match.Status == MatchActive {
+		return s.commitOpeningAbort(ctx, tx, cmd, fingerprint, match, clock, decision)
+	}
+	if clock.IsExpired(decision) && match.Status == MatchActive {
+		_ = tx.Rollback(ctx)
+		return s.resolveExpiredMatch(ctx, actor, cmd, fingerprint, match)
+	}
+	if match.Status != MatchActive {
+		return CommandResult{}, ErrMatchEnded
+	}
+	if match.Version != cmd.ExpectedVersion || match.ControlEpoch != cmd.ControlEpoch {
+		return CommandResult{}, ErrConflict
+	}
+
+	var kind OfferKind
+	var target *int64
+	switch cmd.Action.Kind {
+	case ActionOfferDraw:
+		kind = OfferDraw
+	case ActionOfferTakeback:
+		kind = OfferTakeback
+		version := cmd.Action.OfferTakeback.TargetVersion
+		if _, _, err = takebackTarget(match, version); err != nil {
+			return CommandResult{}, err
+		}
+		target = &version
+	default:
+		return CommandResult{}, ErrInvalidContract
+	}
+
+	offerID := hashHex(fingerprint)
+	// A seat has one outstanding offer per kind. A newer offer replaces the
+	// older one, which stays in the table as a record of what was offered.
+	if _, err = tx.Exec(ctx, `UPDATE online_offers SET resolved_at=$1,resolution='superseded' WHERE match_id=$2 AND kind=$3 AND seat=$4 AND resolved_at IS NULL`,
+		decision, match.MatchID, string(kind), string(cmd.Seat)); err != nil {
+		return CommandResult{}, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO online_offers(offer_id,match_id,kind,seat,target_version,base_version,created_at) VALUES($1,$2,$3,$4,$5,$6,$7)`,
+		offerID, match.MatchID, string(kind), string(cmd.Seat), target, match.Version, decision); err != nil {
+		return CommandResult{}, err
+	}
+	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeAccepted, Version: match.Version, ControlEpoch: match.ControlEpoch, DecidedAt: decision}
+	raw, err := marshalReceipt(receipt)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if err = insertReceipt(ctx, tx, cmd, fingerprint[:], raw, match.Version, match.ControlEpoch, decision); err != nil {
+		return CommandResult{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return CommandResult{}, err
+	}
+	return CommandResult{Receipt: receipt, Raw: raw}, nil
+}
+
+// takebackTarget resolves the exact position a takeback offer names. The
+// target version is the match version of the position that would be restored.
+// It must be a position in the current line and it must leave at least one
+// accepted move to discard.
+func takebackTarget(match Match, target int64) (int, string, error) {
+	if target < 1 {
+		return 0, "", ErrActionNotAllowed
+	}
+	for index := range match.Moves {
+		previous := int64(1)
+		if index > 0 {
+			previous = match.Moves[index-1].Version
+		}
+		if previous != target {
+			continue
+		}
+		position := match.StartingFEN
+		if index > 0 {
+			position = match.Moves[index-1].ResultingFEN
+		}
+		return index, position, nil
+	}
+	return 0, "", ErrActionNotAllowed
 }
 
 func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd Command) (CommandResult, error) {
@@ -482,6 +626,11 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
 		return CommandResult{}, err
 	}
+	// The opening reply window is reconciled before any other deadline. An
+	// unanswered reply ends the match, so a late intent cannot become a move.
+	if clock.ReplyExpired(decision) && match.Status == MatchActive {
+		return s.commitOpeningAbort(ctx, tx, cmd, fingerprint, match, clock, decision)
+	}
 	if clock.IsExpired(decision) && match.Status == MatchActive {
 		_ = tx.Rollback(ctx)
 		return s.resolveExpiredMatch(ctx, actor, cmd, fingerprint, match)
@@ -507,18 +656,126 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		event.Kind = EventResign
 		event.Result = result
 		receipt.Result = result
-	case ActionAbort:
+	case ActionCancel:
+		// The fact that a seat once had an accepted move is historical. A
+		// takeback that removes that move from the current line does not
+		// turn a later cancellation back into an abort.
 		if clock.Moved(cmd.Seat) {
-			return CommandResult{}, ErrActionNotAllowed
+			other, _ := cmd.Seat.Other()
+			result := &Result{Kind: ResultWin, Winner: &other, Reason: ReasonResignation}
+			match.Status = MatchCompleted
+			match.Result = result
+			match.CompletedAt = &decision
+			clock = terminalClock(clock, decision)
+			event.Kind = EventResign
+			event.Result = result
+			receipt.Result = result
+		} else {
+			result := &Result{Kind: ResultAbort, Reason: ReasonAbort}
+			match.Status = MatchAborted
+			match.Result = result
+			match.CompletedAt = &decision
+			clock = terminalClock(clock, decision)
+			event.Kind = EventAbort
+			event.Result = result
+			receipt.Result = result
 		}
-		result := &Result{Kind: ResultAbort, Reason: ReasonAbort}
-		match.Status = MatchAborted
+	case ActionAcceptDraw:
+		offer, err := loadPendingOffer(ctx, tx, match.MatchID, OfferDraw, opponentSeat(cmd.Seat))
+		if err != nil {
+			return CommandResult{}, err
+		}
+		result := &Result{Kind: ResultDraw, Reason: ReasonAgreement}
+		match.Status = MatchCompleted
 		match.Result = result
 		match.CompletedAt = &decision
 		clock = terminalClock(clock, decision)
-		event.Kind = EventAbort
+		event.Kind = EventDrawAgreement
 		event.Result = result
 		receipt.Result = result
+		if err = resolveOffer(ctx, tx, offer, decision, OfferAccepted); err != nil {
+			return CommandResult{}, err
+		}
+	case ActionAcceptTakeback:
+		offer, err := loadPendingOffer(ctx, tx, match.MatchID, OfferTakeback, opponentSeat(cmd.Seat))
+		if err != nil {
+			return CommandResult{}, err
+		}
+		// The offer is bound to the exact version it was made against. Any
+		// later play makes it inapplicable.
+		if offer.BaseVersion != match.Version {
+			return CommandResult{}, ErrConflict
+		}
+		index, position, err := takebackTarget(match, *offer.TargetVersion)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		// The discarded accepted moves stay in the table. Only the current
+		// line changes, so the discarded private archives survive.
+		for _, discarded := range match.Moves[index:] {
+			if _, err = tx.Exec(ctx, `INSERT INTO online_discarded_moves(match_id,move_version,takeback_version,discarded_at) VALUES($1,$2,$3,$4)`,
+				match.MatchID, discarded.Version, nextVersion, decision); err != nil {
+				return CommandResult{}, err
+			}
+		}
+		match.Moves = match.Moves[:index]
+		match.PositionFEN = position
+		// The clock keeps running. The side that was thinking is charged and
+		// the restored side to move takes over. No time is refunded, no
+		// increment is minted and no recovery budget is reset.
+		clock = chargeActiveClock(clock, decision)
+		clock = stopClock(clock)
+		sideToMove, ok := fenSideToMove(position)
+		if !ok {
+			return CommandResult{}, ErrInvalidContract
+		}
+		clock.armMainClock(sideToMove, decision)
+		clock.TurnNumber = int64(len(match.Moves))
+		event.Kind = EventTakebackAccept
+		event.TakebackTargetVersion = offer.TargetVersion
+	case ActionRecordRecoveryAttempt:
+		if err := requireSideToMove(match.PositionFEN, match.Clock, cmd.Seat); err != nil {
+			return CommandResult{}, err
+		}
+		seat, ok := match.Seat(cmd.Seat)
+		if !ok {
+			return CommandResult{}, ErrNotAuthorized
+		}
+		switch cmd.Action.Recovery.Attempt {
+		case RecoveryIllegalMove:
+			seat.IllegalAttemptsSpent++
+			if seat.IllegalAttemptsSpent >= MaxIllegalMoveAttempts {
+				other, _ := cmd.Seat.Other()
+				result := &Result{Kind: ResultWin, Winner: &other, Reason: ReasonIllegalMove}
+				match.Status = MatchCompleted
+				match.Result = result
+				match.CompletedAt = &decision
+				clock = terminalClock(clock, decision)
+				event.Kind = EventIllegalMoveLoss
+				event.Result = result
+				event.RecoveryAttempt = &cmd.Action.Recovery.Attempt
+				receipt.Result = result
+			} else {
+				event.Kind = EventRecoveryAttempt
+				event.RecoveryAttempt = &cmd.Action.Recovery.Attempt
+			}
+		case RecoveryFormattingCorrection:
+			if seat.FormatCorrectionsSpent >= MaxFormattingCorrections {
+				// The automatic correction budget is spent. Only owner
+				// recovery remains, so no further automatic correction is
+				// recorded.
+				return CommandResult{}, ErrActionNotAllowed
+			}
+			seat.FormatCorrectionsSpent++
+			event.Kind = EventRecoveryAttempt
+			event.RecoveryAttempt = &cmd.Action.Recovery.Attempt
+		default:
+			return CommandResult{}, ErrInvalidContract
+		}
+		if _, err = tx.Exec(ctx, `UPDATE online_seats SET illegal_attempts_spent=$1,format_corrections_spent=$2,updated_at=$3 WHERE match_id=$4 AND seat=$5`,
+			seat.IllegalAttemptsSpent, seat.FormatCorrectionsSpent, decision, match.MatchID, string(cmd.Seat)); err != nil {
+			return CommandResult{}, err
+		}
 	case ActionSetControl:
 		control := cmd.Action.SetControl.Control
 		if err := control.Validate(); err != nil {
@@ -695,6 +952,50 @@ func (s *Service) resolveExpiredMatch(ctx context.Context, actor ParticipantRef,
 	return s.commitTimeout(ctx, tx, cmd, fingerprint, match, expired, decision, result)
 }
 
+// commitOpeningAbort ends the match because the opening reply window closed
+// without an accepted reply.
+//
+// The window needs no chess rules, so the abort is committed in the same
+// transaction that reconciled it. The caller holds the match row lock and has
+// sampled a decision time at or after the reply deadline.
+func (s *Service) commitOpeningAbort(ctx context.Context, tx pgx.Tx, cmd Command, fingerprint [32]byte, match Match, clock ClockState, decision time.Time) (CommandResult, error) {
+	if clock.ReplySeat == nil {
+		return CommandResult{}, ErrConflict
+	}
+	expired := *clock.ReplySeat
+	result := &Result{Kind: ResultAbort, Reason: ReasonOpeningReplyTimeout}
+	nextVersion := match.Version + 1
+	match.Version = nextVersion
+	match.Status = MatchAborted
+	match.Result = result
+	completed := decision
+	match.CompletedAt = &completed
+	match.Clock = terminalClock(clock, decision)
+	match.UpdatedAt = decision
+	if err := s.updateMatch(ctx, tx, match, decision); err != nil {
+		return CommandResult{}, err
+	}
+	event := &Event{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, Version: nextVersion, Kind: EventAbort, Seat: &expired, ControlEpoch: match.ControlEpoch, DecisionAt: decision, AcceptedAt: decision, Result: result}
+	if err := insertEvent(ctx, tx, *event); err != nil {
+		return CommandResult{}, err
+	}
+	if err := s.publishProjection(ctx, tx, match); err != nil {
+		return CommandResult{}, err
+	}
+	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeOpeningExpired, Version: nextVersion, ControlEpoch: match.ControlEpoch, DecidedAt: decision, Event: event, Result: result}
+	raw, err := marshalReceipt(receipt)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	if err := insertReceipt(ctx, tx, cmd, fingerprint[:], raw, nextVersion, match.ControlEpoch, decision); err != nil {
+		return CommandResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CommandResult{}, err
+	}
+	return CommandResult{Receipt: receipt, Raw: raw}, nil
+}
+
 // commitTimeout applies an already-validated timeout adjudication. The caller
 // holds the match row lock and has confirmed the decision time is past the
 // deadline for the expired seat.
@@ -756,8 +1057,8 @@ func (s *Service) updateMatch(ctx context.Context, tx pgx.Tx, match Match, decis
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE online_clocks SET white_ms=$1,black_ms=$2,active_seat=$3,active_since=$4,deadline_at=$5,white_moved=$6,black_moved=$7,turn_number=$8,updated_at=$9 WHERE match_id=$10`,
-		match.Clock.WhiteMs, match.Clock.BlackMs, seatValue(match.Clock.ActiveSeat), match.Clock.ActiveSince, match.Clock.DeadlineAt, match.Clock.WhiteMoved, match.Clock.BlackMoved, match.Clock.TurnNumber, decision, match.MatchID)
+	_, err = tx.Exec(ctx, `UPDATE online_clocks SET white_ms=$1,black_ms=$2,active_seat=$3,active_since=$4,deadline_at=$5,white_moved=$6,black_moved=$7,turn_number=$8,reply_seat=$9,reply_deadline_at=$10,updated_at=$11 WHERE match_id=$12`,
+		match.Clock.WhiteMs, match.Clock.BlackMs, seatValue(match.Clock.ActiveSeat), match.Clock.ActiveSince, match.Clock.DeadlineAt, match.Clock.WhiteMoved, match.Clock.BlackMoved, match.Clock.TurnNumber, seatValue(match.Clock.ReplySeat), match.Clock.ReplyDeadlineAt, decision, match.MatchID)
 	return err
 }
 
@@ -1053,6 +1354,9 @@ func loadMatchWithLock(ctx context.Context, q queryer, matchID, lockClause strin
 	if match.Moves, err = loadMoves(ctx, q, matchID); err != nil {
 		return Match{}, err
 	}
+	if match.Offers, err = loadOffers(ctx, q, matchID); err != nil {
+		return Match{}, err
+	}
 	return match, nil
 }
 
@@ -1129,7 +1433,7 @@ func scanMatch(row pgx.Row) (Match, error) {
 }
 
 func loadSeats(ctx context.Context, q queryer, matchID string) ([]MatchSeat, error) {
-	rows, err := q.Query(ctx, `SELECT seat,owner_kind,owner_id,public_label,control_kind,model_label,control_epoch FROM online_seats WHERE match_id=$1 ORDER BY CASE seat WHEN 'white' THEN 0 ELSE 1 END`, matchID)
+	rows, err := q.Query(ctx, `SELECT seat,owner_kind,owner_id,public_label,control_kind,model_label,control_epoch,illegal_attempts_spent,format_corrections_spent FROM online_seats WHERE match_id=$1 ORDER BY CASE seat WHEN 'white' THEN 0 ELSE 1 END`, matchID)
 	if err != nil {
 		return nil, err
 	}
@@ -1137,7 +1441,7 @@ func loadSeats(ctx context.Context, q queryer, matchID string) ([]MatchSeat, err
 	out := make([]MatchSeat, 0, 2)
 	for rows.Next() {
 		var s MatchSeat
-		if err = rows.Scan(&s.Seat, &s.Participant.Kind, &s.Participant.ID, &s.PublicLabel, &s.Control.Kind, &s.Control.ModelLabel, &s.ControlEpoch); err != nil {
+		if err = rows.Scan(&s.Seat, &s.Participant.Kind, &s.Participant.ID, &s.PublicLabel, &s.Control.Kind, &s.Control.ModelLabel, &s.ControlEpoch, &s.IllegalAttemptsSpent, &s.FormatCorrectionsSpent); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
@@ -1148,8 +1452,9 @@ func loadSeats(ctx context.Context, q queryer, matchID string) ([]MatchSeat, err
 func loadClock(ctx context.Context, q queryer, matchID string) (ClockState, error) {
 	var c ClockState
 	var activeSeat *string
-	err := q.QueryRow(ctx, `SELECT white_ms,black_ms,active_seat,active_since,deadline_at,white_moved,black_moved,turn_number FROM online_clocks WHERE match_id=$1`, matchID).
-		Scan(&c.WhiteMs, &c.BlackMs, &activeSeat, &c.ActiveSince, &c.DeadlineAt, &c.WhiteMoved, &c.BlackMoved, &c.TurnNumber)
+	var replySeat *string
+	err := q.QueryRow(ctx, `SELECT white_ms,black_ms,active_seat,active_since,deadline_at,white_moved,black_moved,turn_number,reply_seat,reply_deadline_at FROM online_clocks WHERE match_id=$1`, matchID).
+		Scan(&c.WhiteMs, &c.BlackMs, &activeSeat, &c.ActiveSince, &c.DeadlineAt, &c.WhiteMoved, &c.BlackMoved, &c.TurnNumber, &replySeat, &c.ReplyDeadlineAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ClockState{}, ErrNotFound
 	}
@@ -1163,6 +1468,13 @@ func loadClock(ctx context.Context, q queryer, matchID string) (ClockState, erro
 		}
 		c.ActiveSeat = &seat
 	}
+	if replySeat != nil {
+		seat := Seat(*replySeat)
+		if seat != SeatWhite && seat != SeatBlack {
+			return ClockState{}, ErrInvalidContract
+		}
+		c.ReplySeat = &seat
+	}
 	if c.ActiveSince != nil {
 		t := c.ActiveSince.UTC()
 		c.ActiveSince = &t
@@ -1171,11 +1483,18 @@ func loadClock(ctx context.Context, q queryer, matchID string) (ClockState, erro
 		t := c.DeadlineAt.UTC()
 		c.DeadlineAt = &t
 	}
+	if c.ReplyDeadlineAt != nil {
+		t := c.ReplyDeadlineAt.UTC()
+		c.ReplyDeadlineAt = &t
+	}
 	return c, nil
 }
 
+// loadMoves returns the current line of accepted moves. A takeback keeps the
+// discarded accepted moves in the table, so the current line is the accepted
+// moves that no takeback discarded.
 func loadMoves(ctx context.Context, q queryer, matchID string) ([]Move, error) {
-	rows, err := q.Query(ctx, `SELECT version,seat,uci,san,resulting_fen FROM online_moves WHERE match_id=$1 ORDER BY version`, matchID)
+	rows, err := q.Query(ctx, `SELECT m.version,m.seat,m.uci,m.san,m.resulting_fen FROM online_moves m WHERE m.match_id=$1 AND NOT EXISTS (SELECT 1 FROM online_discarded_moves d WHERE d.match_id=m.match_id AND d.move_version=m.version) ORDER BY m.version`, matchID)
 	if err != nil {
 		return nil, err
 	}
@@ -1189,6 +1508,54 @@ func loadMoves(ctx context.Context, q queryer, matchID string) ([]Move, error) {
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// loadOffers returns the pending offers of a match. A resolved offer stays in
+// the table as a record of what was offered.
+func loadOffers(ctx context.Context, q queryer, matchID string) ([]Offer, error) {
+	rows, err := q.Query(ctx, `SELECT offer_id,kind,seat,target_version,base_version,created_at FROM online_offers WHERE match_id=$1 AND resolved_at IS NULL ORDER BY created_at,offer_id`, matchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]Offer, 0, 2)
+	for rows.Next() {
+		var o Offer
+		var kind string
+		if err = rows.Scan(&o.OfferID, &kind, &o.Seat, &o.TargetVersion, &o.BaseVersion, &o.CreatedAt); err != nil {
+			return nil, err
+		}
+		o.MatchID = matchID
+		o.Kind = OfferKind(kind)
+		o.CreatedAt = o.CreatedAt.UTC()
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// loadPendingOffer returns the outstanding offer of one kind from one seat.
+func loadPendingOffer(ctx context.Context, q queryer, matchID string, kind OfferKind, seat Seat) (Offer, error) {
+	var o Offer
+	var storedKind string
+	err := q.QueryRow(ctx, `SELECT offer_id,kind,seat,target_version,base_version,created_at FROM online_offers WHERE match_id=$1 AND kind=$2 AND seat=$3 AND resolved_at IS NULL`, matchID, string(kind), string(seat)).
+		Scan(&o.OfferID, &storedKind, &o.Seat, &o.TargetVersion, &o.BaseVersion, &o.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Offer{}, ErrActionNotAllowed
+	}
+	if err != nil {
+		return Offer{}, err
+	}
+	o.MatchID = matchID
+	o.Kind = OfferKind(storedKind)
+	o.CreatedAt = o.CreatedAt.UTC()
+	return o, nil
+}
+
+// resolveOffer records how a pending offer ended. The resolution is written
+// once and never rewritten.
+func resolveOffer(ctx context.Context, tx pgx.Tx, offer Offer, at time.Time, resolution OfferResolution) error {
+	_, err := tx.Exec(ctx, `UPDATE online_offers SET resolved_at=$1,resolution=$2 WHERE offer_id=$3 AND resolved_at IS NULL`, at.UTC(), string(resolution), offer.OfferID)
+	return err
 }
 
 func insertEvent(ctx context.Context, tx pgx.Tx, e Event) error {
@@ -1211,8 +1578,12 @@ func insertEvent(ctx context.Context, tx pgx.Tx, e Event) error {
 			controlLabel = *e.Control.ModelLabel
 		}
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO online_events(match_id,version,event_kind,seat,control_epoch,decision_at,accepted_at,move_uci,move_san,resulting_fen,result,control_kind,control_model_label) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10::jsonb,$11,$12)`,
-		e.MatchID, e.Version, string(e.Kind), seatValue(e.Seat), e.ControlEpoch, e.DecisionAt.UTC(), moveUCI, moveSAN, fen, resultJSON, controlKind, controlLabel)
+	var recoveryAttempt any
+	if e.RecoveryAttempt != nil {
+		recoveryAttempt = string(*e.RecoveryAttempt)
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO online_events(match_id,version,event_kind,seat,control_epoch,decision_at,accepted_at,move_uci,move_san,resulting_fen,result,control_kind,control_model_label,takeback_target_version,recovery_attempt) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14)`,
+		e.MatchID, e.Version, string(e.Kind), seatValue(e.Seat), e.ControlEpoch, e.DecisionAt.UTC(), moveUCI, moveSAN, fen, resultJSON, controlKind, controlLabel, e.TakebackTargetVersion, recoveryAttempt)
 	return err
 }
 
@@ -1268,10 +1639,13 @@ func terminalStatus(result *Result) MatchStatus {
 
 func terminalClock(clock ClockState, decision time.Time) ClockState {
 	clock = chargeActiveClock(clock, decision)
-	clock.ActiveSeat = nil
-	clock.ActiveSince = nil
-	clock.DeadlineAt = nil
-	return clock
+	return stopClock(clock)
+}
+
+// opponentSeat returns the other seat of the match.
+func opponentSeat(seat Seat) Seat {
+	other, _ := seat.Other()
+	return other
 }
 
 func seatValue(seat *Seat) any {

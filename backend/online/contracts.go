@@ -15,12 +15,33 @@ import (
 
 // Versioned wire contract versions. Bump these only with a matching Go/TypeScript
 // contract change and an additive database migration.
+//
+// Version 2 replaces the abort action with cancel, adds the mutual draw and
+// exact-version takeback actions, and adds the shared recovery budget record.
+// The cancel action aborts before a side's first accepted move and resigns
+// afterwards, so the old abort name no longer described the transition.
 const (
-	ContractsSchemaVersion        = 1
+	ContractsSchemaVersion        = 2
 	RulesInputSchemaVersion       = 1
 	PublicProjectionSchemaVersion = 1
 	DefaultRulesPolicyVersion     = "online-rules/1"
 )
+
+// Shared turn budgets. They mirror the offline turn budgets so an online
+// match spends the same recovery allowance.
+const (
+	// MaxIllegalMoveAttempts is the number of illegal attempts one turn
+	// allows. The last one loses the match for that seat.
+	MaxIllegalMoveAttempts = 4
+	// MaxFormattingCorrections is the number of automatic formatting
+	// corrections one turn allows. The budget is independent of the illegal
+	// move budget; a further failure waits for owner recovery.
+	MaxFormattingCorrections = 3
+)
+
+// OpeningReplyWindowMs is the time the responder of the opening move has to
+// answer. The match aborts when the window closes without an accepted reply.
+const OpeningReplyWindowMs = 15_000
 
 type Seat string
 
@@ -83,6 +104,13 @@ type ClockState struct {
 	WhiteMoved  bool       `json:"whiteMoved"`
 	BlackMoved  bool       `json:"blackMoved"`
 	TurnNumber  int64      `json:"turnNumber"`
+	// ReplySeat is the seat that owes the opening reply. It is set only
+	// between the first accepted move of the match and the responder's first
+	// accepted reply. While it is set no main clock runs.
+	ReplySeat *Seat `json:"replySeat"`
+	// ReplyDeadlineAt ends the opening reply window. Missing it means no
+	// opening reply is outstanding.
+	ReplyDeadlineAt *time.Time `json:"replyDeadlineAt"`
 }
 
 func (c ClockState) Bank(seat Seat) int64 {
@@ -111,6 +139,18 @@ func (c ClockState) Moved(seat Seat) bool {
 // the supplied authoritative decision time. A nil deadline never expires.
 func (c ClockState) IsExpired(at time.Time) bool {
 	return c.DeadlineAt != nil && !at.Before(*c.DeadlineAt)
+}
+
+// ReplyExpired reports whether the opening reply window was reached at or
+// before the supplied authoritative decision time. The window is the only
+// deadline an unstarted or opening match has.
+func (c ClockState) ReplyExpired(at time.Time) bool {
+	return c.ReplyDeadlineAt != nil && !at.Before(*c.ReplyDeadlineAt)
+}
+
+// AwaitingOpeningReply reports whether the match owes an opening reply.
+func (c ClockState) AwaitingOpeningReply() bool {
+	return c.ReplySeat != nil
 }
 
 type MatchStatus string
@@ -142,6 +182,12 @@ const (
 	ReasonInsufficientMaterial ResultReason = "insufficient_material"
 	ReasonAgreement            ResultReason = "agreement"
 	ReasonAbort                ResultReason = "abort"
+	// ReasonOpeningReplyTimeout marks the unscored abort that follows an
+	// unanswered opening reply.
+	ReasonOpeningReplyTimeout ResultReason = "opening_reply_timeout"
+	// ReasonIllegalMove marks the loss a seat takes after spending its fourth
+	// illegal move attempt in one turn.
+	ReasonIllegalMove ResultReason = "illegal_move"
 )
 
 // Result is a typed, terminal match outcome. The database rejects any update
@@ -159,7 +205,7 @@ func (r Result) Validate() error {
 			return fmt.Errorf("%w: win requires white or black winner", ErrInvalidContract)
 		}
 		switch r.Reason {
-		case ReasonCheckmate, ReasonResignation, ReasonTimeout, ReasonAbandonment:
+		case ReasonCheckmate, ReasonResignation, ReasonTimeout, ReasonAbandonment, ReasonIllegalMove:
 			return nil
 		default:
 			return fmt.Errorf("%w: invalid win reason %q", ErrInvalidContract, r.Reason)
@@ -175,10 +221,15 @@ func (r Result) Validate() error {
 			return fmt.Errorf("%w: invalid draw reason %q", ErrInvalidContract, r.Reason)
 		}
 	case ResultAbort:
-		if r.Winner != nil || r.Reason != ReasonAbort {
+		if r.Winner != nil {
 			return fmt.Errorf("%w: abort outcome is unscored", ErrInvalidContract)
 		}
-		return nil
+		switch r.Reason {
+		case ReasonAbort, ReasonOpeningReplyTimeout:
+			return nil
+		default:
+			return fmt.Errorf("%w: invalid abort reason %q", ErrInvalidContract, r.Reason)
+		}
 	default:
 		return fmt.Errorf("%w: invalid result kind %q", ErrInvalidContract, r.Kind)
 	}
@@ -195,13 +246,19 @@ type Move struct {
 type EventKind string
 
 const (
-	EventMatchCreated  EventKind = "match_created"
-	EventMove          EventKind = "move"
-	EventResign        EventKind = "resign"
-	EventAbort         EventKind = "abort"
-	EventControlChange EventKind = "control_change"
-	EventTimeout       EventKind = "timeout"
-	EventReplayRemoved EventKind = "replay_removed"
+	EventMatchCreated   EventKind = "match_created"
+	EventMove           EventKind = "move"
+	EventResign         EventKind = "resign"
+	EventAbort          EventKind = "abort"
+	EventControlChange  EventKind = "control_change"
+	EventTimeout        EventKind = "timeout"
+	EventReplayRemoved  EventKind = "replay_removed"
+	EventDrawAgreement  EventKind = "draw_agreement"
+	EventTakebackAccept EventKind = "takeback_accepted"
+	// EventRecoveryAttempt records one spent recovery attempt of a turn.
+	EventRecoveryAttempt EventKind = "recovery_attempt"
+	// EventIllegalMoveLoss ends the match after the fourth illegal attempt.
+	EventIllegalMoveLoss EventKind = "illegal_move_loss"
 )
 
 type Event struct {
@@ -216,6 +273,11 @@ type Event struct {
 	Move          *Move        `json:"move,omitempty"`
 	Result        *Result      `json:"result,omitempty"`
 	Control       *SeatControl `json:"control,omitempty"`
+	// TakebackTargetVersion is the exact position an accepted takeback
+	// restored.
+	TakebackTargetVersion *int64 `json:"takebackTargetVersion,omitempty"`
+	// RecoveryAttempt names the spent recovery attempt an event records.
+	RecoveryAttempt *RecoveryAttemptKind `json:"recoveryAttempt,omitempty"`
 }
 
 type MatchSeat struct {
@@ -224,6 +286,12 @@ type MatchSeat struct {
 	PublicLabel  string         `json:"publicLabel"`
 	Control      SeatControl    `json:"control"`
 	ControlEpoch int64          `json:"controlEpoch"`
+	// IllegalAttemptsSpent and FormatCorrectionsSpent are the recovery
+	// budget already spent in this seat's current turn. They reset only when
+	// that seat's next move is accepted. A control change or a takeback never
+	// resets them.
+	IllegalAttemptsSpent   int `json:"illegalAttemptsSpent"`
+	FormatCorrectionsSpent int `json:"formatCorrectionsSpent"`
 }
 
 type Match struct {
@@ -241,6 +309,7 @@ type Match struct {
 	Seats              []MatchSeat `json:"seats"`
 	Clock              ClockState  `json:"clock"`
 	Moves              []Move      `json:"moves"`
+	Offers             []Offer     `json:"offers"`
 	CreatedAt          time.Time   `json:"createdAt"`
 	UpdatedAt          time.Time   `json:"updatedAt"`
 	CompletedAt        *time.Time  `json:"completedAt"`
@@ -267,12 +336,27 @@ func (m Match) HasParticipant(participant ParticipantRef) bool {
 type ActionKind string
 
 const (
-	ActionCreateMatch        ActionKind = "create_match"
-	ActionSubmitMove         ActionKind = "submit_move"
-	ActionResign             ActionKind = "resign"
-	ActionAbort              ActionKind = "abort"
+	ActionCreateMatch ActionKind = "create_match"
+	ActionSubmitMove  ActionKind = "submit_move"
+	ActionResign      ActionKind = "resign"
+	// ActionCancel ends the match for its seat. It aborts while that seat has
+	// never had an accepted move and resigns afterwards. The fact that a seat
+	// once moved is historical: a takeback that removes the move from the
+	// current line does not turn the later cancellation back into an abort.
+	ActionCancel             ActionKind = "cancel"
 	ActionSetControl         ActionKind = "set_control"
 	ActionRemovePublicReplay ActionKind = "remove_public_replay"
+	// ActionOfferDraw records a draw offer. It is not a versioned transition:
+	// an offer never changes the position, the turn or the clocks.
+	ActionOfferDraw ActionKind = "offer_draw"
+	// ActionAcceptDraw accepts the opponent's pending draw offer.
+	ActionAcceptDraw ActionKind = "accept_draw"
+	// ActionOfferTakeback records a takeback offer for an exact position.
+	ActionOfferTakeback ActionKind = "offer_takeback"
+	// ActionAcceptTakeback accepts the opponent's pending takeback offer.
+	ActionAcceptTakeback ActionKind = "accept_takeback"
+	// ActionRecordRecoveryAttempt records one spent recovery attempt.
+	ActionRecordRecoveryAttempt ActionKind = "record_recovery_attempt"
 )
 
 type CreateSeat struct {
@@ -305,13 +389,73 @@ type RemovePublicReplayAction struct {
 	Reason string `json:"reason"`
 }
 
+// OfferTakebackAction names the exact match version whose position a
+// takeback offer would restore. The offer is stale as soon as the match
+// version moves past the version the offer was made against.
+type OfferTakebackAction struct {
+	TargetVersion int64 `json:"targetVersion"`
+}
+
+// RecoveryAttemptKind names one spent recovery attempt.
+type RecoveryAttemptKind string
+
+const (
+	// RecoveryIllegalMove spends one illegal move attempt of the current turn.
+	RecoveryIllegalMove RecoveryAttemptKind = "illegal_move"
+	// RecoveryFormattingCorrection spends one automatic formatting
+	// correction of the current turn. The correction budget is independent of
+	// the illegal move budget.
+	RecoveryFormattingCorrection RecoveryAttemptKind = "formatting_correction"
+)
+
+// RecordRecoveryAttemptAction records one spent recovery attempt.
+type RecordRecoveryAttemptAction struct {
+	Attempt RecoveryAttemptKind `json:"attempt"`
+}
+
+// OfferKind names a pending offer.
+type OfferKind string
+
+const (
+	OfferDraw     OfferKind = "draw"
+	OfferTakeback OfferKind = "takeback"
+)
+
+// OfferResolution records how a pending offer ended.
+type OfferResolution string
+
+const (
+	// OfferAccepted marks an offer the other participant acted on.
+	OfferAccepted OfferResolution = "accepted"
+	// OfferSuperseded marks an offer replaced by a newer offer from the
+	// same seat.
+	OfferSuperseded OfferResolution = "superseded"
+)
+
+// Offer is one pending draw or takeback offer. Offers are not versioned match
+// transitions: they carry the match version they were made against so a
+// stale takeback offer can be refused.
+type Offer struct {
+	OfferID       string           `json:"offerId"`
+	MatchID       string           `json:"matchId"`
+	Kind          OfferKind        `json:"kind"`
+	Seat          Seat             `json:"seat"`
+	TargetVersion *int64           `json:"targetVersion"`
+	BaseVersion   int64            `json:"baseVersion"`
+	CreatedAt     time.Time        `json:"createdAt"`
+	ResolvedAt    *time.Time       `json:"resolvedAt"`
+	Resolution    *OfferResolution `json:"resolution"`
+}
+
 // Action is a closed, typed union. It has no free-form state or SQL field.
 type Action struct {
-	Kind         ActionKind
-	CreateMatch  *CreateMatchSetup
-	SubmitMove   *SubmitMoveAction
-	SetControl   *SetControlAction
-	RemoveReplay *RemovePublicReplayAction
+	Kind          ActionKind
+	CreateMatch   *CreateMatchSetup
+	SubmitMove    *SubmitMoveAction
+	SetControl    *SetControlAction
+	RemoveReplay  *RemovePublicReplayAction
+	OfferTakeback *OfferTakebackAction
+	Recovery      *RecordRecoveryAttemptAction
 }
 
 func (a Action) MarshalJSON() ([]byte, error) {
@@ -339,7 +483,17 @@ func (a Action) MarshalJSON() ([]byte, error) {
 			Kind   ActionKind `json:"kind"`
 			Reason string     `json:"reason"`
 		}{a.Kind, a.RemoveReplay.Reason})
-	case ActionResign, ActionAbort:
+	case ActionOfferTakeback:
+		return json.Marshal(struct {
+			Kind          ActionKind `json:"kind"`
+			TargetVersion int64      `json:"targetVersion"`
+		}{a.Kind, a.OfferTakeback.TargetVersion})
+	case ActionRecordRecoveryAttempt:
+		return json.Marshal(struct {
+			Kind    ActionKind          `json:"kind"`
+			Attempt RecoveryAttemptKind `json:"attempt"`
+		}{a.Kind, a.Recovery.Attempt})
+	case ActionResign, ActionCancel, ActionOfferDraw, ActionAcceptDraw, ActionAcceptTakeback:
 		return json.Marshal(struct {
 			Kind ActionKind `json:"kind"`
 		}{a.Kind})
@@ -375,7 +529,7 @@ func (a *Action) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("%w: submit_move action", ErrInvalidContract)
 		}
 		a.SubmitMove = &SubmitMoveAction{UCI: v.Move}
-	case ActionResign, ActionAbort:
+	case ActionResign, ActionCancel, ActionOfferDraw, ActionAcceptDraw, ActionAcceptTakeback:
 		var v struct {
 			Kind ActionKind `json:"kind"`
 		}
@@ -391,6 +545,24 @@ func (a *Action) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("%w: set_control action", ErrInvalidContract)
 		}
 		a.SetControl = &SetControlAction{Control: v.Control}
+	case ActionOfferTakeback:
+		var v struct {
+			Kind          ActionKind `json:"kind"`
+			TargetVersion int64      `json:"targetVersion"`
+		}
+		if err := decodeStrict(data, &v); err != nil {
+			return fmt.Errorf("%w: offer_takeback action", ErrInvalidContract)
+		}
+		a.OfferTakeback = &OfferTakebackAction{TargetVersion: v.TargetVersion}
+	case ActionRecordRecoveryAttempt:
+		var v struct {
+			Kind    ActionKind          `json:"kind"`
+			Attempt RecoveryAttemptKind `json:"attempt"`
+		}
+		if err := decodeStrict(data, &v); err != nil {
+			return fmt.Errorf("%w: record_recovery_attempt action", ErrInvalidContract)
+		}
+		a.Recovery = &RecordRecoveryAttemptAction{Attempt: v.Attempt}
 	case ActionRemovePublicReplay:
 		var v struct {
 			Kind   ActionKind `json:"kind"`
@@ -420,8 +592,14 @@ func (a Action) Validate() error {
 	if a.RemoveReplay != nil {
 		set++
 	}
+	if a.OfferTakeback != nil {
+		set++
+	}
+	if a.Recovery != nil {
+		set++
+	}
 	switch a.Kind {
-	case ActionResign, ActionAbort:
+	case ActionResign, ActionCancel, ActionOfferDraw, ActionAcceptDraw, ActionAcceptTakeback:
 		if set != 0 {
 			return fmt.Errorf("%w: %s carries no payload", ErrInvalidContract, a.Kind)
 		}
@@ -444,6 +622,24 @@ func (a Action) Validate() error {
 			return fmt.Errorf("%w: set_control payload", ErrInvalidContract)
 		}
 		return a.SetControl.Control.Validate()
+	case ActionOfferTakeback:
+		if set != 1 || a.OfferTakeback == nil {
+			return fmt.Errorf("%w: offer_takeback payload", ErrInvalidContract)
+		}
+		if a.OfferTakeback.TargetVersion < 1 {
+			return fmt.Errorf("%w: takeback target version", ErrInvalidContract)
+		}
+		return nil
+	case ActionRecordRecoveryAttempt:
+		if set != 1 || a.Recovery == nil {
+			return fmt.Errorf("%w: record_recovery_attempt payload", ErrInvalidContract)
+		}
+		switch a.Recovery.Attempt {
+		case RecoveryIllegalMove, RecoveryFormattingCorrection:
+			return nil
+		default:
+			return fmt.Errorf("%w: recovery attempt kind", ErrInvalidContract)
+		}
 	case ActionRemovePublicReplay:
 		if set != 1 || a.RemoveReplay == nil {
 			return fmt.Errorf("%w: remove_public_replay payload", ErrInvalidContract)
@@ -589,6 +785,9 @@ const (
 	OutcomeAccepted        ReceiptOutcome = "accepted"
 	OutcomeDeadlineExpired ReceiptOutcome = "deadline_expired"
 	OutcomeReplayRemoved   ReceiptOutcome = "replay_removed"
+	// OutcomeOpeningExpired marks the unscored abort that follows an
+	// unanswered opening reply.
+	OutcomeOpeningExpired ReceiptOutcome = "opening_expired"
 )
 
 // Receipt is the durable, payload-free outcome of one accepted operation.

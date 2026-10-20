@@ -260,10 +260,22 @@ func (a *onlineAPI) sameOrigin(r *http.Request) (string, bool) {
 // onlineSeatResponse is the allowlisted seat view. The participant reference
 // is an authorization identity and never leaves the server.
 type onlineSeatResponse struct {
-	Seat         online.Seat        `json:"seat"`
-	PublicLabel  string             `json:"publicLabel"`
-	Control      online.SeatControl `json:"control"`
-	ControlEpoch int64              `json:"controlEpoch"`
+	Seat                   online.Seat        `json:"seat"`
+	PublicLabel            string             `json:"publicLabel"`
+	Control                online.SeatControl `json:"control"`
+	ControlEpoch           int64              `json:"controlEpoch"`
+	IllegalAttemptsSpent   int                `json:"illegalAttemptsSpent"`
+	FormatCorrectionsSpent int                `json:"formatCorrectionsSpent"`
+}
+
+// onlineOfferResponse is the allowlisted pending offer view. An offer carries
+// no participant reference and no private data.
+type onlineOfferResponse struct {
+	Kind          online.OfferKind `json:"kind"`
+	Seat          online.Seat      `json:"seat"`
+	TargetVersion *int64           `json:"targetVersion"`
+	BaseVersion   int64            `json:"baseVersion"`
+	CreatedAt     time.Time        `json:"createdAt"`
 }
 
 // onlineMatchResponse is the participant live state.
@@ -272,24 +284,25 @@ type onlineSeatResponse struct {
 // credential, token, or hash. The opponent's seat is described by its public
 // label and declared control only.
 type onlineMatchResponse struct {
-	SchemaVersion      int                  `json:"schemaVersion"`
-	MatchID            string               `json:"matchId"`
-	Variant            string               `json:"variant"`
-	StartingFEN        string               `json:"startingFen"`
-	PositionFEN        string               `json:"positionFen"`
-	TimeControl        online.TimeControl   `json:"timeControl"`
-	Version            int64                `json:"version"`
-	ControlEpoch       int64                `json:"controlEpoch"`
-	RulesPolicyVersion string               `json:"rulesPolicyVersion"`
-	Status             online.MatchStatus   `json:"status"`
-	Result             *online.Result       `json:"result"`
-	Seats              []onlineSeatResponse `json:"seats"`
-	Clock              online.ClockState    `json:"clock"`
-	Moves              []online.Move        `json:"moves"`
-	CreatedAt          time.Time            `json:"createdAt"`
-	UpdatedAt          time.Time            `json:"updatedAt"`
-	CompletedAt        *time.Time           `json:"completedAt"`
-	YourSeat           *online.Seat         `json:"yourSeat"`
+	SchemaVersion      int                   `json:"schemaVersion"`
+	MatchID            string                `json:"matchId"`
+	Variant            string                `json:"variant"`
+	StartingFEN        string                `json:"startingFen"`
+	PositionFEN        string                `json:"positionFen"`
+	TimeControl        online.TimeControl    `json:"timeControl"`
+	Version            int64                 `json:"version"`
+	ControlEpoch       int64                 `json:"controlEpoch"`
+	RulesPolicyVersion string                `json:"rulesPolicyVersion"`
+	Status             online.MatchStatus    `json:"status"`
+	Result             *online.Result        `json:"result"`
+	Seats              []onlineSeatResponse  `json:"seats"`
+	Clock              online.ClockState     `json:"clock"`
+	Moves              []online.Move         `json:"moves"`
+	PendingOffers      []onlineOfferResponse `json:"pendingOffers"`
+	CreatedAt          time.Time             `json:"createdAt"`
+	UpdatedAt          time.Time             `json:"updatedAt"`
+	CompletedAt        *time.Time            `json:"completedAt"`
+	YourSeat           *online.Seat          `json:"yourSeat"`
 }
 
 func toOnlineMatch(match online.Match, principal onlineauth.Principal) onlineMatchResponse {
@@ -297,15 +310,27 @@ func toOnlineMatch(match online.Match, principal onlineauth.Principal) onlineMat
 	var yourSeat *online.Seat
 	for _, seat := range match.Seats {
 		seats = append(seats, onlineSeatResponse{
-			Seat:         seat.Seat,
-			PublicLabel:  seat.PublicLabel,
-			Control:      seat.Control,
-			ControlEpoch: seat.ControlEpoch,
+			Seat:                   seat.Seat,
+			PublicLabel:            seat.PublicLabel,
+			Control:                seat.Control,
+			ControlEpoch:           seat.ControlEpoch,
+			IllegalAttemptsSpent:   seat.IllegalAttemptsSpent,
+			FormatCorrectionsSpent: seat.FormatCorrectionsSpent,
 		})
 		if seat.Participant == principal.Participant {
 			own := seat.Seat
 			yourSeat = &own
 		}
+	}
+	offers := make([]onlineOfferResponse, 0, len(match.Offers))
+	for _, offer := range match.Offers {
+		offers = append(offers, onlineOfferResponse{
+			Kind:          offer.Kind,
+			Seat:          offer.Seat,
+			TargetVersion: offer.TargetVersion,
+			BaseVersion:   offer.BaseVersion,
+			CreatedAt:     offer.CreatedAt.UTC(),
+		})
 	}
 	return onlineMatchResponse{
 		SchemaVersion:      match.SchemaVersion,
@@ -322,6 +347,7 @@ func toOnlineMatch(match online.Match, principal onlineauth.Principal) onlineMat
 		Seats:              seats,
 		Clock:              match.Clock,
 		Moves:              match.Moves,
+		PendingOffers:      offers,
 		CreatedAt:          match.CreatedAt.UTC(),
 		UpdatedAt:          match.UpdatedAt.UTC(),
 		CompletedAt:        match.CompletedAt,

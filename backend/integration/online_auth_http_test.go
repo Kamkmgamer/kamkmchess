@@ -71,7 +71,7 @@ func TestPostgresOnlineHTTPCompositionAuthorizesOnlyParticipants(t *testing.T) {
 	}
 
 	// The guest commands its own seat over HTTP.
-	command := `{"schemaVersion":1,"matchId":"match-http-guest","operationId":"op-http-guest-1","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`
+	command := `{"schemaVersion":2,"matchId":"match-http-guest","operationId":"op-http-guest-1","expectedVersion":1,"seat":"white","controlEpoch":1,"action":{"kind":"submit_move","move":"e2e4"}}`
 	accepted := onlineHTTPRequest(handler, http.MethodPost, "/v1/online/matches/match-http-guest/commands", authTestOrigin, "", map[string]string{httpapi.GuestCredentialHeader: issued.Credential.Secret}, command)
 	if accepted.Code != http.StatusOK {
 		t.Fatalf("guest command status=%d body=%s", accepted.Code, accepted.Body.String())
