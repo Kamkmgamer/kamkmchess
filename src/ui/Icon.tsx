@@ -9,6 +9,8 @@ const paths = {
   archive: 'M4 4h16v5H4zM6 9v11h12V9m-8 4h4', play: 'm8 4 12 8-12 8z', stop: 'M5 5h14v14H5z',
   change: 'M4 7h15l-3-3M20 17H5l3 3', download: 'M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4',
   move: 'M8 11V5a2 2 0 1 1 4 0v6-1a2 2 0 0 1 4 0v2-1a2 2 0 0 1 4 0v5a6 6 0 0 1-6 6h-1a6 6 0 0 1-4.8-2.4L4 15a2 2 0 0 1 3-2.6L8 14',
+  draw: 'M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18M12 3v18M7 7.5h3M6.5 11h3.5M7 14.5h3M6.5 18h3.5',
+  resign: 'M6 21V4M6 4h10l-2 4 2 4H6',
   account: 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0M4 21v-2a8 8 0 0 1 16 0v2',
   plus: 'M12 4v16M4 12h16', check: 'm5 12 4 4L19 6',
 } as const;

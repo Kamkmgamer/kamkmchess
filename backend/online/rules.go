@@ -1,0 +1,167 @@
+package online
+
+import (
+	"crypto/sha256"
+	"encoding/json"
+	"strings"
+	"time"
+)
+
+func InitialClock(tc TimeControl) ClockState {
+	return ClockState{
+		WhiteMs: tc.StartingTimeMs,
+		BlackMs: tc.StartingTimeMs,
+	}
+}
+
+// ApplyAcceptedMove updates clock banks with authoritative decision time. It
+// never uses a client timestamp. When the move is terminal, no next deadline is
+// armed; otherwise the opponent receives the remaining bank and deadline.
+func ApplyAcceptedMove(clock ClockState, tc TimeControl, seat Seat, decision time.Time, terminal bool) ClockState {
+	next := clock
+	if clock.ActiveSeat != nil && *clock.ActiveSeat == seat && clock.ActiveSince != nil {
+		elapsed := decision.Sub(*clock.ActiveSince).Milliseconds()
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		bank := clock.Bank(seat) - elapsed
+		if bank < 0 {
+			bank = 0
+		}
+		next.setBank(seat, bank)
+	}
+	next.setBank(seat, next.Bank(seat)+tc.IncrementMs)
+	next.setMoved(seat)
+	next.TurnNumber++
+	if terminal {
+		next.ActiveSeat = nil
+		next.ActiveSince = nil
+		next.DeadlineAt = nil
+		return next
+	}
+	opponent, ok := seat.Other()
+	if !ok {
+		next.ActiveSeat = nil
+		next.ActiveSince = nil
+		next.DeadlineAt = nil
+		return next
+	}
+	since := decision.UTC()
+	deadline := since.Add(time.Duration(next.Bank(opponent)) * time.Millisecond)
+	next.ActiveSeat = &opponent
+	next.ActiveSince = &since
+	next.DeadlineAt = &deadline
+	return next
+}
+
+func (c *ClockState) setBank(seat Seat, value int64) {
+	if value < 0 {
+		value = 0
+	}
+	switch seat {
+	case SeatWhite:
+		c.WhiteMs = value
+	case SeatBlack:
+		c.BlackMs = value
+	}
+}
+
+func (c *ClockState) setMoved(seat Seat) {
+	switch seat {
+	case SeatWhite:
+		c.WhiteMoved = true
+	case SeatBlack:
+		c.BlackMoved = true
+	}
+}
+
+func BuildRulesInput(match Match, moves []Move, proposedMove string) RulesInput {
+	if moves == nil {
+		moves = []Move{}
+	}
+	in := RulesInput{
+		SchemaVersion:      RulesInputSchemaVersion,
+		RulesPolicyVersion: match.RulesPolicyVersion,
+		MatchID:            match.MatchID,
+		Version:            match.Version,
+		ControlEpoch:       match.ControlEpoch,
+		StartingFEN:        match.StartingFEN,
+		PositionFEN:        match.PositionFEN,
+		ProposedMove:       proposedMove,
+		TimeControl:        match.TimeControl,
+		Moves:              moves,
+		ActiveSeat:         match.Clock.ActiveSeat,
+	}
+	in.InputHash = RulesInputHash(in)
+	return in
+}
+
+// RulesInputHash covers every rule-relevant field plus the match version and
+// control epoch. A candidate evaluated against any other value is rejected.
+func RulesInputHash(in RulesInput) string {
+	type payload struct {
+		SchemaVersion      int         `json:"schemaVersion"`
+		RulesPolicyVersion string      `json:"rulesPolicyVersion"`
+		MatchID            string      `json:"matchId"`
+		Version            int64       `json:"version"`
+		ControlEpoch       int64       `json:"controlEpoch"`
+		StartingFEN        string      `json:"startingFen"`
+		PositionFEN        string      `json:"positionFen"`
+		ProposedMove       string      `json:"proposedMove,omitempty"`
+		TimeControl        TimeControl `json:"timeControl"`
+		Moves              []Move      `json:"moves"`
+		ActiveSeat         *Seat       `json:"activeSeat"`
+	}
+	if in.Moves == nil {
+		in.Moves = []Move{}
+	}
+	raw, err := json.Marshal(payload{
+		SchemaVersion:      in.SchemaVersion,
+		RulesPolicyVersion: in.RulesPolicyVersion,
+		MatchID:            in.MatchID,
+		Version:            in.Version,
+		ControlEpoch:       in.ControlEpoch,
+		StartingFEN:        in.StartingFEN,
+		PositionFEN:        in.PositionFEN,
+		ProposedMove:       in.ProposedMove,
+		TimeControl:        in.TimeControl,
+		Moves:              in.Moves,
+		ActiveSeat:         in.ActiveSeat,
+	})
+	if err != nil {
+		// Fields are plain contract values; marshal cannot fail for validated input.
+		panic("online: rules input marshal: " + err.Error())
+	}
+	hash := sha256.Sum256(raw)
+	return hashHex(hash)
+}
+
+func ResultHash(result Result) ([32]byte, error) {
+	if err := result.Validate(); err != nil {
+		return [32]byte{}, err
+	}
+	raw, err := json.Marshal(result)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(raw), nil
+}
+
+// fenSideToMove reads only the side-to-move field of a validated FEN. It carries
+// no chess rules of its own: the rules process remains the sole legal-move and
+// terminal-position authority, while the writer can still refuse a command for
+// the seat that is not to move.
+func fenSideToMove(fen string) (Seat, bool) {
+	fields := strings.Fields(fen)
+	if len(fields) < 6 {
+		return "", false
+	}
+	switch fields[1] {
+	case "w":
+		return SeatWhite, true
+	case "b":
+		return SeatBlack, true
+	default:
+		return "", false
+	}
+}
