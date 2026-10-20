@@ -4,6 +4,8 @@ import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { ChessBoard } from './ChessBoard.js';
 import { EvaluationBar } from './EvaluationBar.js';
 import { MoveList } from './MoveList.js';
+import { OnlineWorkspace } from './online-workspace.js';
+import type { OnlineComposition } from '../online/composition.js';
 import { useBoardHistory } from './use-board-history.js';
 import type { ControllerSnapshotV1 } from '../controller/index.js';
 import type { GameResultDeclarationV1, ModelSelection } from '../controller/index.js';
@@ -38,6 +40,10 @@ interface AppProps {
   readonly initialSession: LocalGameSession;
   readonly initialSnapshot: ControllerSnapshotV1;
   readonly onOpenAccount?: () => void;
+  /** The online composition. It is absent when online play is not configured. */
+  readonly online?: OnlineComposition | null;
+  /** Opens the profile and history of the owner. */
+  readonly onOpenProfile?: () => void;
 }
 const PROMOTIONS: readonly { value: Promotion; label: string }[] = [
   { value: 'q', label: 'Queen' }, { value: 'r', label: 'Rook' },
@@ -61,7 +67,7 @@ function statusLabel(snapshot: ControllerSnapshotV1): string {
   return (snapshot.position.sideToMove === 'w' ? 'White' : 'Black') + ' to move';
 }
 
-export function App({ composition, initialSession, initialSnapshot, onOpenAccount }: AppProps) {
+export function App({ composition, initialSession, initialSnapshot, onOpenAccount, online, onOpenProfile }: AppProps) {
   const [session, setSession] = useState(initialSession);
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [orientation, setOrientation] = useState<'white' | 'black'>(() =>
@@ -91,6 +97,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [generationJournal, setGenerationJournal] = useState<GenerationJournalV1 | null>(null);
   const [journalRefresh, setJournalRefresh] = useState(0);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [onlineOpen, setOnlineOpen] = useState(false);
   const history = useBoardHistory(snapshot, !setupOpen && !promotion && !recoveryOpen && !tool && resultPrompt === null);
   const generationController = useRef<AbortController | null>(null);
   const practiceController = useRef<AbortController | null>(null);
@@ -578,6 +585,9 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const activeSide = snapshot.checkpoint.clocks.activeSide;
   const final = snapshot.checkpoint.result.kind === 'final';
   const sideKey = snapshot.position.sideToMove === 'w' ? 'white' : 'black';
+  // The board drops queued input when the game or its line changes. The
+  // offline game and the online game both identify their line this way.
+  const boardIdentity = `${snapshot.checkpoint.gameId}/${snapshot.checkpoint.segmentId}/${snapshot.checkpoint.archive.currentLine.lineId}`;
   const activePlayer = snapshot.checkpoint.selections.players[sideKey];
   const isModelTurn = activePlayer.kind === 'model';
   const disabled = setupOpen || history.reviewing || promotion !== null || resultPrompt !== null || isLocalBoardInputDisabled(snapshot, working || isModelTurn || generationState === 'producing');
@@ -662,9 +672,12 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       <a className="wordmark" href="/" aria-label="Kamkm Chess home">kamkm chess</a>
       <div className="topbar-actions">
         {onOpenAccount && <IconButton icon="account" label="Account and saved games" onClick={onOpenAccount} />}
+        {online && <IconButton icon="link" label="Online play" onClick={() => setOnlineOpen(true)} />}
         {!setupOpen && <IconButton icon="settings" label="Settings" onClick={() => openTool('settings')} />}
         <button className="button primary" type="button" onClick={() => openSetup()} aria-label="New game">New</button></div>
     </header>}
+    {onlineOpen && online && <OnlineWorkspace composition={online} onClose={() => setOnlineOpen(false)}
+      {...(onOpenProfile ? { onOpenProfile } : {})} />}
     {tool && <section className="focus-page" aria-label="Match tools">
       <div className="panel-heading"><h2>{tool === 'move' ? 'Move' : tool.charAt(0).toUpperCase() + tool.slice(1)}</h2><IconButton icon="close" label="Close" onClick={() => setTool(null)} /></div>
       {tool === 'settings' && <div className="connection-form">
@@ -695,7 +708,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         <div className={`playing-board${showEvaluation ? ' with-evaluation' : ''}`}>
           {showEvaluation && <EvaluationBar key={session.gameId} orientation={orientation} startingFen={snapshot.checkpoint.rules.startingFen}
             moves={snapshot.checkpoint.rules.moves.slice(0, history.ply).map(move => `${move.from}${move.to}${move.promotion ?? ''}`).join(' ')} />}
-          <ChessBoard orientation={orientation} snapshot={snapshot} disabled={disabled} visible={!focusPage} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} />
+          <ChessBoard orientation={orientation} model={{ position: snapshot.position, identity: boardIdentity }} disabled={disabled} visible={!focusPage} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} />
           {promotion && <section className="promotion-panel" aria-label="Promotion"><div className="promotion-options">{PROMOTIONS.map(piece => <button className="button quiet" type="button" key={piece.value} aria-label={piece.label} autoFocus={piece.value === 'q'} onClick={() => selectPromotion(piece.value)}><img alt="" width="36" height="36" src={new URL(`./pieces/${snapshot.position.sideToMove}${piece.value}.svg`, import.meta.url).href} /></button>)}<IconButton icon="close" label="Cancel promotion" onClick={() => setPromotion(null)} /></div></section>}
         </div>
         <nav hidden={setupOpen} className="board-tools" aria-label="Board tools"><IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />

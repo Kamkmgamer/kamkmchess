@@ -4,7 +4,6 @@ import { Chessground } from '@lichess-org/chessground';
 import type { Api } from '@lichess-org/chessground/api';
 import type { Key } from '@lichess-org/chessground/types';
 import '@lichess-org/chessground/assets/chessground.base.css';
-import type { ControllerSnapshotV1 } from '../controller/index.js';
 import { legalMoves } from '../rules/index.js';
 import type { CoordinateMove, Position, Square } from '../rules/index.js';
 import { isSquare } from './board-input.js';
@@ -16,9 +15,28 @@ function squareDescription(position: Position, square: Square): string {
   return square + ', ' + (piece.color === 'w' ? 'White ' : 'Black ') + names[piece.type];
 }
 
-function destinations(snapshot: ControllerSnapshotV1): Map<Key, Key[]> {
+/**
+ * The board model.
+ *
+ * The board renders a position and nothing else. The offline workspace and
+ * the online workspace both provide this shape, so both use the same board,
+ * the same animations and the same keyboard inspection.
+ */
+export interface BoardModel {
+  /** The canonical position of the game. */
+  readonly position: Position;
+  /**
+   * The identity of the game and its line.
+   *
+   * Queued input is dropped when the identity changes, so a new game, a new
+   * line and a new match never keep an input of the previous one.
+   */
+  readonly identity: string;
+}
+
+function destinations(position: Position): Map<Key, Key[]> {
   const dests = new Map<Key, Key[]>();
-  for (const move of legalMoves(snapshot.position)) {
+  for (const move of legalMoves(position)) {
     const squares = dests.get(move.from) ?? [];
     if (!squares.includes(move.to)) squares.push(move.to);
     dests.set(move.from, squares);
@@ -26,9 +44,9 @@ function destinations(snapshot: ControllerSnapshotV1): Map<Key, Key[]> {
   return dests;
 }
 
-export function ChessBoard({ orientation, snapshot, disabled, visible, onMove, view, premoveColor, allowPremove }: {
+export function ChessBoard({ orientation, model, disabled, visible, onMove, view, premoveColor, allowPremove }: {
   readonly orientation: 'white' | 'black';
-  readonly snapshot: ControllerSnapshotV1;
+  readonly model: BoardModel;
   readonly disabled: boolean;
   readonly visible: boolean;
   readonly onMove: (move: Omit<CoordinateMove, 'promotion'>) => Promise<boolean>;
@@ -40,17 +58,17 @@ export function ChessBoard({ orientation, snapshot, disabled, visible, onMove, v
   const [premove, setPremove] = useState<{ from: Key; to: Key } | null>(null);
   const host = useRef<HTMLDivElement>(null);
   const board = useRef<Api | null>(null);
-  const latest = useRef({ snapshot, disabled, onMove, view, premoveColor });
+  const latest = useRef({ model, disabled, onMove, view, premoveColor });
   const fen = view.position.fen;
   const lastMove = view.lastMove;
   const lastFrom = lastMove?.from as Key | undefined;
   const lastTo = lastMove?.to as Key | undefined;
 
-  useLayoutEffect(() => { latest.current = { snapshot, disabled, onMove, view, premoveColor }; }, [snapshot, disabled, onMove, view, premoveColor]);
+  useLayoutEffect(() => { latest.current = { model, disabled, onMove, view, premoveColor }; }, [model, disabled, onMove, view, premoveColor]);
   useEffect(() => {
     if (!host.current) return;
     const instance = Chessground(host.current, {
-      fen: latest.current.snapshot.position.fen,
+      fen: latest.current.model.position.fen,
       orientation,
       coordinates: true,
       disableContextMenu: true,
@@ -67,14 +85,14 @@ export function ChessBoard({ orientation, snapshot, disabled, visible, onMove, v
             instance.set({ movable: { dests: new Map() } });
             const restore = () => {
               if (board.current !== instance) return;
-              const { snapshot: saved, disabled: blocked, view: displayed, premoveColor: humanColor } = latest.current;
+              const { model: shown, disabled: blocked, view: displayed, premoveColor: humanColor } = latest.current;
               const previous = displayed.lastMove;
               instance.set({
                 fen: displayed.position.fen,
-                turnColor: saved.position.sideToMove === 'w' ? 'white' : 'black',
+                turnColor: shown.position.sideToMove === 'w' ? 'white' : 'black',
                 lastMove: previous ? [previous.from as Key, previous.to as Key] : [],
               });
-              if (!blocked) instance.set({ movable: { color: humanColor ?? (saved.position.sideToMove === 'w' ? 'white' : 'black'), dests: destinations(saved) } });
+              if (!blocked) instance.set({ movable: { color: humanColor ?? (shown.position.sideToMove === 'w' ? 'white' : 'black'), dests: destinations(shown.position) } });
             };
             if (current.disabled || !isSquare(from) || !isSquare(to)) { restore(); return; }
             void current.onMove({ from, to }).then((accepted) => {
@@ -138,7 +156,7 @@ export function ChessBoard({ orientation, snapshot, disabled, visible, onMove, v
   useEffect(() => {
     // History, Undo, a new game, and match endings invalidate queued input.
     board.current?.cancelMove();
-  }, [snapshot.checkpoint.gameId, snapshot.checkpoint.segmentId, snapshot.checkpoint.archive.currentLine.lineId, premoveColor]);
+  }, [model.identity, premoveColor]);
 
   useEffect(() => {
     if (!premove) return;
@@ -155,15 +173,15 @@ export function ChessBoard({ orientation, snapshot, disabled, visible, onMove, v
   useEffect(() => {
     const instance = board.current;
     if (!instance) return;
-    instance.set({ orientation, turnColor: latest.current.snapshot.position.sideToMove === 'w' ? 'white' : 'black' });
+    instance.set({ orientation, turnColor: latest.current.model.position.sideToMove === 'w' ? 'white' : 'black' });
     if (disabled) {
       if (premoveColor) instance.selectSquare(null);
       else instance.cancelMove();
     }
     instance.set({
       movable: {
-        color: premoveColor ?? (latest.current.snapshot.position.sideToMove === 'w' ? 'white' : 'black'),
-        dests: disabled ? new Map() : destinations(latest.current.snapshot),
+        color: premoveColor ?? (latest.current.model.position.sideToMove === 'w' ? 'white' : 'black'),
+        dests: disabled ? new Map() : destinations(latest.current.model.position),
       },
       premovable: { enabled: premoveColor !== null },
       draggable: { enabled: !disabled || allowPremove },
@@ -196,8 +214,8 @@ export function ChessBoard({ orientation, snapshot, disabled, visible, onMove, v
                 const node = document.getElementById('board-announcement');
                 if (node) node.textContent = squareDescription(view.position, square);
                 if (disabled) return;
-                const piece = snapshot.position.pieces.find((item) => item.square === square);
-                if (piece?.color === snapshot.position.sideToMove) setKeyboardOrigin({ square, fen });
+                const piece = model.position.pieces.find((item) => item.square === square);
+                if (piece?.color === model.position.sideToMove) setKeyboardOrigin({ square, fen });
                 else if (keyboardOrigin?.fen === fen) {
                   void onMove({ from: keyboardOrigin.square, to: square });
                   setKeyboardOrigin(null);

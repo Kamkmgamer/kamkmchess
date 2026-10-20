@@ -16,6 +16,8 @@ import { createProfileIdentityTracker } from './profile/identity.js';
 import type { ProfileIdentityBinding, ProfileIdentityTracker } from './profile/identity.js';
 import { createParticipantSession } from './online/session.js';
 import type { ParticipantSession } from './online/session.js';
+import { createOnlineComposition } from './online/composition.js';
+import type { OnlineComposition } from './online/composition.js';
 import type { GuestOnlineCredential } from './online/auth.js';
 import { publicConfig } from './public-config.js';
 import './account-workspace.css';
@@ -66,6 +68,8 @@ export function AccountWorkspace(initialView: WorkspaceView) {
   const identityRef = useRef<AccountIdentity | null>(null);
   const guestCredentialRef = useRef<GuestOnlineCredential | null>(null);
   const [profileIdentity, setProfileIdentity] = useState<ProfileIdentityBinding | null>(null);
+  const [online, setOnline] = useState<OnlineComposition | null>(null);
+  const onlineRef = useRef<OnlineComposition | null>(null);
   useEffect(() => { activeView.current = view; }, [view]);
 
   useEffect(() => {
@@ -101,6 +105,17 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       initialized = created;
       accountSession.current = created;
       setSession(created);
+      // The online workspace follows the signed-in identity. An identity
+      // change disposes the matches of the previous identity at once.
+      if (publicConfig.apiBaseUrl) {
+        const composition = createOnlineComposition({
+          baseUrl: publicConfig.apiBaseUrl,
+          accountSession: created,
+        });
+        onlineRef.current = composition;
+        setOnline(composition);
+        void composition.loadFeatures();
+      }
       // The profile surface is bound to the signed-in account and to the
       // guest seat this browser holds. A new account makes a new binding and
       // fences the old one, so a call started under the previous account is
@@ -143,6 +158,8 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       unsubscribeParticipant?.();
       participantSession.current?.dispose();
       participantSession.current = null;
+      onlineRef.current?.dispose();
+      onlineRef.current = null;
       initialized?.dispose();
       identityGeneration.current += 1;
       for (const request of requests) request.abort();
@@ -338,7 +355,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
         {message && <p role="status">{busy ? 'Syncing…' : message.startsWith('Complete game') ? 'Synced.' : message.startsWith('Cloud history') ? 'Sync conflict. Choose continuation.' : message.startsWith('Account game opened') || message.startsWith('Guest workspace opened') || message.startsWith('The accepted cloud game') ? 'Opened.' : 'Sync failed. Retry.'}</p>}
       </>}
     </section>}
-    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} onOpenAccount={() => setAccountPage('account')} /></div>
+    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} onOpenAccount={() => setAccountPage('account')} online={online} onOpenProfile={() => setAccountPage('profile')} /></div>
   </>;
 }
 
