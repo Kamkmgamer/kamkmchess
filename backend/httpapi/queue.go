@@ -105,11 +105,18 @@ func (a *queueAPI) create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	entry, created, err := a.service.CreateEntry(r.Context(), principal.Participant, queue.CreateEntryRequest{
+	request := queue.CreateEntryRequest{
 		Control:         body.Control,
 		TimeControl:     body.TimeControl,
 		ClientRequestID: body.ClientRequestID,
-	})
+	}
+	// The queue never accepts an engine seat and never accepts a clock
+	// outside the shared bounds. The service checks the request again.
+	if err := queue.ValidateEntryRequest(request); err != nil {
+		writeQueueError(w, err)
+		return
+	}
+	entry, created, err := a.service.CreateEntry(r.Context(), principal.Participant, request)
 	if err != nil {
 		writeQueueError(w, err)
 		return

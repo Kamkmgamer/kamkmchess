@@ -1,0 +1,214 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  OnlineQueueError,
+  QUEUE_ENTRIES_PATH,
+  createQueueClient,
+  isAssignedEntry,
+  isExpiredEntry,
+  isPendingFallbackEntry,
+  parseQueueAssignment,
+  queueEntryCancelPath,
+  queueEntryFallbackPath,
+  queueEntryHeartbeatPath,
+  queueEntryKeepSearchingPath,
+  queueEntryMatchPath,
+  queueEntryPath,
+  queueEntryReadyPath,
+  queueOperationBody,
+  queuePhaseOf,
+} from './queue';
+import type { QueueEntry } from './contracts';
+
+function entry(overrides: Partial<QueueEntry> = {}): QueueEntry {
+  return {
+    schemaVersion: 2,
+    entryId: 'qe_entry0001',
+    owner: { kind: 'account', id: 'user_a' },
+    control: { kind: 'agent', modelLabel: 'GPT-4o' },
+    timeControl: { startingTimeMs: 300000, incrementMs: 2000 },
+    status: 'waiting',
+    version: 1,
+    readyAt: '2026-10-21T22:00:00.000Z',
+    cutoffAt: '2026-10-21T22:00:10.000Z',
+    assignedMatchId: null,
+    createdAt: '2026-10-21T22:00:00.000Z',
+    updatedAt: '2026-10-21T22:00:00.000Z',
+    ...overrides,
+  };
+}
+
+describe('queue routes', () => {
+  it('names the queue routes of the service', () => {
+    expect(QUEUE_ENTRIES_PATH).toBe('/v1/online/queue/entries');
+    expect(queueEntryPath('qe_entry0001')).toBe('/v1/online/queue/entries/qe_entry0001');
+    expect(queueEntryReadyPath('qe_entry0001')).toBe('/v1/online/queue/entries/qe_entry0001/ready');
+    expect(queueEntryCancelPath('qe_entry0001')).toBe('/v1/online/queue/entries/qe_entry0001/cancel');
+    expect(queueEntryKeepSearchingPath('qe_entry0001')).toBe('/v1/online/queue/entries/qe_entry0001/keep-searching');
+    expect(queueEntryHeartbeatPath('qe_entry0001')).toBe('/v1/online/queue/entries/qe_entry0001/heartbeat');
+    expect(queueEntryMatchPath('qe_entry0001')).toBe('/v1/online/queue/entries/qe_entry0001/match');
+    expect(queueEntryFallbackPath('qe_entry0001')).toBe('/v1/online/queue/entries/qe_entry0001/fallback');
+  });
+});
+
+describe('queue answer parsing', () => {
+  it('parses a candidate assignment', () => {
+    const assignment = parseQueueAssignment({
+      schemaVersion: 2,
+      matchId: 'm_match0001',
+      seat: 'white',
+      opponentLabel: 'Bob',
+      control: { kind: 'agent', modelLabel: 'Claude' },
+    });
+    expect(assignment.seat).toBe('white');
+    expect(assignment.opponentLabel).toBe('Bob');
+    expect(assignment.control).toEqual({ kind: 'agent', modelLabel: 'Claude' });
+    expect(assignment.guestCredential).toBeUndefined();
+  });
+
+  it('parses a fallback assignment with its engine credential', () => {
+    const assignment = parseQueueAssignment({
+      schemaVersion: 2,
+      matchId: 'm_match0001',
+      seat: 'black',
+      opponentLabel: 'Stockfish 19 Lite',
+      control: { kind: 'engine', modelLabel: 'Stockfish 19 Lite' },
+      guestCredential: {
+        guestId: 'engine_0001',
+        matchId: 'm_match0001',
+        seat: 'white',
+        token: 'kmgc1_secret',
+        expiresAt: '2026-10-21T23:00:00.000Z',
+      },
+    });
+    expect(assignment.guestCredential?.seat).toBe('white');
+    expect(assignment.guestCredential?.token).toBe('kmgc1_secret');
+  });
+
+  it('refuses an answer with an unknown or a missing field', () => {
+    expect(() =>
+      parseQueueAssignment({
+        schemaVersion: 2,
+        matchId: 'm_match0001',
+        seat: 'white',
+        opponentLabel: 'Bob',
+        control: { kind: 'human' },
+        ownerId: 'user_b',
+      }),
+    ).toThrow(OnlineQueueError);
+    expect(() =>
+      parseQueueAssignment({
+        schemaVersion: 2,
+        matchId: 'm_match0001',
+        seat: 'white',
+        control: { kind: 'human' },
+      }),
+    ).toThrow(OnlineQueueError);
+  });
+
+  it('refuses a control that the service would never publish', () => {
+    expect(() =>
+      parseQueueAssignment({
+        schemaVersion: 2,
+        matchId: 'm_match0001',
+        seat: 'white',
+        opponentLabel: 'Bob',
+        control: { kind: 'human', modelLabel: 'Claude' },
+      }),
+    ).toThrow(OnlineQueueError);
+    expect(() =>
+      parseQueueAssignment({
+        schemaVersion: 2,
+        matchId: 'm_match0001',
+        seat: 'white',
+        opponentLabel: 'Bob',
+        control: { kind: 'agent' },
+      }),
+    ).toThrow(OnlineQueueError);
+  });
+});
+
+describe('queue domain rules', () => {
+  it('reads an expired entry as waiting without a ready time', () => {
+    const expired = entry({ readyAt: null, cutoffAt: null });
+    expect(isExpiredEntry(expired)).toBe(true);
+    expect(queuePhaseOf(expired)).toBe('expired');
+  });
+
+  it('reads an assigned entry as assigned', () => {
+    const assigned = entry({ status: 'assigned', assignedMatchId: 'm_match0001', cutoffAt: null });
+    expect(isAssignedEntry(assigned)).toBe(true);
+    expect(queuePhaseOf(assigned)).toBe('assigned');
+  });
+
+  it('reads a cancelled entry as cancelled', () => {
+    expect(queuePhaseOf(entry({ status: 'cancelled', cutoffAt: null }))).toBe('cancelled');
+  });
+
+  it('reads a waiting entry as searching', () => {
+    expect(queuePhaseOf(entry())).toBe('searching');
+  });
+
+  it('reads an entry without a cutoff as searching, never as a fallback', () => {
+    const kept = entry({ cutoffAt: null });
+    expect(isPendingFallbackEntry(kept)).toBe(false);
+    expect(queuePhaseOf(kept)).toBe('searching');
+  });
+
+  it('reads a passed cutoff as a pending fallback', () => {
+    const pending = entry({ cutoffAt: '2020-01-01T00:00:00.000Z' });
+    expect(isPendingFallbackEntry(pending)).toBe(true);
+    expect(queuePhaseOf(pending)).toBe('pending-fallback');
+  });
+});
+
+describe('queue client', () => {
+  it('calls the documented routes with the documented bodies', async () => {
+    const calls: { path: string; method: string; body?: unknown }[] = [];
+    const client = createQueueClient(async (request) => {
+      calls.push({ path: request.path, method: request.method, ...(request.body === undefined ? {} : { body: request.body }) });
+      if (request.path.endsWith('/match')) {
+        return {
+          schemaVersion: 2,
+          matchId: 'm_match0001',
+          seat: 'white',
+          opponentLabel: 'Bob',
+          control: { kind: 'human' },
+        };
+      }
+      return entry();
+    });
+
+    await client.createEntry({
+      schemaVersion: 2,
+      control: { kind: 'agent', modelLabel: 'GPT-4o' },
+      timeControl: { startingTimeMs: 300000, incrementMs: 2000 },
+      clientRequestId: 'intent-0001',
+    });
+    await client.ready('qe_entry0001');
+    await client.cancel('qe_entry0001', { schemaVersion: 2, operationId: 'operation-0001' });
+    await client.keepSearching('qe_entry0001');
+    await client.heartbeat('qe_entry0001');
+    const assignment = await client.match('qe_entry0001');
+
+    expect(calls[0]?.path).toBe('/v1/online/queue/entries');
+    expect(calls[0]?.method).toBe('POST');
+    expect(calls[0]?.body).toEqual({
+      schemaVersion: 2,
+      control: { kind: 'agent', modelLabel: 'GPT-4o' },
+      timeControl: { startingTimeMs: 300000, incrementMs: 2000 },
+      clientRequestId: 'intent-0001',
+    });
+    expect(calls[1]?.path).toBe('/v1/online/queue/entries/qe_entry0001/ready');
+    expect(calls[1]?.body).toEqual({ schemaVersion: 2 });
+    expect(calls[2]?.body).toEqual({ schemaVersion: 2, operationId: 'operation-0001' });
+    expect(calls[3]?.path).toBe('/v1/online/queue/entries/qe_entry0001/keep-searching');
+    expect(calls[4]?.path).toBe('/v1/online/queue/entries/qe_entry0001/heartbeat');
+    expect(assignment.matchId).toBe('m_match0001');
+  });
+
+  it('builds an operation body without an identifier', () => {
+    expect(queueOperationBody()).toEqual({ schemaVersion: 2 });
+    expect(queueOperationBody('operation-0001')).toEqual({ schemaVersion: 2, operationId: 'operation-0001' });
+  });
+});

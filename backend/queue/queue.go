@@ -719,6 +719,23 @@ func lockBucket(ctx context.Context, tx pgx.Tx, startingTimeMs, incrementMs int6
 	return nil
 }
 
+// ValidateEntryRequest checks one entry request without writing anything.
+//
+// The HTTP layer uses it to refuse an impossible request before the service
+// is called, and the service checks it again before it writes.
+func ValidateEntryRequest(request CreateEntryRequest) error {
+	if err := validateControl(request.Control); err != nil {
+		return err
+	}
+	if err := validateTimeControl(request.TimeControl); err != nil {
+		return err
+	}
+	if request.ClientRequestID != "" && !clientRequestIDShape(request.ClientRequestID) {
+		return fmt.Errorf("%w: client request id", ErrInvalidRequest)
+	}
+	return nil
+}
+
 // validateActor refuses everything but an account participant.
 func validateActor(actor online.ParticipantRef) error {
 	if actor.Kind != online.ParticipantAccount || actor.ID == "" {
