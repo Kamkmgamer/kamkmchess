@@ -591,25 +591,82 @@ func (s *Service) Accept(ctx context.Context, request AcceptRequest) (Accepted, 
 // claim consumes the invitation and records the acceptance in one
 // transaction.
 //
-// The conditional update is the atomic consumption: two concurrent
-// acceptances serialize on the invitation row and only one of them sees the
-// open status. The acceptance row is written in the same transaction, so an
-// invitation is never consumed without a recoverable acceptance.
+// The invitation row is locked before its state is read, so two concurrent
+// acceptances serialize and only one of them sees the open status. The loser
+// of the race observes the consumed state after the winner committed and
+// releases the lock with its rollback.
+//
+// Every read of the claim runs inside the claim transaction. A loser never
+// holds a row lock while it waits for a connection of the pool, so a
+// contended acceptance can never exhaust the pool and block the winner of
+// the race.
+//
+// The acceptance row is written in the same transaction, so an invitation is
+// never consumed without a recoverable acceptance.
 //
 // The identity of an anonymous guest acceptor is allocated inside that
 // transaction and stored as the seat owner of the created match, so the
 // identity and the minted credential always agree.
 func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation Invitation) (acceptance, error) {
 	keyHash := hashAcceptanceKey(request.AcceptanceKey)
-	existing, err := s.acceptanceByKey(ctx, request.InvitationID, keyHash)
-	if err == nil {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return acceptance{}, err
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	// The invitation row is locked for the claim. The lock is taken before
+	// the state is read, so a concurrent acceptance is observed after it
+	// committed.
+	var (
+		status    string
+		expiresAt time.Time
+	)
+	err = tx.QueryRow(ctx, `SELECT status,expires_at FROM online_friend_invitations WHERE invitation_id=$1 FOR UPDATE`, request.InvitationID).Scan(&status, &expiresAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			closed = true
+			_ = tx.Rollback(ctx)
+			return acceptance{}, ErrNotFound
+		}
+		return acceptance{}, err
+	}
+	// An acceptance with the same key resumes the same acceptance.
+	existing, lookupErr := s.acceptanceByKey(ctx, tx, request.InvitationID, keyHash)
+	if lookupErr == nil {
+		closed = true
+		_ = tx.Rollback(ctx)
 		if request.Acceptor != nil && existing.AcceptorID != request.Acceptor.Participant.ID {
 			return acceptance{}, ErrConflict
 		}
 		return existing, nil
 	}
-	if !errors.Is(err, ErrNotFound) {
-		return acceptance{}, err
+	if !errors.Is(lookupErr, ErrNotFound) {
+		return acceptance{}, lookupErr
+	}
+	now := s.now()
+	switch Status(status) {
+	case StatusConsumed:
+		closed = true
+		_ = tx.Rollback(ctx)
+		return acceptance{}, ErrAlreadyConsumed
+	case StatusCancelled:
+		closed = true
+		_ = tx.Rollback(ctx)
+		return acceptance{}, ErrConflict
+	case StatusExpired:
+		closed = true
+		_ = tx.Rollback(ctx)
+		return acceptance{}, ErrExpired
+	}
+	if !now.Before(expiresAt) {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return acceptance{}, ErrExpired
 	}
 	acceptanceID, err := s.options.Identifier("acc_", 24)
 	if err != nil {
@@ -626,12 +683,6 @@ func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation I
 			acceptorLabel = GuestLabel
 		}
 	}
-	now := s.now()
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return acceptance{}, err
-	}
-	defer tx.Rollback(ctx)
 	// The identity of an anonymous guest acceptor is allocated once, inside
 	// the transaction that consumes the invitation.
 	if acceptorID == "" {
@@ -641,35 +692,14 @@ func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation I
 		}
 		acceptorID = guestID
 	}
-	var claimed string
-	err = tx.QueryRow(ctx, `UPDATE online_friend_invitations SET status='consumed',consumed_at=$2,acceptance_id=$3,version=version+1 WHERE invitation_id=$1 AND status='open' AND expires_at > $2 RETURNING invitation_id`,
-		request.InvitationID, now, acceptanceID).Scan(&claimed)
+	tag, err := tx.Exec(ctx, `UPDATE online_friend_invitations SET status='consumed',consumed_at=$2,acceptance_id=$3,version=version+1 WHERE invitation_id=$1 AND status='open' AND expires_at > $2`,
+		request.InvitationID, now, acceptanceID)
 	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return acceptance{}, err
-		}
-		// Somebody else consumed it, or it expired. A concurrent acceptance
-		// with the same key may own it now.
-		existing, lookupErr := s.acceptanceByKey(ctx, request.InvitationID, keyHash)
-		if lookupErr == nil {
-			if request.Acceptor != nil && existing.AcceptorID != request.Acceptor.Participant.ID {
-				return acceptance{}, ErrConflict
-			}
-			return existing, nil
-		}
-		current, _, readErr := s.readInvitation(ctx, request.InvitationID)
-		if readErr != nil {
-			return acceptance{}, readErr
-		}
-		switch current.Status {
-		case StatusExpired:
-			return acceptance{}, ErrExpired
-		case StatusCancelled:
-			return acceptance{}, ErrConflict
-		}
-		if !s.now().Before(current.ExpiresAt) {
-			return acceptance{}, ErrExpired
-		}
+		return acceptance{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		closed = true
+		_ = tx.Rollback(ctx)
 		return acceptance{}, ErrAlreadyConsumed
 	}
 	seat := invitation.InviterSeat
@@ -692,6 +722,7 @@ func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation I
 	if err = tx.Commit(ctx); err != nil {
 		return acceptance{}, err
 	}
+	closed = true
 	return acceptance{
 		AcceptanceID:  acceptanceID,
 		InvitationID:  request.InvitationID,
@@ -1219,8 +1250,12 @@ type acceptance struct {
 // acceptanceByKey loads the acceptance of one idempotency key.
 //
 // The key is compared as a hash. The stored row never holds the capability.
-func (s *Service) acceptanceByKey(ctx context.Context, invitationID string, keyHash []byte) (acceptance, error) {
-	row := s.db.QueryRow(ctx, `SELECT acceptance_id,invitation_id,acceptor_kind,acceptor_id,acceptor_public_label,COALESCE(guest_id,''),seat,control_kind,model_label,status,match_id FROM online_invitation_acceptances WHERE invitation_id=$1 AND acceptance_key_hash=$2`, invitationID, keyHash)
+//
+// The lookup runs against the caller's querier. The claim passes its own
+// transaction, so a contended acceptance never reaches for a second
+// connection while it holds the lock of the invitation row.
+func (s *Service) acceptanceByKey(ctx context.Context, q online.Querier, invitationID string, keyHash []byte) (acceptance, error) {
+	row := q.QueryRow(ctx, `SELECT acceptance_id,invitation_id,acceptor_kind,acceptor_id,acceptor_public_label,COALESCE(guest_id,''),seat,control_kind,model_label,status,match_id FROM online_invitation_acceptances WHERE invitation_id=$1 AND acceptance_key_hash=$2`, invitationID, keyHash)
 	var (
 		record      acceptance
 		modelLabel  *string

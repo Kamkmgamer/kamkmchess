@@ -28,14 +28,19 @@ func TestPostgresTheAllocatedEngineSeatTakesOneScopedGuestCredential(t *testing.
 
 	owner := online.ParticipantRef{Kind: online.ParticipantAccount, ID: "user_owner"}
 	engineGuest := online.ParticipantRef{Kind: online.ParticipantGuest, ID: "guest_engine_stockfish"}
-	engineLabel := "Stockfish 19 Lite"
+	// The declared model label of the browser engine is canonical: the
+	// service names the browser Stockfish seat itself, and the published
+	// label of the seat stays the product text. The value is the one of
+	// backend/history.EngineLabel.
+	engineModelLabel := "Stockfish 19 Lite (browser)"
+	enginePublicLabel := "Stockfish 19 Lite"
 	setup := online.CreateMatchSetup{
 		Variant:     "orthodox",
 		StartingFEN: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
 		TimeControl: online.TimeControl{StartingTimeMs: 300_000, IncrementMs: 2_000},
 		Seats: online.CreateMatchSeats{
 			White: online.CreateSeat{Participant: owner, PublicLabel: "Owner", Control: online.SeatControl{Kind: online.ControlHuman}},
-			Black: online.CreateSeat{Participant: engineGuest, PublicLabel: engineLabel, Control: online.SeatControl{Kind: online.ControlEngine, ModelLabel: &engineLabel}},
+			Black: online.CreateSeat{Participant: engineGuest, PublicLabel: enginePublicLabel, Control: online.SeatControl{Kind: online.ControlEngine, ModelLabel: &engineModelLabel}},
 		},
 	}
 	command, err := online.NewAllocationCommand(owner, setup, "queue-fallback-operation-0123456789")
@@ -55,11 +60,11 @@ func TestPostgresTheAllocatedEngineSeatTakesOneScopedGuestCredential(t *testing.
 	if !ok {
 		t.Fatal("the allocated match has no black seat")
 	}
-	if black.Control.Kind != online.ControlEngine || black.Control.ModelLabel == nil || *black.Control.ModelLabel != engineLabel {
+	if black.Control.Kind != online.ControlEngine || black.Control.ModelLabel == nil || *black.Control.ModelLabel != engineModelLabel {
 		t.Fatalf("the engine seat control = %+v", black.Control)
 	}
-	if black.PublicLabel != engineLabel {
-		t.Fatalf("the engine seat label = %q, want %q", black.PublicLabel, engineLabel)
+	if black.PublicLabel != enginePublicLabel {
+		t.Fatalf("the engine seat label = %q, want %q", black.PublicLabel, enginePublicLabel)
 	}
 
 	// The owner's browser receives a guest seat credential of the engine
