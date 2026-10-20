@@ -1,14 +1,15 @@
 # KHA-72 public profile and explicit guest linking evidence
 
-Locally verified on 2026-10-20 on `t3/public-profiles-guest-linking`.
-Tested source commit: `16cb69b`.
-The branch starts at `a1e069e`, which includes the KHA-64 through KHA-67
-foundations.
+Locally verified on 2026-10-20 on `t3/kha-72-profile-fixes`. The tested
+source commit is `50de6e1`. It continues `c3fb56d`, the compact profile
+controls, and the KHA-64 through KHA-68 foundations.
 
 The implementation commits are `fc814b2` (the service, the routes, the
 storage and the PostgreSQL fixtures), `b5baafb` (the browser boundary, the
 panel state machine and the interface), `cf222f0` (the browser check
-harness), and `16cb69b` (the corrections an independent review found).
+harness), `16cb69b` (the corrections an independent review found),
+`c3fb56d` (the compact profile controls), and `71e8a85`, `a20919c` and
+`50de6e1` (the corrections a second independent review found).
 
 ## Implemented contract
 
@@ -50,7 +51,7 @@ are described in [the public profile contract](../architecture/public-profiles.m
 
 ## Verification
 
-`pnpm check` passed ESLint, both TypeScript projects, 781 tests across 70
+`pnpm check` passed ESLint, both TypeScript projects, 803 tests across 71
 files, the browser production build, the private rules-worker build and the
 distribution notices. The pre-change baseline had 744 tests across 67 files.
 
@@ -66,7 +67,7 @@ go test -count=1 ./backend/... ./cmd/...
 go vet ./backend/... ./cmd/...
 ```
 
-Both commands passed. The full integration package took 48 seconds. The
+Both commands passed. The full integration package took 71 seconds. The
 checks used the real private Node rules artifact and required PostgreSQL
 rather than skipping absent-database fixtures. The Windows race detector was
 not run locally because this host has no C compiler; the existing Linux Go CI
@@ -79,8 +80,8 @@ The new fixtures are:
   composition, the real authorization service and the real database.
 - 6 unit fixtures in `backend/profile/profile_test.go` for the public name
   and avatar rules and for the shared shape contract.
-- 37 browser fixtures in `src/profile/` for the wire contract, the client and
-  the panel state machine.
+- 57 browser fixtures in `src/profile/` for the wire contract, the client,
+  the identity binding and the panel state machine.
 
 The integration fixtures cover:
 
@@ -145,10 +146,65 @@ no credential at all, an account call that keeps the credential in the
 already owns, the service error code of a refusal, a request without a
 signed-in account, the two-step guest link, a proof that names another seat,
 a browser that holds no guest credential, a base URL that is not a trusted
-service origin, and a failed request with its status), and the panel state
-machine (the load, the save, the refused name before the request leaves, the
-name conflict, the guest link, the missing guest seat, the already linked
-seat, the spent proof, and a failed load).
+service origin, and a failed request with its status), the identity binding
+(a refresh of the same identity keeps the binding, a changed account, a
+replaced session and a changed guest seat make a new one, and a disposed
+tracker fences the binding), and the panel state machine (the load, the
+save, the refused name before the request leaves, the reserved name before
+the request leaves, the name conflict, the guest link, the missing guest
+seat, the already linked seat, the spent proof, an expired account session,
+a refused link and a failed load).
+
+## The account-switch corrections
+
+An independent review of the integrated slice found that the profile surface
+was not bound to the account it loaded. The client resolved the session
+token at call time, so a save that started under one account could be sent
+under the account that replaced it, and a load that started under the
+previous account could publish into the new account's surface. The same
+review found that an expired account session was reported as a lost guest
+seat, and it recorded three lower findings.
+
+The corrections are:
+
+- The profile surface is bound to an identity. `src/profile/identity.ts`
+  makes a binding that names the signed-in account and the guest seat, and
+  the signal of that binding fires when either of them changes. The client
+  checks the binding after every asynchronous stage of a credentialed call:
+  the session token, the request, the response body, the ownership proof,
+  the link and the reload after the link. A token minted for a replaced
+  account is discarded, a request that has not left the browser is never
+  sent, a response that arrives too late is released instead of published,
+  and a pending call settles with `account_changed` instead of hanging.
+- The tracker makes a new binding when the account changes, when the Clerk
+  session is replaced, when the guest seat credential changes and when the
+  workspace is disposed. The same identity object reported again is not a
+  new owner, so an ordinary refresh keeps the binding.
+- The account workspace owns the tracker, and the panel is mounted for one
+  binding. A replaced account therefore shows its own profile and never the
+  drafts of the account it replaced. A signed-out browser and a browser in
+  the middle of a session change ask for a sign-in; only a build without a
+  service origin says that the profile service is not configured.
+- The client tells the three refusals apart. An account route that answers
+  401 is an expired account session and asks for a sign-in. The ownership
+  proof route keeps the guest seat sentence. The link route carries the
+  account session and the ownership proof at once, so its refusal says that
+  the link was refused and does not claim which of the two failed.
+- A reserved public name has its own sentence, so a reserved name is no
+  longer refused with the shape guidance.
+- The credential header slot belongs to the boundary. The generic caller
+  header bag is gone; the ownership proof travels in its own named header
+  and the credential is written last, so no caller header can replace it or
+  add a second spelling of it. The link fixture shows the account
+  credential and the ownership proof travelling side by side.
+- The linked guest seats are still listed without a limit. The interface
+  shows a count, the wire contract stays complete because the panel decides
+  whether the current seat is already linked from the full set, and the
+  scaling concern is recorded for KHA-78 and KHA-83 rather than answered
+  with a silent truncation.
+- The unconditional delete guard of migration `0005_public_profiles.sql` is
+  recorded as an integration note for KHA-79. No deletion behaviour was
+  changed here.
 
 ## Browser check
 
@@ -173,6 +229,28 @@ because the interface tore the panel down in its effect cleanup and React's
 development double-mount disposed the panel before the first load resolved.
 The panel now holds no resource of its own, so it needs no teardown, and the
 check confirmed the load, the save, the conflict and the link.
+
+The second pass added an account switch to the same harness. The page
+`experiments/kha72-profile/switch.html` mounts the real panel with the real
+client and the real identity binding, and
+`experiments/kha72-profile/check-switch.mjs` drives it with the repository
+Playwright Chromium. The check starts a save under one account, replaces the
+account while the session token is still being minted, and then starts a
+save that is not interrupted. The interrupted save never reaches the
+service, the new account shows its own profile instead of the drafts of the
+account it replaced, and the uninterrupted save is sent under the account it
+started under. The check was run against the shipped source and against a
+source with the fence removed; it fails on the second one, so it is a
+regression check and not a screenshot. The first panel preview was run
+again on the corrected source and still answered `That name is already
+taken.`, `Profile saved.` and `Guest seat linked to your account.` without a
+page error.
+
+The mounted account workspace itself was not exercised in a browser: it
+needs a hosted Clerk session, which this check does not reach. What the
+check covers is the part that can be exercised locally, the panel mounted
+for one binding with the real client, the real state machine and the real
+identity binding.
 
 This is a local check of the interface against a stub service. It is not a
 deployed acceptance run, and it does not certify native accessibility, other
@@ -234,6 +312,12 @@ session revocation, and that the panel never loaded under React's
 development double-mount. All seven were corrected, and the corrections are
 covered by the fixtures and the browser check above.
 
+A second independent review ran on the integrated source and found that the
+profile surface was not bound to the account it loaded, that an expired
+account session was reported as a lost guest seat, and three lower
+findings. Those findings and their dispositions are in
+[the account-switch corrections](#the-account-switch-corrections) above.
+
 OpenCode `opencode/minimax-m3.1-flash-free` handled the implementation, the
 fixtures, the independent review and the browser check. The parent reviewed
 the findings, the integration and the tracker updates.
@@ -259,3 +343,28 @@ linked-success view used 14 words of interface copy, excluding the chosen
 public name and numeric count. The manual Impeccable detector found no
 issues. These checks do not replace the pending account-switch review or
 the later live invitation and hosted acceptance runs.
+
+## The account-switch review
+
+The pending account-switch review was carried out on the integrated source
+and its findings were corrected in `71e8a85`, `a20919c` and `50de6e1`. The
+profile surface is now bound to an identity binding, every credentialed
+stage of a call is fenced by it, and the panel is mounted for one binding,
+so a replaced account never receives the drafts, the requests or the
+answers of the account it replaced. The expired account session, the lost
+guest seat and the refused link are now three different sentences.
+
+The corrections are browser-side. The service, the storage, the routes, the
+single-use proof, the lock order, the post-lock expiry checks, the wrong
+seat refusal and the public allowlist were reviewed and left unchanged, and
+the Go suite passed unchanged after the corrections.
+
+The remaining boundaries are unchanged: the linked guest seats are still
+listed without a limit and the scaling concern is recorded for KHA-78 and
+KHA-83, the unconditional delete guard of migration 0005 is recorded for
+KHA-79, and the application still cannot offer a link before the KHA-75
+invitation flow exists.
+
+`HIS-01` and `HIS-02` remain `not_run` in the acceptance matrix. The
+fixtures and the browser check above are local evidence about the source,
+not evidence about the deployed product.
