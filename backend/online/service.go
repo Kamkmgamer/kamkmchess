@@ -19,6 +19,7 @@ type Service struct {
 	evaluator          Evaluator
 	rulesPolicyVersion string
 	authorizer         SeatAuthorizer
+	deadlineScan       deadlineScan
 }
 
 // Open binds the online writer to a pool. It does not mutate schema.

@@ -2,6 +2,13 @@
 
 ## Parent continuity regressions
 
+A final service-boundary regression found that an unavailable timeout policy
+could keep the oldest expired match in every bounded batch, starving a later
+opening abort. The test failed with a one-match batch because the second pass
+selected the same pending timeout again. Batches now rotate by match identifier
+and wrap for retries. The test verifies the later opening abort and the subsequent
+retry of the original timeout. The focused deadline suite passes after the fix.
+
 Integration review added two service-boundary PostgreSQL regressions. The
 first failed because the takeback armed its deadline before removing the
 discarded increments, leaving an extra two seconds on a two-second-increment

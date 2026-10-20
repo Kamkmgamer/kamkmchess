@@ -533,6 +533,46 @@ func TestPostgresOnlineTrustedReconciliationKeepsAnExpiredClockPendingWithoutATi
 	}
 }
 
+// MAT-04: a pending timeout must not keep a later opening abort outside every
+// bounded batch. The unavailable rules policy is needed only by the timeout.
+func TestPostgresOnlinePendingTimeoutDoesNotStarveLaterOpeningExpiry(t *testing.T) {
+	service, pool := onlineService(t, moveEvaluator{})
+	ctx := context.Background()
+	mainID := "match-deadline-fair-a"
+	createOnlineMatch(t, service, mainID, "op-fair-main-create")
+	playOpeningExchange(t, service, mainID, "op-fair-main")
+	expireMainClock(t, pool, mainID)
+	if _, err := pool.Exec(ctx, `UPDATE online_clocks SET active_since=active_since-interval '2 hours',deadline_at=deadline_at-interval '2 hours' WHERE match_id=$1`, mainID); err != nil {
+		t.Fatal(err)
+	}
+	openingID := "match-deadline-fair-b"
+	createOnlineMatch(t, service, openingID, "op-fair-opening-create")
+	if _, err := service.Execute(ctx, alice, moveOnlineCommand(openingID, "op-fair-opening-move", online.SeatWhite, 1, "e2e4")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE online_clocks SET reply_deadline_at=clock_timestamp()-interval '1 hour' WHERE match_id=$1`, openingID); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := service.ReconcileDeadlines(ctx, 1)
+	if !errors.Is(err, online.ErrTimeoutPolicyUnavailable) || first.Due != 1 || first.Pending != 1 {
+		t.Fatalf("the pending timeout pass = %+v, %v", first, err)
+	}
+	second, err := service.ReconcileDeadlines(ctx, 1)
+	if err != nil || second.Due != 1 || second.Settled != 1 {
+		t.Fatalf("a pending timeout starved the later opening expiry: %+v, %v", second, err)
+	}
+	opening, err := service.GetMatch(ctx, openingID)
+	if err != nil || opening.Status != online.MatchAborted || opening.Result == nil || opening.Result.Reason != online.ReasonOpeningReplyTimeout {
+		t.Fatalf("the opening reply did not abort: %+v, %v", opening, err)
+	}
+	// Rotation still retries the earlier failure after reaching the end.
+	retry, err := service.ReconcileDeadlines(ctx, 1)
+	if !errors.Is(err, online.ErrTimeoutPolicyUnavailable) || retry.Due != 1 || retry.Pending != 1 {
+		t.Fatalf("the earlier timeout was not retried: %+v, %v", retry, err)
+	}
+}
+
 // MAT-04: while the rules service is unavailable the expiry stays pending
 // for a retry, and no result is invented.
 func TestPostgresOnlineTrustedReconciliationKeepsAnExpiredClockPendingWhileTheRulesServiceIsUnavailable(t *testing.T) {

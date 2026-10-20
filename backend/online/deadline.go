@@ -3,6 +3,7 @@ package online
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -33,6 +34,13 @@ const DefaultDeadlineSweepBatch = 100
 // MaxDeadlineSweepBatch is the hard ceiling of one reconciliation pass. A
 // caller cannot ask for an unbounded batch.
 const MaxDeadlineSweepBatch = 1000
+
+// deadlineScan rotates bounded passes through due matches. A pending rules
+// evaluation cannot permanently keep later deadlines outside the batch.
+type deadlineScan struct {
+	mu    sync.Mutex
+	after string
+}
 
 // DeadlineOutcome reports what one trusted reconciliation did with a match.
 type DeadlineOutcome string
@@ -76,13 +84,19 @@ type DeadlineReconciler interface {
 // held while an external rules evaluation runs, and no connection waits idle
 // between two passes.
 func (s *Service) DueDeadlineMatchIDs(ctx context.Context, limit int) ([]string, error) {
+	return s.dueDeadlineMatchIDs(ctx, limit, "")
+}
+
+func (s *Service) dueDeadlineMatchIDs(ctx context.Context, limit int, after string) ([]string, error) {
 	if limit <= 0 {
 		limit = DefaultDeadlineSweepBatch
 	}
 	if limit > MaxDeadlineSweepBatch {
 		limit = MaxDeadlineSweepBatch
 	}
-	rows, err := s.db.Query(ctx, `SELECT c.match_id FROM online_clocks c JOIN online_matches m ON m.match_id=c.match_id WHERE m.status='active' AND ((c.deadline_at IS NOT NULL AND c.deadline_at <= clock_timestamp()) OR (c.reply_deadline_at IS NOT NULL AND c.reply_deadline_at <= clock_timestamp())) ORDER BY COALESCE(c.deadline_at,c.reply_deadline_at),c.match_id LIMIT $1`, limit)
+	// The scan uses one database timestamp. Final acceptance still samples a
+	// fresh clock after the match lock; the scan only selects possible work.
+	rows, err := s.db.Query(ctx, `SELECT c.match_id FROM online_clocks c JOIN online_matches m ON m.match_id=c.match_id WHERE m.status='active' AND ((c.deadline_at IS NOT NULL AND c.deadline_at <= statement_timestamp()) OR (c.reply_deadline_at IS NOT NULL AND c.reply_deadline_at <= statement_timestamp())) ORDER BY (c.match_id <= $2),c.match_id LIMIT $1`, limit, after)
 	if err != nil {
 		return nil, err
 	}
@@ -99,6 +113,16 @@ func (s *Service) DueDeadlineMatchIDs(ctx context.Context, limit int) ([]string,
 		return nil, err
 	}
 	return ids, nil
+}
+
+func (s *Service) nextDueDeadlineMatchIDs(ctx context.Context, limit int) ([]string, error) {
+	s.deadlineScan.mu.Lock()
+	defer s.deadlineScan.mu.Unlock()
+	ids, err := s.dueDeadlineMatchIDs(ctx, limit, s.deadlineScan.after)
+	if err == nil && len(ids) != 0 {
+		s.deadlineScan.after = ids[len(ids)-1]
+	}
+	return ids, err
 }
 
 // ReconcileDeadline settles one match whose armed deadline has passed.
@@ -143,7 +167,9 @@ func (s *Service) ReconcileDeadline(ctx context.Context, matchID string) (Deadli
 // returned so a caller can log it, and the remaining matches of the pass are
 // still attempted.
 func (s *Service) ReconcileDeadlines(ctx context.Context, limit int) (DeadlineSweep, error) {
-	ids, err := s.DueDeadlineMatchIDs(ctx, limit)
+	// Only scan selection is serialized. The cursor advances before any rules
+	// work starts, with all database connections and scan locks released.
+	ids, err := s.nextDueDeadlineMatchIDs(ctx, limit)
 	if err != nil {
 		return DeadlineSweep{}, err
 	}

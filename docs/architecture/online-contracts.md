@@ -268,6 +268,13 @@ wait to become visible to the subsequent credential check.
 
 ## Automatic deadline reconciliation
 
+Bounded passes rotate by match identifier and wrap to retry pending expiries.
+An unavailable timeout policy therefore cannot keep a later opening abort
+outside every batch. The cursor belongs to one service process and resets
+on restart; terminal decisions remain database-locked and idempotent across
+processes. Scan selection releases its lock and database connection before
+external rules work begins.
+
 A match arms at most one deadline, so a match that nobody touches still has to end. The writer owns
 a trusted deadline boundary that realises the deadline without a participant command.
 
