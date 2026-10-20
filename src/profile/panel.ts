@@ -8,8 +8,13 @@
  *
  * The status line is the whole feedback surface, so every outcome has one
  * short sentence: what happened, or what to do next.
+ *
+ * The panel holds no resource of its own. It has no timer, no subscription
+ * and no connection, so it needs no teardown: the interface unsubscribes when
+ * it goes away, and a late answer then reaches nobody.
  */
 import type { ProfileClient, GuestSeatBinding } from './client';
+import { ProfileRequestError } from './client';
 import { isAcceptableAvatar, isAcceptableUsername } from './contracts';
 import type { OwnProfile } from './contracts';
 
@@ -46,12 +51,10 @@ export interface ProfilePanel {
   save(): Promise<void>;
   /** Links the guest seat this browser controls to the account. */
   linkGuestSeat(): Promise<void>;
-  dispose(): void;
 }
 
 export function createProfilePanel(options: ProfilePanelOptions): ProfilePanel {
   const listeners = new Set<() => void>();
-  let disposed = false;
   let state: ProfilePanelState = {
     status: 'idle',
     profile: null,
@@ -62,17 +65,14 @@ export function createProfilePanel(options: ProfilePanelOptions): ProfilePanel {
   };
 
   function publish(next: Partial<ProfilePanelState>): void {
-    if (disposed) return;
     state = { ...state, ...next };
     for (const listener of [...listeners]) listener();
   }
 
   async function load(): Promise<void> {
-    if (disposed) return;
     publish({ status: 'loading', message: '' });
     try {
       const profile = await options.client.readOwnProfile();
-      if (disposed) return;
       publish({
         status: 'ready',
         profile,
@@ -81,13 +81,11 @@ export function createProfilePanel(options: ProfilePanelOptions): ProfilePanel {
         message: '',
       });
     } catch (error) {
-      if (disposed) return;
       publish({ status: 'error', message: messageFor(error, 'Could not load your profile. Retry.') });
     }
   }
 
   async function save(): Promise<void> {
-    if (disposed) return;
     const username = state.usernameDraft.trim();
     if (username.length > 0 && !isAcceptableUsername(username)) {
       publish({ status: 'ready', message: 'Use 3 to 24 letters, digits, dashes.' });
@@ -103,7 +101,6 @@ export function createProfilePanel(options: ProfilePanelOptions): ProfilePanel {
         username: username.length > 0 ? username : null,
         avatar: state.avatarDraft,
       });
-      if (disposed) return;
       publish({
         status: 'ready',
         profile: state.profile ? { ...state.profile, ...profile } : null,
@@ -112,13 +109,11 @@ export function createProfilePanel(options: ProfilePanelOptions): ProfilePanel {
         message: 'Profile saved.',
       });
     } catch (error) {
-      if (disposed) return;
       publish({ status: 'ready', message: messageFor(error, 'Could not save your profile. Retry.') });
     }
   }
 
   async function linkGuestSeat(): Promise<void> {
-    if (disposed) return;
     const seat = state.guestSeat;
     if (!seat) {
       publish({ status: state.status, message: 'No guest seat is open in this browser.' });
@@ -127,12 +122,9 @@ export function createProfilePanel(options: ProfilePanelOptions): ProfilePanel {
     publish({ status: 'linking', message: 'Linking guest seat…' });
     try {
       await options.client.linkGuestSeat(seat);
-      if (disposed) return;
       const profile = await options.client.readOwnProfile();
-      if (disposed) return;
       publish({ status: 'ready', profile, message: 'Guest seat linked to your account.' });
     } catch (error) {
-      if (disposed) return;
       publish({ status: 'ready', message: messageFor(error, 'Could not link the guest seat. Retry.') });
     }
   }
@@ -152,28 +144,43 @@ export function createProfilePanel(options: ProfilePanelOptions): ProfilePanel {
     },
     save,
     linkGuestSeat,
-    dispose() {
-      disposed = true;
-      listeners.clear();
-    },
   };
 }
 
 /**
  * Turns a failed request into one short sentence.
  *
- * The message names the problem and the recovery. It never carries a status
- * code, a URL, or a service detail.
+ * The service error code is the stable part of a refusal, so the copy is
+ * chosen from the code and never read out of an English message. The message
+ * names the problem and the recovery. It never carries a status code, a URL,
+ * or a service detail.
  */
 function messageFor(error: unknown, fallback: string): string {
+  const code = error instanceof ProfileRequestError ? error.code : '';
+  const chosen = code ? BY_CODE.get(code) : undefined;
+  if (chosen) return chosen;
   if (error instanceof Error) {
     const detail = error.message;
-    if (/taken/i.test(detail)) return 'That name is already taken.';
-    if (/not allowed/i.test(detail)) return 'Use 3 to 24 letters, digits, dashes.';
-    if (/already linked/i.test(detail)) return 'That guest seat is already linked.';
-    if (/no longer yours/i.test(detail)) return 'That guest seat is no longer yours.';
-    if (/sign in/i.test(detail)) return 'Sign in to edit your profile.';
+    if (/taken/i.test(detail)) return BY_CODE.get('username_taken') ?? fallback;
+    if (/not allowed/i.test(detail)) return BY_CODE.get('invalid_username') ?? fallback;
+    if (/already linked/i.test(detail)) return BY_CODE.get('seat_already_linked') ?? fallback;
+    if (/no longer yours/i.test(detail)) return BY_CODE.get('unauthorized') ?? fallback;
+    if (/sign in/i.test(detail)) return BY_CODE.get('not_signed_in') ?? fallback;
     if (/unavailable|invalid response/i.test(detail)) return fallback;
   }
   return fallback;
 }
+
+/** The copy of each service refusal. */
+const BY_CODE = new Map<string, string>([
+  ['username_taken', 'That name is already taken.'],
+  ['invalid_username', 'Use 3 to 24 letters, digits, dashes.'],
+  ['invalid_avatar', 'Choose an avatar from the list.'],
+  ['seat_already_linked', 'That guest seat is already linked.'],
+  ['proof_already_used', 'That ownership proof was already used.'],
+  ['proof_seat_mismatch', 'That proof names another seat.'],
+  ['unauthorized', 'That guest seat is no longer yours.'],
+  ['not_signed_in', 'Sign in to edit your profile.'],
+  ['no_guest_seat', 'No guest seat is open in this browser.'],
+  ['temporarily_unavailable', 'The profile service is unavailable. Retry.'],
+]);

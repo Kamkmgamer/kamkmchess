@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createProfilePanel } from './panel';
+import { ProfileRequestError } from './client';
 import type { ProfileClient } from './client';
 import type { PublicProfile } from './contracts';
 
@@ -79,7 +80,7 @@ describe('profile panel', () => {
 
   it('reports a name that another profile already owns', async () => {
     const panel = createProfilePanel({
-      client: clientStub({ updateOwnProfile: vi.fn(async () => { throw new Error('That name is already taken.'); }) }),
+      client: clientStub({ updateOwnProfile: vi.fn(async () => { throw new ProfileRequestError('That name is already taken.', 409, 'username_taken'); }) }),
     });
     await panel.load();
 
@@ -87,6 +88,30 @@ describe('profile panel', () => {
     await panel.save();
 
     expect(panel.getSnapshot().message).toBe('That name is already taken.');
+  });
+
+  it('reports a guest seat that is already linked from the service code', async () => {
+    const panel = createProfilePanel({
+      client: clientStub({ linkGuestSeat: vi.fn(async () => { throw new ProfileRequestError('That guest seat is already linked.', 409, 'seat_already_linked'); }) }),
+      guestSeat: { matchId: 'match_alpha', seat: 'white' },
+    });
+    await panel.load();
+
+    await panel.linkGuestSeat();
+
+    expect(panel.getSnapshot().message).toBe('That guest seat is already linked.');
+  });
+
+  it('reports a spent ownership proof from the service code', async () => {
+    const panel = createProfilePanel({
+      client: clientStub({ linkGuestSeat: vi.fn(async () => { throw new ProfileRequestError('That guest seat is already linked.', 409, 'proof_already_used'); }) }),
+      guestSeat: { matchId: 'match_alpha', seat: 'white' },
+    });
+    await panel.load();
+
+    await panel.linkGuestSeat();
+
+    expect(panel.getSnapshot().message).toBe('That ownership proof was already used.');
   });
 
   it('links the guest seat this browser controls and says so', async () => {
@@ -128,9 +153,7 @@ describe('profile panel', () => {
     await panel.linkGuestSeat();
 
     expect(panel.getSnapshot().message).toBe('That guest seat is already linked.');
-  });
-
-  it('reports a load that failed without losing the drafts', async () => {
+  });  it('reports a load that failed without losing the drafts', async () => {
     const panel = createProfilePanel({ client: clientStub({ readOwnProfile: vi.fn(async () => { throw new Error('The profile service is unavailable.'); }) }) });
 
     await panel.load();

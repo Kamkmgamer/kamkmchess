@@ -53,6 +53,10 @@ profile, or an owner: a body that carries one is refused as an unknown field.
 The guest link carries its proof in the `X-Guest-Ownership-Proof` header, so
 the secret never enters a URL, a shared state, or a log line.
 
+The profile API answers its own preflight with `PUT` in the allowed methods,
+because it edits a profile. The private single-owner sync API keeps its
+narrower method set.
+
 A missing profile and a name that does not exist both answer 404. A name that
 another profile already owns answers 409 `username_taken`. A refused name
 answers 400 `invalid_username`, and a refused avatar answers 400
@@ -96,13 +100,27 @@ for an unbounded time, so an expiry that was checked before the lock is
 checked again.
 
 The proof is consumed by the linking transaction. The ledger binds one proof
-to one profile, once, and one live guest seat to at most one profile.
+to one profile, once, and the proof itself is marked spent, so the proof is
+dead everywhere afterwards and cannot link a second profile. The link changes
+nothing else. The seat owner in `online_seats` is immutable and stays the
+guest, the guest stays the actor of every accepted move, the accepted
+receipts stay, and the accepted operation fingerprints keep their original
+value. The link records the association in its own append-only ledger.
 
-The link changes nothing else. The seat owner in `online_seats` is immutable
-and stays the guest, the guest stays the actor of every accepted move, the
-accepted receipts stay, and the accepted operation fingerprints keep their
-original value. The link records the association in its own append-only
-ledger.
+The proof is read once before any lock is taken, so a request that does not
+name the seat cannot make the service serialise on somebody else's seat
+lock. The transaction then holds the account advisory lock and the guest seat
+advisory lock, the same locks the revocation paths hold, so a link is ordered
+against a session revocation, a credential rotation and a seat removal
+instead of racing them. Inside the transaction, and after the locks were
+taken, the service re-checks the account session revocation, the proof, the
+parent credential, the seat ownership and every expiry. A lock can be held
+for an unbounded time, so an expiry that was checked before the lock is
+checked again.
+
+The profile writes take the account lock as well, and re-check the account
+inside the transaction, so a session that was revoked while the request
+waited cannot change a profile.
 
 Signing in never links a seat. The account profile lists the linked guest
 seats, and a link only ever happens because the account asked for it.
@@ -124,6 +142,13 @@ Migration `backend/migrations/0005_public_profiles.sql` adds two tables.
 The runtime grants follow the KHA-65 pattern: the API role gets the two new
 tables, the private rules process keeps no table privileges, and `PUBLIC`
 access is revoked.
+
+## The shared shape contract
+
+`backend/profile/testdata/public-profile-contract.json` is the single source
+of truth for the identifier shapes, the public name shape, the avatar catalog
+and the reserved names. The Go service and the browser contract both read it,
+and a change to one side cannot silently break the other.
 
 ## Browser boundary
 
@@ -148,6 +173,11 @@ renders it. The panel is mounted in the account workspace, next to the
 existing sign-in and private account controls, and the offline game layout is
 untouched.
 
+The panel holds no resource of its own, so it needs no teardown: the
+interface unsubscribes when it goes away, and a late answer then reaches
+nobody. The interface reads the service error code, never an English
+message, to choose its one status sentence.
+
 ## Boundaries
 
 - The public history, the public replay, the control attribution and the
@@ -159,6 +189,13 @@ untouched.
   over.
 - The proof is a capability for the seat it names. It is minted from the seat
   credential, it is single use, and it is bound to one seat. The browser that
-  controls a guest seat is the browser that can link it.
+  controls a guest seat is the browser that can link it. A stolen guest seat
+  credential is therefore as consequential as a stolen session token; the
+  link does not add a new transfer of authority.
 - A guest seat can only be linked while its credential is live. A revoked,
   superseded or expired credential invalidates every proof it issued.
+- The application can only offer the link once a browser holds a guest seat
+  credential. The invitation and guest-join flow belongs to KHA-75, so until
+  it exists the account workspace never holds one, and the panel says that
+  linking needs an open guest seat. The service path, the client path and the
+  proof of ownership are complete and exercised.

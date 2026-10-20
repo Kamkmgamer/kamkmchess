@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   PROFILE_AVATAR_CHOICES,
+  PROFILE_CONTRACT_SHAPES,
+  PROFILE_RESERVED_USERNAMES,
   ProfileContractError,
   createProfileUpdateBody,
   isAcceptableAvatar,
@@ -10,6 +12,16 @@ import {
   parseOwnProfile,
   parsePublicProfile,
 } from './contracts';
+import contractRaw from '../../backend/profile/testdata/public-profile-contract.json?raw';
+
+const sharedContract = JSON.parse(contractRaw) as {
+  readonly profileIdPattern: string;
+  readonly linkIdPattern: string;
+  readonly proofIdPattern: string;
+  readonly usernamePattern: string;
+  readonly avatarChoices: readonly string[];
+  readonly reservedUsernames: readonly string[];
+};
 
 const publicProfile = {
   schemaVersion: 1,
@@ -21,6 +33,15 @@ const publicProfile = {
 };
 
 describe('public profile contracts', () => {
+  it('matches the shared shape contract the service also reads', () => {
+    expect(PROFILE_CONTRACT_SHAPES.profileIdPattern).toBe(sharedContract.profileIdPattern);
+    expect(PROFILE_CONTRACT_SHAPES.linkIdPattern).toBe(sharedContract.linkIdPattern);
+    expect(PROFILE_CONTRACT_SHAPES.proofIdPattern).toBe(sharedContract.proofIdPattern);
+    expect(PROFILE_CONTRACT_SHAPES.usernamePattern).toBe(sharedContract.usernamePattern);
+    expect([...PROFILE_AVATAR_CHOICES]).toEqual([...sharedContract.avatarChoices]);
+    expect([...PROFILE_RESERVED_USERNAMES]).toEqual([...sharedContract.reservedUsernames]);
+  });
+
   it('reads the allowlisted public payload', () => {
     const profile = parsePublicProfile(publicProfile);
     expect(profile.profileId).toBe('kp_alphaalphaalpha');
@@ -91,10 +112,39 @@ describe('public profile contracts', () => {
     expect(proof.matchId).toBe('match_alpha');
   });
 
+  it('reads the proof identifier shape the service issues', () => {
+    // The service issues "kgp_" followed by sixteen base64url characters.
+    const issued = 'kgp_9kQ2bYt1xWvZn0aBc';
+    const proof = parseGuestOwnershipProof({
+      schemaVersion: 1,
+      proofId: issued,
+      secret: 'kgp1_secretsecretsecret',
+      matchId: 'match_alpha',
+      seat: 'white',
+      expiresAt: '2026-10-20T10:30:00Z',
+    });
+    expect(proof.proofId).toBe(issued);
+    expect(() => parseGuestOwnershipProof({
+      schemaVersion: 1,
+      proofId: 'kg9kQ2bYt1xWvZn0aBc',
+      secret: 'kgp1_secretsecretsecret',
+      matchId: 'match_alpha',
+      seat: 'white',
+      expiresAt: '2026-10-20T10:30:00Z',
+    })).toThrow(/expected a proof identifier/);
+  });
+
   it('builds an update body that never names an account or a profile', () => {
     expect(createProfileUpdateBody({ username: 'Alice' })).toEqual({ username: 'Alice' });
-    expect(createProfileUpdateBody({ username: null, avatar: 'tide' })).toEqual({ username: null, avatar: 'tide' });
+    expect(createProfileUpdateBody({ avatar: 'tide' })).toEqual({ avatar: 'tide' });
     expect(createProfileUpdateBody({})).toEqual({});
+  });
+
+  it('builds an update body that removes a chosen name', () => {
+    // An empty name clears the chosen name. The service reads an empty
+    // string as the removal, and an absent name as "keep the current one".
+    expect(createProfileUpdateBody({ username: null })).toEqual({ username: '' });
+    expect(createProfileUpdateBody({ username: 'Alice' })).toEqual({ username: 'Alice' });
   });
 
   it('accepts only the shapes the service accepts', () => {

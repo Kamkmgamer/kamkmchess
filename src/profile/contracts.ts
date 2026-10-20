@@ -107,6 +107,20 @@ const LINK_ID_PATTERN = /^kl_[A-Za-z0-9_-]{8,63}$/;
 const PROOF_ID_PATTERN = /^kgp_[A-Za-z0-9_-]{8,63}$/;
 const USERNAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{1,22}[A-Za-z0-9]$/;
 
+/**
+ * The identifier shapes of the public profile contract.
+ *
+ * They are part of the contract, and the shared fixture in
+ * `backend/profile/testdata/public-profile-contract.json` is the single
+ * source of truth for them on both sides of the wire.
+ */
+export const PROFILE_CONTRACT_SHAPES = {
+  profileIdPattern: PROFILE_ID_PATTERN.source,
+  linkIdPattern: LINK_ID_PATTERN.source,
+  proofIdPattern: PROOF_ID_PATTERN.source,
+  usernamePattern: USERNAME_PATTERN.source,
+} as const;
+
 export function parsePublicProfile(value: unknown): PublicProfile {
   const path = 'publicProfile';
   const object = asObject(value, path);
@@ -210,10 +224,14 @@ export function parseGuestOwnershipProof(value: unknown): GuestOwnershipProof {
  * The body never names a profile, an account, or an owner. The service takes
  * the account from the verified session, so a body that carried an identity
  * would be an attempt to act for somebody else.
+ *
+ * The name has three states on the wire. An absent name keeps the current
+ * one. An empty name removes the chosen name and returns the profile to the
+ * generated default. Any other name is the new chosen name.
  */
 export function createProfileUpdateBody(update: ProfileUpdate): Record<string, unknown> {
   const body: Record<string, unknown> = {};
-  if (update.username !== undefined) body.username = update.username;
+  if (update.username !== undefined) body.username = update.username === null ? '' : update.username;
   if (update.avatar !== undefined) body.avatar = update.avatar;
   return body;
 }

@@ -26,8 +26,8 @@ var ProfileRequestHeaders = []string{GuestCredentialHeader, GuestOwnershipProofH
 
 // ProfileService is the public profile service the API uses.
 type ProfileService interface {
-	EnsureProfile(ctx context.Context, accountID string) (profile.Profile, error)
-	UpdateProfile(ctx context.Context, accountID string, update profile.Update) (profile.Profile, error)
+	EnsureProfile(ctx context.Context, account onlineauth.Principal, origin string) (profile.Profile, error)
+	UpdateProfile(ctx context.Context, account onlineauth.Principal, update profile.Update, origin string) (profile.Profile, error)
 	PublicProfile(ctx context.Context, profileID string) (profile.Profile, error)
 	ProfileByUsername(ctx context.Context, username string) (profile.Profile, error)
 	LinkGuestSeat(ctx context.Context, account onlineauth.Principal, request profile.LinkRequest) (profile.GuestLink, error)
@@ -110,7 +110,12 @@ func (a *profileAPI) ownProfile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	record, err := a.profiles.EnsureProfile(r.Context(), principal.Subject)
+	origin, ok := a.auth.origin(r, false)
+	if !ok {
+		writeError(w, http.StatusForbidden, "origin_required")
+		return
+	}
+	record, err := a.profiles.EnsureProfile(r.Context(), principal, origin)
 	if err != nil {
 		writeProfileError(w, err)
 		return
@@ -137,6 +142,11 @@ func (a *profileAPI) updateProfile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	origin, ok := a.auth.origin(r, true)
+	if !ok {
+		writeError(w, http.StatusForbidden, "origin_required")
+		return
+	}
 	var body struct {
 		Username *string `json:"username"`
 		Avatar   *string `json:"avatar"`
@@ -144,10 +154,10 @@ func (a *profileAPI) updateProfile(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &body) {
 		return
 	}
-	record, err := a.profiles.UpdateProfile(r.Context(), principal.Subject, profile.Update{
+	record, err := a.profiles.UpdateProfile(r.Context(), principal, profile.Update{
 		Username: body.Username,
 		Avatar:   body.Avatar,
-	})
+	}, origin)
 	if err != nil {
 		writeProfileError(w, err)
 		return

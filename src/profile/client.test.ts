@@ -88,11 +88,39 @@ describe('profile client', () => {
     expect(calls.at(0)?.body).not.toContain('jwt-1');
   });
 
-  it('reports a name that another profile already owns', async () => {
+  it('reports a name that another profile already owns with the service code', async () => {
     const { fetcher } = recordingFetch(() => json({ error: 'username_taken' }, 409));
     const client = createProfileClient({ baseUrl: 'https://service.example', accountToken: async () => 'jwt', fetch: fetcher });
 
-    await expect(client.updateOwnProfile({ username: 'rookie' })).rejects.toThrow(/already taken/);
+    const failure = await client.updateOwnProfile({ username: 'rookie' }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ProfileRequestError);
+    expect((failure as ProfileRequestError).message).toMatch(/already taken/);
+    expect((failure as ProfileRequestError).code).toBe('username_taken');
+  });
+
+  it('tells an already linked seat apart from a spent proof', async () => {
+    const { fetcher } = recordingFetch(request => {
+      if (request.url.endsWith('/v1/guest-seats/ownership-proof')) {
+        return json({
+          schemaVersion: 1,
+          proofId: 'kgp_proofproofproof',
+          secret: 'kgp1_secretsecretsecret',
+          matchId: 'match_alpha',
+          seat: 'white',
+          expiresAt: '2026-10-20T10:30:00Z',
+        });
+      }
+      return json({ error: 'proof_already_used' }, 409);
+    });
+    const client = createProfileClient({
+      baseUrl: 'https://service.example',
+      accountToken: async () => 'jwt',
+      guestSeatToken: async () => 'guest-secret',
+      fetch: fetcher,
+    });
+
+    const failure = await client.linkGuestSeat({ matchId: 'match_alpha', seat: 'white' }).catch((error: unknown) => error);
+    expect((failure as ProfileRequestError).code).toBe('proof_already_used');
   });
 
   it('refuses to work without a signed-in account', async () => {

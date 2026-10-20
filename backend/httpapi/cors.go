@@ -18,11 +18,20 @@ func CORS(origins []string, next http.Handler) http.Handler {
 // header and for the stream cursor header, so the private sync API is never
 // widened to accept them.
 func CORSWithHeaders(origins []string, extraHeaders []string, next http.Handler) http.Handler {
+	return CORSWithMethods(origins, extraHeaders, "GET, POST, OPTIONS", next)
+}
+
+// CORSWithMethods behaves like CORSWithHeaders and additionally allows the
+// listed methods.
+//
+// The public profile API edits a profile, so it needs PUT in its preflight
+// answer. The private single-owner sync API keeps its narrower method set.
+func CORSWithMethods(origins []string, extraHeaders []string, methods string, next http.Handler) http.Handler {
 	headers := "Authorization, Content-Type"
 	if len(extraHeaders) > 0 {
 		headers += ", " + strings.Join(extraHeaders, ", ")
 	}
-	return corsHandler(origins, "GET, POST, OPTIONS", headers, next)
+	return corsHandler(origins, methods, headers, next)
 }
 
 func corsHandler(origins []string, methods, headers string, next http.Handler) http.Handler {

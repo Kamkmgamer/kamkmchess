@@ -53,29 +53,29 @@ func (s *Service) now() time.Time { return s.options.Now().UTC() }
 // independent of the account, so a public payload never leaks the
 // authentication identifier.
 //
+// The write runs under the account lock and re-checks the account inside the
+// transaction, so a session that was revoked while the request waited cannot
+// create a profile.
+//
 // A concurrent first use creates one profile: the insert is a no-op when the
 // account already has one, and the stored row is read back.
-func (s *Service) EnsureProfile(ctx context.Context, accountID string) (Profile, error) {
-	accountID = strings.TrimSpace(accountID)
-	if accountID == "" {
-		return Profile{}, ErrNotAuthorized
-	}
-	profile, err := s.readProfileByAccount(ctx, s.db, accountID, false)
-	if err == nil {
-		return profile, nil
-	}
-	if !errors.Is(err, ErrNotFound) {
-		return Profile{}, err
-	}
-	profileID, err := newIdentifier("kp_")
+func (s *Service) EnsureProfile(ctx context.Context, account onlineauth.Principal, origin string) (Profile, error) {
+	var record Profile
+	err := s.withAccount(ctx, account, origin, func(ctx context.Context, tx pgx.Tx) error {
+		if err := s.ensureProfileRow(ctx, tx, account.Subject); err != nil {
+			return err
+		}
+		stored, err := s.readStoredProfile(ctx, tx, profileByAccount, account.Subject)
+		if err != nil {
+			return err
+		}
+		record = stored.profile()
+		return nil
+	})
 	if err != nil {
 		return Profile{}, err
 	}
-	if _, err = s.db.Exec(ctx, `INSERT INTO online_public_profiles(profile_id,account_id) VALUES($1,$2) ON CONFLICT (account_id) DO NOTHING`,
-		profileID, accountID); err != nil {
-		return Profile{}, err
-	}
-	return s.readProfileByAccount(ctx, s.db, accountID, false)
+	return record, nil
 }
 
 // UpdateProfile applies an ownership-checked change to the account's own
@@ -86,16 +86,14 @@ func (s *Service) EnsureProfile(ctx context.Context, accountID string) (Profile,
 // account is the one the server verified, and it can only change its own
 // profile.
 //
-// The update runs in one transaction that locks the profile row, so two
-// concurrent edits of the same profile are ordered and never produce a torn
-// name and avatar pair. A public name that another profile already owns is
-// refused by the unique index, which makes the check race-safe: exactly one
-// of two concurrent claims of the same name wins.
-func (s *Service) UpdateProfile(ctx context.Context, accountID string, update Update) (Profile, error) {
-	accountID = strings.TrimSpace(accountID)
-	if accountID == "" {
-		return Profile{}, ErrNotAuthorized
-	}
+// The update runs in one transaction that takes the account lock and locks
+// the profile row. Two concurrent edits of the same profile are therefore
+// ordered and never produce a torn name and avatar pair, and a session that
+// was revoked while the request waited cannot change the profile. A public
+// name that another profile already owns is refused by the unique index,
+// which makes the check race-safe: exactly one of two concurrent claims of
+// the same name wins.
+func (s *Service) UpdateProfile(ctx context.Context, account onlineauth.Principal, update Update, origin string) (Profile, error) {
 	var (
 		display *string
 		key     *string
@@ -117,41 +115,41 @@ func (s *Service) UpdateProfile(ctx context.Context, accountID string, update Up
 	if err != nil {
 		return Profile{}, err
 	}
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return Profile{}, err
-	}
-	defer tx.Rollback(ctx)
-	// The profile row is locked for the update, so two concurrent edits of
-	// the same profile are ordered by the database.
-	if err = s.ensureProfileRow(ctx, tx, accountID); err != nil {
-		return Profile{}, err
-	}
-	row, err := s.readStoredProfile(ctx, tx, `SELECT profile_id,account_id,coalesce(username,''),coalesce(username_key,''),avatar_key,created_at,updated_at FROM online_public_profiles WHERE account_id=$1 FOR UPDATE`, accountID)
-	if err != nil {
-		return Profile{}, err
-	}
-	username := row.Username
-	usernameKey := row.UsernameKey
-	if display != nil {
-		username = *display
-		usernameKey = keyOrEmpty(key)
-	}
-	avatarKey := row.AvatarKey
-	if avatar != nil {
-		avatarKey = *avatar
-	}
-	if _, err = tx.Exec(ctx, `UPDATE online_public_profiles SET username=$1,username_key=$2,avatar_key=$3,updated_at=clock_timestamp() WHERE profile_id=$4`,
-		nullable(username), nullableKey(usernameKey), avatarKey, row.ProfileID); err != nil {
-		if isUniqueViolation(err, "online_public_profiles_username") {
-			return Profile{}, ErrUsernameTaken
+	var updated Profile
+	err = s.withAccount(ctx, account, origin, func(ctx context.Context, tx pgx.Tx) error {
+		// The profile row is locked for the update, so two concurrent edits
+		// of the same profile are ordered by the database.
+		if err := s.ensureProfileRow(ctx, tx, account.Subject); err != nil {
+			return err
 		}
-		return Profile{}, err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return Profile{}, err
-	}
-	updated, err := s.readProfileByAccount(ctx, s.db, accountID, false)
+		row, err := s.readStoredProfile(ctx, tx, profileByAccount+" FOR UPDATE", account.Subject)
+		if err != nil {
+			return err
+		}
+		username := row.Username
+		usernameKey := row.UsernameKey
+		if display != nil {
+			username = *display
+			usernameKey = keyOrEmpty(key)
+		}
+		avatarKey := row.AvatarKey
+		if avatar != nil {
+			avatarKey = *avatar
+		}
+		if _, err = tx.Exec(ctx, `UPDATE online_public_profiles SET username=$1,username_key=$2,avatar_key=$3,updated_at=clock_timestamp() WHERE profile_id=$4`,
+			nullable(username), nullableKey(usernameKey), avatarKey, row.ProfileID); err != nil {
+			if isUniqueViolation(err, uniqueUsernameIndex) {
+				return ErrUsernameTaken
+			}
+			return err
+		}
+		stored, err := s.readStoredProfile(ctx, tx, profileByAccount, account.Subject)
+		if err != nil {
+			return err
+		}
+		updated = stored.profile()
+		return nil
+	})
 	if err != nil {
 		return Profile{}, err
 	}
@@ -203,22 +201,35 @@ type LinkRequest struct {
 // the account is the one the server verified: the request never names an
 // account.
 //
-// The transaction holds the account lock and the guest seat lock, the same
-// locks the revocation paths hold, so a link is ordered against a session
-// revocation, a credential rotation, and a seat removal instead of racing
-// them. Every expiry is re-checked after those locks are held, because a lock
-// can be held for an unbounded time.
+// The ownership proof is checked once before any lock is taken, so a request
+// that does not name the seat cannot make the service serialise on somebody
+// else's seat lock. The transaction then holds the account lock and the guest
+// seat lock, the same locks the revocation paths hold, so a link is ordered
+// against a session revocation, a credential rotation, and a seat removal
+// instead of racing them. Every expiry is re-checked after those locks are
+// held, because a lock can be held for an unbounded time.
 //
-// The ownership proof is consumed by this transaction: the ledger binds one
-// proof to one profile, once. The proof, the guest identity, and the seat
-// owner are left untouched, so the guest stays the actor of every accepted
-// move and the accepted fingerprints keep their original value.
+// The ownership proof is consumed by this transaction. The ledger binds one
+// proof to one profile, once, and the proof itself is marked spent, so a
+// second link with the same proof is refused everywhere. The guest identity
+// and the seat owner are left untouched, so the guest stays the actor of
+// every accepted move and the accepted fingerprints keep their original
+// value.
 func (s *Service) LinkGuestSeat(ctx context.Context, account onlineauth.Principal, request LinkRequest) (GuestLink, error) {
 	if s.authorizer == nil {
 		return GuestLink{}, errors.New("profile: no link authorizer is configured")
 	}
 	if account.Kind != online.ParticipantAccount || account.Subject == "" {
 		return GuestLink{}, ErrNotAuthorized
+	}
+	// The proof names the seat it proves. Reading it before the locks keeps
+	// a request for somebody else's seat from taking that seat's lock.
+	proof, err := s.authorizer.VerifyOwnershipProof(ctx, request.ProofSecret, request.Origin)
+	if err != nil {
+		return GuestLink{}, err
+	}
+	if proof.MatchID != request.MatchID || proof.Seat != request.Seat {
+		return GuestLink{}, onlineauth.ErrUnauthenticated
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
@@ -230,7 +241,7 @@ func (s *Service) LinkGuestSeat(ctx context.Context, account onlineauth.Principa
 	if err = onlineauth.LockAccountScope(ctx, tx, account.Subject); err != nil {
 		return GuestLink{}, err
 	}
-	if err = onlineauth.LockSeatScope(ctx, tx, request.MatchID, request.Seat); err != nil {
+	if err = onlineauth.LockSeatScope(ctx, tx, proof.MatchID, proof.Seat); err != nil {
 		return GuestLink{}, err
 	}
 	// The proof, the parent credential, the seat ownership, the session
@@ -240,10 +251,10 @@ func (s *Service) LinkGuestSeat(ctx context.Context, account onlineauth.Principa
 	if err != nil {
 		return GuestLink{}, err
 	}
-	if err = s.ensureProfileRow(ctx, tx, account.Subject); err != nil {
+	if err = s.ensureProfileRow(ctx, tx, authority.AccountID); err != nil {
 		return GuestLink{}, err
 	}
-	profile, err := s.readProfileByAccount(ctx, tx, account.Subject, true)
+	profile, err := s.readStoredProfile(ctx, tx, profileByAccount, authority.AccountID)
 	if err != nil {
 		return GuestLink{}, err
 	}
@@ -253,14 +264,24 @@ func (s *Service) LinkGuestSeat(ctx context.Context, account onlineauth.Principa
 	}
 	linkedAt := s.now()
 	if _, err = tx.Exec(ctx, `INSERT INTO online_profile_guest_links(link_id,profile_id,account_id,guest_id,match_id,seat,proof_id,linked_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-		linkID, profile.ProfileID, account.Subject, authority.GuestID, authority.MatchID, string(authority.Seat), authority.ProofID, linkedAt); err != nil {
-		if isUniqueViolation(err, "online_profile_guest_links_proof") {
+		linkID, profile.ProfileID, authority.AccountID, authority.GuestID, authority.MatchID, string(authority.Seat), authority.ProofID, linkedAt); err != nil {
+		if isUniqueViolation(err, uniqueProofIndex) {
 			return GuestLink{}, ErrProofConsumed
 		}
-		if isUniqueViolation(err, "online_profile_guest_links_seat") {
+		if isUniqueViolation(err, uniqueSeatIndex) {
 			return GuestLink{}, ErrSeatAlreadyLinked
 		}
 		return GuestLink{}, err
+	}
+	// The proof is spent. The proof table is append-only apart from its
+	// one-way revocation columns, and the ledger keeps its own record, so
+	// the proof can never be used a second time.
+	spent, err := tx.Exec(ctx, `UPDATE online_guest_ownership_proofs SET revoked_at=clock_timestamp(),revoked_reason='proof_consumed' WHERE proof_id=$1 AND revoked_at IS NULL`, authority.ProofID)
+	if err != nil {
+		return GuestLink{}, err
+	}
+	if spent.RowsAffected() != 1 {
+		return GuestLink{}, ErrProofConsumed
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return GuestLink{}, err
@@ -305,6 +326,19 @@ func (s *Service) GuestLinks(ctx context.Context, accountID string) ([]GuestLink
 	return links, nil
 }
 
+// The stored queries and the index names the service maps a unique
+// violation onto a typed refusal. The index names belong to migration
+// 0005; renaming an index there means renaming it here.
+const (
+	profileByAccount  = `SELECT profile_id,account_id,coalesce(username,''),coalesce(username_key,''),avatar_key,created_at,updated_at FROM online_public_profiles WHERE account_id=$1`
+	profileByID       = `SELECT profile_id,account_id,coalesce(username,''),coalesce(username_key,''),avatar_key,created_at,updated_at FROM online_public_profiles WHERE profile_id=$1`
+	profileByUsername = `SELECT profile_id,account_id,coalesce(username,''),coalesce(username_key,''),avatar_key,created_at,updated_at FROM online_public_profiles WHERE username_key=$1`
+
+	uniqueUsernameIndex = "online_public_profiles_username"
+	uniqueProofIndex    = "online_profile_guest_links_proof"
+	uniqueSeatIndex     = "online_profile_guest_links_seat"
+)
+
 // storedProfile is the row shape of a public profile.
 type storedProfile struct {
 	ProfileID   string
@@ -345,20 +379,43 @@ func (s *Service) ensureProfileRow(ctx context.Context, tx pgx.Tx, accountID str
 	return nil
 }
 
-func (s *Service) readProfileByAccount(ctx context.Context, q online.Querier, accountID string, forUpdate bool) (Profile, error) {
-	query := `SELECT profile_id,account_id,coalesce(username,''),coalesce(username_key,''),avatar_key,created_at,updated_at FROM online_public_profiles WHERE account_id=$1`
-	if forUpdate {
-		query += ` FOR UPDATE`
+// withAccount runs a write under the account lock.
+//
+// The lock is the shared protocol of the participant command path, the
+// revocation path, and the profile path, so a write is ordered against a
+// session revocation instead of racing it. The account is re-checked inside
+// the transaction, after the lock was held, so a revocation that committed
+// while the caller waited is visible to the write.
+func (s *Service) withAccount(ctx context.Context, account onlineauth.Principal, origin string, work func(ctx context.Context, tx pgx.Tx) error) error {
+	if s.authorizer == nil {
+		return errors.New("profile: no account authorizer is configured")
 	}
-	return s.readProfile(ctx, q, query, accountID)
+	if account.Kind != online.ParticipantAccount || account.Subject == "" {
+		return ErrNotAuthorized
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err = onlineauth.LockAccountScope(ctx, tx, account.Subject); err != nil {
+		return err
+	}
+	if err = s.authorizer.AuthorizeAccount(ctx, tx, account, origin); err != nil {
+		return err
+	}
+	if err = work(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Service) readProfileByID(ctx context.Context, q online.Querier, profileID string) (Profile, error) {
-	return s.readProfile(ctx, q, `SELECT profile_id,account_id,coalesce(username,''),coalesce(username_key,''),avatar_key,created_at,updated_at FROM online_public_profiles WHERE profile_id=$1`, profileID)
+	return s.readProfile(ctx, q, profileByID, profileID)
 }
 
 func (s *Service) readProfileByUsernameKey(ctx context.Context, q online.Querier, key string) (Profile, error) {
-	return s.readProfile(ctx, q, `SELECT profile_id,account_id,coalesce(username,''),coalesce(username_key,''),avatar_key,created_at,updated_at FROM online_public_profiles WHERE username_key=$1`, key)
+	return s.readProfile(ctx, q, profileByUsername, key)
 }
 
 func (s *Service) readProfile(ctx context.Context, q online.Querier, query string, argument any) (Profile, error) {

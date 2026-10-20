@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +17,27 @@ import (
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
 	"github.com/Kamkmgamer/kamkmchess/backend/profile"
 )
+
+// proofIDPattern is the shape of a guest ownership proof identifier. The
+// browser contract parses the same shape, and both read the shared fixture in
+// backend/profile/testdata.
+var proofIDPattern = regexp.MustCompile(sharedProofIDPattern())
+
+// sharedProofIDPattern reads the proof identifier shape from the shared
+// contract fixture.
+func sharedProofIDPattern() string {
+	raw, err := os.ReadFile("../profile/testdata/public-profile-contract.json")
+	if err != nil {
+		return `^kgp_[A-Za-z0-9_-]{8,63}$`
+	}
+	var contract struct {
+		ProofIDPattern string `json:"proofIdPattern"`
+	}
+	if err = json.Unmarshal(raw, &contract); err != nil || contract.ProofIDPattern == "" {
+		return `^kgp_[A-Za-z0-9_-]{8,63}$`
+	}
+	return contract.ProofIDPattern
+}
 
 // profileHTTPFixture is the production composition of the public profile API:
 // the real profile service, the real authorization service, the real
@@ -262,6 +285,44 @@ func TestPostgresPublicUsernameUniquenessIsCaseInsensitiveAndRaceSafe(t *testing
 	}
 }
 
+func TestPostgresPublicProfileNameCanBeRemoved(t *testing.T) {
+	fixture := newOnlineAuthFixture(t, moveEvaluator{})
+	handler := profileHTTPFixture(t, fixture)
+	token := profileToken(t, fixture, "user_a", "session-alice")
+	ownProfileID(t, handler, token)
+
+	named := onlineHTTPRequest(handler, http.MethodPut, "/v1/account/profile", authTestOrigin, "", map[string]string{"Authorization": "Bearer " + token}, `{"username":"Alice"}`)
+	if named.Code != http.StatusOK {
+		t.Fatalf("named status=%d body=%s", named.Code, named.Body.String())
+	}
+	if decodeProfile(t, named.Body.Bytes())["username"] != "Alice" {
+		t.Fatalf("the chosen name was not published: %s", named.Body.String())
+	}
+
+	// An empty name removes the chosen name and returns the profile to the
+	// generated default.
+	cleared := onlineHTTPRequest(handler, http.MethodPut, "/v1/account/profile", authTestOrigin, "", map[string]string{"Authorization": "Bearer " + token}, `{"username":""}`)
+	if cleared.Code != http.StatusOK {
+		t.Fatalf("cleared status=%d body=%s", cleared.Code, cleared.Body.String())
+	}
+	payload := decodeProfile(t, cleared.Body.Bytes())
+	if payload["username"] != nil {
+		t.Fatalf("the chosen name was not removed: %v", payload["username"])
+	}
+	avatar, _ := payload["avatar"].(map[string]any)
+	if avatar["kind"] != "generated" {
+		t.Fatalf("avatar = %v, want the generated default", payload["avatar"])
+	}
+
+	// The removed name is free again.
+	other := profileToken(t, fixture, "user_b", "session-bob")
+	ownProfileID(t, handler, other)
+	taken := onlineHTTPRequest(handler, http.MethodPut, "/v1/account/profile", authTestOrigin, "", map[string]string{"Authorization": "Bearer " + other}, `{"username":"alice"}`)
+	if taken.Code != http.StatusOK {
+		t.Fatalf("the removed name was not free: status=%d body=%s", taken.Code, taken.Body.String())
+	}
+}
+
 func TestPostgresPublicProfileEditsAreOwnershipChecked(t *testing.T) {
 	fixture := newOnlineAuthFixture(t, moveEvaluator{})
 	handler := profileHTTPFixture(t, fixture)
@@ -383,6 +444,11 @@ func TestPostgresExplicitGuestLinkBindsTheSeatAndKeepsTheOriginalActor(t *testin
 	if proofSecret == "" {
 		t.Fatalf("the ownership proof carries no secret: %s", minted.Body.String())
 	}
+	// The proof identifier has the shape the browser contract parses.
+	proofID, _ := mintedPayload["proofId"].(string)
+	if !proofIDPattern.MatchString(proofID) {
+		t.Fatalf("the proof identifier %q does not match the browser contract", proofID)
+	}
 
 	// The account links the seat explicitly.
 	linked := onlineHTTPRequest(handler, http.MethodPost, "/v1/account/profile/guest-links", authTestOrigin, "", map[string]string{
@@ -430,13 +496,24 @@ func TestPostgresExplicitGuestLinkBindsTheSeatAndKeepsTheOriginalActor(t *testin
 		t.Fatalf("the account has %d linked guest seats, want 1", len(links))
 	}
 
-	// The proof is consumed. The same proof never links a second profile.
+	// The proof is spent. The same proof never links a second profile.
 	reused := onlineHTTPRequest(handler, http.MethodPost, "/v1/account/profile/guest-links", authTestOrigin, "", map[string]string{
 		"Authorization":                "Bearer " + token,
 		httpapi.GuestOwnershipProofHeader: proofSecret,
 	}, `{"matchId":"match-link-one","seat":"white"}`)
-	if reused.Code != http.StatusConflict {
+	if reused.Code != http.StatusUnauthorized {
 		t.Fatalf("reused proof status=%d body=%s", reused.Code, reused.Body.String())
+	}
+	// The spent proof is dead everywhere, not only in the link ledger.
+	if _, err := fixture.authorizer.VerifyOwnershipProof(context.Background(), proofSecret, authTestOrigin); err == nil {
+		t.Fatal("the spent proof still verifies")
+	}
+	var linkCount int
+	if err := fixture.pool.QueryRow(context.Background(), `SELECT count(*) FROM online_profile_guest_links`).Scan(&linkCount); err != nil {
+		t.Fatal(err)
+	}
+	if linkCount != 1 {
+		t.Fatalf("%d links exist, want 1", linkCount)
 	}
 }
 

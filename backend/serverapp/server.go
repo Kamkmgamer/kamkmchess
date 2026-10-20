@@ -144,7 +144,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	root.Handle("/v1/online/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders, httpapi.NewOnline(onlineService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins})))
 	// The public profile API is mounted under its own prefixes so it never
 	// widens the private single-owner sync API.
-	profileHandler := httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.ProfileRequestHeaders, httpapi.NewProfile(profileService, guestProofIssuer{allocator: onlineauth.NewAllocator(authorizer)}, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}))
+	profileHandler := httpapi.CORSWithMethods(cfg.Clerk.AllowedOrigins, httpapi.ProfileRequestHeaders, "GET, POST, PUT, OPTIONS", httpapi.NewProfile(profileService, guestProofIssuer{allocator: onlineauth.NewAllocator(authorizer)}, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}))
 	root.Handle("/v1/profiles/", profileHandler)
 	root.Handle("/v1/account/", profileHandler)
 	root.Handle("/v1/guest-seats/", profileHandler)

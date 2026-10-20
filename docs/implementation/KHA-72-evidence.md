@@ -50,7 +50,7 @@ are described in [the public profile contract](../architecture/public-profiles.m
 
 ## Verification
 
-`pnpm check` passed ESLint, both TypeScript projects, 775 tests across 70
+`pnpm check` passed ESLint, both TypeScript projects, 781 tests across 70
 files, the browser production build, the private rules-worker build and the
 distribution notices. The pre-change baseline had 744 tests across 67 files.
 
@@ -66,7 +66,7 @@ go test -count=1 ./backend/... ./cmd/...
 go vet ./backend/... ./cmd/...
 ```
 
-Both commands passed. The full integration package took 47 seconds. The
+Both commands passed. The full integration package took 48 seconds. The
 checks used the real private Node rules artifact and required PostgreSQL
 rather than skipping absent-database fixtures. The Windows race detector was
 not run locally because this host has no C compiler; the existing Linux Go CI
@@ -74,12 +74,12 @@ configuration runs `go test -race` against PostgreSQL and the built worker.
 
 The new fixtures are:
 
-- 13 PostgreSQL integration fixtures in
+- 14 PostgreSQL integration fixtures in
   `backend/integration/online_profile_test.go`, over the real HTTP
   composition, the real authorization service and the real database.
-- 4 unit fixtures in `backend/profile/profile_test.go` for the public name
-  and avatar rules.
-- 31 browser fixtures in `src/profile/` for the wire contract, the client and
+- 6 unit fixtures in `backend/profile/profile_test.go` for the public name
+  and avatar rules and for the shared shape contract.
+- 37 browser fixtures in `src/profile/` for the wire contract, the client and
   the panel state machine.
 
 The integration fixtures cover:
@@ -106,14 +106,19 @@ The integration fixtures cover:
   name with a space, a name that reads as an email address, a name with a
   leading or trailing dash and an over-long name are all refused, and a
   refused name is never published.
+- The removal of a chosen name. An empty name removes the chosen name and
+  returns the profile to the generated default, and the removed name is free
+  again for another account.
 - Two concurrent edits of the same profile. The row lock orders them, so the
   name and the avatar never end up from different requests.
 - The explicit guest link. The guest moves before the link, so an accepted
   fingerprint exists. Signing in does not link the seat. The guest mints an
-  ownership proof from its own seat credential, the account links the seat,
+  ownership proof from its own seat credential, and the proof identifier
+  matches the shape the browser contract parses. The account links the seat,
   the seat owner is still the guest afterwards, the stored receipt is still
   readable, the duplicate operation still returns it, the link is listed on
-  the account's profile, and the same proof cannot link a second profile.
+  the account's profile, the spent proof no longer verifies anywhere, and
+  the same proof cannot link a second profile.
 - The rejection of another person's seat. A proof for another seat never
   links this one, in both directions and for both accounts. A guest seat
   credential is not an ownership proof. A request without a proof is refused.
@@ -132,15 +137,18 @@ The integration fixtures cover:
 
 The browser fixtures cover the closed wire contract (an unknown field, a
 missing field, an unsupported version, a name outside the contract and an
-avatar outside the catalog are all refused), the client (a public read with
+avatar outside the catalog are all refused), the shared shape contract (the
+browser rules and the service rules are the same, and the fixture in
+`backend/profile/testdata` is read by both), the client (a public read with
 no credential at all, an account call that keeps the credential in the
 `Authorization` header and out of the body, a name that another profile
-already owns, a request without a signed-in account, the two-step guest
-link, a proof that names another seat, a browser that holds no guest
-credential, a base URL that is not a trusted service origin, and a failed
-request with its status), and the panel state machine (the load, the save,
-the refused name before the request leaves, the name conflict, the guest
-link, the missing guest seat, the already linked seat, and a failed load).
+already owns, the service error code of a refusal, a request without a
+signed-in account, the two-step guest link, a proof that names another seat,
+a browser that holds no guest credential, a base URL that is not a trusted
+service origin, and a failed request with its status), and the panel state
+machine (the load, the save, the refused name before the request leaves, the
+name conflict, the guest link, the missing guest seat, the already linked
+seat, the spent proof, and a failed load).
 
 ## Browser check
 
@@ -159,6 +167,12 @@ avatar. Linking the guest seat answered `Guest seat linked to your account.`
 and listed the linked seat. The panel was inspected in the light and the
 dark appearance, and the automated design detector reported no findings on
 the changed interface files.
+
+The first pass of this check found a real defect: the panel never loaded,
+because the interface tore the panel down in its effect cleanup and React's
+development double-mount disposed the panel before the first load resolved.
+The panel now holds no resource of its own, so it needs no teardown, and the
+check confirmed the load, the save, the conflict and the link.
 
 This is a local check of the interface against a stub service. It is not a
 deployed acceptance run, and it does not certify native accessibility, other
@@ -192,6 +206,14 @@ Three boundaries are deliberate and are stated rather than hidden:
   guest that returns after the credential expired cannot link that seat
   later.
 
+One further boundary is a product gap rather than a design choice. The
+application can only offer the link once a browser holds a guest seat
+credential. The invitation and guest-join flow belongs to KHA-75, so until
+that flow exists the account workspace never holds one, and the panel says
+that linking needs an open guest seat. The service path, the browser client
+path and the proof of ownership are complete and exercised; what is missing
+is the invitation flow that produces the guest seat in the first place.
+
 The invitation, queue and match-claiming surfaces are not part of this
 slice. The named friend challenge that uses the username lookup is a later
 ticket. The offline game layout, the existing sign-in controls and the
@@ -201,6 +223,17 @@ Deployment and provider spending were not performed. The verification above
 used the local source tree and the local PostgreSQL container; branch
 publication and the pull request are tracked separately.
 
+An independent review of the slice against the ticket contract ran on the
+same branch. It found that the browser contract parsed a proof identifier
+shape the service never issued, that a removed public name was a silent
+no-op across the wire, that the profile API's preflight did not allow the
+method it uses, that the link took a seat lock from a client-supplied value
+before the proof was checked, that a spent proof stayed live in the
+authorization service, that the profile writes were not ordered against a
+session revocation, and that the panel never loaded under React's
+development double-mount. All seven were corrected, and the corrections are
+covered by the fixtures and the browser check above.
+
 OpenCode `opencode/minimax-m3.1-flash-free` handled the implementation, the
-fixtures and the browser check. The parent reviewed the findings, the
-integration and the tracker updates.
+fixtures, the independent review and the browser check. The parent reviewed
+the findings, the integration and the tracker updates.

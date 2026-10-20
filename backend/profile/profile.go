@@ -89,6 +89,25 @@ var ChosenAvatars = []string{
 	"violet",
 }
 
+// reservedUsernames are public names that would impersonate a participant
+// label, an account role, or a system identity.
+var reservedUsernames = map[string]bool{
+	"guest":         true,
+	"guests":        true,
+	"anonymous":     true,
+	"deleted":       true,
+	"admin":         true,
+	"administrator": true,
+	"system":        true,
+	"moderator":     true,
+	"support":       true,
+	"staff":         true,
+	"official":      true,
+	"root":          true,
+	"null":          true,
+	"undefined":     true,
+}
+
 // Profile is the public identity of one account.
 type Profile struct {
 	// ProfileID is the stable public identifier. It never changes, it is not
@@ -136,25 +155,6 @@ type Update struct {
 // that would make a public label ambiguous. It starts and ends with a letter
 // or a digit, so a name never ends in a dangling separator.
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{1,22}[A-Za-z0-9]$`)
-
-// reservedUsernames are public names that would impersonate a participant
-// label, an account role, or a system identity.
-var reservedUsernames = map[string]bool{
-	"guest":         true,
-	"guests":        true,
-	"anonymous":     true,
-	"deleted":       true,
-	"admin":         true,
-	"administrator": true,
-	"system":        true,
-	"moderator":     true,
-	"support":       true,
-	"staff":         true,
-	"official":      true,
-	"root":          true,
-	"null":          true,
-	"undefined":     true,
-}
 
 // NormalizeUsername validates a chosen public name.
 //

@@ -9,6 +9,23 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// AuthorizeAccount re-checks a verified account principal inside the
+// caller's transaction.
+//
+// The check runs against the caller's querier, so a caller that holds the
+// account lock sees a session revocation that committed while it waited for
+// the lock. The account expiry is checked again here, because a lock can be
+// held for an unbounded time.
+//
+// Every failure returns the same error, so a caller cannot learn which part
+// of the account identity failed.
+func (s *Service) AuthorizeAccount(ctx context.Context, q online.Querier, account Principal, origin string) error {
+	if q == nil {
+		return ErrUnauthenticated
+	}
+	return s.authorizeAccountPrincipal(ctx, q, account, origin)
+}
+
 // LinkAuthority is the verified authority to bind one guest seat to one
 // account.
 //

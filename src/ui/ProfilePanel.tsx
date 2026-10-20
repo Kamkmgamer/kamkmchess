@@ -31,9 +31,11 @@ const AVATAR_LABELS: Record<string, string> = {
  */
 export function ProfilePanel({ client, guestSeat = null }: ProfilePanelProps) {
   const panel = useMemo(() => createProfilePanel({ client, guestSeat }), [client, guestSeat]);
+  // The panel holds no resource of its own, so there is nothing to tear down
+  // when the interface goes away. React unsubscribes from it, and a late
+  // answer then reaches nobody.
   useEffect(() => {
     void panel.load();
-    return () => panel.dispose();
   }, [panel]);
   const state = useSyncExternalStore(panel.subscribe, panel.getSnapshot, panel.getSnapshot);
   const busy = state.status === 'saving' || state.status === 'linking' || state.status === 'loading';
@@ -88,9 +90,11 @@ export function ProfilePanel({ client, guestSeat = null }: ProfilePanelProps) {
           <span>{link.matchId} · {link.seat}</span>
         </li>)}</ul>
         : <p className="muted">No guest seat is linked yet.</p>}
-      {guestSeat && <div className="account-panel-actions">
-        <button type="button" className="button secondary" disabled={busy} onClick={() => void panel.linkGuestSeat()}>Link guest seat</button>
-      </div>}
+      {guestSeat
+        ? <div className="account-panel-actions">
+          <button type="button" className="button secondary" disabled={busy} onClick={() => void panel.linkGuestSeat()}>Link guest seat</button>
+        </div>
+        : <p className="muted">Open a guest seat to link it to this account.</p>}
     </section>
 
     <p className="profile-status" role="status">{state.message}</p>

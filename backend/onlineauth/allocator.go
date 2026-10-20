@@ -101,11 +101,11 @@ func (a *Allocator) AcceptInvitation(ctx context.Context, request AcceptInvitati
 	if err != nil {
 		return IssuedSeatCredentials{}, err
 	}
-	credentialID, err := newIdentifier()
+	credentialID, err := newIdentifier("kg")
 	if err != nil {
 		return IssuedSeatCredentials{}, err
 	}
-	proofID, err := newIdentifier()
+	proofID, err := newIdentifier("kgp_")
 	if err != nil {
 		return IssuedSeatCredentials{}, err
 	}
@@ -201,7 +201,7 @@ func (a *Allocator) IssueOwnershipProof(ctx context.Context, seatSecret, origin 
 	if err != nil {
 		return IssuedOwnershipProof{}, err
 	}
-	proofID, err := newIdentifier()
+	proofID, err := newIdentifier("kgp_")
 	if err != nil {
 		return IssuedOwnershipProof{}, err
 	}
@@ -442,12 +442,15 @@ func seatOwnedByGuest(ctx context.Context, q online.Querier, matchID string, sea
 }
 
 // newIdentifier returns a random, non-secret identifier for a stored row.
-func newIdentifier() (string, error) {
+//
+// The prefix separates the identifier kinds, so a proof identifier can never
+// be mistaken for a seat credential identifier.
+func newIdentifier(prefix string) (string, error) {
 	raw := make([]byte, 12)
 	if _, err := rand.Read(raw); err != nil {
 		return "", errors.New("onlineauth: secure random source unavailable")
 	}
-	return "kg" + base64.RawURLEncoding.EncodeToString(raw), nil
+	return prefix + base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func matchIDShape(value string) bool {

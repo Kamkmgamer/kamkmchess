@@ -1,9 +1,81 @@
 package profile
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"reflect"
+	"regexp"
 	"testing"
 )
+
+// sharedContract is the shape contract the browser parses too. The fixture is
+// the single source of truth for both sides of the wire.
+type sharedContract struct {
+	ProfileIDPattern  string   `json:"profileIdPattern"`
+	LinkIDPattern     string   `json:"linkIdPattern"`
+	ProofIDPattern    string   `json:"proofIdPattern"`
+	UsernamePattern   string   `json:"usernamePattern"`
+	AvatarChoices     []string `json:"avatarChoices"`
+	ReservedUsernames []string `json:"reservedUsernames"`
+}
+
+func readSharedContract(t *testing.T) sharedContract {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/public-profile-contract.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contract sharedContract
+	if err = json.Unmarshal(raw, &contract); err != nil {
+		t.Fatal(err)
+	}
+	return contract
+}
+
+func TestTheServiceRulesMatchTheSharedShapeContract(t *testing.T) {
+	contract := readSharedContract(t)
+	if contract.UsernamePattern != usernamePattern.String() {
+		t.Fatalf("the public name shape %q does not match the shared contract %q", usernamePattern.String(), contract.UsernamePattern)
+	}
+	if !reflect.DeepEqual(contract.AvatarChoices, ChosenAvatars) {
+		t.Fatalf("the avatar catalog %v does not match the shared contract %v", ChosenAvatars, contract.AvatarChoices)
+	}
+	if len(contract.ReservedUsernames) != len(reservedUsernames) {
+		t.Fatalf("the reserved names %v do not match the shared contract %v", reservedUsernames, contract.ReservedUsernames)
+	}
+	for _, name := range contract.ReservedUsernames {
+		if !reservedUsernames[name] {
+			t.Fatalf("the reserved name %q is missing from the service rules", name)
+		}
+	}
+}
+
+func TestTheIssuedIdentifiersMatchTheSharedShapeContract(t *testing.T) {
+	contract := readSharedContract(t)
+	profileID, err := newIdentifier("kp_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	linkID, err := newIdentifier("kl_")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matchesPattern(contract.ProfileIDPattern, profileID) {
+		t.Fatalf("the profile identifier %q does not match %q", profileID, contract.ProfileIDPattern)
+	}
+	if !matchesPattern(contract.LinkIDPattern, linkID) {
+		t.Fatalf("the link identifier %q does not match %q", linkID, contract.LinkIDPattern)
+	}
+}
+
+func matchesPattern(pattern, value string) bool {
+	expression, err := regexp.Compile(pattern)
+	if err != nil {
+		return false
+	}
+	return expression.MatchString(value)
+}
 
 func TestNormalizeUsernameKeepsTheChosenSpellingAndComparesCaseInsensitively(t *testing.T) {
 	cases := []struct {

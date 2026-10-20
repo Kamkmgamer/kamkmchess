@@ -114,51 +114,51 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
   ): Promise<{ status: number; data: unknown }> {
     const token = await options.accountToken();
     if (typeof token !== 'string' || token.trim() === '') {
-      throw new ProfileRequestError('Sign in before changing your profile.', 401);
+      throw new ProfileRequestError('Sign in before changing your profile.', 401, 'not_signed_in');
     }
     return request(path, { ...init, credential: { kind: 'account', token } });
   }
 
   async function mintOwnershipProof(): Promise<GuestOwnershipProof> {
     if (!options.guestSeatToken) {
-      throw new ProfileRequestError('No guest seat is open in this browser.', 400);
+      throw new ProfileRequestError('No guest seat is open in this browser.', 400, 'no_guest_seat');
     }
     const token = await options.guestSeatToken();
     if (typeof token !== 'string' || token.trim() === '') {
-      throw new ProfileRequestError('No guest seat is open in this browser.', 400);
+      throw new ProfileRequestError('No guest seat is open in this browser.', 400, 'no_guest_seat');
     }
     const result = await request('/v1/guest-seats/ownership-proof', {
       method: 'POST',
       credential: { kind: 'guest', token },
     });
-    if (result.status === 401) throw new ProfileRequestError('That guest seat is no longer yours.', 401);
-    if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status);
+    if (result.status === 401) throw new ProfileRequestError('That guest seat is no longer yours.', 401, errorCode(result.data));
+    if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
     return parseGuestOwnershipProof(result.data);
   }
 
   return {
     async readPublicProfile(profileId) {
       const result = await request(`/v1/profiles/${encodeURIComponent(profileId)}`);
-      if (result.status === 404) throw new ProfileRequestError('That profile does not exist.', 404);
-      if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status);
+      if (result.status === 404) throw new ProfileRequestError('That profile does not exist.', 404, errorCode(result.data));
+      if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
       return parsePublicProfile(result.data);
     },
     async readPublicProfileByUsername(username) {
       const result = await request(`/v1/profiles/username/${encodeURIComponent(username.trim())}`);
-      if (result.status === 404) throw new ProfileRequestError('No player uses that name.', 404);
-      if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status);
+      if (result.status === 404) throw new ProfileRequestError('No player uses that name.', 404, errorCode(result.data));
+      if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
       return parsePublicProfile(result.data);
     },
     async readOwnProfile() {
       const result = await accountRequest('/v1/account/profile');
-      if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status);
+      if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
       return parseOwnProfile(result.data);
     },
     async updateOwnProfile(update) {
       const result = await accountRequest('/v1/account/profile', { method: 'PUT', body: createProfileUpdateBody(update) });
-      if (result.status === 409) throw new ProfileRequestError('That name is already taken.', 409);
-      if (result.status === 400) throw new ProfileRequestError('That name or avatar is not allowed.', 400);
-      if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status);
+      if (result.status === 409) throw new ProfileRequestError('That name is already taken.', 409, errorCode(result.data));
+      if (result.status === 400) throw new ProfileRequestError('That name or avatar is not allowed.', 400, errorCode(result.data));
+      if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
       return parsePublicProfile(result.data);
     },
     mintOwnershipProof,
@@ -167,29 +167,45 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
       // runs on a shareable invitation.
       const proof = await mintOwnershipProof();
       if (proof.matchId !== seat.matchId || proof.seat !== seat.seat) {
-        throw new ProfileRequestError('That proof names another seat.', 409);
+        throw new ProfileRequestError('That proof names another seat.', 409, 'proof_seat_mismatch');
       }
       const result = await accountRequest('/v1/account/profile/guest-links', {
         method: 'POST',
         body: { matchId: seat.matchId, seat: seat.seat },
         headers: { 'X-Guest-Ownership-Proof': proof.secret },
       });
-      if (result.status === 409) throw new ProfileRequestError('That guest seat is already linked.', 409);
-      if (result.status === 401) throw new ProfileRequestError('That guest seat is no longer yours.', 401);
-      if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status);
+      if (result.status === 409) throw new ProfileRequestError('That guest seat is already linked.', 409, errorCode(result.data));
+      if (result.status === 401) throw new ProfileRequestError('That guest seat is no longer yours.', 401, errorCode(result.data));
+      if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
       return parseGuestLink(result.data);
     },
   };
 }
 
+/**
+ * The service error code of a failed response.
+ *
+ * The code is the stable part of a refusal. The interface maps it to one
+ * short sentence, so it never has to read an English message to know what
+ * happened.
+ */
+function errorCode(data: unknown): string {
+  if (typeof data !== 'object' || data === null) return '';
+  const code = (data as { error?: unknown }).error;
+  return typeof code === 'string' ? code : '';
+}
+
 /** A failed profile request. */
 export class ProfileRequestError extends Error {
   readonly status: number;
+  /** The service error code, or an empty string when the service gave none. */
+  readonly code: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, code = '') {
     super(message);
     this.name = 'ProfileRequestError';
     this.status = status;
+    this.code = code;
   }
 }
 
