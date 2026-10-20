@@ -190,8 +190,13 @@ func (e *OnlineEvaluator) Evaluate(ctx context.Context, input online.RulesInput)
 
 // translateRejection maps a rules-process refusal to the shared online
 // contract. An illegal or terminal proposal is a refused intent, not an
-// unavailable service, and a history that does not match the evaluated
-// position is a stale candidate.
+// unavailable service.
+//
+// A history that does not match the evaluated position is different: the
+// writer and the rules process disagree about the position itself. That is an
+// internal consistency failure, not a conflict the participant can fix, so it
+// is reported as an unavailable rules service instead of a user-fixable
+// stale candidate.
 func translateRejection(err error) error {
 	var rejected *RejectionError
 	if !errors.As(err, &rejected) {
@@ -201,7 +206,7 @@ func translateRejection(err error) error {
 	case "illegal-move", "position-terminal":
 		return fmt.Errorf("%w: %s", online.ErrActionNotAllowed, rejected.Message)
 	case "invalid-history", "history-mismatch":
-		return fmt.Errorf("%w: %s", online.ErrStaleCandidate, rejected.Message)
+		return fmt.Errorf("%w: %s", online.ErrUnavailable, rejected.Message)
 	case "invalid-fen":
 		return fmt.Errorf("%w: %s", online.ErrInvalidContract, rejected.Message)
 	default:
