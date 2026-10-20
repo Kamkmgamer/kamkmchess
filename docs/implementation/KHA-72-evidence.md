@@ -1,5 +1,21 @@
 # KHA-72 public profile and explicit guest linking evidence
 
+## Parent response cleanup regression
+
+The parent added a real `ReadableStream` regression for an identity change
+during an unfinished JSON body. It failed because `Response.text()` held the
+reader lock and cancellation of the locked body never reached its source.
+The client now owns the reader, cancels it on identity invalidation and
+releases its lock. The regression and all 78 focused profile/account tests
+pass. Additional liveness checks discard work invalidated between promise
+stages. The workspace also clears the profile binding at the start of its
+identity fence, before asynchronous sign-out cleanup.
+
+The repository's mounted account-switch Chromium check passes on the
+integrated source. It sends no interrupted save and sends the healthy save
+with the replacement account's token. Full combined checks are recorded
+after the remaining match deadline correction is integrated.
+
 Locally verified on 2026-10-20 on `t3/kha-72-profile-fixes`. The tested
 source commit is `50de6e1`. It continues `c3fb56d`, the compact profile
 controls, and the KHA-64 through KHA-68 foundations.

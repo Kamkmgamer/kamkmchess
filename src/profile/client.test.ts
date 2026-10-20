@@ -244,6 +244,25 @@ describe('profile client', () => {
 });
 
 describe('profile client identity fence', () => {
+  it('cancels and unlocks a stalled response body when the account changes', async () => {
+    const cancelled = vi.fn();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode('{"schemaVersion":1,')); },
+      cancel: cancelled,
+    });
+    const { fetcher } = recordingFetch(() => new Response(body));
+    const { binding } = bindingFor(account('acct_alpha'));
+    const client = createProfileClient({ baseUrl: 'https://service.example', identity: binding, fetch: fetcher });
+
+    const pending = client.readOwnProfile();
+    await vi.waitFor(() => expect(body.locked).toBe(true));
+    binding.abort();
+
+    await expect(pending).rejects.toMatchObject({ code: 'account_changed' });
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    expect(body.locked).toBe(false);
+  });
+
   it('never sends a save under the account that replaced the one the call started under', async () => {
     const { calls, fetcher } = recordingFetch(() => json(publicProfile));
     let release: (() => void) | undefined;

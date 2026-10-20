@@ -74,6 +74,12 @@ export function AccountWorkspace(initialView: WorkspaceView) {
     let unsubscribe: (() => void) | undefined;
     let unsubscribeParticipant: (() => void) | undefined;
     let initialized: AccountSession | null = null;
+    const clearProfileIdentity = () => {
+      if (cancelled) return;
+      identityRef.current = null;
+      const identities = profileIdentities.current;
+      if (identities) setProfileIdentity(identities.update(null, guestCredentialRef.current));
+    };
     void (async () => {
       const credentials = await guestView.composition.connectionStore;
       const created = await createAccountSession({
@@ -81,12 +87,13 @@ export function AccountWorkspace(initialView: WorkspaceView) {
         credentials,
         fence: {
           async fencePendingRequests() {
+            clearProfileIdentity();
             identityGeneration.current += 1;
             for (const request of activeRequests.current) request.abort();
             activeRequests.current.clear();
             await releaseAccountCompositions();
           },
-          clearInMemoryIdentity() { if (!cancelled) setIdentity(null); },
+          clearInMemoryIdentity() { if (!cancelled) { setIdentity(null); clearProfileIdentity(); } },
           hidePrivateViews() { if (!cancelled) { setGames([]); setView(guestResumeView.current); } },
         },
       });

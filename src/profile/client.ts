@@ -115,10 +115,13 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
    */
   async function fenced<T>(work: Promise<T>): Promise<T> {
     const signal = identity.signal;
-    if (signal.aborted) throw accountChanged();
+    if (signal.aborted) {
+      void work.catch(() => undefined);
+      throw accountChanged();
+    }
     let onAbort: (() => void) | undefined;
     try {
-      return await new Promise<T>((resolve, reject) => {
+      const result = await new Promise<T>((resolve, reject) => {
         onAbort = () => { reject(accountChanged()); };
         signal.addEventListener('abort', onAbort, { once: true });
         work.then(
@@ -126,8 +129,32 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
           (error: unknown) => { reject(signal.aborted ? accountChanged() : error); },
         );
       });
+      assertLive();
+      return result;
     } finally {
       if (onAbort) signal.removeEventListener('abort', onAbort);
+    }
+  }
+
+  async function readCredentialedBody(response: Response): Promise<string> {
+    const reader = response.body?.getReader();
+    if (!reader) { assertLive(); return ''; }
+    const decoder = new TextDecoder();
+    let text = '';
+    try {
+      assertLive();
+      for (;;) {
+        const chunk = await fenced(reader.read());
+        if (chunk.done) return text + decoder.decode();
+        text += decoder.decode(chunk.value, { stream: true });
+      }
+    } catch (error) {
+      // The boundary owns this reader, so cancellation also releases a body
+      // whose transport ignored the identity's abort signal.
+      void reader.cancel().catch(() => undefined);
+      throw error;
+    } finally {
+      reader.releaseLock();
     }
   }
 
@@ -190,7 +217,7 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
     let text: string;
     try {
       text = guarded
-        ? await fenced(response.text())
+        ? await readCredentialedBody(response)
         : await response.text();
     } catch (error) {
       // A body that was released too late is not left open.
@@ -205,6 +232,7 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
         throw new ProfileRequestError('The profile service returned an invalid response.', response.status);
       }
     }
+    if (guarded) assertLive();
     return { status: response.status, data };
   }
 
@@ -260,6 +288,7 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
       method: 'POST',
       credential: { kind: 'guest', token },
     });
+    assertLive();
     if (result.status === 401) throw new ProfileRequestError('That guest seat is no longer yours.', 401, 'guest_seat_unauthorized');
     if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
     return parseGuestOwnershipProof(result.data);
@@ -280,12 +309,14 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
     },
     async readOwnProfile() {
       const result = await accountRequest('/v1/account/profile');
+      assertLive();
       if (result.status === 401) throw new ProfileRequestError('Sign in to edit your profile.', 401, 'not_signed_in');
       if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
       return parseOwnProfile(result.data);
     },
     async updateOwnProfile(update) {
       const result = await accountRequest('/v1/account/profile', { method: 'PUT', body: createProfileUpdateBody(update) });
+      assertLive();
       if (result.status === 401) throw new ProfileRequestError('Sign in to edit your profile.', 401, 'not_signed_in');
       if (result.status === 409) throw new ProfileRequestError('That name is already taken.', 409, errorCode(result.data));
       if (result.status === 400) throw new ProfileRequestError('That name or avatar is not allowed.', 400, errorCode(result.data));
@@ -308,6 +339,7 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
         body: { matchId: seat.matchId, seat: seat.seat },
         proof: proof.secret,
       });
+      assertLive();
       if (result.status === 409) throw new ProfileRequestError('That guest seat is already linked.', 409, errorCode(result.data));
       // The link route carries the account session and the ownership proof, so
       // its refusal does not say which of the two was refused.
