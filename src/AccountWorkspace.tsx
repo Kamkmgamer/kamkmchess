@@ -1,5 +1,5 @@
 import { IconButton } from './ui/Icon.js';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { accountGameDatabaseName, createAccountSession, createIndexedDbAccountData, readClerkRuntimeConfig } from './accounts/index.js';
 import type { AccountIdentity, AccountSession, GuestGameSummary } from './accounts/index.js';
 import { createCloudCoordination, createCloudSyncManager, createIndexedDbCloudLocal, GoCloudClient, readCloudRuntimeConfig } from './cloud/index.js';
@@ -7,8 +7,14 @@ import { openGameStore } from './storage/index.js';
 import type { ControllerSnapshotV1 } from './controller/index.js';
 import { App } from './ui/App.js';
 import { AccountPanel } from './ui/AccountPanel.js';
+import { ProfilePanel } from './ui/ProfilePanel.js';
 import { MatchComposition } from './ui/match-composition.js';
 import type { LocalGameSession } from './ui/match-composition.js';
+import { createProfileClient } from './profile/client.js';
+import type { GuestSeatBinding } from './profile/client.js';
+import { createParticipantSession } from './online/session.js';
+import type { ParticipantSession } from './online/session.js';
+import type { GuestOnlineCredential } from './online/auth.js';
 import { publicConfig } from './public-config.js';
 import './account-workspace.css';
 
@@ -36,12 +42,13 @@ async function releaseAccountCompositions(keep?: MatchComposition): Promise<void
 
 /** Mounted only by an explicitly configured account build. Guest startup stays local. */
 export function AccountWorkspace(initialView: WorkspaceView) {
-  const [accountPage, setAccountPage] = useState<'account' | 'games' | null>(null);
+  const [accountPage, setAccountPage] = useState<'account' | 'games' | 'profile' | null>(null);
   const [gamePage, setGamePage] = useState(0);
   const [guestView] = useState(initialView);
   const guestResumeView = useRef(guestView);
   const [session, setSession] = useState<AccountSession | null>(null);
   const [identity, setIdentity] = useState<AccountIdentity | null>(null);
+  const [guestCredential, setGuestCredential] = useState<GuestOnlineCredential | null>(null);
   const [view, setView] = useState<WorkspaceView>(guestView);
   const [games, setGames] = useState<readonly GuestGameSummary[]>([]);
   const [message, setMessage] = useState('');
@@ -50,6 +57,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
   const [conflicts, setConflicts] = useState<Record<string, { revision: number; epoch: number }>>({});
   const activeRequests = useRef(new Set<AbortController>());
   const accountSession = useRef<AccountSession | null>(null);
+  const participantSession = useRef<ParticipantSession | null>(null);
   const identityGeneration = useRef(0);
   const activeView = useRef(view);
   useEffect(() => { activeView.current = view; }, [view]);
@@ -58,6 +66,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
     const requests = activeRequests.current;
     let cancelled = false;
     let unsubscribe: (() => void) | undefined;
+    let unsubscribeParticipant: (() => void) | undefined;
     let initialized: AccountSession | null = null;
     void (async () => {
       const credentials = await guestView.composition.connectionStore;
@@ -79,6 +88,15 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       initialized = created;
       accountSession.current = created;
       setSession(created);
+      // The participant session holds the guest seat credential, if this
+      // browser controls one. It never merges into the signed-in account.
+      const participants = createParticipantSession({ accountSession: created });
+      participantSession.current = participants;
+      unsubscribeParticipant = participants.subscribe((state) => {
+        if (cancelled) return;
+        const credential = state.credential;
+        setGuestCredential(credential && credential.kind === 'guest' ? credential : null);
+      });
       unsubscribe = created.subscribe((next) => {
         if (cancelled) return;
         identityGeneration.current += 1;
@@ -93,12 +111,39 @@ export function AccountWorkspace(initialView: WorkspaceView) {
     return () => {
       cancelled = true;
       unsubscribe?.();
+      unsubscribeParticipant?.();
+      participantSession.current?.dispose();
+      participantSession.current = null;
       initialized?.dispose();
       identityGeneration.current += 1;
       for (const request of requests) request.abort();
       void releaseAccountCompositions().catch(() => undefined);
     };
   }, [guestView]);
+
+  // The public profile client. It needs the service origin and the signed-in
+  // account; without them there is no profile surface to show.
+  const profileClient = useMemo(() => {
+    if (!publicConfig.apiBaseUrl || !session) return null;
+    return createProfileClient({
+      baseUrl: publicConfig.apiBaseUrl,
+      accountToken: async () => {
+        const active = session.identity;
+        if (!active) throw new Error('Sign in to edit your profile.');
+        return active.token();
+      },
+      guestSeatToken: async () => {
+        if (!guestCredential) throw new Error('No guest seat is open in this browser.');
+        return guestCredential.issue();
+      },
+    });
+  }, [session, guestCredential]);
+
+  // The guest seat this browser controls, when there is one.
+  const guestSeat = useMemo<GuestSeatBinding | null>(
+    () => (guestCredential ? { matchId: guestCredential.matchId, seat: guestCredential.seat } : null),
+    [guestCredential],
+  );
 
   useEffect(() => {
     if (!identity) return;
@@ -233,7 +278,8 @@ export function AccountWorkspace(initialView: WorkspaceView) {
   return <>
     {accountPage && <section className="focus-page account-workspace" aria-label="Account and saved games">
       <div className="panel-heading"><IconButton icon="back" label="Back" onClick={() => setAccountPage('account')} disabled={accountPage === 'account'} /><IconButton icon="close" label="Close account" onClick={() => setAccountPage(null)} /></div>
-      {accountPage === 'account' ? session ? <AccountPanel session={session} guestImport={repositories} onIdentityChanged={() => setRevision(value => value + 1)} onOpenGames={() => { setGamePage(0); setAccountPage('games'); }} /> : <p>Loading…</p> : <>
+      {accountPage === 'account' ? session ? <AccountPanel session={session} guestImport={repositories} onIdentityChanged={() => setRevision(value => value + 1)} onOpenGames={() => { setGamePage(0); setAccountPage('games'); }} onOpenProfile={profileClient ? () => setAccountPage('profile') : undefined} /> : <p>Loading…</p>
+        : accountPage === 'profile' ? (profileClient ? <ProfilePanel client={profileClient} guestSeat={guestSeat} /> : <p>The profile service is not configured.</p>) : <>
         <h2>Saved games</h2>
         <div className="account-actions">
           <IconButton icon="plus" label="New account game" disabled={busy} onClick={() => void openAccountGame()} />

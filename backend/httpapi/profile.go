@@ -258,6 +258,8 @@ func (a *profileAPI) ownershipProof(w http.ResponseWriter, r *http.Request) {
 		SchemaVersion: profile.SchemaVersion,
 		ProofID:       proof.ProofID,
 		Secret:        proof.Secret,
+		MatchID:       proof.MatchID,
+		Seat:          string(proof.Seat),
 		ExpiresAt:     proof.ExpiresAt.UTC(),
 	})
 }
@@ -298,11 +300,15 @@ type guestLinkResponse struct {
 
 // ownershipProofResponse delivers a freshly minted proof to its holder.
 //
-// The secret is delivered once, in this response, and never stored.
+// The secret is delivered once, in this response, and never stored. The seat
+// binding travels with it so a caller can confirm the proof names the seat it
+// means to link before it uses the secret.
 type ownershipProofResponse struct {
 	SchemaVersion int       `json:"schemaVersion"`
 	ProofID       string    `json:"proofId"`
 	Secret        string    `json:"secret"`
+	MatchID       string    `json:"matchId"`
+	Seat          string    `json:"seat"`
 	ExpiresAt     time.Time `json:"expiresAt"`
 }
 

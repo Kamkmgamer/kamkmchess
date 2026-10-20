@@ -70,6 +70,13 @@ for an authenticated account principal. It does not change seat ownership or mer
 KHA-72 owns explicit linking, must consume or bind the proof within its linking transaction, and
 must preserve the original actor used in operation fingerprints.
 
+KHA-72 implements that link. The public profile service re-verifies the account session, the
+proof, the parent credential, the seat ownership and every expiry inside the link transaction,
+under the account lock and the guest seat lock, and consumes the proof there. The seat owner, the
+guest actor and the accepted fingerprints are unchanged. `VerifyLinkSeat` is the in-transaction
+verification the link uses, and the advisory lock helpers let the link take the same locks the
+revocation paths take. See [the public profile contract](public-profiles.md).
+
 A verified guest can use its participant authority to request replay removal through the existing
 command contract. Trusted removal handling can revoke the guest seat's credentials. Full erasure,
 anonymization, retention and restore handling remain KHA-79.

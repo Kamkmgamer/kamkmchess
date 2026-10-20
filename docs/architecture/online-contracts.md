@@ -272,6 +272,18 @@ Migration `0003_online_auth.sql` adds session revocations, guest seat credential
 proofs. Only hashes of the random guest secrets are stored. Match seats retain their original
 participant references, preserving receipt fingerprints and the existing seat immutability guard.
 
+## Public profiles
+
+KHA-72 adds the stable public identity of a signed-in account: an opaque public profile identifier,
+a deliberately chosen and case-insensitively unique username, and a chosen avatar from a bounded
+catalog. The public payload is an allowlist, so it never carries the account identifier, the
+sign-in email, the legal name, or a session or credential. A guest has no profile.
+
+Linking a guest seat to an account is an explicit action that consumes a guest ownership proof
+inside the link transaction, under the account lock and the guest seat lock. The seat owner, the
+guest actor, the accepted receipts and the accepted fingerprints are left untouched. See
+[the public profile contract](public-profiles.md) for the routes, the storage, and the boundaries.
+
 ## Deferred work
 
 - Finite fetch-SSE delivery, durable cursors and polling recovery (KHA-69).
