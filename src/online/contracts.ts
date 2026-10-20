@@ -34,6 +34,7 @@ export type EventKind =
   | 'move'
   | 'resign'
   | 'abort'
+  | 'cancel'
   | 'control_change'
   | 'timeout'
   | 'replay_removed'
@@ -192,8 +193,6 @@ export interface Offer {
   /** The match version the offer was made against. */
   baseVersion: number;
   createdAt: string;
-  resolvedAt: string | null;
-  resolution: 'accepted' | 'superseded' | null;
 }
 
 /**
@@ -505,6 +504,7 @@ function parseEventKind(value: unknown, path: string): EventKind {
     'move',
     'resign',
     'abort',
+    'cancel',
     'control_change',
     'timeout',
     'replay_removed',

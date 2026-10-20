@@ -767,6 +767,154 @@ func TestPostgresOnlineControlChangeKeepsTheClockRunning(t *testing.T) {
 	}
 }
 
+// MAT-08: the clock keeps running while no intent arrives. The deadline is
+// absolute, so the elapsed time is charged at the next accepted move.
+func TestPostgresOnlineClockKeepsRunningWhileNoIntentArrives(t *testing.T) {
+	service, pool := onlineService(t, moveEvaluator{})
+	ctx := context.Background()
+	matchID := "match-clock-running"
+	create := createOnlineCommand(matchID, "op-clock-running-create")
+	create.Action.CreateMatch.TimeControl = online.TimeControl{StartingTimeMs: 300_000, IncrementMs: 2_000}
+	if _, err := service.Execute(ctx, alice, create); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	playOpeningExchange(t, service, matchID, "op-clock-running")
+	before, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Clock.ActiveSeat == nil || *before.Clock.ActiveSeat != online.SeatWhite {
+		t.Fatalf("the opening reply did not start White's main clock: %+v", before.Clock)
+	}
+	// White thinks for ten seconds without sending an intent.
+	if _, err = pool.Exec(ctx, `UPDATE online_clocks SET active_since=active_since-$1::interval WHERE match_id=$2`, "10 seconds", matchID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-clock-running-white-second", online.SeatWhite, 3, "g1f3")); err != nil {
+		t.Fatalf("accepted move: %v", err)
+	}
+	after, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The bank lost the thinking time and gained the increment once.
+	if after.Clock.WhiteMs > before.Clock.WhiteMs-10_000+2_000 {
+		t.Fatalf("the bank = %d, want at least the ten seconds of thinking deducted", after.Clock.WhiteMs)
+	}
+	if after.Clock.WhiteMs < before.Clock.WhiteMs-11_000+2_000 {
+		t.Fatalf("the bank = %d, want the ten seconds of thinking deducted and one increment added", after.Clock.WhiteMs)
+	}
+}
+
+// MAT-11: play that continues after a draw offer declines it, so the offer
+// never survives an accepted move.
+func TestPostgresOnlineAcceptedMoveWithdrawsAPendingDrawOffer(t *testing.T) {
+	service, _ := onlineService(t, moveEvaluator{})
+	ctx := context.Background()
+	matchID := "match-draw-withdrawn"
+	createOnlineMatch(t, service, matchID, "op-draw-withdrawn-create")
+	if _, err := service.Execute(ctx, alice, offerDrawOnlineCommand(matchID, "op-draw-withdrawn-offer", online.SeatWhite, 1)); err != nil {
+		t.Fatalf("draw offer: %v", err)
+	}
+	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-draw-withdrawn-white", online.SeatWhite, 1, "e2e4")); err != nil {
+		t.Fatalf("opening move: %v", err)
+	}
+	after, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after.Offers) != 0 {
+		t.Fatalf("the accepted move left %d pending offers", len(after.Offers))
+	}
+	if _, err = service.Execute(ctx, bob, acceptDrawOnlineCommand(matchID, "op-draw-withdrawn-accept", online.SeatBlack, 2)); !errors.Is(err, online.ErrActionNotAllowed) {
+		t.Fatalf("accepting a withdrawn offer = %v, want ErrActionNotAllowed", err)
+	}
+	match, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if match.Status != online.MatchActive || match.Result != nil {
+		t.Fatalf("the withdrawn offer ended the match: %+v", match)
+	}
+}
+
+// MAT-12: a finished match has no pending offer.
+func TestPostgresOnlineFinishedMatchHasNoPendingOffer(t *testing.T) {
+	service, _ := onlineService(t, moveEvaluator{})
+	ctx := context.Background()
+	matchID := "match-offer-finished"
+	createOnlineMatch(t, service, matchID, "op-offer-finished-create")
+	if _, err := service.Execute(ctx, alice, offerDrawOnlineCommand(matchID, "op-offer-finished-offer", online.SeatWhite, 1)); err != nil {
+		t.Fatalf("draw offer: %v", err)
+	}
+	if _, err := service.Execute(ctx, bob, resignOnlineCommand(matchID, "op-offer-finished-resign", online.SeatBlack, 1)); err != nil {
+		t.Fatalf("resign: %v", err)
+	}
+	after, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != online.MatchCompleted {
+		t.Fatalf("status = %q, want completed", after.Status)
+	}
+	if len(after.Offers) != 0 {
+		t.Fatalf("the finished match still shows %d pending offers", len(after.Offers))
+	}
+}
+
+// MAT-04: the expiry is reconciled before any other refusal, so a late,
+// stale or wrong-seat intent settles the match the same way as a late legal
+// move.
+func TestPostgresOnlineExpiredClockSettlesEvenWhenTheIntentIsRefused(t *testing.T) {
+	service, pool := onlineService(t, timeoutEvaluator{winnerFor: timeoutWinForOpponent})
+	ctx := context.Background()
+	matchID := "match-expired-refusal"
+	createOnlineMatch(t, service, matchID, "op-expired-refusal-create")
+	playOpeningExchange(t, service, matchID, "op-expired-refusal")
+	expireMainClock(t, pool, matchID)
+	// Black is not the side to move, so the intent is refused, but the expired
+	// clock still settles the match.
+	late, err := service.Execute(ctx, bob, moveOnlineCommand(matchID, "op-expired-refusal-late", online.SeatBlack, 3, "e7e5"))
+	if err != nil {
+		t.Fatalf("the late intent: %v", err)
+	}
+	if late.Receipt.Outcome != online.OutcomeDeadlineExpired {
+		t.Fatalf("outcome = %q, want deadline_expired", late.Receipt.Outcome)
+	}
+	match, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if match.Status != online.MatchCompleted || match.Result == nil || match.Result.Reason != online.ReasonTimeout {
+		t.Fatalf("match after the refused intent = %+v", match)
+	}
+	if len(match.Moves) != 2 {
+		t.Fatalf("the refused intent became a move: moves=%d", len(match.Moves))
+	}
+}
+
+// MAT-02: the cancellation is recorded as its own event, so the audit trail
+// separates it from an explicit resignation.
+func TestPostgresOnlineCancellationIsRecordedAsItsOwnEvent(t *testing.T) {
+	service, pool := onlineService(t, moveEvaluator{})
+	ctx := context.Background()
+	matchID := "match-cancel-event"
+	createOnlineMatch(t, service, matchID, "op-cancel-event-create")
+	if _, err := service.Execute(ctx, alice, moveOnlineCommand(matchID, "op-cancel-event-white", online.SeatWhite, 1, "e2e4")); err != nil {
+		t.Fatalf("opening move: %v", err)
+	}
+	if _, err := service.Execute(ctx, bob, cancelOnlineCommand(matchID, "op-cancel-event-black", online.SeatBlack, 2)); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	var kind string
+	if err := pool.QueryRow(ctx, `SELECT event_kind FROM online_events WHERE match_id=$1 AND version=3`, matchID).Scan(&kind); err != nil {
+		t.Fatal(err)
+	}
+	if kind != "cancel" {
+		t.Fatalf("the cancellation event = %q, want cancel", kind)
+	}
+}
+
 // MAT-12: a final result cannot be overwritten by later intents.
 func TestPostgresOnlineFinalResultCannotBeOverwritten(t *testing.T) {
 	service, pool := onlineService(t, moveEvaluator{})
@@ -784,12 +932,12 @@ func TestPostgresOnlineFinalResultCannotBeOverwritten(t *testing.T) {
 		t.Fatalf("match after the resignation = %+v", final)
 	}
 	for name, command := range map[string]online.Command{
-		"move":           moveOnlineCommand(matchID, "op-final-move", online.SeatBlack, 2, "e7e5"),
-		"cancel":         cancelOnlineCommand(matchID, "op-final-cancel", online.SeatBlack, 2),
-		"offer draw":     offerDrawOnlineCommand(matchID, "op-final-offer", online.SeatBlack, 2),
-		"accept draw":    acceptDrawOnlineCommand(matchID, "op-final-accept", online.SeatBlack, 2),
+		"move":            moveOnlineCommand(matchID, "op-final-move", online.SeatBlack, 2, "e7e5"),
+		"cancel":          cancelOnlineCommand(matchID, "op-final-cancel", online.SeatBlack, 2),
+		"offer draw":      offerDrawOnlineCommand(matchID, "op-final-offer", online.SeatBlack, 2),
+		"accept draw":     acceptDrawOnlineCommand(matchID, "op-final-accept", online.SeatBlack, 2),
 		"accept takeback": acceptTakebackOnlineCommand(matchID, "op-final-takeback", online.SeatBlack, 2),
-		"recovery":       recoveryAttemptOnlineCommand(matchID, "op-final-recovery", online.SeatBlack, 2, online.RecoveryIllegalMove),
+		"recovery":        recoveryAttemptOnlineCommand(matchID, "op-final-recovery", online.SeatBlack, 2, online.RecoveryIllegalMove),
 	} {
 		if _, err = service.Execute(ctx, bob, command); !errors.Is(err, online.ErrMatchEnded) {
 			t.Fatalf("%s after the final result = %v, want ErrMatchEnded", name, err)

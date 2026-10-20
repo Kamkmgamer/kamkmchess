@@ -30,9 +30,10 @@ Membership failures and missing matches both return 404. Invalid credentials ret
 requests 400, missing mutation origin 403, version/operation conflicts 409 and unavailable rules or
 storage 503. JSON responses use `Cache-Control: no-store`.
 
-The live response contains position, clocks, accepted moves, public labels, declared controls and
-`yourSeat`. It omits participant references, Clerk subjects, guest IDs, session IDs, credential IDs
-and hashes. Public replay reads use the existing completed-game allowlist and respect removal.
+The live response contains position, clocks, accepted moves, public labels, declared controls,
+pending draw and takeback offers, the spent recovery budget of each seat and `yourSeat`. It omits
+participant references, Clerk subjects, guest IDs, session IDs, credential IDs and hashes. Public
+replay reads use the existing completed-game allowlist and respect removal.
 
 ## Credentials and revocation
 

@@ -236,7 +236,7 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 	// The consistent snapshot also resolves an already accepted operation and
 	// re-checks the presented credential, so a revoked participant never
 	// receives a stored receipt.
-	snapshot, duplicate, err := s.preflightMove(ctx, cmd, actor, fingerprint)
+	snapshot, duplicate, sampled, err := s.preflightMove(ctx, cmd, actor, fingerprint)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -247,6 +247,18 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 	seat, ok := snapshot.Seat(cmd.Seat)
 	if !ok || seat.Participant != actor {
 		return CommandResult{}, ErrNotAuthorized
+	}
+	// The expiry is reconciled before any other refusal, so a late, stale or
+	// wrong-seat intent settles the match the same way as a late legal move.
+	// The reconciliation re-checks the deadline under the match lock, so the
+	// snapshot reading is only a hint.
+	if snapshot.Status == MatchActive {
+		if snapshot.Clock.ReplyExpired(sampled) {
+			return s.resolveOpeningExpired(ctx, actor, cmd, fingerprint, snapshot)
+		}
+		if snapshot.Clock.IsExpired(sampled) {
+			return s.resolveExpiredMatch(ctx, actor, cmd, fingerprint, snapshot)
+		}
 	}
 	if snapshot.Status != MatchActive {
 		return CommandResult{}, ErrMatchEnded
@@ -283,8 +295,12 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 // presented credential, and resolves an already accepted operation. The
 // duplicate receipt is only returned after the credential check, so a revoked
 // participant cannot replay an accepted move.
-func (s *Service) preflightMove(ctx context.Context, cmd Command, actor ParticipantRef, fingerprint [32]byte) (Match, *CommandResult, error) {
+//
+// The returned time is the database clock read inside the same snapshot, so
+// it is never older than the state it describes.
+func (s *Service) preflightMove(ctx context.Context, cmd Command, actor ParticipantRef, fingerprint [32]byte) (Match, *CommandResult, time.Time, error) {
 	var duplicate *CommandResult
+	var sampled time.Time
 	snapshot, err := loadMatchSnapshot(ctx, s.db, cmd.MatchID, func(ctx context.Context, tx pgx.Tx, match Match) error {
 		if err := s.authorizeCredential(ctx, tx, cmd.MatchID, actor); err != nil {
 			return err
@@ -297,12 +313,15 @@ func (s *Service) preflightMove(ctx context.Context, cmd Command, actor Particip
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
+		if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&sampled); err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
-		return Match{}, nil, err
+		return Match{}, nil, time.Time{}, err
 	}
-	return snapshot, duplicate, nil
+	return snapshot, duplicate, sampled.UTC(), nil
 }
 
 // ApplyWorkerCandidate is the only path that commits a rules candidate. It
@@ -416,6 +435,10 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 	// starts again. No other seat's budget changes.
 	if _, err = tx.Exec(ctx, `UPDATE online_seats SET illegal_attempts_spent=0,format_corrections_spent=0,updated_at=$1 WHERE match_id=$2 AND seat=$3`,
 		decision, match.MatchID, string(cmd.Seat)); err != nil {
+		return CommandResult{}, err
+	}
+	// Play that continues after a draw offer declines it.
+	if err = withdrawDrawOffers(ctx, tx, match.MatchID, decision); err != nil {
 		return CommandResult{}, err
 	}
 	match.PositionFEN = move.ResultingFEN
@@ -667,7 +690,7 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 			match.Result = result
 			match.CompletedAt = &decision
 			clock = terminalClock(clock, decision)
-			event.Kind = EventResign
+			event.Kind = EventCancel
 			event.Result = result
 			receipt.Result = result
 		} else {
@@ -676,7 +699,7 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 			match.Result = result
 			match.CompletedAt = &decision
 			clock = terminalClock(clock, decision)
-			event.Kind = EventAbort
+			event.Kind = EventCancel
 			event.Result = result
 			receipt.Result = result
 		}
@@ -952,6 +975,52 @@ func (s *Service) resolveExpiredMatch(ctx context.Context, actor ParticipantRef,
 	return s.commitTimeout(ctx, tx, cmd, fingerprint, match, expired, decision, result)
 }
 
+// resolveOpeningExpired adjudicates an opening reply window that was already
+// reached under the locked snapshot. The abort needs no chess rules, so the
+// decision is taken under a fresh lock and a freshly sampled decision time.
+func (s *Service) resolveOpeningExpired(ctx context.Context, actor ParticipantRef, cmd Command, fingerprint [32]byte, snapshot Match) (CommandResult, error) {
+	if snapshot.Clock.ReplySeat == nil {
+		return CommandResult{}, ErrConflict
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	match, clock, decision, err := lockMatch(ctx, tx, cmd.MatchID)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	// The credential is re-checked after the snapshot and before any stored
+	// receipt is returned.
+	if err = s.authorizeCredential(ctx, tx, cmd.MatchID, actor); err != nil {
+		return CommandResult{}, err
+	}
+	if duplicate, err := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
+		return duplicate, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return CommandResult{}, err
+	}
+	match.Clock = clock
+	seat, ok := match.Seat(cmd.Seat)
+	if !ok || seat.Participant != actor {
+		return CommandResult{}, ErrNotAuthorized
+	}
+	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
+		return CommandResult{}, err
+	}
+	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+		return CommandResult{}, err
+	}
+	if match.Status != MatchActive {
+		return CommandResult{}, ErrMatchEnded
+	}
+	if !clock.ReplyExpired(decision) {
+		return CommandResult{}, ErrStaleCandidate
+	}
+	return s.commitOpeningAbort(ctx, tx, cmd, fingerprint, match, clock, decision)
+}
+
 // commitOpeningAbort ends the match because the opening reply window closed
 // without an accepted reply.
 //
@@ -1059,7 +1128,16 @@ func (s *Service) updateMatch(ctx context.Context, tx pgx.Tx, match Match, decis
 	}
 	_, err = tx.Exec(ctx, `UPDATE online_clocks SET white_ms=$1,black_ms=$2,active_seat=$3,active_since=$4,deadline_at=$5,white_moved=$6,black_moved=$7,turn_number=$8,reply_seat=$9,reply_deadline_at=$10,updated_at=$11 WHERE match_id=$12`,
 		match.Clock.WhiteMs, match.Clock.BlackMs, seatValue(match.Clock.ActiveSeat), match.Clock.ActiveSince, match.Clock.DeadlineAt, match.Clock.WhiteMoved, match.Clock.BlackMoved, match.Clock.TurnNumber, seatValue(match.Clock.ReplySeat), match.Clock.ReplyDeadlineAt, decision, match.MatchID)
-	return err
+	if err != nil {
+		return err
+	}
+	if match.Result != nil {
+		// A finished match has no pending offer.
+		if _, err = tx.Exec(ctx, `UPDATE online_offers SET resolved_at=$1,resolution='withdrawn' WHERE match_id=$2 AND resolved_at IS NULL`, decision, match.MatchID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Service) publishProjection(ctx context.Context, tx pgx.Tx, match Match) error {
@@ -1555,6 +1633,14 @@ func loadPendingOffer(ctx context.Context, q queryer, matchID string, kind Offer
 // once and never rewritten.
 func resolveOffer(ctx context.Context, tx pgx.Tx, offer Offer, at time.Time, resolution OfferResolution) error {
 	_, err := tx.Exec(ctx, `UPDATE online_offers SET resolved_at=$1,resolution=$2 WHERE offer_id=$3 AND resolved_at IS NULL`, at.UTC(), string(resolution), offer.OfferID)
+	return err
+}
+
+// withdrawDrawOffers ends every pending draw offer of a match. Play that
+// continues after a draw offer declines it, so a draw offer never survives
+// an accepted move.
+func withdrawDrawOffers(ctx context.Context, tx pgx.Tx, matchID string, at time.Time) error {
+	_, err := tx.Exec(ctx, `UPDATE online_offers SET resolved_at=$1,resolution='withdrawn' WHERE match_id=$2 AND kind='draw' AND resolved_at IS NULL`, at.UTC(), matchID)
 	return err
 }
 

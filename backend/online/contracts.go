@@ -250,6 +250,7 @@ const (
 	EventMove           EventKind = "move"
 	EventResign         EventKind = "resign"
 	EventAbort          EventKind = "abort"
+	EventCancel         EventKind = "cancel"
 	EventControlChange  EventKind = "control_change"
 	EventTimeout        EventKind = "timeout"
 	EventReplayRemoved  EventKind = "replay_removed"
@@ -430,21 +431,23 @@ const (
 	// OfferSuperseded marks an offer replaced by a newer offer from the
 	// same seat.
 	OfferSuperseded OfferResolution = "superseded"
+	// OfferWithdrawn marks an offer that the continuation of the match ended.
+	// An accepted move withdraws every pending draw offer, because play that
+	// continues after an offer declines it.
+	OfferWithdrawn OfferResolution = "withdrawn"
 )
 
 // Offer is one pending draw or takeback offer. Offers are not versioned match
 // transitions: they carry the match version they were made against so a
 // stale takeback offer can be refused.
 type Offer struct {
-	OfferID       string           `json:"offerId"`
-	MatchID       string           `json:"matchId"`
-	Kind          OfferKind        `json:"kind"`
-	Seat          Seat             `json:"seat"`
-	TargetVersion *int64           `json:"targetVersion"`
-	BaseVersion   int64            `json:"baseVersion"`
-	CreatedAt     time.Time        `json:"createdAt"`
-	ResolvedAt    *time.Time       `json:"resolvedAt"`
-	Resolution    *OfferResolution `json:"resolution"`
+	OfferID       string    `json:"offerId"`
+	MatchID       string    `json:"matchId"`
+	Kind          OfferKind `json:"kind"`
+	Seat          Seat      `json:"seat"`
+	TargetVersion *int64    `json:"targetVersion"`
+	BaseVersion   int64     `json:"baseVersion"`
+	CreatedAt     time.Time `json:"createdAt"`
 }
 
 // Action is a closed, typed union. It has no free-form state or SQL field.

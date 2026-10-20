@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS online_offers (
   base_version bigint NOT NULL CHECK (base_version >= 1),
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   resolved_at timestamptz,
-  resolution text CHECK (resolution IS NULL OR resolution IN ('accepted', 'superseded')),
+  resolution text CHECK (resolution IS NULL OR resolution IN ('accepted', 'superseded', 'withdrawn')),
   CHECK ((kind = 'takeback') = (target_version IS NOT NULL)),
   CHECK ((resolved_at IS NULL) = (resolution IS NULL))
 );
@@ -71,7 +71,7 @@ CREATE INDEX IF NOT EXISTS online_offers_match ON online_offers(match_id, kind, 
 
 -- Event kinds for the new transitions.
 ALTER TABLE online_events DROP CONSTRAINT IF EXISTS online_events_event_kind_check;
-ALTER TABLE online_events ADD CONSTRAINT online_events_event_kind_check CHECK (event_kind IN ('match_created', 'move', 'resign', 'abort', 'control_change', 'timeout', 'replay_removed', 'draw_agreement', 'takeback_accepted', 'recovery_attempt', 'illegal_move_loss'));
+ALTER TABLE online_events ADD CONSTRAINT online_events_event_kind_check CHECK (event_kind IN ('match_created', 'move', 'resign', 'abort', 'cancel', 'control_change', 'timeout', 'replay_removed', 'draw_agreement', 'takeback_accepted', 'recovery_attempt', 'illegal_move_loss'));
 ALTER TABLE online_events ADD COLUMN IF NOT EXISTS takeback_target_version bigint;
 ALTER TABLE online_events ADD COLUMN IF NOT EXISTS recovery_attempt text;
 ALTER TABLE online_events DROP CONSTRAINT IF EXISTS online_events_takeback_target_check;
@@ -97,7 +97,7 @@ BEGIN
   END LOOP;
 END
 $$;
-ALTER TABLE online_events ADD CONSTRAINT online_events_result_scope_check CHECK (event_kind IN ('move', 'resign', 'abort', 'timeout', 'draw_agreement', 'illegal_move_loss') OR result IS NULL);
+ALTER TABLE online_events ADD CONSTRAINT online_events_result_scope_check CHECK (event_kind IN ('move', 'resign', 'abort', 'cancel', 'timeout', 'draw_agreement', 'illegal_move_loss') OR result IS NULL);
 
 -- An offer is written once. Only its resolution may be recorded, and only
 -- once, so a later offer cannot rewrite what was offered.
