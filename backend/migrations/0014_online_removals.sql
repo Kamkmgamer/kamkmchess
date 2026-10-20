@@ -13,10 +13,16 @@
 -- The ledger records a removal. It never stores the removed content, and it
 -- never stores a credential, a session, a provider request, or a private
 -- endpoint.
+--
+-- The subject of a removal is its one-way reference, never the subject
+-- identifier: the reference is sha256('kamkm.online.removal.v1:' || identifier)
+-- and it is derived in SQL as well, so the rows of a subject are found without
+-- the identifier ever being stored here.
 
 CREATE TABLE IF NOT EXISTS online_removal_requests (
   removal_id text PRIMARY KEY CHECK (removal_id ~ '^rm_[A-Za-z0-9_-]{8,63}$'),
   subject_kind text NOT NULL CHECK (subject_kind IN ('account', 'guest')),
+  -- The one-way reference of the subject, never the subject identifier.
   subject_id text NOT NULL CHECK (length(subject_id) BETWEEN 1 AND 128),
   -- account_deletion anonymizes the shared games and keeps them.
   -- explicit_removal erases the shared replays from both histories.
@@ -56,6 +62,7 @@ CREATE TABLE IF NOT EXISTS online_removal_ledger (
   ledger_id text PRIMARY KEY CHECK (ledger_id ~ '^rl_[A-Za-z0-9_-]{8,63}$'),
   removal_id text NOT NULL REFERENCES online_removal_requests(removal_id) ON DELETE RESTRICT,
   subject_kind text NOT NULL CHECK (subject_kind IN ('account', 'guest')),
+  -- The one-way reference of the subject, never the subject identifier.
   subject_id text NOT NULL CHECK (length(subject_id) BETWEEN 1 AND 128),
   match_id text NOT NULL CHECK (length(match_id) BETWEEN 8 AND 64),
   scope text NOT NULL CHECK (scope IN ('account_deletion', 'explicit_removal')),
@@ -73,6 +80,8 @@ CREATE INDEX IF NOT EXISTS online_removal_ledger_subject ON online_removal_ledge
 -- ledger entries.
 CREATE TABLE IF NOT EXISTS online_account_deletions (
   deletion_id text PRIMARY KEY CHECK (deletion_id ~ '^rd_[A-Za-z0-9_-]{8,63}$'),
+  -- The one-way reference of the deleted account, never the account
+  -- identifier.
   account_id text NOT NULL UNIQUE CHECK (length(account_id) BETWEEN 1 AND 128),
   requested_at timestamptz NOT NULL,
   applied_at timestamptz NOT NULL,

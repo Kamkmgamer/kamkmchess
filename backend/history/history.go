@@ -88,6 +88,11 @@ var (
 	ErrInvalidLabel = errors.New("history: the public label is not allowed")
 	// ErrNotCompleted reports a match that has not reached a terminal result.
 	ErrNotCompleted = errors.New("history: the match is not completed")
+	// ErrProfileClosed reports the profile of a deleted account.
+	//
+	// A deleted account keeps no public identity, so the publisher never
+	// creates a profile for it and never counts a result for it again.
+	ErrProfileClosed = errors.New("history: the profile of a deleted account is closed")
 )
 
 // DeclaredControl is the declared control of one seat.

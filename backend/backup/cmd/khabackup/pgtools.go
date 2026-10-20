@@ -157,15 +157,53 @@ type postgresRemovalLedger struct {
 }
 
 // available reports whether the online removal ledger exists in the database.
-func (l postgresRemovalLedger) available(ctx context.Context) bool {
+//
+// A read that fails is not an absent ledger. The caller fails closed: an
+// unreadable ledger is not an empty ledger.
+func (l postgresRemovalLedger) available(ctx context.Context) (bool, error) {
 	var exists bool
 	err := l.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='online_removal_ledger')`).Scan(&exists)
-	return err == nil && exists
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// RecordRestore records that the database was restored from a backup.
+func (l postgresRemovalLedger) RecordRestore(ctx context.Context, restoreID string) (string, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !available {
+		return "", nil
+	}
+	return l.removals.RecordRestore(ctx, restoreID)
+}
+
+// ReleaseRestoreGate releases the restore gate after the removal ledger was
+// replayed.
+//
+// The release is refused while the ledger is not applied, so a restored
+// database never serves traffic with the rows of a removed game.
+func (l postgresRemovalLedger) ReleaseRestoreGate(ctx context.Context, restoreID string) error {
+	available, err := l.available(ctx)
+	if err != nil {
+		return err
+	}
+	if !available {
+		return nil
+	}
+	return l.removals.ReleaseRestoreGate(ctx, restoreID)
 }
 
 // ListRemovalRecords reads the online removal ledger of the live database.
 func (l postgresRemovalLedger) ListRemovalRecords(ctx context.Context) ([]backup.RemovalRecord, error) {
-	if !l.available(ctx) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !available {
 		return nil, nil
 	}
 	return l.removals.ListRemovalRecords(ctx)
@@ -176,7 +214,14 @@ func (l postgresRemovalLedger) ListRemovalRecords(ctx context.Context) ([]backup
 // The replay is the privacy service, so the restored rows are removed exactly
 // as the original removal removed them.
 func (l postgresRemovalLedger) ApplyRemovalRecords(ctx context.Context, records []backup.RemovalRecord) error {
-	if len(records) == 0 || !l.available(ctx) {
+	if len(records) == 0 {
+		return nil
+	}
+	available, err := l.available(ctx)
+	if err != nil {
+		return err
+	}
+	if !available {
 		return nil
 	}
 	return l.removals.ApplyRemovalRecords(ctx, records)

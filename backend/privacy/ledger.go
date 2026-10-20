@@ -9,6 +9,7 @@ import (
 
 	"github.com/Kamkmgamer/kamkmchess/backend/backup"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
+	"github.com/Kamkmgamer/kamkmchess/backend/subject"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -63,7 +64,7 @@ func (s *Service) applyRemovalRecord(ctx context.Context, record backup.RemovalR
 	}
 	defer tx.Rollback(ctx)
 	var seat string
-	err = tx.QueryRow(ctx, `SELECT seat FROM online_seats WHERE match_id=$1 AND owner_kind=$2 AND owner_id=$3`,
+	err = tx.QueryRow(ctx, `SELECT seat FROM online_seats WHERE match_id=$1 AND owner_kind=$2 AND `+subject.SQLReference("owner_id")+` = $3`,
 		record.MatchID, record.SubjectKind, record.SubjectID).Scan(&seat)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -85,6 +86,12 @@ func (s *Service) applyRemovalRecord(ctx context.Context, record backup.RemovalR
 		return err
 	}
 	match := subjectMatch{MatchID: record.MatchID, Seat: online.Seat(seat)}
+	// The match row lock orders the replay against the projection of that
+	// match. The projection takes the same lock, so a restored database is
+	// never projected with the rows the replay is about to remove.
+	if _, err = tx.Exec(ctx, `SELECT match_id FROM online_matches WHERE match_id=$1 FOR UPDATE`, record.MatchID); err != nil {
+		return err
+	}
 	if err = s.applyMatchRemoval(ctx, tx, record.RemovalID, record.SubjectKind, record.SubjectID, record.Scope, match); err != nil {
 		return err
 	}
@@ -136,8 +143,9 @@ func RemovalLedgerDigestHex(records []backup.RemovalRecord) (string, error) {
 
 // RecordRestore records that a database was restored from a backup.
 //
-// The restored database may serve traffic only after the removal ledger has
-// been replayed and the gate has been released.
+// The record is written after the restore, because the restore replaces the
+// table that holds it. The gate stays closed until the removal ledger has
+// been replayed and the replay has been verified.
 func (s *Service) RecordRestore(ctx context.Context, restoreID string) (string, error) {
 	restoreID = trimSpace(restoreID)
 	if restoreID == "" {
@@ -167,12 +175,20 @@ func (s *Service) RecordRestore(ctx context.Context, restoreID string) (string, 
 // ReleaseRestoreGate releases a restore gate after the removal ledger has
 // been replayed.
 //
-// The release is final. A gate that was released once never blocks the
-// service again.
+// The release is final, and it is refused while the removal ledger is not
+// applied. A gate is never opened for a database that still serves a removed
+// game.
 func (s *Service) ReleaseRestoreGate(ctx context.Context, restoreID string) error {
 	restoreID = trimSpace(restoreID)
 	if restoreID == "" {
 		return ErrInvalidArgument
+	}
+	applied, err := s.LedgerApplied(ctx)
+	if err != nil {
+		return err
+	}
+	if !applied {
+		return ErrLedgerNotApplied
 	}
 	tag, err := s.db.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE restore_id=$1 AND serving_allowed=false`, restoreID)
 	if err != nil {
@@ -184,16 +200,46 @@ func (s *Service) ReleaseRestoreGate(ctx context.Context, restoreID string) erro
 	return nil
 }
 
-// ServingAllowed reports whether the restored database may serve traffic.
+// LedgerApplied reports whether every recorded removal is applied in the
+// database.
 //
-// A restore that has not released its gate blocks the service, because the
-// newest removal ledger has not been replayed yet.
+// The check reads the applied state of the removals themselves, so it
+// survives a restore: a restored database holds the rows of the removals it
+// lost, and the check finds them. A service that starts on such a database
+// refuses to serve, because the erased game would be public again.
+//
+// The check fails closed: an unreadable ledger is not an empty ledger.
+func (s *Service) LedgerApplied(ctx context.Context) (bool, error) {
+	var pending bool
+	err := s.db.QueryRow(ctx, `
+		SELECT
+			EXISTS(
+				SELECT 1 FROM online_removal_ledger l
+				JOIN online_seats s ON s.match_id = l.match_id AND s.owner_id = l.subject_id
+				WHERE s.owner_id <> 'anonymized')
+			OR EXISTS(
+				SELECT 1 FROM online_removal_ledger l
+				JOIN online_public_replays r ON r.match_id = l.match_id
+				WHERE l.scope = 'explicit_removal' AND r.revoked_at IS NULL)`).Scan(&pending)
+	if err != nil {
+		return false, err
+	}
+	return !pending, nil
+}
+
+// ServingAllowed reports whether the service may serve traffic.
+//
+// Two conditions have to hold: no restore gate is waiting for its removal
+// ledger, and every recorded removal is applied in the database.
 func (s *Service) ServingAllowed(ctx context.Context) (bool, error) {
 	var pending bool
 	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_restore_gates WHERE serving_allowed = false)`).Scan(&pending); err != nil {
 		return false, err
 	}
-	return !pending, nil
+	if pending {
+		return false, nil
+	}
+	return s.LedgerApplied(ctx)
 }
 
 // PendingRecoverySanitizations lists the removals whose recovery copies are

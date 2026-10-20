@@ -49,6 +49,11 @@ var (
 	// ErrProofConsumed reports an ownership proof that already bound a
 	// profile.
 	ErrProofConsumed = errors.New("profile: the ownership proof was already used")
+	// ErrProfileClosed reports the profile of a deleted account.
+	//
+	// A deleted account keeps no public identity, so the profile routes
+	// refuse it.
+	ErrProfileClosed = errors.New("profile: the profile of a deleted account is closed")
 )
 
 // AvatarKind is the origin of a public avatar.

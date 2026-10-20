@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
+	"github.com/Kamkmgamer/kamkmchess/backend/subject"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -58,6 +59,18 @@ func (s *Service) ProjectMatch(ctx context.Context, matchID string) (Replay, err
 	if matchID == "" {
 		return Replay{}, ErrInvalidArgument
 	}
+	// The participants are read before the transaction, because the profile
+	// resolution takes the account lock and the account lock always precedes
+	// the match lock. The removal takes the locks in the same order, so the
+	// two paths cannot deadlock.
+	participants, err := s.readParticipants(ctx, s.db, matchID)
+	if err != nil {
+		return Replay{}, err
+	}
+	profileIDs, err := s.resolveProfiles(ctx, participants)
+	if err != nil {
+		return Replay{}, err
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return Replay{}, err
@@ -79,10 +92,6 @@ func (s *Service) ProjectMatch(ctx context.Context, matchID string) (Replay, err
 		return Replay{}, ErrNotFound
 	}
 	replay, participants, err := s.buildReplay(ctx, tx, matchID)
-	if err != nil {
-		return Replay{}, err
-	}
-	profileIDs, err := s.resolveProfiles(ctx, tx, participants)
 	if err != nil {
 		return Replay{}, err
 	}
@@ -217,14 +226,14 @@ func opponentOf(participants []projectedParticipant, seat online.Seat) projected
 
 // resolveProfiles returns the public profile of every account participant.
 //
-// The resolution runs inside the projection transaction, so a concurrent
-// account deletion is visible: an account that was deleted has no public
-// history any more, and its result rows are never recreated.
+// The resolution runs before the projection takes the match lock, because the
+// profile service takes the account lock. The account lock always precedes
+// the match lock, in the projection and in the removal, so the two paths
+// cannot deadlock.
 //
-// A profile is created only for an account that has one or that is not
-// deleted. The creation runs in its own transaction through the profile
-// service, which is the only writer of the profile table.
-func (s *Service) resolveProfiles(ctx context.Context, tx pgx.Tx, participants []projectedParticipant) (map[string]string, error) {
+// An account that was deleted has no public history any more: its profile is
+// not created and its result rows are never written again.
+func (s *Service) resolveProfiles(ctx context.Context, participants []projectedParticipant) (map[string]string, error) {
 	profileIDs := map[string]string{}
 	for _, participant := range participants {
 		if participant.OwnerKind != string(online.ParticipantAccount) || participant.OwnerID == "" {
@@ -234,34 +243,33 @@ func (s *Service) resolveProfiles(ctx context.Context, tx pgx.Tx, participants [
 			continue
 		}
 		var deleted bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_account_deletions WHERE account_id=$1)`, participant.OwnerID).Scan(&deleted); err != nil {
+		if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_account_deletions WHERE account_id = $1)`, subject.Reference(participant.OwnerID)).Scan(&deleted); err != nil {
 			return nil, err
 		}
 		if deleted {
 			continue
 		}
-		var profileID string
-		err := tx.QueryRow(ctx, `SELECT profile_id FROM online_public_profiles WHERE account_id=$1`, participant.OwnerID).Scan(&profileID)
+		profileID, err := s.profileFor(ctx, participant.OwnerID)
 		if err != nil {
-			if !errors.Is(err, pgx.ErrNoRows) {
-				return nil, err
-			}
-			if s.profiles == nil {
+			if errors.Is(err, ErrProfileClosed) || errors.Is(err, ErrNotFound) {
 				continue
 			}
-			profileID, err = s.profiles.EnsureProfileForAccount(ctx, participant.OwnerID)
-			if err != nil {
-				if errors.Is(err, ErrNotFound) {
-					continue
-				}
-				return nil, err
-			}
+			return nil, err
 		}
 		if profileID != "" {
 			profileIDs[participant.OwnerID] = profileID
 		}
 	}
 	return profileIDs, nil
+}
+
+// profileFor returns the public profile of an account, creating it when the
+// account has none.
+func (s *Service) profileFor(ctx context.Context, accountID string) (string, error) {
+	if s.profiles == nil {
+		return "", ErrNotFound
+	}
+	return s.profiles.EnsureProfileForAccount(ctx, accountID)
 }
 
 // buildReplay reads the shared match state and builds the public replay.

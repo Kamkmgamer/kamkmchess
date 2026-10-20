@@ -140,10 +140,14 @@ Rules the browser must honour:
 * Every removal is recorded in a durable removal ledger (`online_removal_ledger`) and in a
   removal request (`online_removal_requests`). The request is unique per subject and scope, so a
   repeated request never creates a second removal.
+* The subject of a removal is its **one-way reference**, never the identifier. The reference is
+  `sha256("kamkm.online.removal.v1:" + identifier)` and it is derived in SQL as well, so a removal
+  finds the rows of its subject without the identifier ever being stored in the removal tables, the
+  deletion marker, the removal ledger or the encrypted backup bundle. The removal tables, the
+  marker and the ledger therefore never retain the identifier of a removed person.
 * The legacy deletion marker (`online_deletion_markers`) is written in the same transaction. The
   seat guard and the replay guard of the base schema require that marker, so the anonymization and
-  the erasure are only accepted when a recorded marker exists. The marker carries the one-way
-  reference of the subject, not the subject identifier.
+  the erasure are only accepted when a recorded marker exists.
 * The live service data and the public projections are removed inside the removal transaction, so
   they are gone long before the twenty-four hour target. The answer states `liveDeleteDueAt` and
   `liveDeletedAt`.
@@ -151,21 +155,63 @@ Rules the browser must honour:
   `recoverySanitizeDueAt`. The removal ledger travels inside the encrypted backup bundle, and a
   restore replays it before the restored database serves traffic.
 * The restore gate (`online_restore_gates`) blocks the service while a restored database has not
-  released its gate. A restore releases the gate only after the removal ledger was replayed.
-* The operator tooling (`khabackup`) seals the removal ledger into the bundle, reports
-  `removalsApplied` after a restore, and reports the removals it could not apply.
+  released its gate. The service refuses to **start** while the removal ledger is not applied in
+  the database, and every request is checked again while it runs. A restore releases the gate only
+  after the removal ledger was replayed and the replay was verified.
+* The operator tooling (`khabackup`) seals the removal ledger into the bundle, replays it after a
+  restore, records the restore, releases the gate, and reports the removals it could not apply. A
+  ledger that cannot be read is an error, never an empty ledger.
+
+## Lock protocol
+
+The flows that act on the same participant take the same locks, in the same order:
+
+1. the account scope locks, in ascending order (`backend/locks`, the shared account scope lock);
+2. the match row locks, in ascending match identifier order.
+
+* The trusted allocation of a seat, the removal of a participant and the creation of a public
+  profile take the same account scope lock, so an allocation and a removal of one participant are
+  ordered instead of racing.
+* The publication of a public replay and the removal of the same match take the same match row
+  lock, so a first publication and a removal are never interleaved: either the removal is recorded
+  first and the publication refuses to publish, or the publication publishes first and the removal
+  revokes or anonymizes the published payload.
+* The account scope lock always precedes the match row lock, so the two paths cannot deadlock.
 
 ## Known limitations
 
-* The removal request and the removal ledger keep the subject identifier, because a restore has to
-  find the rows of that subject to replay the removal. The identifier is service-held, never
-  public, and it is not in the public payload, the public replay or the public history.
+* The rows that predate a removal (the seat, the public profile row, the session revocation) keep
+  the identifier of the subject, because the service looks them up by it. They are service-held,
+  never public, and they are not in the public payload, the public replay or the public history.
+  The removal tables, the deletion marker, the removal ledger and the encrypted backup bundle carry
+  only the one-way reference.
 * The public profile row of a deleted account stays as an anonymous shell: the base schema keeps
   the profile identifier and the account reference immutable. The chosen name, the chosen avatar
-  and every public history row of the account are removed.
+  and every public history row of the account are removed, the profile seam refuses the deleted
+  account, and the profile routes refuse to publish a name for it again.
 * The declared label of a model opponent is published only when it is a known public model name or
   a label the owner registered before the control was declared. Every other declared value is
   stored as the neutral label `Custom model`.
+
+## Integration notes for the foundation and the queue owners
+
+* **Shared account scope lock.** The allocation, the removal and the profile creation take the
+  account scope lock of `backend/locks` (`LockAccountScope`, `AccountScope`). The key derivation
+  is `pg_advisory_xact_lock(hashtext('kamkmchess.account.' + kind + ':' + id))`, the same one the
+  online service uses, so the flows are ordered against each other. The scope string is the kind
+  and the identifier, so an account and a guest never share a scope.
+* **Removed participants.** The removal tables carry the one-way reference of the subject. The
+  check that refuses a seat for a removed participant must therefore compare the reference:
+  `backend/subject` provides `AccountRemovedSQL` and `GuestRemovedSQL` for exactly that. A
+  removal *request* means the participant is gone; the removal of the public replay of a single
+  match is not a removal request and never closes a seat anywhere.
+* **Restore gate.** The online service already reads `online_restore_gates` for its mutations. The
+  public reads and the service start are gated as well: the service refuses to start while the
+  removal ledger is not applied, and every request answers with `restore_pending` until the gate
+  is released.
+* **Restore lifecycle.** `khabackup restore --apply` restores the bundle, replays the removal
+  ledger, records the restore, verifies the replay and releases the gate. A restore that cannot
+  replay the ledger leaves the gate closed and the service closed.
 
 ## Typed browser modules
 

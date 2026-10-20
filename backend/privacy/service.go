@@ -3,17 +3,17 @@ package privacy
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/locks"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/Kamkmgamer/kamkmchess/backend/subject"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -113,9 +113,11 @@ func (s *Service) remove(ctx context.Context, principal onlineauth.Principal, or
 	}
 	defer tx.Rollback(ctx)
 	if principal.Kind == online.ParticipantAccount {
-		// The account lock orders the removal against the participant command
-		// path and the revocation path.
-		if err = onlineauth.LockAccountScope(ctx, tx, principal.Subject); err != nil {
+		// The account scope lock orders the removal against the trusted
+		// allocation of a seat for the same participant. It is the shared
+		// lock of the online service, so an allocation and a removal of one
+		// participant are ordered instead of racing.
+		if err = locks.LockAccountScope(ctx, tx, locks.AccountScope(string(principal.Participant.Kind), principal.Participant.ID)); err != nil {
 			return Report{}, err
 		}
 		if s.authorizer == nil {
@@ -136,6 +138,11 @@ func (s *Service) remove(ctx context.Context, principal onlineauth.Principal, or
 	} else {
 		if s.authorizer == nil {
 			return Report{}, errors.New("privacy: no account authorizer is configured")
+		}
+		// The guest scope lock orders the removal against the allocation of a
+		// seat for the same guest.
+		if err = locks.LockAccountScope(ctx, tx, locks.AccountScope(string(principal.Participant.Kind), principal.Participant.ID)); err != nil {
+			return Report{}, err
 		}
 		// The guest proves the ownership of its seat with the live seat
 		// credential. The credential is re-checked inside the transaction.
@@ -158,12 +165,13 @@ func (s *Service) remove(ctx context.Context, principal onlineauth.Principal, or
 func (s *Service) applyRemoval(ctx context.Context, tx pgx.Tx, principal onlineauth.Principal, scope string) (Report, error) {
 	subjectKind := string(principal.Participant.Kind)
 	subjectID := principal.Participant.ID
+	reference := subject.Reference(subjectID)
 	now := s.now()
-	request, err := s.ensureRequest(ctx, tx, subjectKind, subjectID, scope, now)
+	request, err := s.ensureRequest(ctx, tx, subjectKind, reference, scope, now)
 	if err != nil {
 		return Report{}, err
 	}
-	matches, err := s.subjectMatches(ctx, tx, subjectKind, subjectID)
+	matches, err := s.subjectMatches(ctx, tx, subjectKind, reference)
 	if err != nil {
 		return Report{}, err
 	}
@@ -177,7 +185,19 @@ func (s *Service) applyRemoval(ctx context.Context, tx pgx.Tx, principal onlinea
 		RecoverySanitizeDueAt: request.RecoverySanitizeDueAt.UTC(),
 	}
 	for _, match := range matches {
-		if err = s.applyMatchRemoval(ctx, tx, request.RemovalID, subjectKind, subjectID, scope, match); err != nil {
+		// The match row lock orders the removal against the publication of
+		// the replay of that match. The projection takes the same lock, so
+		// the two are never interleaved: either the removal is recorded
+		// first and the projection refuses to publish, or the projection
+		// publishes first and the removal revokes or anonymizes it.
+		//
+		// The matches are locked in ascending identifier order, which is the
+		// order the projection locks them in as well, so the two paths
+		// cannot deadlock.
+		if _, err = tx.Exec(ctx, `SELECT match_id FROM online_matches WHERE match_id=$1 FOR UPDATE`, match.MatchID); err != nil {
+			return Report{}, err
+		}
+		if err = s.applyMatchRemoval(ctx, tx, request.RemovalID, subjectKind, reference, scope, match); err != nil {
 			return Report{}, err
 		}
 		if scope == ScopeExplicitRemoval {
@@ -194,14 +214,14 @@ func (s *Service) applyRemoval(ctx context.Context, tx pgx.Tx, principal onlinea
 		}
 	} else {
 		// The deleted account keeps no public history of its own.
-		if _, err = tx.Exec(ctx, `DELETE FROM online_profile_results WHERE profile_id = (SELECT profile_id FROM online_public_profiles WHERE account_id=$1)`, subjectID); err != nil {
+		if _, err = tx.Exec(ctx, `DELETE FROM online_profile_results WHERE profile_id = (SELECT profile_id FROM online_public_profiles WHERE `+subject.SQLReference("account_id")+` = $1)`, reference); err != nil {
 			return Report{}, err
 		}
-		if _, err = tx.Exec(ctx, `DELETE FROM online_profile_result_totals WHERE profile_id = (SELECT profile_id FROM online_public_profiles WHERE account_id=$1)`, subjectID); err != nil {
+		if _, err = tx.Exec(ctx, `DELETE FROM online_profile_result_totals WHERE profile_id = (SELECT profile_id FROM online_public_profiles WHERE `+subject.SQLReference("account_id")+` = $1)`, reference); err != nil {
 			return Report{}, err
 		}
 	}
-	if err = s.removePrivateOwnerData(ctx, tx, subjectKind, subjectID, scope); err != nil {
+	if err = s.removePrivateOwnerData(ctx, tx, subjectKind, reference, scope); err != nil {
 		return Report{}, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE online_removal_requests SET status='applied', applied_at=$1, live_deleted_at=$1, removed_match_count=$2, anonymized_match_count=$3 WHERE removal_id=$4`,
@@ -225,10 +245,13 @@ type removalRequest struct {
 // ensureRequest returns the removal request of the subject, creating it when
 // it is missing.
 //
+// The subject is named by its one-way reference, so the request table never
+// retains the identifier of a removed subject.
+//
 // The unique index of the request table is what makes a repeated request
 // idempotent: the second request of the same subject and scope finds the
 // first one.
-func (s *Service) ensureRequest(ctx context.Context, tx pgx.Tx, subjectKind, subjectID, scope string, now time.Time) (removalRequest, error) {
+func (s *Service) ensureRequest(ctx context.Context, tx pgx.Tx, subjectKind, reference, scope string, now time.Time) (removalRequest, error) {
 	removalID, err := newIdentifier("rm_")
 	if err != nil {
 		return removalRequest{}, err
@@ -237,14 +260,14 @@ func (s *Service) ensureRequest(ctx context.Context, tx pgx.Tx, subjectKind, sub
 		INSERT INTO online_removal_requests(removal_id,subject_kind,subject_id,scope,status,requested_at,verified_at,live_delete_due_at,recovery_sanitize_due_at)
 		VALUES($1,$2,$3,$4,'verified',$5,$5,$6,$7)
 		ON CONFLICT (subject_kind, subject_id, scope) DO NOTHING`,
-		removalID, subjectKind, subjectID, scope, now, now.Add(s.options.LiveRemovalDelay), now.Add(s.options.RecoverySanitizeDelay)); err != nil {
+		removalID, subjectKind, reference, scope, now, now.Add(s.options.LiveRemovalDelay), now.Add(s.options.RecoverySanitizeDelay)); err != nil {
 		return removalRequest{}, err
 	}
 	var request removalRequest
 	err = tx.QueryRow(ctx, `
 		SELECT removal_id,status,verified_at,live_delete_due_at,recovery_sanitize_due_at
 		FROM online_removal_requests
-		WHERE subject_kind=$1 AND subject_id=$2 AND scope=$3`, subjectKind, subjectID, scope).
+		WHERE subject_kind=$1 AND subject_id=$2 AND scope=$3`, subjectKind, reference, scope).
 		Scan(&request.RemovalID, &request.Status, &request.VerifiedAt, &request.LiveDeleteDueAt, &request.RecoverySanitizeDueAt)
 	if err != nil {
 		return removalRequest{}, err
@@ -262,8 +285,11 @@ type subjectMatch struct {
 }
 
 // subjectMatches lists the matches the subject took part in.
-func (s *Service) subjectMatches(ctx context.Context, tx pgx.Tx, subjectKind, subjectID string) ([]subjectMatch, error) {
-	rows, err := tx.Query(ctx, `SELECT match_id,seat FROM online_seats WHERE owner_kind=$1 AND owner_id=$2 ORDER BY match_id`, subjectKind, subjectID)
+//
+// The subject is named by its one-way reference, so the removal never stores
+// or queries the subject identifier.
+func (s *Service) subjectMatches(ctx context.Context, tx pgx.Tx, subjectKind, reference string) ([]subjectMatch, error) {
+	rows, err := tx.Query(ctx, `SELECT match_id,seat FROM online_seats WHERE owner_kind=$1 AND `+subject.SQLReference("owner_id")+` = $2 ORDER BY match_id`, subjectKind, reference)
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +318,7 @@ func (s *Service) subjectMatches(ctx context.Context, tx pgx.Tx, subjectKind, su
 //
 // The marker carries the one-way reference of the subject, so the marker
 // table never retains the identifier of an erased subject.
-func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, subjectKind, subjectID, scope string, match subjectMatch) error {
+func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, subjectKind, reference, scope string, match subjectMatch) error {
 	now := s.now()
 	reason := "account_deletion"
 	if scope == ScopeExplicitRemoval {
@@ -306,7 +332,7 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, s
 		INSERT INTO online_deletion_markers(marker_id,marker_kind,subject_kind,subject_id,match_id,reason,requested_at,applied_at)
 		VALUES($1,'account_anonymization',$2,$3,$4,$5,$6,$6)
 		ON CONFLICT (marker_id) DO NOTHING`,
-		markerID, subjectKind, subjectReference(subjectID), match.MatchID, reason, now); err != nil {
+		markerID, subjectKind, reference, match.MatchID, reason, now); err != nil {
 		return err
 	}
 	if scope == ScopeExplicitRemoval {
@@ -318,7 +344,7 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, s
 			INSERT INTO online_deletion_markers(marker_id,marker_kind,subject_kind,subject_id,match_id,reason,requested_at,applied_at)
 			VALUES($1,'replay_removal',$2,$3,$4,$5,$6,$6)
 			ON CONFLICT (marker_id) DO NOTHING`,
-			removalMarker, subjectKind, subjectReference(subjectID), match.MatchID, reason, now); err != nil {
+			removalMarker, subjectKind, reference, match.MatchID, reason, now); err != nil {
 			return err
 		}
 		// The public replay of the match leaves the public URL.
@@ -356,11 +382,12 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, s
 		}
 	}
 	// The seat of the deleted participant keeps the game and loses the
-	// identity.
+	// identity. The subject is named by its reference, so the raw identifier
+	// is never part of the statement.
 	if _, err = tx.Exec(ctx, `
 		UPDATE online_seats SET owner_id='anonymized', public_label='Deleted player'
-		WHERE match_id=$1 AND seat=$2 AND owner_kind=$3 AND owner_id=$4`,
-		match.MatchID, string(match.Seat), subjectKind, subjectID); err != nil {
+		WHERE match_id=$1 AND seat=$2 AND owner_kind=$3 AND `+subject.SQLReference("owner_id")+` = $4`,
+		match.MatchID, string(match.Seat), subjectKind, reference); err != nil {
 		return err
 	}
 	// The removal ledger records the match, so a restore of an older backup
@@ -373,7 +400,7 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, s
 		INSERT INTO online_removal_ledger(ledger_id,removal_id,subject_kind,subject_id,match_id,scope,removed_at)
 		VALUES($1,$2,$3,$4,$5,$6,$7)
 		ON CONFLICT (removal_id, match_id) DO NOTHING`,
-		ledgerID, removalID, subjectKind, subjectID, match.MatchID, scope, now); err != nil {
+		ledgerID, removalID, subjectKind, reference, match.MatchID, scope, now); err != nil {
 		return err
 	}
 	return nil
@@ -382,38 +409,41 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, s
 // removePrivateOwnerData removes the service-held private owner data of the
 // subject.
 //
+// The subject is named by its one-way reference, so the removal never stores
+// or queries the subject identifier.
+//
 // The account keeps no public name, no chosen avatar, no guest link and no
 // registered public label. The guest keeps no seat credential and no
 // ownership proof.
-func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, subjectKind, subjectID, scope string) error {
+func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, subjectKind, reference, scope string) error {
 	if subjectKind == string(online.ParticipantAccount) {
 		// The public identity of the account is removed. The profile row stays
 		// as an anonymous shell, because the base schema keeps the profile
 		// identifier immutable.
-		if _, err := tx.Exec(ctx, `UPDATE online_public_profiles SET username=NULL, username_key=NULL, avatar_key='', updated_at=clock_timestamp() WHERE account_id=$1`, subjectID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE online_public_profiles SET username=NULL, username_key=NULL, avatar_key='', updated_at=clock_timestamp() WHERE `+subject.SQLReference("account_id")+` = $1`, reference); err != nil {
 			return err
 		}
 		// The explicit guest links of the account are revoked.
-		if _, err := tx.Exec(ctx, `UPDATE online_profile_guest_links SET revoked_at=clock_timestamp(), revoked_reason=$2 WHERE account_id=$1 AND revoked_at IS NULL`, subjectID, scope); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE online_profile_guest_links SET revoked_at=clock_timestamp(), revoked_reason=$2 WHERE `+subject.SQLReference("account_id")+` = $1 AND revoked_at IS NULL`, reference, scope); err != nil {
 			return err
 		}
 		// The registered public labels of the account are revoked.
-		if _, err := tx.Exec(ctx, `UPDATE online_account_public_labels SET revoked_at=clock_timestamp() WHERE account_id=$1 AND revoked_at IS NULL`, subjectID); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE online_account_public_labels SET revoked_at=clock_timestamp() WHERE `+subject.SQLReference("account_id")+` = $1 AND revoked_at IS NULL`, reference); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO online_account_deletions(deletion_id,account_id,requested_at,applied_at,removal_id)
 			VALUES($1,$2,$3,$3,(SELECT removal_id FROM online_removal_requests WHERE subject_kind='account' AND subject_id=$2 AND scope=$4))
-			ON CONFLICT (account_id) DO NOTHING`, deletionID(), subjectID, s.now(), scope); err != nil {
+			ON CONFLICT (account_id) DO NOTHING`, deletionID(), reference, s.now(), scope); err != nil {
 			return err
 		}
 		return nil
 	}
 	// The guest keeps no seat credential and no ownership proof.
-	if _, err := tx.Exec(ctx, `UPDATE online_guest_seat_credentials SET revoked_at=clock_timestamp(), revoked_reason=$2 WHERE guest_id=$1 AND revoked_at IS NULL`, subjectID, "erasure_request"); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE online_guest_seat_credentials SET revoked_at=clock_timestamp(), revoked_reason='erasure_request' WHERE `+subject.SQLReference("guest_id")+` = $1 AND revoked_at IS NULL`, reference); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE online_guest_ownership_proofs SET revoked_at=clock_timestamp(), revoked_reason=$2 WHERE guest_id=$1 AND revoked_at IS NULL`, subjectID, "erasure_request"); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE online_guest_ownership_proofs SET revoked_at=clock_timestamp(), revoked_reason='erasure_request' WHERE `+subject.SQLReference("guest_id")+` = $1 AND revoked_at IS NULL`, reference); err != nil {
 		return err
 	}
 	return nil
@@ -444,20 +474,13 @@ func matchIDs(matches []subjectMatch) []string {
 	return ids
 }
 
-// subjectReference is the one-way reference of a subject.
-//
-// The deletion marker of a removal carries the reference instead of the
-// subject identifier, so the marker table never retains the identifier of an
-// erased subject. The reference is derived with a domain separation, so it
-// cannot be compared with a hash of the same value in another context.
-func subjectReference(subjectID string) string {
-	sum := sha256.Sum256([]byte("kamkm.online.removal.v1:" + subjectID))
-	return hex.EncodeToString(sum[:])
-}
-
 // SubjectReference is the one-way reference of a subject.
+//
+// The removal tables, the deletion marker and the removal ledger carry the
+// reference instead of the subject identifier, so a removal never retains the
+// identifier of the subject it removed.
 func SubjectReference(subjectID string) string {
-	return subjectReference(subjectID)
+	return subject.Reference(subjectID)
 }
 
 // deletionID returns a random identifier for an account deletion record.

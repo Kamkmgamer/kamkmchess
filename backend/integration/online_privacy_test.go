@@ -212,8 +212,16 @@ func TestPostgresExplicitRemovalErasesTheReplayFromBothHistories(t *testing.T) {
 	for _, record := range records {
 		if record.MatchID == matchID {
 			found = true
-			if record.Scope != privacy.ScopeExplicitRemoval || record.SubjectID != "user_a" {
+			if record.Scope != privacy.ScopeExplicitRemoval {
 				t.Fatalf("the ledger record = %+v", record)
+			}
+			// The ledger names the subject by its one-way reference, so the
+			// identifier of the removed account is never retained.
+			if record.SubjectID == "user_a" {
+				t.Fatalf("the ledger record keeps the raw subject identifier: %+v", record)
+			}
+			if record.SubjectID != privacy.SubjectReference("user_a") {
+				t.Fatalf("the ledger record subject = %q", record.SubjectID)
 			}
 		}
 	}
@@ -245,7 +253,7 @@ func TestPostgresExplicitRemovalErasesTheReplayFromBothHistories(t *testing.T) {
 		t.Fatalf("the repeated request changed the aggregate totals: %+v", kept.Totals)
 	}
 	var requests int
-	if err = fixture.pool.QueryRow(context.Background(), `SELECT count(*) FROM online_removal_requests WHERE subject_kind='account' AND subject_id='user_a' AND scope=$1`, privacy.ScopeExplicitRemoval).Scan(&requests); err != nil {
+	if err = fixture.pool.QueryRow(context.Background(), `SELECT count(*) FROM online_removal_requests WHERE subject_kind='account' AND subject_id=$1 AND scope=$2`, privacy.SubjectReference("user_a"), privacy.ScopeExplicitRemoval).Scan(&requests); err != nil {
 		t.Fatal(err)
 	}
 	if requests != 1 {
@@ -454,6 +462,63 @@ func TestPostgresPrivacyRoutesSeparateDeletionFromRemoval(t *testing.T) {
 	guestRemoval := onlineHTTPRequest(handler, http.MethodPost, "/v1/privacy/guest/removal", authTestOrigin, "", nil, `{"confirm":"erase-shared-replays"}`)
 	if guestRemoval.Code != http.StatusUnauthorized {
 		t.Fatalf("the anonymous guest removal status=%d body=%s", guestRemoval.Code, guestRemoval.Body.String())
+	}
+}
+
+// TestPostgresPublicReadsAreRefusedWhileTheRestoreGateIsClosed covers the
+// serving gate of a restored database.
+//
+// A restore that has not replayed the removal ledger keeps the service
+// closed: the public replay and the public history answer with a retryable
+// failure instead of serving a game that was removed.
+func TestPostgresPublicReadsAreRefusedWhileTheRestoreGateIsClosed(t *testing.T) {
+	fixture, removals, historyService := privacyFixture(t)
+	matchID := "privacy-gate-match"
+	privacyCompletedMatch(t, fixture, historyService, matchID)
+	profileID := privacyProfileID(t, fixture, "user_b")
+	historyService2 := historyService
+	_ = historyService2
+
+	// The composition serves the public routes behind the serving gate.
+	handler := httpapi.WithServingGate(removals, httpapi.NewPublicHistory(historyService))
+	// Before the restore the public reads work.
+	read := onlineHTTPRequest(handler, http.MethodGet, "/v1/public/profiles/"+profileID+"/history", authTestOrigin, "", nil, "")
+	if read.Code != http.StatusOK {
+		t.Fatalf("the public history status=%d body=%s", read.Code, read.Body.String())
+	}
+	// A restore that has not replayed the removal ledger closes the service.
+	if _, err := removals.RecordRestore(context.Background(), "restore-gate-test"); err != nil {
+		t.Fatalf("record restore: %v", err)
+	}
+	allowed, err := removals.ServingAllowed(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed {
+		t.Fatal("a restored database serves traffic before the removal ledger is replayed")
+	}
+	closed := onlineHTTPRequest(handler, http.MethodGet, "/v1/public/profiles/"+profileID+"/history", authTestOrigin, "", nil, "")
+	if closed.Code != http.StatusServiceUnavailable {
+		t.Fatalf("the closed public history status=%d body=%s", closed.Code, closed.Body.String())
+	}
+	replay := onlineHTTPRequest(handler, http.MethodGet, "/v1/public/matches/"+matchID+"/replay", authTestOrigin, "", nil, "")
+	if replay.Code != http.StatusServiceUnavailable {
+		t.Fatalf("the closed public replay status=%d body=%s", replay.Code, replay.Body.String())
+	}
+	// The gate is released only after the removal ledger was replayed.
+	if err = removals.ReleaseRestoreGate(context.Background(), "restore-gate-test"); err != nil {
+		t.Fatalf("release restore gate: %v", err)
+	}
+	allowed, err = removals.ServingAllowed(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed {
+		t.Fatal("a released restore does not serve traffic")
+	}
+	open := onlineHTTPRequest(handler, http.MethodGet, "/v1/public/profiles/"+profileID+"/history", authTestOrigin, "", nil, "")
+	if open.Code != http.StatusOK {
+		t.Fatalf("the public history after the release status=%d body=%s", open.Code, open.Body.String())
 	}
 }
 
