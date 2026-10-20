@@ -78,6 +78,7 @@ The browser suite verifies a full legal game through checkmate and reload, compa
 - [Opponent catalogs and diagnostic API](docs/implementation/KHA-38-api.md)
 - [Controller model handoffs](docs/implementation/KHA-38-controller-api.md)
 - [Optional Clerk account API](docs/implementation/KHA-42-api.md) and [cloud sync API](docs/implementation/KHA-43-api.md)
+- [Online participant authorization](docs/architecture/online-authorization.md), including guest seat credentials and identity fencing. Online invitations, transport and board integration continue in their dependent tickets.
 - [Encrypted backups and local restore rehearsal](docs/implementation/MVP-operations.md)
 - [Exact position checks and resource limits](docs/implementation/MVP-position-checks.md)
 - [Go API and PostgreSQL storage](docs/architecture/go-api.md)

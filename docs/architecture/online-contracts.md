@@ -2,8 +2,8 @@
 
 This note records the boundaries, schema, and transaction rules added by
 [KHA-65](https://linear.app/kamkm/issue/KHA-65/add-shared-online-state-transactional-commands-and-operation-receipts).
-It describes the local foundation only: there is no public HTTP route, stream, queue allocator, or
-deployment change in this slice. Acceptance scenarios `ARC-02`, `ARC-03`, and `ARC-04` remain
+It describes the local foundation and the participant authorization added by KHA-67. SSE delivery
+and queue allocation remain separate work. Acceptance scenarios `ARC-02`, `ARC-03`, and `ARC-04` remain
 `not_run` until the integrated service and staging exercise exist.
 
 ## Ownership boundary
@@ -148,8 +148,8 @@ A stale candidate fails with `ErrStaleCandidate` and writes nothing. The evaluat
 handle in this package; the Go writer remains the only committer.
 
 `rulesworker.NewOnlineEvaluator` implements the setup, move and timeout evaluator contracts using the
-private pinned Node process. Real-process/PostgreSQL fixtures exercise this composition. HTTP
-bootstrap and participant credential verification are later integrations. Internal match/receipt
+private pinned Node process. Real-process/PostgreSQL fixtures exercise this composition. The server
+bootstrap composes participant credential verification and the writer. Internal match/receipt
 read helpers require authorization by their server callers; they are not public routes.
 
 `GetMatchForParticipant` and `GetReceiptForParticipant` provide membership-scoped reads. They return
@@ -157,7 +157,10 @@ read helpers require authorization by their server callers; they are not public 
 internal interfaces. Command decoding requires EOF after the JSON value. Accepted move and public
 replay SAN use a bounded notation check rather than the broader public-label validator.
 
-Match snapshots use one repeatable-read transaction for the match, seats, clock and move list.
+Trusted internal match snapshots use one repeatable-read transaction. Participant snapshots use
+READ COMMITTED while holding the match row FOR SHARE across match, seat, clock, move and receipt
+reads. This blocks the writer while allowing a revocation committed during an authorization-lock
+wait to become visible to the subsequent credential check.
 
 ## Public projection and removal
 
@@ -191,10 +194,19 @@ restricted migration role can still apply the additive schema. Integration tests
 assertions explicitly when the roles are unavailable; a skipped assertion is never reported as a
 pass.
 
+## Participant authorization
+
+KHA-67 adds the participant HTTP API under `/v1/online`, independently of private archive sync.
+See [the authorization contract](online-authorization.md) for routes, credential scope, revocation,
+browser identity fencing and the trusted invitation/linking interfaces.
+
+Migration `0003_online_auth.sql` adds session revocations, guest seat credentials and guest ownership
+proofs. Only hashes of the random guest secrets are stored. Match seats retain their original
+participant references, preserving receipt fingerprints and the existing seat immutability guard.
+
 ## Deferred work
 
-- Authenticated HTTP commands, fetch-SSE delivery, Clerk/guest authorization, and match membership
-  (KHA-67 and KHA-68).
+- Finite fetch-SSE delivery, durable cursors and polling recovery (KHA-69).
 - Queue allocation, lease acquisition/revocation commands, matchmaking, cutoffs, and fallback.
 - First-move opening clocks, 15-second reply abort, draw/takeback, abandonment claims, and full
   outcome adjudication (KHA-68).

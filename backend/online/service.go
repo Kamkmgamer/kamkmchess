@@ -18,14 +18,21 @@ type Service struct {
 	db                 *pgxpool.Pool
 	evaluator          Evaluator
 	rulesPolicyVersion string
+	authorizer         SeatAuthorizer
 }
 
 // Open binds the online writer to a pool. It does not mutate schema.
-func Open(_ context.Context, db *pgxpool.Pool, evaluator Evaluator) (*Service, error) {
+func Open(_ context.Context, db *pgxpool.Pool, evaluator Evaluator, opts ...Option) (*Service, error) {
 	if db == nil {
 		return nil, ErrInvalidArgument
 	}
-	return &Service{db: db, evaluator: evaluator, rulesPolicyVersion: DefaultRulesPolicyVersion}, nil
+	service := &Service{db: db, evaluator: evaluator, rulesPolicyVersion: DefaultRulesPolicyVersion}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(service)
+		}
+	}
+	return service, nil
 }
 
 // SetRulesPolicyVersion pins the policy identifier stored with new matches and
@@ -80,10 +87,28 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if duplicate, err := loadReceipt(ctx, s.db, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
-		return duplicate, nil
-	} else if !errors.Is(err, ErrNotFound) {
+	// The credential is re-checked and an already accepted operation is
+	// resolved inside one transaction that holds the participant lock. The
+	// lock is what orders a duplicate return against a concurrent
+	// revocation, and resolving the duplicate before the rules worker runs
+	// keeps an accepted create retry free of a worker call.
+	preflight, err := s.db.Begin(ctx)
+	if err != nil {
 		return CommandResult{}, err
+	}
+	if err = s.authorizeCredential(ctx, preflight, cmd.MatchID, actor); err != nil {
+		_ = preflight.Rollback(ctx)
+		return CommandResult{}, err
+	}
+	duplicate, duplicateErr := loadReceipt(ctx, preflight, cmd.MatchID, cmd.OperationID, fingerprint[:])
+	// The lock is released before the rules worker runs. The acceptance
+	// transaction takes it again and re-checks the credential.
+	_ = preflight.Rollback(ctx)
+	if duplicateErr == nil {
+		return duplicate, nil
+	}
+	if !errors.Is(duplicateErr, ErrNotFound) {
+		return CommandResult{}, duplicateErr
 	}
 	match := Match{
 		SchemaVersion:      ContractsSchemaVersion,
@@ -118,6 +143,12 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 		return CommandResult{}, err
 	}
 	defer tx.Rollback(ctx)
+	// The credential is re-checked inside the acceptance transaction so a
+	// revocation committed while the rules process was working cannot spend
+	// this operation ID.
+	if err = s.authorizeCredential(ctx, tx, cmd.MatchID, actor); err != nil {
+		return CommandResult{}, err
+	}
 	if duplicate, err := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
 		return duplicate, nil
 	} else if !errors.Is(err, ErrNotFound) {
@@ -134,12 +165,12 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 	if _, err = tx.Exec(ctx, `INSERT INTO online_matches(match_id,schema_version,variant,starting_fen,position_fen,starting_time_ms,increment_ms,version,control_epoch,input_hash,rules_policy_version,status,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
 		match.MatchID, match.SchemaVersion, match.Variant, match.StartingFEN, match.PositionFEN, match.TimeControl.StartingTimeMs, match.TimeControl.IncrementMs, match.Version, match.ControlEpoch, mustHashBytes(inputHash), match.RulesPolicyVersion, string(match.Status), decision, decision); err != nil {
 		if isUniqueViolation(err) {
-			// A concurrent or earlier create may have committed this operation.
+			// A concurrent or earlier create may have committed this
+			// operation. The duplicate is resolved in a transaction that
+			// holds the participant lock, so the return is ordered against
+			// a concurrent revocation instead of racing it.
 			_ = tx.Rollback(ctx)
-			if duplicate, lookupErr := loadReceipt(ctx, s.db, cmd.MatchID, cmd.OperationID, fingerprint[:]); lookupErr == nil {
-				return duplicate, nil
-			}
-			return CommandResult{}, ErrAlreadyExists
+			return s.resolveCreateConflict(ctx, actor, cmd, fingerprint)
 		}
 		return CommandResult{}, err
 	}
@@ -171,23 +202,43 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 	return CommandResult{Receipt: receipt, Raw: raw}, nil
 }
 
+// resolveCreateConflict resolves a create that lost the race for the match
+// row. The stored receipt is looked up inside a transaction that holds the
+// participant lock, so a duplicate return is ordered against a concurrent
+// revocation instead of racing it.
+func (s *Service) resolveCreateConflict(ctx context.Context, actor ParticipantRef, cmd Command, fingerprint [32]byte) (CommandResult, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return CommandResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err = s.authorizeCredential(ctx, tx, cmd.MatchID, actor); err != nil {
+		return CommandResult{}, err
+	}
+	duplicate, err := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:])
+	if err == nil {
+		return duplicate, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return CommandResult{}, err
+	}
+	return CommandResult{}, ErrAlreadyExists
+}
+
 func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Command) (CommandResult, error) {
 	fingerprint, err := CommandFingerprint(actor, cmd)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	snapshot, err := loadMatchConsistent(ctx, s.db, cmd.MatchID)
+	// The consistent snapshot also resolves an already accepted operation and
+	// re-checks the presented credential, so a revoked participant never
+	// receives a stored receipt.
+	snapshot, duplicate, err := s.preflightMove(ctx, cmd, actor, fingerprint)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	// Resolve receipts after the snapshot read: any original operation reflected
-	// in that snapshot has already committed its receipt. An overlapping retry
-	// cannot reject the advanced state before discovering its accepted operation.
-	// The authoritative duplicate check repeats under the match lock.
-	if duplicate, err := loadReceipt(ctx, s.db, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
-		return duplicate, nil
-	} else if !errors.Is(err, ErrNotFound) {
-		return CommandResult{}, err
+	if duplicate != nil {
+		return *duplicate, nil
 	}
 
 	seat, ok := snapshot.Seat(cmd.Seat)
@@ -218,6 +269,32 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 		return CommandResult{}, err
 	}
 	return s.applyWorkerCandidate(ctx, actor, cmd, fingerprint, candidate)
+}
+
+// preflightMove reads one consistent snapshot of the match, re-checks the
+// presented credential, and resolves an already accepted operation. The
+// duplicate receipt is only returned after the credential check, so a revoked
+// participant cannot replay an accepted move.
+func (s *Service) preflightMove(ctx context.Context, cmd Command, actor ParticipantRef, fingerprint [32]byte) (Match, *CommandResult, error) {
+	var duplicate *CommandResult
+	snapshot, err := loadMatchSnapshot(ctx, s.db, cmd.MatchID, func(ctx context.Context, tx pgx.Tx, match Match) error {
+		if err := s.authorizeCredential(ctx, tx, cmd.MatchID, actor); err != nil {
+			return err
+		}
+		receipt, err := lookupReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:])
+		if err == nil {
+			duplicate = &receipt
+			return nil
+		}
+		if !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return Match{}, nil, err
+	}
+	return snapshot, duplicate, nil
 }
 
 // ApplyWorkerCandidate is the only path that commits a rules candidate. It
@@ -254,6 +331,13 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 	if err != nil {
 		return CommandResult{}, err
 	}
+	// The credential is re-checked after the rules worker returned and before
+	// any stored receipt is returned or any state is written. A revocation
+	// committed while the worker was busy therefore rejects the command
+	// instead of racing the accepted move.
+	if err = s.authorizeCredential(ctx, tx, cmd.MatchID, actor); err != nil {
+		return CommandResult{}, err
+	}
 	if duplicate, err := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
 		return duplicate, nil
 	} else if !errors.Is(err, ErrNotFound) {
@@ -270,6 +354,16 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 	seat, ok := match.Seat(cmd.Seat)
 	if !ok || seat.Participant != actor {
 		return CommandResult{}, ErrNotAuthorized
+	}
+	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
+		return CommandResult{}, err
+	}
+	// The decision time is re-sampled after every participant lock is held.
+	// The first sample happened before the authorization lock, so a command
+	// that waited for a revocation, or for a busy seat, must not be judged
+	// against a clock reading from before that wait.
+	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+		return CommandResult{}, err
 	}
 	if clock.IsExpired(decision) && match.Status == MatchActive {
 		_ = tx.Rollback(ctx)
@@ -357,6 +451,11 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 	if err != nil {
 		return CommandResult{}, err
 	}
+	// The credential is re-checked inside the acceptance transaction before a
+	// stored receipt is returned and before any state change.
+	if err = s.authorizeCredential(ctx, tx, cmd.MatchID, actor); err != nil {
+		return CommandResult{}, err
+	}
 	if duplicate, err := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
 		return duplicate, nil
 	} else if !errors.Is(err, ErrNotFound) {
@@ -372,6 +471,16 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 	seat, ok := match.Seat(cmd.Seat)
 	if !ok || seat.Participant != actor {
 		return CommandResult{}, ErrNotAuthorized
+	}
+	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
+		return CommandResult{}, err
+	}
+	// The decision time is re-sampled after every participant lock is held.
+	// The first sample happened before the authorization lock, so a command
+	// that waited for a revocation, or for a busy seat, must not be judged
+	// against a clock reading from before that wait.
+	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+		return CommandResult{}, err
 	}
 	if clock.IsExpired(decision) && match.Status == MatchActive {
 		_ = tx.Rollback(ctx)
@@ -544,6 +653,11 @@ func (s *Service) resolveExpiredMatch(ctx context.Context, actor ParticipantRef,
 	if err != nil {
 		return CommandResult{}, err
 	}
+	// The credential is re-checked after the timeout policy was evaluated and
+	// before any stored receipt is returned.
+	if err = s.authorizeCredential(ctx, tx, cmd.MatchID, actor); err != nil {
+		return CommandResult{}, err
+	}
 	if duplicate, dupErr := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:]); dupErr == nil {
 		return duplicate, nil
 	} else if !errors.Is(dupErr, ErrNotFound) {
@@ -555,6 +669,16 @@ func (s *Service) resolveExpiredMatch(ctx context.Context, actor ParticipantRef,
 	}
 	if seat, ok := match.Seat(cmd.Seat); !ok || seat.Participant != actor {
 		return CommandResult{}, ErrNotAuthorized
+	}
+	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
+		return CommandResult{}, err
+	}
+	// The decision time is re-sampled after every participant lock is held.
+	// The first sample happened before the authorization lock, so a command
+	// that waited for a revocation, or for a busy seat, must not be judged
+	// against a clock reading from before that wait.
+	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+		return CommandResult{}, err
 	}
 	if match.Status != MatchActive {
 		return CommandResult{}, ErrMatchEnded
@@ -707,18 +831,20 @@ func (s *Service) GetMatch(ctx context.Context, matchID string) (Match, error) {
 
 // GetMatchForParticipant returns the live match only to one of its participants.
 // Missing and non-member matches share ErrNotFound to avoid existence leaks.
+// The presented credential is re-checked inside the same snapshot.
 func (s *Service) GetMatchForParticipant(ctx context.Context, matchID string, participant ParticipantRef) (Match, error) {
 	if err := participant.Validate(); err != nil || !idPattern.MatchString(matchID) {
 		return Match{}, ErrInvalidArgument
 	}
-	match, err := loadMatchConsistent(ctx, s.db, matchID)
-	if err != nil {
-		return Match{}, err
-	}
-	if !match.HasParticipant(participant) {
-		return Match{}, ErrNotFound
-	}
-	return match, nil
+	return loadMatchSnapshot(ctx, s.db, matchID, func(ctx context.Context, tx pgx.Tx, match Match) error {
+		if err := s.authorizeCredential(ctx, tx, matchID, participant); err != nil {
+			return err
+		}
+		if !match.HasParticipant(participant) {
+			return ErrNotFound
+		}
+		return nil
+	})
 }
 
 func (s *Service) GetReceipt(ctx context.Context, matchID, operationID string) (CommandResult, error) {
@@ -729,18 +855,31 @@ func (s *Service) GetReceipt(ctx context.Context, matchID, operationID string) (
 }
 
 // GetReceiptForParticipant avoids exposing receipt bytes to unrelated callers.
+// The presented credential is re-checked inside the same snapshot that reads
+// the receipt.
 func (s *Service) GetReceiptForParticipant(ctx context.Context, matchID, operationID string, participant ParticipantRef) (CommandResult, error) {
 	if err := participant.Validate(); err != nil || !idPattern.MatchString(matchID) || !idPattern.MatchString(operationID) {
 		return CommandResult{}, ErrInvalidArgument
 	}
-	match, err := loadMatchConsistent(ctx, s.db, matchID)
+	var result CommandResult
+	_, err := loadMatchSnapshot(ctx, s.db, matchID, func(ctx context.Context, tx pgx.Tx, match Match) error {
+		if err := s.authorizeCredential(ctx, tx, matchID, participant); err != nil {
+			return err
+		}
+		if !match.HasParticipant(participant) {
+			return ErrNotFound
+		}
+		receipt, err := lookupReceipt(ctx, tx, matchID, operationID, nil)
+		if err != nil {
+			return err
+		}
+		result = receipt
+		return nil
+	})
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if !match.HasParticipant(participant) {
-		return CommandResult{}, ErrNotFound
-	}
-	return loadReceiptWithoutHash(ctx, s.db, matchID, operationID)
+	return result, nil
 }
 
 func (s *Service) GetPublicProjection(ctx context.Context, matchID string) (PublicProjection, error) {
@@ -824,6 +963,10 @@ func (s *Service) GetRunnerLease(ctx context.Context, leaseID string) (RunnerLea
 // loadMatchConsistent reads the match row, seats, clock, and moves from one
 // repeatable-read snapshot. Independent statements under READ COMMITTED could
 // otherwise observe a match version from one commit with moves from another.
+//
+// This is the unrestricted read. It is never used where a participant
+// credential is checked, because a repeatable-read snapshot is fixed before
+// the authorization lock is taken.
 func loadMatchConsistent(ctx context.Context, db *pgxpool.Pool, matchID string) (Match, error) {
 	tx, err := db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
@@ -840,11 +983,61 @@ func loadMatchConsistent(ctx context.Context, db *pgxpool.Pool, matchID string) 
 	return match, nil
 }
 
+// loadMatchSnapshot reads a match and runs the authorization callback inside
+// one transaction.
+//
+// The transaction is READ COMMITTED and it holds a shared lock on the match row
+// until it ends.
+//
+// READ COMMITTED is deliberate. A repeatable-read snapshot is fixed by the
+// first statement of the transaction, which is the match read, before the
+// callback takes the participant lock. A revocation that commits while the
+// callback waits for that lock would stay invisible to that snapshot, so the
+// callback would authorize a credential that is already revoked.
+//
+// The shared lock is what keeps the read consistent. The only writer of a
+// match takes the same row exclusively before every transition, so no writer
+// can commit between the match read and the receipt read. The reader and the
+// writer take their locks in the same order: the match row first, the
+// participant lock second.
+func loadMatchSnapshot(ctx context.Context, db *pgxpool.Pool, matchID string, within func(context.Context, pgx.Tx, Match) error) (Match, error) {
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted, AccessMode: pgx.ReadWrite})
+	if err != nil {
+		return Match{}, err
+	}
+	defer tx.Rollback(ctx)
+	match, err := loadMatchForShare(ctx, tx, matchID)
+	if err != nil {
+		return Match{}, err
+	}
+	if within != nil {
+		if err = within(ctx, tx, match); err != nil {
+			return Match{}, err
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Match{}, err
+	}
+	return match, nil
+}
+
 // loadMatch loads one match and its children from a single connection. When q is
 // a writer transaction that already holds the match row lock the result is
 // internally consistent. Read-only callers must use loadMatchConsistent.
 func loadMatch(ctx context.Context, q queryer, matchID string) (Match, error) {
-	match, err := scanMatch(q.QueryRow(ctx, `SELECT `+matchColumns+` FROM online_matches WHERE match_id=$1`, matchID))
+	return loadMatchWithLock(ctx, q, matchID, "")
+}
+
+// loadMatchForShare loads one match while holding a shared lock on its row.
+//
+// The shared lock blocks every state transition of that match, so the seats,
+// clock, and moves read after it belong to the same committed version.
+func loadMatchForShare(ctx context.Context, q queryer, matchID string) (Match, error) {
+	return loadMatchWithLock(ctx, q, matchID, " FOR SHARE")
+}
+
+func loadMatchWithLock(ctx context.Context, q queryer, matchID, lockClause string) (Match, error) {
+	match, err := scanMatch(q.QueryRow(ctx, `SELECT `+matchColumns+` FROM online_matches WHERE match_id=$1`+lockClause, matchID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Match{}, ErrNotFound
 	}
@@ -875,13 +1068,10 @@ func lockMatch(ctx context.Context, tx pgx.Tx, matchID string) (Match, ClockStat
 	if err != nil {
 		return Match{}, ClockState{}, time.Time{}, err
 	}
-	var decision time.Time
-	// Sample after the lock, and keep accepted event time nondecreasing if the
-	// host wall clock steps backwards. Outage reconciliation is a separate flow.
-	if err = tx.QueryRow(ctx, `SELECT GREATEST(clock_timestamp(), $1::timestamptz)`, match.UpdatedAt).Scan(&decision); err != nil {
+	decision, err := sampleDecision(ctx, tx, match.UpdatedAt)
+	if err != nil {
 		return Match{}, ClockState{}, time.Time{}, err
 	}
-	decision = decision.UTC()
 	clock, err := loadClock(ctx, tx, matchID)
 	if err != nil {
 		return Match{}, ClockState{}, time.Time{}, err
@@ -892,6 +1082,24 @@ func lockMatch(ctx context.Context, tx pgx.Tx, matchID string) (Match, ClockStat
 	}
 	match.Seats = seats
 	return match, clock, decision, nil
+}
+
+// sampleDecision samples the authoritative database clock.
+//
+// The reading is taken from the database, not from the host wall clock, so
+// every writer of a match judges a deadline against the same clock. The match
+// update time is the floor, so an accepted event time never moves backwards.
+//
+// The reading must be taken after the participant locks are held. A command
+// that waited for a revocation, or for a busy seat, is judged against the time
+// it actually acquired those locks and not against a reading from before the
+// wait.
+func sampleDecision(ctx context.Context, tx pgx.Tx, floor time.Time) (time.Time, error) {
+	var decision time.Time
+	if err := tx.QueryRow(ctx, `SELECT GREATEST(clock_timestamp(), $1::timestamptz)`, floor).Scan(&decision); err != nil {
+		return time.Time{}, err
+	}
+	return decision.UTC(), nil
 }
 
 func scanMatch(row pgx.Row) (Match, error) {

@@ -6,34 +6,43 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/rulesworker"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Commit the original request immediately after the retry's first receipt
-// lookup. This deterministically exercises an overlapping lost-ack retry.
-type receiptCommitTracer struct {
-	commit func()
+// committingEvaluator commits the original request while the retry is between
+// its snapshot and its acceptance. This deterministically exercises an
+// overlapping lost-ack retry.
+//
+// The rules evaluation is the only point of the command path that holds no
+// transaction and no database lock. The original command is committed from
+// there, so the original overlaps the retry exactly as a lost-ack retry
+// overlaps the request it retries. The original's own evaluation must not
+// commit again, so the commit fires once.
+type committingEvaluator struct {
+	online.Evaluator
+	mu     sync.Mutex
 	fired  bool
+	commit func()
 }
 
-type receiptLookupKey struct{}
-
-func (tr *receiptCommitTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	return context.WithValue(ctx, receiptLookupKey{}, strings.Contains(data.SQL, "FROM online_operation_receipts"))
-}
-
-func (tr *receiptCommitTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryEndData) {
-	if receipt, _ := ctx.Value(receiptLookupKey{}).(bool); receipt && !tr.fired {
-		tr.fired = true
-		tr.commit()
+func (e *committingEvaluator) Evaluate(ctx context.Context, input online.RulesInput) (online.Candidate, error) {
+	candidate, err := e.Evaluator.Evaluate(ctx, input)
+	if err != nil {
+		return candidate, err
 	}
+	e.mu.Lock()
+	fire := !e.fired
+	e.fired = true
+	e.mu.Unlock()
+	if fire {
+		e.commit()
+	}
+	return candidate, nil
 }
 
 type winningMoveEvaluator struct{ moveEvaluator }
@@ -57,38 +66,30 @@ func TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			var evaluator online.Evaluator = moveEvaluator{}
+			var base online.Evaluator = moveEvaluator{}
 			if tc.terminal {
-				evaluator = winningMoveEvaluator{}
+				base = winningMoveEvaluator{}
 			}
-			service, pool := onlineService(t, evaluator)
+			var (
+				service  *online.Service
+				original online.CommandResult
+			)
 			const matchID = "match-receipt-race"
-			createOnlineMatch(t, service, matchID, "op-receipt-create")
 			move := moveOnlineCommand(matchID, "op-receipt-move", online.SeatWhite, 1, "e2e4")
-			var original online.CommandResult
-			tracer := &receiptCommitTracer{commit: func() {
+			evaluator := &committingEvaluator{Evaluator: base, commit: func() {
 				var err error
 				original, err = service.Execute(ctx, alice, move)
 				if err != nil {
 					t.Fatalf("original move: %v", err)
 				}
 			}}
-			cfg := pool.Config()
-			cfg.ConnConfig.Tracer = tracer
-			retryPool, err := pgxpool.NewWithConfig(ctx, cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer retryPool.Close()
-			retryService, err := online.Open(ctx, retryPool, evaluator)
-			if err != nil {
-				t.Fatal(err)
-			}
+			service, _ = onlineService(t, evaluator)
+			createOnlineMatch(t, service, matchID, "op-receipt-create")
 			retry := move
 			if tc.changed {
 				retry.Action.SubmitMove = &online.SubmitMoveAction{UCI: "d2d4"}
 			}
-			result, err := retryService.Execute(ctx, alice, retry)
+			result, err := service.Execute(ctx, alice, retry)
 			if tc.changed {
 				if !errors.Is(err, online.ErrOperationReuse) {
 					t.Fatalf("changed payload after original commit: %v, want ErrOperationReuse", err)
