@@ -20,23 +20,23 @@ import (
 // The queue tests drive the service with a deterministic clock, so every
 // deadline, lease and cutoff is exact instead of approximate.
 
-// fakeClock is the deterministic clock of one test.
-type fakeClock struct {
+// queueClock is the deterministic clock of one test.
+type queueClock struct {
 	mu  sync.Mutex
 	now time.Time
 }
 
-func newFakeClock() *fakeClock {
-	return &fakeClock{now: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
+func newQueueClock() *queueClock {
+	return &queueClock{now: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
 }
 
-func (c *fakeClock) Now() time.Time {
+func (c *queueClock) Now() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.now
 }
 
-func (c *fakeClock) Advance(duration time.Duration) {
+func (c *queueClock) Advance(duration time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.now = c.now.Add(duration)
@@ -115,7 +115,7 @@ type queueHarness struct {
 	pool        *pgxpool.Pool
 	service     *queue.Service
 	online      *online.Service
-	clock       *fakeClock
+	clock       *queueClock
 	credentials *recordingCredentials
 }
 
@@ -129,7 +129,7 @@ func newQueueHarness(t *testing.T) *queueHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clock := newFakeClock()
+	clock := newQueueClock()
 	credentials := &recordingCredentials{}
 	service, err := queue.Open(context.Background(), pool, queue.Options{
 		Now:         clock.Now,
