@@ -1,7 +1,7 @@
 # KHA-68 authoritative online moves, clocks and match outcomes
 
 Locally verified on 2026-10-20 on `t3/authoritative-online-match-outcomes`.
-Tested source commit: `53a9a13`.
+Tested source commit: `1ea088f`.
 The branch starts at `a1e069e`, which includes the KHA-64/65/66/67 foundations.
 
 ## Implemented contract
@@ -85,8 +85,8 @@ go test -count=1 ./backend/... ./cmd/...
 go vet ./backend/... ./cmd/...
 ```
 
-Both commands passed. The full integration package took 50 seconds. The checks used the real private
-Node rules artifact and required PostgreSQL rather than skipping absent-database fixtures.
+Both commands passed. The full integration package took about 55 seconds. The checks used the real
+private Node rules artifact and required PostgreSQL rather than skipping absent-database fixtures.
 
 ### New Go fixtures
 
@@ -104,7 +104,9 @@ Node rules artifact and required PostgreSQL rather than skipping absent-database
   and a cancellation after it resigns. A third fixture takes back the seat's own move and then
   cancels, and the result is still a resignation.
 - MAT-08: a control change keeps the active seat, the active start, the deadline and both banks
-  unchanged, and the clock still expires on its own deadline.
+  unchanged, and the clock still expires on its own deadline. A second fixture moves the start of
+  the running clock into the past and shows that the next accepted move charges the elapsed time
+  and adds the increment once.
 - MAT-11: a draw offer does not advance the match version, does not move a clock and does not end
   the match, the offering seat cannot accept its own offer, and a seat without an offer cannot
   accept a draw. An accepted move withdraws every pending draw offer, so a declined offer cannot
@@ -129,7 +131,8 @@ Node rules artifact and required PostgreSQL rather than skipping absent-database
 Existing fixtures were updated where they encoded the old opening-clock behaviour. The timeout
 fixtures now reach normal play through the opening exchange before they expire a clock, and the
 participant-lock race fixture now proves that a command that waits past the opening reply deadline
-is adjudicated as the opening abort. The assertions were not weakened.
+is adjudicated as the opening abort. A second participant-lock fixture covers the main clock
+deadline. The assertions were not weakened.
 
 `backend/online/contracts_test.go` covers the clock state machine at the package boundary. The
 opening phase fixture asserts that the first accepted move arms the reply window instead of a main
