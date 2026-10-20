@@ -92,9 +92,35 @@ func checkHealth(ctx context.Context, pool *pgxpool.Pool, reporter *online.Healt
 		return
 	}
 	if err := prober.ProbeRules(ctx); err != nil {
+		// The rules process is down. The interruption is recorded as a
+		// durable boundary, so the gate closes and the clock of the
+		// unfinished matches is refunded when the dependency comes back.
+		// The service does not have to restart for the recovery.
+		if suspendErr := prober.SuspendForDependency(ctx, online.DependencyRules); suspendErr != nil {
+			if onError != nil {
+				onError(suspendErr)
+			}
+		}
 		if onError != nil {
 			onError(err)
 		}
+		return
+	}
+	// The rules process answered. A pending interruption is recovered
+	// before the service reports itself healthy again, so the canonical
+	// state is published before resumed actions are accepted.
+	pending, err := prober.PendingSuspension(ctx)
+	if err != nil {
+		if onError != nil {
+			onError(err)
+		}
+		return
+	}
+	if pending == nil {
+		return
+	}
+	if _, err = prober.RecoverFromInterruption(ctx); err != nil && onError != nil {
+		onError(err)
 	}
 }
 

@@ -3,9 +3,7 @@ package privacy
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -14,6 +12,7 @@ import (
 
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/Kamkmgamer/kamkmchess/backend/onlinekeys"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -451,8 +450,7 @@ func matchIDs(matches []subjectMatch) []string {
 // erased subject. The reference is derived with a domain separation, so it
 // cannot be compared with a hash of the same value in another context.
 func subjectReference(subjectID string) string {
-	sum := sha256.Sum256([]byte("kamkm.online.removal.v1:" + subjectID))
-	return hex.EncodeToString(sum[:])
+	return onlinekeys.SubjectReference(subjectID)
 }
 
 // SubjectReference is the one-way reference of a subject.

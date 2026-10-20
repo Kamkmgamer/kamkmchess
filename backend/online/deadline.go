@@ -52,6 +52,11 @@ const (
 	DeadlineNotDue DeadlineOutcome = "not_due"
 	// DeadlineAlreadySettled means the match already carried a terminal result.
 	DeadlineAlreadySettled DeadlineOutcome = "already_settled"
+	// DeadlineGated means the service is suspended, restoring or still
+	// recovering, so the deadline is not settled. The clock of that match
+	// is about to be adjusted by the canonical recovery, and the match
+	// stays pending until the service serves again.
+	DeadlineGated DeadlineOutcome = "gated"
 )
 
 // DeadlineSweep summarises one bounded reconciliation pass.
@@ -141,6 +146,17 @@ func (s *Service) nextDueDeadlineMatchIDs(ctx context.Context, limit int) ([]str
 func (s *Service) ReconcileDeadline(ctx context.Context, matchID string) (DeadlineOutcome, error) {
 	if !idPattern.MatchString(matchID) {
 		return "", ErrInvalidArgument
+	}
+	// The shared gate keeps the sweep away from a suspended or recovering
+	// service. The clock of a due match is about to be adjusted by the
+	// canonical recovery, so settling it now would charge the player for
+	// the interruption.
+	gate, err := ServiceGate(ctx, s.db)
+	if err != nil {
+		return "", err
+	}
+	if !gate.Open {
+		return DeadlineGated, nil
 	}
 	// One consistent snapshot decides which deadline applies. No lock and no
 	// transaction is held while the rules process runs.

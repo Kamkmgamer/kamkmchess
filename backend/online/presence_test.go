@@ -210,22 +210,34 @@ func TestRunnerLeaseRequestValidation(t *testing.T) {
 	}
 }
 
-// TestRecoveryOverlapRefundsOnlyTheInterruptedPart covers the recovery
+// TestRecoveryOverlapRefundsTheWholeInterruption covers the recovery
 // arithmetic.
 //
-// The refund is the part of the charged window that fell inside the
-// interruption, so a clock that survived the interruption is refunded for
-// exactly the time the service was down.
-func TestRecoveryOverlapRefundsOnlyTheInterruptedPart(t *testing.T) {
+// A service interruption is never charged to a player. When the clock was
+// running when the service went down, the whole interruption is refunded,
+// even when the deadline passed while the service was down.
+func TestRecoveryOverlapRefundsTheWholeInterruption(t *testing.T) {
 	start := time.Now().UTC()
 	activeSince := start.Add(-10 * time.Minute)
 	deadline := start.Add(10 * time.Minute)
+	// The clock survived the interruption.
 	overlap, ok := recoveryOverlap(&deadline, &activeSince, nil, nil, start.Add(-time.Hour), start, start.Add(2*time.Minute))
 	if !ok {
 		t.Fatal("the charged window was not found")
 	}
 	if overlap != 2*time.Minute {
-		t.Fatalf("overlap = %v, want 2m", overlap)
+		t.Fatalf("refund = %v, want 2m", overlap)
+	}
+	// The deadline passed while the service was down. The player keeps the
+	// time they had left when the service went down, so the refund is the
+	// whole interruption and not the part of it that fitted in the clock.
+	shortDeadline := start.Add(5 * time.Second)
+	overlap, ok = recoveryOverlap(&shortDeadline, &activeSince, nil, nil, start.Add(-time.Hour), start, start.Add(100*time.Second))
+	if !ok {
+		t.Fatal("the charged window was not found")
+	}
+	if overlap != 100*time.Second {
+		t.Fatalf("refund = %v, want 100s", overlap)
 	}
 	// A deadline that expired before the interruption is preserved.
 	past := start.Add(-time.Minute)
@@ -234,16 +246,27 @@ func TestRecoveryOverlapRefundsOnlyTheInterruptedPart(t *testing.T) {
 		t.Fatal("the charged window was not found")
 	}
 	if overlap != 0 {
-		t.Fatalf("overlap = %v, want 0", overlap)
+		t.Fatalf("refund = %v, want 0", overlap)
 	}
-	// A clock that started after the interruption is untouched.
+	// A clock that started inside the interruption is refunded only for the
+	// part of its charge that fell inside it.
 	later := start.Add(3 * time.Minute)
 	overlap, ok = recoveryOverlap(&deadline, &later, nil, nil, start.Add(-time.Hour), start, start.Add(2*time.Minute))
 	if !ok {
 		t.Fatal("the charged window was not found")
 	}
 	if overlap != 0 {
-		t.Fatalf("overlap = %v, want 0", overlap)
+		t.Fatalf("refund = %v, want 0", overlap)
+	}
+	// The opening reply window follows the same rule.
+	replyDeadline := start.Add(5 * time.Second)
+	firstMove := start.Add(-time.Minute)
+	overlap, ok = recoveryOverlap(nil, nil, &replyDeadline, &firstMove, start.Add(-time.Hour), start, start.Add(100*time.Second))
+	if !ok {
+		t.Fatal("the reply window was not found")
+	}
+	if overlap != 100*time.Second {
+		t.Fatalf("reply refund = %v, want 100s", overlap)
 	}
 }
 

@@ -175,6 +175,13 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 	} else if !errors.Is(err, ErrNotFound) {
 		return CommandResult{}, err
 	}
+	// The shared gate refuses the creation when the service is suspended,
+	// restoring or still recovering. The check runs inside the acceptance
+	// transaction, after the rules process validated the setup, so a
+	// creation that started before a suspension cannot commit after it.
+	if err = s.requireGate(ctx, tx); err != nil {
+		return CommandResult{}, err
+	}
 	var decision time.Time
 	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&decision); err != nil {
 		return CommandResult{}, err
@@ -405,6 +412,13 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
 		return CommandResult{}, err
 	}
+	// The shared gate refuses the acceptance when the service is suspended,
+	// restoring or still recovering. The check runs inside the acceptance
+	// transaction, after the rules process answered, so a command that
+	// started before a suspension cannot commit after it.
+	if err = s.requireGate(ctx, tx); err != nil {
+		return CommandResult{}, err
+	}
 	// The decision time is re-sampled after every participant lock is held.
 	// The first sample happened before the authorization lock, so a command
 	// that waited for a revocation, or for a busy seat, must not be judged
@@ -542,6 +556,11 @@ func (s *Service) executeOffer(ctx context.Context, actor ParticipantRef, cmd Co
 		return CommandResult{}, ErrNotAuthorized
 	}
 	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
+		return CommandResult{}, err
+	}
+	// The shared gate refuses the mutation when the service is suspended,
+	// restoring or still recovering.
+	if err = s.requireGate(ctx, tx); err != nil {
 		return CommandResult{}, err
 	}
 	if decision, err = s.sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
@@ -690,11 +709,22 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
 		return CommandResult{}, err
 	}
+	// The shared gate refuses the mutation when the service is suspended,
+	// restoring or still recovering.
+	if err = s.requireGate(ctx, tx); err != nil {
+		return CommandResult{}, err
+	}
 	// The decision time is re-sampled after every participant lock is held.
 	// The first sample happened before the authorization lock, so a command
 	// that waited for a revocation, or for a busy seat, must not be judged
 	// against a clock reading from before that wait.
 	if decision, err = s.sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+		return CommandResult{}, err
+	}
+	// A command that presents a runner lease may only act while the lease
+	// is live. A stale runner may not resign, spend a recovery attempt or
+	// change the control of its seat.
+	if err = s.authorizePresentedLease(ctx, tx, match, cmd, decision); err != nil {
 		return CommandResult{}, err
 	}
 	// The opening reply window is reconciled before any other deadline. An
@@ -821,12 +851,21 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 			return CommandResult{}, err
 		}
 	case ActionRecordRecoveryAttempt:
-		if err := requireSideToMove(match.PositionFEN, match.Clock, cmd.Seat); err != nil {
-			return CommandResult{}, err
-		}
+		// A spent recovery attempt is what the agent reports about its own
+		// turn, so an agent seat needs the lease of its runner. The owner
+		// never spends that budget by hand.
 		seat, ok := match.Seat(cmd.Seat)
 		if !ok {
 			return CommandResult{}, ErrNotAuthorized
+		}
+		// A spent recovery attempt is what the agent reports about its own
+		// turn, so an agent seat needs the lease of its runner. The owner
+		// never spends that budget by hand.
+		if seat.Control.Kind != ControlHuman && cmd.LeaseID == "" {
+			return CommandResult{}, ErrNotAuthorized
+		}
+		if err := requireSideToMove(match.PositionFEN, match.Clock, cmd.Seat); err != nil {
+			return CommandResult{}, err
 		}
 		switch cmd.Action.Recovery.Attempt {
 		case RecoveryIllegalMove:

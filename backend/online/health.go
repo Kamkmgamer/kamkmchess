@@ -137,8 +137,9 @@ func NewHealthReporter(db *pgxpool.Pool) *HealthReporter {
 //
 // The checkpoint is written only when the state of that dependency changed,
 // so a healthy service does not grow a checkpoint row on every pass. The
-// liveness record is refreshed on every observation, so an unexpected failure
-// can be located after hours of healthy service.
+// liveness record is refreshed only while the service is healthy, so an
+// interruption of a dependency is located by the recovery instead of being
+// hidden by a fresh liveness record.
 func (h *HealthReporter) ReportDependency(ctx context.Context, dependency string, state HealthState, detail string) error {
 	if h == nil {
 		return ErrInvalidArgument
@@ -171,7 +172,28 @@ func (h *HealthReporter) ReportDependency(ctx context.Context, dependency string
 			return err
 		}
 	}
+	if !h.OverallHealthy() {
+		// The service is not healthy, so it is not alive. The liveness
+		// record keeps its last value, and the recovery locates the
+		// interruption from it.
+		return nil
+	}
 	return h.refreshLiveness(ctx, now.UTC())
+}
+
+// OverallHealthy reports whether every observed dependency is healthy.
+func (h *HealthReporter) OverallHealthy() bool {
+	if h == nil {
+		return true
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for _, name := range h.order {
+		if h.dependencies[name].State != HealthHealthy {
+			return false
+		}
+	}
+	return true
 }
 
 // SharedState returns the health state that every instance of the service
@@ -318,7 +340,10 @@ func (s *Service) healthState(ctx context.Context) HealthState {
 	}
 	shared, err := s.health.SharedState(ctx)
 	if err != nil || !shared.Valid() {
-		return local
+		// A shared health state that cannot be read is an unavailable
+		// service, never a healthy one. The claim path fails closed, so a
+		// service that cannot confirm its own health never hands out a win.
+		return HealthUnavailable
 	}
 	if shared.severity() > local.severity() {
 		return shared

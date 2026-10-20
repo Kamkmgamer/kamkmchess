@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/onlinekeys"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -136,6 +137,20 @@ func (s *Service) createMatchInTx(ctx context.Context, tx pgx.Tx, cmd Command, s
 	} else if !errors.Is(err, ErrNotFound) {
 		return CommandResult{}, err
 	}
+	// The shared gate refuses the allocation when the service is suspended,
+	// restoring or still recovering. The check runs inside the caller's
+	// transaction, so a refused allocation consumes nothing: the invitation
+	// or the queue entry of that transaction is rolled back with it.
+	if err = s.requireGate(ctx, tx); err != nil {
+		return CommandResult{}, err
+	}
+	// A trusted allocation does not present a credential, so the removal of
+	// a participant is checked here instead. The account scope locks order
+	// the allocation against the removal of the same participant, and the
+	// removal ledger decides whether a participant still exists.
+	if err = s.requireParticipants(ctx, tx, setup); err != nil {
+		return CommandResult{}, err
+	}
 	var decision time.Time
 	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&decision); err != nil {
 		return CommandResult{}, err
@@ -213,6 +228,75 @@ func (s *Service) CreateAllocatedMatch(ctx context.Context, actor ParticipantRef
 		return CommandResult{}, err
 	}
 	return result, nil
+}
+
+// requireParticipants refuses an allocation of a participant that was
+// removed.
+//
+// A trusted allocation does not present a credential, so the removal state of
+// both participants is checked here. The account scope locks are taken first,
+// in ascending order, so the allocation is ordered against the removal of the
+// same participant and two allocations of the same participants cannot
+// deadlock.
+//
+// The removal ledger and the account deletions are the durable record of the
+// removal. A removal that was verified is committed, so the participant no
+// longer has a seat anywhere, and a new seat would resurrect it.
+//
+// A replay removal is not an identity removal. The removal of a public
+// replay is a match scoped marker, and it never appears in the removal
+// requests or in the account deletions, so a participant whose replay was
+// removed may still play.
+func (s *Service) requireParticipants(ctx context.Context, tx pgx.Tx, setup *CreateMatchSetup) error {
+	participants := []ParticipantRef{setup.Seats.White.Participant, setup.Seats.Black.Participant}
+	scopes := make([]string, 0, len(participants))
+	for _, participant := range participants {
+		if participant.Kind == ParticipantAccount {
+			scopes = append(scopes, participant.ID)
+		}
+	}
+	if err := LockAccountScopes(ctx, tx, scopes); err != nil {
+		return err
+	}
+	for _, participant := range participants {
+		removed, err := participantRemoved(ctx, tx, participant)
+		if err != nil {
+			return err
+		}
+		if removed {
+			return ErrNotAuthorized
+		}
+	}
+	return nil
+}
+
+// participantRemoved reports whether a participant was removed.
+//
+// The account deletions are the record of an ordinary account deletion, and
+// the removal ledger is the record of an explicit removal of an account or of
+// a guest. The subject is looked up by its identifier and by its one-way
+// reference, so the check keeps working when the ledger stores the reference
+// instead of the identifier.
+func participantRemoved(ctx context.Context, q Querier, participant ParticipantRef) (bool, error) {
+	reference := onlinekeys.SubjectReference(participant.ID)
+	if participant.Kind == ParticipantAccount {
+		var removed bool
+		if err := q.QueryRow(ctx, `SELECT EXISTS(
+  SELECT 1 FROM online_account_deletions WHERE account_id=$1
+  UNION ALL
+  SELECT 1 FROM online_removal_requests WHERE subject_kind='account' AND subject_id IN ($1, $2))`,
+			participant.ID, reference).Scan(&removed); err != nil {
+			return false, err
+		}
+		return removed, nil
+	}
+	var removed bool
+	if err := q.QueryRow(ctx, `SELECT EXISTS(
+  SELECT 1 FROM online_removal_requests WHERE subject_kind='guest' AND subject_id IN ($1, $2))`,
+		participant.ID, reference).Scan(&removed); err != nil {
+		return false, err
+	}
+	return removed, nil
 }
 
 // ValidateSetup checks a match setup against the pinned rules policy.

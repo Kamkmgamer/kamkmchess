@@ -3,12 +3,12 @@ package onlineauth
 import (
 	"context"
 	"errors"
-	"hash/fnv"
 	"strings"
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/auth"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
+	"github.com/Kamkmgamer/kamkmchess/backend/onlinekeys"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -29,9 +29,12 @@ const DefaultStreamMaxDuration = 20 * time.Second
 // Lock namespaces. The same key is taken by the participant command path and
 // by the revocation path, so a revocation and an accepted write are ordered
 // instead of racing.
+//
+// The keys themselves live in the shared onlinekeys package, so the online
+// writer and the privacy service take exactly the same locks.
 const (
-	lockAccount = "account"
-	lockSeat    = "guest-seat"
+	lockAccount = onlinekeys.LockAccount
+	lockSeat    = onlinekeys.LockSeat
 )
 
 // Options configures the authorization service.
@@ -477,22 +480,17 @@ func allowedRevocationReason(reason string) bool {
 
 // accountLockKey is the advisory lock key for one account subject.
 func accountLockKey(subject string) int64 {
-	return advisoryKey(lockAccount, subject)
+	return onlinekeys.AccountLockKey(subject)
 }
 
 // seatLockKey is the advisory lock key for one guest seat.
 func seatLockKey(matchID string, seat online.Seat) int64 {
-	return advisoryKey(lockSeat, matchID, string(seat))
+	return onlinekeys.SeatLockKey(matchID, string(seat))
 }
 
 // advisoryKey derives a stable 64-bit advisory lock key.
 func advisoryKey(parts ...string) int64 {
-	hash := fnv.New64a()
-	for _, part := range parts {
-		_, _ = hash.Write([]byte(part))
-		_, _ = hash.Write([]byte{0})
-	}
-	return int64(hash.Sum64() & 0x7fffffffffffffff)
+	return onlinekeys.AdvisoryKey(parts...)
 }
 
 // lockScope takes a transaction advisory lock. It is a no-op outside a real
