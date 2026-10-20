@@ -39,8 +39,11 @@ Migration `backend/migrations/0002_online.sql` is additive and versioned through
 - `online_moves`: append-only accepted moves, keyed by match and match version, with UCI, SAN,
   resulting FEN, and the authoritative decision/accepted time.
 - `online_events`: append-only versioned event log for creation, moves, resignation, abort, control
-  change, timeout, replay removal, draw agreement, takeback acceptance, spent recovery attempts and
-  the illegal move loss.
+  change, timeout, replay removal, draw agreement, takeback acceptance, created offers, spent
+  recovery attempts and the illegal move loss. An `offer_created` event carries the offer it
+  created.
+- `online_turn_budgets`: the journal of what a seat spent in a turn, keyed by the accepted-move
+  prefix the turn starts from.
 - `online_operation_receipts`: scoped operation ID, 32-byte request fingerprint, original result
   bytes, resulting version/epoch, and acceptance time.
 - `online_queue_entries`: queue-entry schema and read contract only; allocation commands are not
@@ -56,6 +59,10 @@ Migration `backend/migrations/0004_online_match_outcomes.sql` is additive and ad
 window columns, the shared recovery budget counters, `online_offers` (pending draw and takeback
 offers) and `online_discarded_moves` (accepted moves that a takeback removed from the current line).
 It relaxes the match schema version check to accept version `2`. It changes no existing row.
+
+Migration `backend/migrations/0006_online_offer_consent.sql` is additive and adds the offer payload of
+an event, the `offer_created` event kind and `online_turn_budgets`, the journal of what a seat spent
+in a turn. It changes no existing row.
 
 Database checks constrain IDs, FEN lengths, UCI shape, time-control ranges, control labels, result
 consistency, and clock/projection/lease consistency. A match has at most one armed deadline: either
@@ -77,10 +84,10 @@ closed union:
 | `cancel` | none | Claimed seat owner; active match; aborts before that seat's first accepted move, resigns afterwards |
 | `set_control` | declared human/agent/engine control | Claimed seat owner; active match; increments control epoch |
 | `remove_public_replay` | `owner_request` or `erasure_request` | A participant after a terminal result; clears the public projection |
-| `offer_draw` | none | Claimed seat owner; active match; records a pending offer without changing the match version |
-| `accept_draw` | none | Claimed seat owner; requires the opponent's pending draw offer; ends the match as a draw |
-| `offer_takeback` | exact target version | Claimed seat owner; the target must be a position in the current line |
-| `accept_takeback` | none | Claimed seat owner; requires the opponent's pending takeback offer for the current version |
+| `offer_draw` | none | Claimed seat owner; active match; records a pending offer and advances the match version without changing the position, the turn or the clocks |
+| `accept_draw` | the offered identity | Claimed seat owner; requires the opponent's pending draw offer with exactly that identity; ends the match as a draw |
+| `offer_takeback` | exact target version | Claimed seat owner; the target must be a position in the current line; unavailable until the opening exchange is complete |
+| `accept_takeback` | the offered identity | Claimed seat owner; requires the opponent's pending takeback offer with exactly that identity; unavailable until the opening exchange is complete |
 | `record_recovery_attempt` | `illegal_move` or `formatting_correction` | The side to move; spends the recovery budget of the current turn |
 
 Unknown fields, unknown action kinds, arbitrary state blobs, SQL, client timestamps, credentials,
@@ -170,31 +177,52 @@ Increment is applied once per accepted move.
 
 ## Offers, takebacks and recovery budgets
 
-An offer is a request, not a match transition. It never changes the position, the turn or the
-clocks, so it does not advance the match version and it does not interrupt a move the other
-participant is preparing. It is still ordered against the match: it is written under the match lock,
-after the same authorization and expiry checks every other intent passes, and it keeps the match
-version it was made against. A seat has one outstanding offer per kind; a newer offer supersedes the
-older one, and the superseded row stays as a record of what was offered.
+An offer is part of the shared match state. It advances the canonical match version and appends its
+own `offer_created` event, which carries the exact offer it created, so a durable event stream can
+rebuild which offer is pending. It never changes the position, the turn or the clocks, so it does
+not interrupt a move the other participant is preparing, and the absolute clock deadlines stay
+continuous. The offer is still ordered against the match: it is written under the match lock, after
+the same authorization and expiry checks every other intent passes.
+
+The offer is bound to the version it produced. It is actionable only while the match version still
+equals it, so any later transition makes it inapplicable and withdraws it. A seat has one
+outstanding offer per kind; a newer offer replaces the older one, which stays in the table with the
+resolution `superseded`. The pending offers of a match are therefore exactly the offers that can
+still be accepted, and a terminal match has no pending offer.
+
+The consent of an offer names the exact offer it accepts. The writer reads that offer under the
+match lock and checks its identity, its kind, the offering seat, its resolution and the version it
+is bound to. A replaced, consumed or stale offer is refused instead of applying a different offer,
+and the named identity is part of the operation fingerprint, so a changed consent cannot reuse an
+accepted operation ID.
 
 - A draw offer needs the other participant's acceptance. The acceptance ends the match as a draw by
   agreement. Play that continues after an offer declines it, so an accepted move withdraws every
   pending draw offer.
 - A takeback offer names the exact version of an accepted move whose position it would restore, or
   version `1` for the starting position. The target must be a position in the current line and it
-  must leave at least one accepted move to discard. The offer is bound to the match version it was
-  made against, so any later play makes it inapplicable.
+  must leave at least one accepted move to discard. A takeback is unavailable until the opening
+  exchange is complete: the offer and the acceptance are refused while the reply window is open,
+  and the reply deadline, the state and the clocks are never touched by the request. The expiry
+  still takes precedence, so an unanswered reply still aborts the match.
 - Accepting a takeback restores the position and the current line, charges the side that was
-  thinking, and arms the restored side to move. It refunds no time, mints no increment and resets no
-  recovery budget. The discarded accepted moves stay in `online_moves` and are marked in
-  `online_discarded_moves`, so the discarded private archives survive. The increment of a discarded
-  move is not given back, so replaying that move after the takeback adds its increment again.
+  thinking, and arms the restored side to move with its normal main clock. It refunds no time. The
+  increment that was credited to every discarded accepted move is removed again, so a replacement
+  move is a new accepted move that receives exactly one increment and a repeated takeback cannot
+  inflate a bank. The discarded accepted moves stay in `online_moves` and are marked in
+  `online_discarded_moves`, so the discarded private archives survive.
+- The opening phase is a historical fact. A takeback that restores the starting position does not
+  reopen the reply window and does not clear the first-move flags, so a later cancellation is still
+  a resignation.
 
-The recovery budget of a turn lives in the seat row. It resets only when that seat's own move is
-accepted. A control change and a takeback never reset it, so neither can hand a seat a fresh attempt
-allowance. The fourth illegal attempt of a turn loses the match for that seat. The automatic
-formatting correction budget is independent and stops at three corrections, after which only owner
-recovery remains.
+The recovery budget of a turn lives in the seat row and in the turn journal. The seat counters hold
+what the current turn has already spent and are reset when that seat's own move is accepted. The
+journal in `online_turn_budgets` records what a seat spent in a turn, keyed by the accepted-move
+prefix the turn starts from, so the allowance survives the move that ended the turn. A takeback
+restores the turn it restores, and with it the allowance that turn had already spent, so neither a
+takeback nor a control change can hand a seat a fresh attempt allowance. The fourth illegal attempt
+of a turn loses the match for that seat. The automatic formatting correction budget is independent
+and stops at three corrections, after which only owner recovery remains.
 
 ## Rules candidate fencing
 
@@ -219,6 +247,12 @@ handle in this package; the Go writer remains the only committer.
 private pinned Node process. Real-process/PostgreSQL fixtures exercise this composition. The server
 bootstrap composes participant credential verification and the writer. Internal match/receipt
 read helpers require authorization by their server callers; they are not public routes.
+
+A refused proposal keeps its own answer: an illegal or terminal proposal is refused with
+`ErrActionNotAllowed` and an invalid position with `ErrInvalidContract`. A history that does not
+match the evaluated position means that the writer and the rules process disagree about the position
+itself. That is an internal consistency failure and not a conflict a participant can fix, so it is
+reported as `ErrUnavailable` and reaches the client as a temporary service failure.
 
 `GetMatchForParticipant` and `GetReceiptForParticipant` provide membership-scoped reads. They return
 `ErrNotFound` for non-members as well as missing matches, while unrestricted helpers remain trusted
@@ -295,3 +329,15 @@ guest actor, the accepted receipts and the accepted fingerprints are left untouc
   control timeline.
 - Per-move declared-control timeline in replays and public attribution presentation.
 - Retention automation, backup replay of the removal ledger, staging verification, and deployment.
+
+## Version boundary of the unreleased branch
+
+The online branch has never been released, so there is no deployed schema version 1 receipt. The
+contract is at schema version 2 and the request fingerprint hashes the schema version, so a version 2
+command can never reuse a version 1 operation ID: the stored fingerprint of a version 1 operation
+does not match and the retry is refused with `ErrOperationReuse`. The receipt route returns the
+stored bytes of a version 1 receipt unchanged, and the TypeScript receipt parser requires schema
+version 2, so such a body is not accepted by a version 2 client. A match row created with schema
+version 1 still accepts version 2 commands. This boundary is recorded here so the next reader does
+not mistake it for a compatibility layer: there is none, and none is needed before the first
+release.

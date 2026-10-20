@@ -1,8 +1,46 @@
 # KHA-68 authoritative online moves, clocks and match outcomes
 
 Locally verified on 2026-10-20 on `t3/authoritative-online-match-outcomes`.
-Tested source commit: `1ea088f`.
+Tested source commit: `f5bb721` (the correction commits `379957f`, `6c311b5`, `ebff3f1` and
+`f5bb721`; the documentation commit follows them).
 The branch starts at `a1e069e`, which includes the KHA-64/65/66/67 foundations.
+
+## Merge note for the parallel corrections
+
+The deadline correction edits `backend/online/service.go` as well. The shared file is split so the
+two corrections can be merged in either order:
+
+- `backend/online/offers.go` holds the offer helpers: `loadOfferByID`, `consentOffer`,
+  `supersedeSeatOffer` and `withdrawStaleOffers`. The deadline correction does not touch them.
+- `backend/online/budgets.go` holds the turn budget journal: `turnPrefixKey`, `recordTurnBudget`,
+  `loadTurnBudgets` and `restoreTurnBudgets`. The deadline correction does not touch them.
+- `backend/online/service.go` changes in this slice are confined to `executeOffer`, the
+  `ActionAcceptDraw` and `ActionAcceptTakeback` cases of `executeMutation`, the
+  `ActionRecordRecoveryAttempt` case, `updateMatch` and `insertEvent`. The deadline correction
+  changes the read path and the expiry reconciliation; it does not change these functions.
+- `backend/online/rules.go` gains `takebacksAllowed`, a pure clock predicate. The deadline
+  correction does not touch it.
+- `updateMatch` now withdraws the offers that a version transition made inapplicable. A correction
+  that also writes offers has to keep that withdrawal, because the pending offers of a match are
+  exactly the actionable ones.
+
+No external rules evaluation happens under a transaction or a database lock, and the authorization
+and revocation lock order is unchanged: the credential check and the receipt lookup still run
+before the seat check, and the decision time is still sampled after every lock is held.
+
+## Corrections of the independent review
+
+The slice was reviewed independently and the findings were corrected on this branch. The corrections
+are in four commits on top of the KHA-68 slice:
+
+- `379957f` adds the offer consent and turn budget schema.
+- `6c311b5` binds an offer consent to the exact offered identity, versions the offer lifecycle,
+  removes the increment of a discarded move and keeps the opening exchange out of a takeback.
+- `ebff3f1` restores the recovery budget of the turn a takeback restores.
+- `f5bb721` reports an internal rules history disagreement as a service failure.
+
+The corrections are recorded in detail below. The review findings that are not corrected here are
+listed under "Remaining limitations".
 
 ## Implemented contract
 
@@ -29,20 +67,42 @@ line does not turn a later cancellation back into an abort.
 
 ### Offers, takebacks and recovery budgets
 
-A draw offer needs the other participant's acceptance. Play that continues after an offer declines
-it, so an accepted move withdraws every pending draw offer. A takeback offer names the exact
-version of an accepted move whose position it would restore, or version `1` for the starting
-position, and the offer is bound to the version it was made against, so later play makes it
-inapplicable. Accepting a takeback restores the position and the current line, charges the side
-that was thinking, and arms the restored side to move. It refunds no time, mints no increment and
-resets no recovery budget. The discarded accepted moves stay in `online_moves` and are marked in
-`online_discarded_moves`, so the discarded private archives survive. The increment of a discarded
-move is not given back, so replaying that move after the takeback adds its increment again.
+A draw offer needs the other participant's acceptance. An offer is part of the versioned match
+state: it advances the canonical match version and appends an `offer_created` event that carries
+the exact offer it created, so a durable event stream can rebuild which offer is pending. It never
+changes the position, the turn or the clocks, and the absolute deadlines stay continuous. The offer
+is bound to the version it produced, so any later transition withdraws it and the pending offers of
+a match are exactly the actionable ones.
 
-The recovery budget of a turn lives in the seat row. It resets only when that seat's own move is
-accepted. A control change and a takeback never reset it. The fourth illegal attempt of a turn
-loses the match for that seat. The formatting correction budget is independent and stops at three
-corrections.
+The consent of an offer names the exact offer it accepts. The writer reads that offer under the
+match lock and checks its identity, its kind, the offering seat, its resolution and the version it
+is bound to. A replaced, consumed or stale offer is refused instead of applying a different offer,
+and the named identity is part of the operation fingerprint, so a changed consent cannot reuse an
+accepted operation ID. The participant live view exposes the offered identity, and it carries no
+participant reference or private data.
+
+A takeback offer names the exact version of an accepted move whose position it would restore, or
+version `1` for the starting position. Accepting a takeback restores the position and the current
+line, charges the side that was thinking, and arms the restored side to move with its normal main
+clock. It refunds no time. The increment that was credited to every discarded accepted move is
+removed again, so a replacement move is a new accepted move that receives exactly one increment and
+a repeated takeback cannot inflate a bank. The discarded accepted moves stay in `online_moves` and
+are marked in `online_discarded_moves`, so the discarded private archives survive.
+
+A takeback is unavailable until the opening exchange is complete. The offer and the acceptance are
+refused while the fifteen second reply window is open, and the reply deadline, the match state and
+the clocks are never touched by the request. The expiry still takes precedence, so an unanswered
+reply still aborts the match. The opening phase is a historical fact: a takeback that restores the
+starting position does not reopen the reply window and does not clear the first-move flags, so a
+later cancellation is still a resignation.
+
+The recovery budget of a turn lives in the seat row and in the turn journal. The seat counters hold
+what the current turn has already spent and are reset when that seat's own move is accepted. The
+journal in `online_turn_budgets` records what a seat spent in a turn, keyed by the accepted-move
+prefix the turn starts from, so the allowance survives the move that ended the turn. A takeback
+restores the turn it restores, and with it the allowance that turn had already spent. A control
+change never resets it. The fourth illegal attempt of a turn loses the match for that seat. The
+formatting correction budget is independent and stops at three corrections.
 
 ### Clock continuity and expiry
 
@@ -59,15 +119,25 @@ overwritten by a later intent, a stale offer, a late rules candidate or direct S
 The action union gains `cancel` (replacing `abort`), `offer_draw`, `accept_draw`, `offer_takeback`,
 `accept_takeback` and `record_recovery_attempt`. The clock state gains the opening reply seat and
 its deadline, the result reasons gain `opening_reply_timeout` and `illegal_move`, the event kinds
-gain `draw_agreement`, `takeback_accepted`, `recovery_attempt` and `illegal_move_loss`, and the
-receipt outcomes gain `opening_expired`.
+gain `draw_agreement`, `takeback_accepted`, `offer_created`, `recovery_attempt` and
+`illegal_move_loss`, and the receipt outcomes gain `opening_expired`.
+
+The correction commits keep schema version 2 and change the shape of two payloads:
+
+- `accept_draw` and `accept_takeback` carry the offered identity. The identity is part of the
+  canonical action payload, so it is part of the request fingerprint.
+- The `offer_created` event carries the offer it created.
 
 Migration `backend/migrations/0004_online_match_outcomes.sql` is additive. It adds the reply
 window columns, the seat recovery budget counters, `online_offers` and `online_discarded_moves`, and
 relaxes the match schema version check to accept version 2. It rewrites no existing row.
 
+Migration `backend/migrations/0006_online_offer_consent.sql` is additive. It adds the offer payload
+of an event, the `offer_created` event kind and `online_turn_budgets`, the journal of what a seat
+spent in a turn. It rewrites no existing row.
+
 The shared contract fixture `backend/online/testdata/online-contracts.json` carries one example of
-every new action, and both the Go and the TypeScript suite parse it.
+every new action and the offer event, and both the Go and the TypeScript suite parse it.
 
 ## Verification
 
@@ -107,16 +177,18 @@ private Node rules artifact and required PostgreSQL rather than skipping absent-
   unchanged, and the clock still expires on its own deadline. A second fixture moves the start of
   the running clock into the past and shows that the next accepted move charges the elapsed time
   and adds the increment once.
-- MAT-11: a draw offer does not advance the match version, does not move a clock and does not end
-  the match, the offering seat cannot accept its own offer, and a seat without an offer cannot
-  accept a draw. An accepted move withdraws every pending draw offer, so a declined offer cannot
-  end the match later. A takeback restores the exact position and the accepted line, keeps the
-  discarded accepted move rows, and refunds neither time nor an increment. A stale takeback offer
-  conflicts and rewinds nothing. A takeback offer for a position outside the current line is
-  refused. A finished match exposes no pending offer.
-- MAT-11: the spent recovery budget of a turn survives a control change and a takeback, and only an
-  accepted move of that seat starts it again. The fourth illegal attempt loses the match and the
-  formatting budget is independent of it.
+- MAT-11: a draw offer advances the match version, does not move a clock and does not end the match,
+  the offering seat cannot accept its own offer, and a seat without an offer cannot accept a draw.
+  An accepted move withdraws every pending draw offer, so a declined offer cannot end the match
+  later. A takeback restores the exact position and the accepted line, keeps the discarded accepted
+  move rows, refunds no time and removes the increment of every discarded move. A stale takeback
+  offer is withdrawn, is no longer published as pending and is refused when it is named. A takeback
+  offer for a position outside the current line is refused. A finished match exposes no pending
+  offer.
+- MAT-11: the spent recovery budget of a turn survives a control change, and only an accepted move
+  of that seat starts it again. A takeback restores the budget of the turn it restores, so the
+  fourth illegal attempt of that turn still loses the match and the automatic formatting allowance
+  of that turn cannot be replenished.
 - MAT-12: a final result survives a later move, cancellation, draw offer, draw acceptance, takeback
   acceptance and recovery report, and the stored result cannot be rewritten by direct SQL. The
   cancellation is recorded as its own event, so the audit trail separates it from an explicit
@@ -137,6 +209,51 @@ deadline. The assertions were not weakened.
 `backend/online/contracts_test.go` covers the clock state machine at the package boundary. The
 opening phase fixture asserts that the first accepted move arms the reply window instead of a main
 clock, that the responder's bank is untouched, and that the reply starts the next side's clock.
+
+### Correction fixtures
+
+`backend/integration/online_offer_consent_test.go` covers the corrected offer contract against real
+PostgreSQL.
+
+- The consent of a takeback is bound to the exact offered identity. A replaced offer is refused
+  instead of accepting the offer that replaced it, the match does not rewind, and the acceptance of
+  the live offer restores exactly the position that offer named. The replaced offer keeps the
+  resolution `superseded` and the accepted offer the resolution `accepted`.
+- A consumed offer, an unknown offer identity and the offering seat's own offer are refused, and a
+  refused acceptance changes nothing.
+- The consent of a draw offer is bound to the exact offered identity too, and the accepted offer is
+  resolved as accepted in the same transaction.
+- An offer advances the canonical version, appends an `offer_created` event that carries the offer,
+  and leaves the position, the turn, the banks and the running clock untouched. A late rules
+  candidate evaluated before the offer changes nothing.
+- The increment of every discarded accepted move is removed again. The fixtures assert the literal
+  banks: the elapsed time that was already charged stays charged, the replacement move receives
+  exactly one increment, and a repeated takeback never leaves a bank above the line without a
+  takeback.
+- A takeback is refused during the opening exchange. The reply deadline, the match state and the
+  clocks are untouched, and the expiry still takes precedence, so an unanswered reply still aborts
+  the match. A second fixture repeats the rule for a custom position that starts with Black to
+  move.
+- A takeback that restores the starting position does not reopen the reply window and does not clear
+  the first-move flags, so the later cancellation is still a resignation.
+- The offered identity is part of the request fingerprint, so a changed consent cannot reuse an
+  accepted operation ID.
+
+`backend/integration/online_takeback_budget_test.go` covers the corrected recovery budget against
+real PostgreSQL.
+
+- Three illegal attempts of a turn, an accepted move of that seat, and a takeback that restores the
+  turn leave the three spent attempts in place, so the next illegal attempt is the fourth of that
+  turn and loses the match for that seat.
+- The automatic formatting allowance of a restored turn is restored as well, so the third correction
+  of that turn is allowed and the fourth is refused.
+
+`backend/httpapi/online_test.go` asserts that the participant live view exposes the offered
+identity without any participant reference or private data, and that an acceptance command without
+that identity is rejected before it reaches the writer.
+
+`backend/rulesworker/evaluator_test.go` asserts that a refused proposal keeps its own answer and
+that an internal history disagreement is an unavailable service instead of a participant error.
 
 ### Deterministic time and real races
 
@@ -174,10 +291,12 @@ after each check.
 - The abandonment claim after one continuous minute offline is not part of this slice. The clock
   keeps running through a peer disconnect, which is what this ticket required.
 - The rules process refusal now decides the answer instead of the transport: an illegal or
-  terminal proposal is refused with `ErrActionNotAllowed` and a history that does not match the
-  evaluated position with `ErrStaleCandidate`. The HTTP status for an illegal move changes from 503
-  to 409, and an invalid position changes from 503 to 400. This is a wire visible change to the
-  KHA-66/67 surface.
+  terminal proposal is refused with `ErrActionNotAllowed` and an invalid position with
+  `ErrInvalidContract`. A history that does not match the evaluated position means that the writer
+  and the rules process disagree about the position, so it is reported with `ErrUnavailable` and
+  reaches the client as a temporary service failure instead of a conflict it cannot fix. The HTTP
+  status for an illegal move changes from 503 to 409, and an invalid position changes from 503 to
+  400. This is a wire visible change to the KHA-66/67 surface.
 - The public replay projection carries the current line only. A takeback removes the discarded moves
   from the replay and keeps them in the shared tables.
 - Deployment, provider spending, staging verification and native accessibility were not performed.
@@ -193,6 +312,30 @@ cancellation is recorded as its own event, the takeback target is documented as 
 accepted move, the increment of a discarded move is documented as not given back, the offer shape
 no longer advertises fields the server never fills, and the participant lock fixture for the main
 clock deadline was restored.
+
+A second independent review of the corrected slice raised one high, six medium and four low
+findings. Their dispositions are:
+
+- The consent of an offer is bound to the exact offered identity. Fixed in `6c311b5`.
+- An offer is versioned and discoverable. Fixed in `6c311b5`: the offer advances the canonical
+  version, appends an `offer_created` event that carries the offer, and the clocks stay continuous.
+- An accepted takeback is resolved as accepted, and only actionable offers stay pending. Fixed in
+  `6c311b5`.
+- A takeback restored a turn whose recovery budget had already been consumed. Fixed in `ebff3f1`
+  with the turn journal.
+- The increment of a discarded move is removed again, so a replacement move receives exactly one
+  increment. The ruling of the parent is applied and documented in `6c311b5`.
+- A takeback during the opening reply window cancelled the window. Fixed in `6c311b5`: takebacks
+  are unavailable until the opening exchange is complete.
+- The read path does not reconcile an expired clock. Not corrected here: the automatic deadline
+  settlement belongs to the separate deadline correction.
+- The browser agent runner that produces the recovery reports is not implemented. It is the
+  downstream runner ticket, and the illegal move loss stays unreachable until it lands.
+- An internal history disagreement was reported as a user-fixable conflict. Fixed in `f5bb721`.
+- A version 1 receipt cannot be retried with a version 2 command. Recorded honestly as the
+  pre-release version boundary in the architecture note. The branch has never been released, no
+  stored receipt or fingerprint was rewritten, and the receipt route still returns the stored bytes
+  of an old receipt unchanged.
 
 OpenCode `opencode/minimax-m3.1-flash-free` handled the implementation and the verification of this
 slice. The parent reviewed the contract change, the migration and the evidence.
