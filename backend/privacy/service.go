@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,6 +139,7 @@ func (s *Service) remove(ctx context.Context, principal onlineauth.Principal, or
 		}
 		// The guest proves the ownership of its seat with the live seat
 		// credential. The credential is re-checked inside the transaction.
+		ctx = onlineauth.WithPrincipal(ctx, principal)
 		if err = s.authorizer.AuthorizeSeat(ctx, tx, principal.MatchID, principal.Participant, principal.Seat); err != nil {
 			return Report{}, err
 		}
@@ -175,7 +177,7 @@ func (s *Service) applyRemoval(ctx context.Context, tx pgx.Tx, principal onlinea
 		RecoverySanitizeDueAt: request.RecoverySanitizeDueAt.UTC(),
 	}
 	for _, match := range matches {
-		if err = s.applyMatchRemoval(ctx, tx, principal, scope, match); err != nil {
+		if err = s.applyMatchRemoval(ctx, tx, request.RemovalID, subjectKind, subjectID, scope, match); err != nil {
 			return Report{}, err
 		}
 		if scope == ScopeExplicitRemoval {
@@ -199,7 +201,7 @@ func (s *Service) applyRemoval(ctx context.Context, tx pgx.Tx, principal onlinea
 			return Report{}, err
 		}
 	}
-	if err = s.removePrivateOwnerData(ctx, tx, principal, scope); err != nil {
+	if err = s.removePrivateOwnerData(ctx, tx, subjectKind, subjectID, scope); err != nil {
 		return Report{}, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE online_removal_requests SET status='applied', applied_at=$1, live_deleted_at=$1, removed_match_count=$2, anonymized_match_count=$3 WHERE removal_id=$4`,
@@ -287,9 +289,10 @@ func (s *Service) subjectMatches(ctx context.Context, tx pgx.Tx, subjectKind, su
 // guard of the base schema both require that marker, so the anonymization
 // and the erasure are only accepted when a recorded marker exists for the
 // subject and the match.
-func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, principal onlineauth.Principal, scope string, match subjectMatch) error {
-	subjectKind := string(principal.Participant.Kind)
-	subjectID := principal.Participant.ID
+//
+// The marker carries the one-way reference of the subject, so the marker
+// table never retains the identifier of an erased subject.
+func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, subjectKind, subjectID, scope string, match subjectMatch) error {
 	now := s.now()
 	reason := "account_deletion"
 	if scope == ScopeExplicitRemoval {
@@ -333,15 +336,15 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, principal on
 		// participant as "Deleted player".
 		if _, err = tx.Exec(ctx, `
 			UPDATE online_public_replays
-			SET replay_json = jsonb_set(replay_json, '{participants,' || $2 || ',publicLabel}', '"Deleted player"'::jsonb)
-			WHERE match_id=$1 AND revoked_at IS NULL`, match.MatchID, participantIndex(match.Seat)); err != nil {
+			SET replay_json = jsonb_set(replay_json, ARRAY['participants', $2::text, 'publicLabel'], '"Deleted player"'::jsonb)
+			WHERE match_id=$1 AND revoked_at IS NULL`, match.MatchID, strconv.Itoa(participantIndex(match.Seat))); err != nil {
 			return err
 		}
 		// The older projection of the match writer is anonymized as well.
 		if _, err = tx.Exec(ctx, `
 			UPDATE online_public_projections
-			SET projection_json = jsonb_set(projection_json, '{participants,' || $2 || ',publicLabel}', '"Deleted player"'::jsonb)
-			WHERE match_id=$1 AND revoked_at IS NULL`, match.MatchID, participantIndex(match.Seat)); err != nil {
+			SET projection_json = jsonb_set(projection_json, ARRAY['participants', $2::text, 'publicLabel'], '"Deleted player"'::jsonb)
+			WHERE match_id=$1 AND revoked_at IS NULL`, match.MatchID, strconv.Itoa(participantIndex(match.Seat))); err != nil {
 			return err
 		}
 		// The opponent's history entry loses the deleted name.
@@ -368,9 +371,9 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, principal on
 	}
 	if _, err = tx.Exec(ctx, `
 		INSERT INTO online_removal_ledger(ledger_id,removal_id,subject_kind,subject_id,match_id,scope,removed_at)
-		VALUES($1,(SELECT removal_id FROM online_removal_requests WHERE subject_kind=$2 AND subject_id=$3 AND scope=$4),$2,$3,$5,$4,$6)
+		VALUES($1,$2,$3,$4,$5,$6,$7)
 		ON CONFLICT (removal_id, match_id) DO NOTHING`,
-		ledgerID, subjectKind, subjectID, scope, match.MatchID, now); err != nil {
+		ledgerID, removalID, subjectKind, subjectID, match.MatchID, scope, now); err != nil {
 		return err
 	}
 	return nil
@@ -382,9 +385,8 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, principal on
 // The account keeps no public name, no chosen avatar, no guest link and no
 // registered public label. The guest keeps no seat credential and no
 // ownership proof.
-func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, principal onlineauth.Principal, scope string) error {
-	subjectID := principal.Participant.ID
-	if principal.Kind == online.ParticipantAccount {
+func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, subjectKind, subjectID, scope string) error {
+	if subjectKind == string(online.ParticipantAccount) {
 		// The public identity of the account is removed. The profile row stays
 		// as an anonymous shell, because the base schema keeps the profile
 		// identifier immutable.

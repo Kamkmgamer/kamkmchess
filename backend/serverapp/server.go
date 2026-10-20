@@ -15,6 +15,7 @@ import (
 	"github.com/Kamkmgamer/kamkmchess/backend/invite"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/Kamkmgamer/kamkmchess/backend/privacy"
 	"github.com/Kamkmgamer/kamkmchess/backend/profile"
 	"github.com/Kamkmgamer/kamkmchess/backend/queue"
 	"github.com/Kamkmgamer/kamkmchess/backend/rulesworker"
@@ -290,6 +291,15 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// The public history API is mounted under its own prefix. Its reads need
 	// no credential at all.
 	root.Handle("/v1/public/", httpapi.CORS(cfg.Clerk.AllowedOrigins, httpapi.NewPublicHistory(historyService)))
+	// The privacy API is mounted under its own prefix. It carries the account
+	// and the guest credential header, and the private single-owner sync API
+	// is never widened to accept them.
+	privacyService, err := privacy.Open(ctx, pool, authorizer, privacy.Options{})
+	if err != nil {
+		pool.Close()
+		return nil, nil, errors.New("privacy service initialization failed")
+	}
+	root.Handle("/v1/privacy/", httpapi.CORSWithMethods(cfg.Clerk.AllowedOrigins, httpapi.PrivacyRequestHeaders, "GET, POST, OPTIONS", httpapi.NewPrivacy(privacyService, historyService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins})))
 	// The public profile API is mounted under its own prefixes so it never
 	// widens the private single-owner sync API.
 	profileHandler := httpapi.CORSWithMethods(cfg.Clerk.AllowedOrigins, httpapi.ProfileRequestHeaders, "GET, POST, PUT, OPTIONS", httpapi.NewProfile(profileService, guestProofIssuer{allocator: onlineauth.NewAllocator(authorizer)}, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}))

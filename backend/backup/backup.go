@@ -32,7 +32,11 @@ var (
 type ExportPayload struct {
 	Tool      string      `json:"tool"`
 	Tombstone []Tombstone `json:"tombstones"`
-	SQL       []byte      `json:"-"`
+	// Removals is the online removal ledger read at seal time. It is the
+	// record that an erased shared game or a removed identity must not come
+	// back when an older backup is restored.
+	Removals []RemovalRecord `json:"removals"`
+	SQL      []byte          `json:"-"`
 }
 
 // EncodeExport renders the payload as its documented one-line header followed
@@ -43,12 +47,17 @@ func EncodeExport(payload ExportPayload) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	removals, err := json.Marshal(payload.Removals)
+	if err != nil {
+		return nil, err
+	}
 	header, err := json.Marshal(struct {
 		Format   int    `json:"format"`
 		Tool     string `json:"tool"`
 		Ledger   string `json:"ledger"`
+		Removals string `json:"removals"`
 		SQLBytes int    `json:"sqlBytes"`
-	}{ExportFormat, payload.Tool, base64.StdEncoding.EncodeToString(ledger), len(payload.SQL)})
+	}{ExportFormat, payload.Tool, base64.StdEncoding.EncodeToString(ledger), base64.StdEncoding.EncodeToString(removals), len(payload.SQL)})
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +80,7 @@ func DecodeExport(plaintext []byte) (ExportPayload, error) {
 		Format   int    `json:"format"`
 		Tool     string `json:"tool"`
 		Ledger   string `json:"ledger"`
+		Removals string `json:"removals"`
 		SQLBytes int    `json:"sqlBytes"`
 	}
 	if json.Unmarshal(plaintext[len(ExportMagic)+1:end], &header) != nil || header.Format != ExportFormat {
@@ -82,6 +92,16 @@ func DecodeExport(plaintext []byte) (ExportPayload, error) {
 	}
 	if json.Unmarshal(ledgerJSON, &payload.Tombstone) != nil {
 		return ExportPayload{}, ErrMalformedContainer
+	}
+	// A bundle sealed before the removal ledger existed carries no removals.
+	if header.Removals != "" {
+		removalsJSON, err := base64.StdEncoding.DecodeString(header.Removals)
+		if err != nil {
+			return ExportPayload{}, ErrMalformedContainer
+		}
+		if len(removalsJSON) > 0 && json.Unmarshal(removalsJSON, &payload.Removals) != nil {
+			return ExportPayload{}, ErrMalformedContainer
+		}
 	}
 	payload.Tool = header.Tool
 	payload.SQL = plaintext[end+1:]
@@ -132,6 +152,10 @@ type CreateRequest struct {
 	MaxBytes   int
 	Dumper     Dumper
 	Tombstones TombstoneSource
+	// Removals is the optional online removal ledger. When it is present, the
+	// bundle carries the removals, so a restore of an older bundle can
+	// replay them before the restored database serves traffic.
+	Removals RemovalLedgerSource
 }
 
 // Create seals one encrypted logical export at Path. The file is written
@@ -158,6 +182,16 @@ func Create(ctx context.Context, request CreateRequest) (Manifest, error) {
 	if _, err = MergeLedgers(ledger, nil); err != nil {
 		return Manifest{}, err
 	}
+	var removals []RemovalRecord
+	if request.Removals != nil {
+		removals, err = request.Removals.ListRemovalRecords(ctx)
+		if err != nil {
+			return Manifest{}, err
+		}
+		if _, err = MergeRemovalLedgers(removals, nil); err != nil {
+			return Manifest{}, err
+		}
+	}
 	maxBytes := request.MaxBytes
 	if maxBytes == 0 {
 		maxBytes = MaxPlaintextBytes
@@ -172,11 +206,15 @@ func Create(ctx context.Context, request CreateRequest) (Manifest, error) {
 		}
 		return Manifest{}, err
 	}
-	plaintext, err := EncodeExport(ExportPayload{Tool: tool, Tombstone: ledger, SQL: limited.buffer.Bytes()})
+	plaintext, err := EncodeExport(ExportPayload{Tool: tool, Tombstone: ledger, Removals: removals, SQL: limited.buffer.Bytes()})
 	if err != nil {
 		return Manifest{}, err
 	}
 	ledgerJSON, err := EncodeLedger(ledger)
+	if err != nil {
+		return Manifest{}, err
+	}
+	removalsJSON, err := json.Marshal(removals)
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -186,6 +224,8 @@ func Create(ctx context.Context, request CreateRequest) (Manifest, error) {
 		DumpTool:           tool,
 		TombstoneCount:     len(ledger),
 		TombstoneLedgerSHA: digestHex(ledgerJSON),
+		RemovalCount:       len(removals),
+		RemovalLedgerSHA:   digestHex(removalsJSON),
 		RestoredFrom:       request.RestoredFrom,
 	}
 	container, sealedManifest, err := Seal(sealed, plaintext, request.Passphrase)
@@ -227,6 +267,16 @@ func Verify(path string, passphrase []byte) (Verified, error) {
 		return Verified{}, err
 	}
 	if manifest.TombstoneCount != len(payload.Tombstone) || manifest.TombstoneLedgerSHA != digestHex(ledgerJSON) {
+		return Verified{}, ErrLedgerDigest
+	}
+	removalsJSON, err := json.Marshal(payload.Removals)
+	if err != nil {
+		return Verified{}, err
+	}
+	if manifest.RemovalCount != len(payload.Removals) {
+		return Verified{}, ErrLedgerDigest
+	}
+	if len(payload.Removals) > 0 && manifest.RemovalLedgerSHA != digestHex(removalsJSON) {
 		return Verified{}, ErrLedgerDigest
 	}
 	return Verified{Manifest: manifest, Payload: payload, SQLBytes: int64(len(payload.SQL)), PlainBytes: manifest.PlaintextBytes}, nil
@@ -293,6 +343,13 @@ type RestoreRequest struct {
 	Restorer     Restorer
 	Tombstones   TombstoneSink
 	NewerLedgers [][]Tombstone
+	// Removals is the optional online removal ledger sink. When it is
+	// present, the merged removal ledger is replayed after the restore, so an
+	// erased shared game or a removed identity cannot come back.
+	Removals RemovalLedgerSink
+	// NewerRemovalLedgers carries the removal ledgers of the newer rotation
+	// copies.
+	NewerRemovalLedgers [][]RemovalRecord
 }
 
 // RestoreResult reports what a completed restore actually did.
@@ -302,11 +359,22 @@ type RestoreResult struct {
 	// TombstonesKept counts ledger entries the restored database already
 	// honoured, which is the expected outcome for a fresh restore.
 	TombstonesKept int `json:"tombstonesKept"`
+	// RemovalsApplied counts the online removals that were replayed after the
+	// restore.
+	RemovalsApplied int `json:"removalsApplied"`
+	// RemovalsPending lists the online removals that still have to be applied
+	// before the restored database serves traffic. It is only filled when no
+	// removal sink was supplied.
+	RemovalsPending []RemovalRecord `json:"removalsPending,omitempty"`
 }
 
 // Restore authenticates the bundle, loads the logical export in one
 // transaction, then reapplies the merged deletion ledger. A failure before the
 // sink write leaves the target database unchanged.
+//
+// The online removal ledger is replayed after the restore, in the same call.
+// A restore that cannot replay the removals must not serve traffic, so the
+// removal sink is a required part of a restore that carries removals.
 func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error) {
 	if request.Restorer == nil {
 		return RestoreResult{}, fmt.Errorf("%w: a restorer is required", ErrMalformedContainer)
@@ -323,6 +391,10 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err != nil {
 		return RestoreResult{}, err
 	}
+	removals, err := mergeRemovals(ctx, verified.Payload.Removals, request.Removals, request.NewerRemovalLedgers)
+	if err != nil {
+		return RestoreResult{}, err
+	}
 	if err = request.Restorer.Restore(ctx, bytes.NewReader(verified.Payload.SQL)); err != nil {
 		return RestoreResult{}, err
 	}
@@ -331,7 +403,7 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err = request.Tombstones.ApplyTombstones(ctx, ledger); err != nil {
 		return RestoreResult{}, err
 	}
-	return RestoreResult{
+	result := RestoreResult{
 		RestorePlan: RestorePlan{
 			Manifest:       verified.Manifest,
 			SQLBytes:       verified.SQLBytes,
@@ -340,7 +412,45 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 		},
 		TombstonesApplied: len(ledger),
 		TombstonesKept:    SummarizeRecovery(actions)[RecoveryKeep],
-	}, nil
+	}
+	if len(removals) == 0 {
+		return result, nil
+	}
+	if request.Removals == nil {
+		// The removals are reported, not applied. The restored database must
+		// not serve traffic before they are applied.
+		result.RemovalsPending = removals
+		return result, nil
+	}
+	if err = request.Removals.ApplyRemovalRecords(ctx, removals); err != nil {
+		return RestoreResult{}, err
+	}
+	result.RemovalsApplied = len(removals)
+	return result, nil
+}
+
+// mergeRemovals merges the removal ledger of a bundle with the newer removal
+// ledgers of the rotation copies.
+func mergeRemovals(ctx context.Context, bundle []RemovalRecord, sink RemovalLedgerSource, newer [][]RemovalRecord) ([]RemovalRecord, error) {
+	merged, err := MergeRemovalLedgers(bundle, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, set := range newer {
+		if merged, err = MergeRemovalLedgers(merged, set); err != nil {
+			return nil, err
+		}
+	}
+	if sink != nil {
+		live, err := sink.ListRemovalRecords(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if merged, err = MergeRemovalLedgers(merged, live); err != nil {
+			return nil, err
+		}
+	}
+	return merged, nil
 }
 
 // CollectLedgers verifies several bundles and merges their deletion ledgers. It
