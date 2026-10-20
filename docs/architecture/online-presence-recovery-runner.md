@@ -108,6 +108,8 @@ The lease rules are enforced by the server, not by the client:
 - The uncertain provider request survives a lease change. A new lease of the
   seat carries the pending request of the previous lease, so the new runner
   knows that the previous runner may have started billable work.
+- The lease of a seat is only readable by the participant that owns the seat.
+  A lease names the runner of a seat, so it is not a shared view.
 
 Errors reuse the existing mapping: a membership failure and a missing match
 are both `404`, a stale version, seat, epoch or lease is `409`, and a service
@@ -162,6 +164,12 @@ export interface SeatPresence {
   readonly lastHeartbeatAt: string | null;
   readonly leaseExpiresAt: string | null;
   readonly offlineSince: string | null;
+  /**
+   * When the other participant chose to keep waiting for this seat.
+   * It belongs to the offline interval of this seat, so the heartbeat of
+   * the waiting participant never clears it and the reconnect of this seat
+   * does.
+   */
   readonly keepWaitingAt: string | null;
 }
 
@@ -171,6 +179,8 @@ export interface ClaimAvailability {
   readonly opponentSeat: Seat | null;
   readonly offlineSince: string | null;
   readonly graceSecondsLeft: number;
+  /** When the participant chose to keep waiting for the opponent. */
+  readonly waitingSince: string | null;
 }
 
 export interface PresenceView {
@@ -181,10 +191,16 @@ export interface PresenceView {
   readonly status: MatchStatus;
   readonly seats: readonly SeatPresence[];
   readonly serviceState: 'healthy' | 'degraded' | 'unavailable';
+  /** False while the canonical recovery of an interrupted service runs. */
+  readonly recovered: boolean;
   readonly claim: ClaimAvailability;
   readonly yourSeat: Seat | null;
 }
 ```
+
+The parsers are `parsePresenceView`, `parseSeatPresence`,
+`parseClaimAvailability`, `parseClaimCommand` and `parseRunnerLease`. The
+match command parser accepts the optional `leaseId`.
 
 The lease DTO extends the existing `RunnerLease` shape:
 
