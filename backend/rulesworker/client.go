@@ -37,6 +37,26 @@ const (
 	MaxLedgerEntries        = 4096
 	MaxRequestIDLength      = 128
 	MaxMatchVersion         = int64(1<<53 - 1)
+
+	// DefaultStartTimeout bounds the cold start of the worker process.
+	//
+	// The start of the shared worker is a one-time cost of the host, not a
+	// property of the request that needs the worker. It therefore has its
+	// own budget, so a slow process start on a loaded host cannot consume
+	// the exchange budget of the request that waits for it.
+	DefaultStartTimeout = 10 * time.Second
+
+	// ReadinessRequestID is the correlation token of the readiness probe.
+	//
+	// The probe is a facts-only request for the standard position. Its
+	// reply proves that the worker booted and speaks the protocol, and the
+	// reply itself is discarded.
+	ReadinessRequestID = "kamkm-readiness"
+
+	// standardStartingFEN is the position of the readiness probe. It is the
+	// cheapest position the worker can evaluate, and it never carries a
+	// move intent.
+	standardStartingFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 )
 
 var (
@@ -66,9 +86,15 @@ type Config struct {
 	Entry string
 	// Node defaults to node from PATH.
 	Node string
-	// RequestTimeout bounds one request including process start. A timeout
-	// terminates the process so a late reply cannot be mistaken for a newer one.
-	RequestTimeout   time.Duration
+	// RequestTimeout bounds the exchange of one request, including the
+	// retries. A timeout terminates the process so a late reply cannot be
+	// mistaken for a newer one.
+	RequestTimeout time.Duration
+	// StartTimeout bounds the cold start of the worker process and its
+	// readiness probe. The start is a one-time cost of a shared resource,
+	// so it has its own budget and never consumes the exchange budget of
+	// the request that waits for it.
+	StartTimeout     time.Duration
 	MaxRequestBytes  int
 	MaxResponseBytes int
 }
@@ -216,6 +242,9 @@ type Client struct {
 	proc   *exec.Cmd
 	stdin  io.WriteCloser
 	stdout *bufio.Reader
+	// ready records that the worker answered the readiness probe. A worker
+	// that is running but not ready is restarted before the next exchange.
+	ready bool
 }
 
 func New(config Config) (*Client, error) {
@@ -250,6 +279,9 @@ func normalizeConfig(config Config) (Config, error) {
 	if config.RequestTimeout <= 0 {
 		config.RequestTimeout = DefaultRequestTimeout
 	}
+	if config.StartTimeout <= 0 {
+		config.StartTimeout = DefaultStartTimeout
+	}
 	if config.MaxRequestBytes <= 0 {
 		config.MaxRequestBytes = DefaultMaxRequestBytes
 	}
@@ -263,57 +295,145 @@ func normalizeConfig(config Config) (Config, error) {
 // cancellation, crashes, malformed output and mismatched correlation all
 // terminate the process and return a zero Response.
 //
-// One deadline covers queueing behind another request, process start, retries
-// and the exchange, so a request that waits for the worker cannot consume a
-// fresh budget once it is admitted.
+// One deadline covers queueing behind another request, the exchange and the
+// retries, so a request that waits for the worker cannot consume a fresh
+// budget once it is admitted.
+//
+// The cold start of the worker is not charged to that deadline. The process
+// start and the readiness probe are a one-time cost of a shared resource,
+// and the host's process start latency is not a property of the request.
+// The start has its own budget, and the time it spends is added back to the
+// exchange deadline. Charging that cost to the request budget made a slow
+// start on a loaded host fail the first request after a boot or after a
+// restart, and the failure repeated itself: a timeout stops the worker, so
+// the next request paid the start again.
 func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	deadline := ctx
-	if c.config.RequestTimeout > 0 {
-		var cancel context.CancelFunc
-		deadline, cancel = context.WithTimeout(ctx, c.config.RequestTimeout)
-		defer cancel()
-	}
+	// The request budget covers the queue wait and the exchange.
+	wait, cancelWait := context.WithTimeout(ctx, c.config.RequestTimeout)
+	defer cancelWait()
 
 	line, err := c.buildRequest(request)
 	if err != nil {
 		return Response{}, err
 	}
-	if err := c.acquire(deadline); err != nil {
+	if err := c.acquire(wait); err != nil {
 		return Response{}, err
 	}
 	defer c.release()
 
-	if err := deadline.Err(); err != nil {
-		return Response{}, contextError(deadline)
+	if err := wait.Err(); err != nil {
+		return Response{}, contextError(wait)
 	}
 	if c.closed {
 		return Response{}, ErrClosed
 	}
+	waitExpiry, _ := wait.Deadline()
+	expiry := waitExpiry
 
 	for attempt := 0; ; attempt++ {
-		if err := deadline.Err(); err != nil {
-			return Response{}, contextError(deadline)
+		if !time.Now().Before(expiry) {
+			return Response{}, ErrTimeout
 		}
-		if c.proc == nil {
-			if err := c.start(); err != nil {
-				return Response{}, fmt.Errorf("%w: %v", ErrCrashed, err)
-			}
+		// The start has its own budget, and the caller's context still
+		// bounds the whole call.
+		startCtx, cancelStart := context.WithTimeout(ctx, c.config.StartTimeout)
+		started := time.Now()
+		readyErr := c.ensureReady(ctx, startCtx)
+		startElapsed := time.Since(started)
+		cancelStart()
+		if readyErr != nil {
+			return Response{}, readyErr
 		}
-		response, retry, err := c.exchange(deadline, line, request)
-		if err == nil {
+		// The start is not charged to the exchange budget.
+		expiry = expiry.Add(startElapsed)
+		exchange, cancelExchange := context.WithDeadline(ctx, expiry)
+		response, retry, exchangeErr := c.exchange(exchange, line, request)
+		cancelExchange()
+		if exchangeErr == nil {
 			return response, nil
 		}
 		c.stop()
 		var rejection *RejectionError
-		if errors.As(err, &rejection) {
+		if errors.As(exchangeErr, &rejection) {
 			return Response{}, rejection
 		}
 		if !retry || attempt >= 1 {
-			return Response{}, err
+			return Response{}, exchangeErr
 		}
+	}
+}
+
+// Warm starts the worker and waits until it answers the readiness probe.
+//
+// The start and the probe have their own budget, so a caller can pay the
+// cold start before the first request needs the worker. It is idempotent: a
+// worker that is already ready is left alone.
+func (c *Client) Warm(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := c.acquire(ctx); err != nil {
+		return err
+	}
+	defer c.release()
+	if c.closed {
+		return ErrClosed
+	}
+	startCtx, cancel := context.WithTimeout(ctx, c.config.StartTimeout)
+	defer cancel()
+	return c.ensureReady(ctx, startCtx)
+}
+
+// ensureReady makes sure that a worker process is running and has answered
+// the readiness probe.
+//
+// The probe is a facts-only request for the standard position. Its reply
+// proves that the worker booted and speaks the protocol, and the reply is
+// discarded. The probe runs under the start budget, so the host's process
+// start latency is never charged to the exchange budget of the request that
+// waits for the worker.
+//
+// A probe that fails stops the worker. The next request starts a fresh one;
+// the client never retries the probe in a loop.
+func (c *Client) ensureReady(ctx context.Context, startCtx context.Context) error {
+	if c.proc != nil && c.ready {
+		return nil
+	}
+	// A canceled caller never starts a worker.
+	if err := ctx.Err(); err != nil {
+		return contextError(ctx)
+	}
+	if c.proc == nil {
+		if err := c.start(); err != nil {
+			return fmt.Errorf("%w: %v", ErrCrashed, err)
+		}
+	}
+	probe := readinessRequest()
+	line, err := c.buildRequest(probe)
+	if err != nil {
+		c.stop()
+		return err
+	}
+	if _, _, err = c.exchange(startCtx, line, probe); err != nil {
+		c.stop()
+		return err
+	}
+	c.ready = true
+	return nil
+}
+
+// readinessRequest is the facts-only request of the readiness probe.
+//
+// It asks for the facts of the standard position and expects no candidate.
+func readinessRequest() Request {
+	return Request{
+		RequestID:    ReadinessRequestID,
+		MatchVersion: 1,
+		FEN:          standardStartingFEN,
+		History:      []string{standardStartingFEN},
 	}
 }
 
@@ -750,6 +870,7 @@ func (c *Client) kill() {
 
 func (c *Client) stop() {
 	if c.proc == nil {
+		c.ready = false
 		return
 	}
 	if c.stdin != nil {
@@ -760,6 +881,7 @@ func (c *Client) stop() {
 	c.proc = nil
 	c.stdin = nil
 	c.stdout = nil
+	c.ready = false
 }
 
 func contextError(parent context.Context) error {

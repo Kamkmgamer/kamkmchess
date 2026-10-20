@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -15,9 +16,26 @@ import (
 
 const fakeWorkerScript = `
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
+
+// The boot delay simulates a host that starts the worker slowly. It is read
+// from a file beside the script, so only the fixture that needs a slow boot
+// pays for it.
+function bootDelayMs() {
+  try {
+    const raw = readFileSync(join(dirname(process.argv[1]), 'boot-delay-ms'), 'utf8');
+    const value = Number.parseInt(raw.trim(), 10);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  } catch {
+    return 0;
+  }
+}
+
+const bootDelay = bootDelayMs();
 
 function facts(timeoutWinner = null) {
   return {
@@ -91,6 +109,11 @@ function responseFor(req) {
 
 for await (const line of rl) {
   const req = JSON.parse(line);
+  // The readiness probe is the first request of a cold worker, so it carries
+  // the boot delay of the simulated host.
+  if (req.requestId === '__READINESS_REQUEST_ID__' && bootDelay > 0) {
+    await new Promise((resolve) => setTimeout(resolve, bootDelay));
+  }
   switch (req.requestId) {
     case 'crash':
       process.exit(9);
@@ -147,11 +170,33 @@ for await (const line of rl) {
 
 const initialFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
+// fakeWorkerSource renders the fake worker with the correlation token of the
+// readiness probe, so the fixture and the client cannot drift apart.
+func fakeWorkerSource() string {
+	return strings.ReplaceAll(fakeWorkerScript, "__READINESS_REQUEST_ID__", ReadinessRequestID)
+}
+
 func testEntry(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "worker.mjs")
-	if err := os.WriteFile(path, []byte(fakeWorkerScript), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(fakeWorkerSource()), 0o600); err != nil {
 		t.Fatalf("write fake worker: %v", err)
+	}
+	return path
+}
+
+// testEntryWithBootDelay writes a fake worker whose readiness probe answers
+// only after the given delay. It simulates a host that starts the worker
+// slowly.
+func testEntryWithBootDelay(t *testing.T, delay time.Duration) string {
+	t.Helper()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "worker.mjs")
+	if err := os.WriteFile(path, []byte(fakeWorkerSource()), 0o600); err != nil {
+		t.Fatalf("write fake worker: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "boot-delay-ms"), []byte(strconv.Itoa(int(delay.Milliseconds()))), 0o600); err != nil {
+		t.Fatalf("write the boot delay: %v", err)
 	}
 	return path
 }
@@ -163,6 +208,13 @@ func testClient(t *testing.T, timeout time.Duration) *Client {
 		t.Fatalf("new client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
+	// The worker is warmed before the fixture returns. The cold start has
+	// its own budget now, and the dedicated regression below covers it, so
+	// the other fixtures measure the protocol instead of the host's
+	// process start latency.
+	if err := client.Warm(context.Background()); err != nil {
+		t.Fatalf("warm the worker: %v", err)
+	}
 	return client
 }
 
@@ -179,6 +231,55 @@ func moveRequest(id string) Request {
 	req := request(id)
 	req.Intent = &Intent{Kind: "move", From: "e2", To: "e4"}
 	return req
+}
+
+// TestTheColdStartDoesNotConsumeTheExchangeBudget proves that the boot of
+// the worker is not charged to the exchange budget of the request.
+//
+// The fake worker answers the readiness probe only after the simulated boot
+// delay. The request budget is far shorter than that delay, so the request
+// can only succeed when the start has its own budget.
+func TestTheColdStartDoesNotConsumeTheExchangeBudget(t *testing.T) {
+	entry := testEntryWithBootDelay(t, 400*time.Millisecond)
+	client, err := New(Config{Entry: entry, RequestTimeout: 150 * time.Millisecond, StartTimeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	response, err := client.Evaluate(context.Background(), moveRequest("ok"))
+	if err != nil {
+		t.Fatalf("the cold start consumed the exchange budget: %v", err)
+	}
+	if response.Candidate == nil || response.Candidate.Move.From != "e2" {
+		t.Fatalf("candidate = %+v", response.Candidate)
+	}
+}
+
+// TestTheRestartAfterATimeoutKeepsItsOwnStartBudget proves that a worker
+// that was stopped by a timeout restarts without spending the exchange
+// budget of the next request on the start.
+func TestTheRestartAfterATimeoutKeepsItsOwnStartBudget(t *testing.T) {
+	entry := testEntryWithBootDelay(t, 400*time.Millisecond)
+	client, err := New(Config{Entry: entry, RequestTimeout: 150 * time.Millisecond, StartTimeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	// The first request pays the boot and then times out on the stalled
+	// worker.
+	if _, err = client.Evaluate(context.Background(), request("slow")); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("error = %v, want timeout", err)
+	}
+	// The next request restarts the worker. The restart has its own start
+	// budget, so the request only spends its exchange budget on the
+	// exchange.
+	response, err := client.Evaluate(context.Background(), request("ok"))
+	if err != nil {
+		t.Fatalf("the restart consumed the exchange budget: %v", err)
+	}
+	if response.RequestID != "ok" {
+		t.Fatalf("correlation lost: %+v", response)
+	}
 }
 
 func TestEvaluateReturnsValidatedMoveCandidate(t *testing.T) {
