@@ -51,6 +51,7 @@
  * wires to its own state; it renders nothing and owns no chess authority.
  */
 import { OnlineAuthError, describeCredential, matchSeatScope } from './auth';
+import { ONLINE_CONTRACTS_SCHEMA_VERSION } from './contracts';
 import type { ClockState, MatchStatus, Move, OfferKind, Result, Seat, SeatControl, TimeControl } from './contracts';
 import type { AuthorizedRequester, AuthorizedStream } from './request';
 import type { ParticipantSession } from './session';
@@ -600,8 +601,11 @@ export function parseOnlineMatchView(value: unknown, expectedMatchId: string): O
   if (variant !== 'orthodox') {
     throw new OnlineUpdateError('invalid-envelope', 'The update snapshot uses an unsupported variant.');
   }
+  if (object.schemaVersion !== ONLINE_CONTRACTS_SCHEMA_VERSION) {
+    throw new OnlineUpdateError('invalid-envelope', 'The update snapshot schema version is not supported.');
+  }
   return {
-    schemaVersion: asPositiveInteger(object.schemaVersion, 'snapshot.schemaVersion'),
+    schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
     matchId,
     variant,
     startingFen: asFen(object.startingFen, 'snapshot.startingFen'),
@@ -800,6 +804,7 @@ export function createOnlineUpdatesSubscriber(options: OnlineUpdatesOptions): On
     const parser = createSseParser({ maxEventBytes, maxLineBytes });
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
     let idleExpired = false;
+    let sawSnapshot = false;
     const armIdle = (): void => {
       if (idleTimer !== undefined) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
@@ -811,6 +816,7 @@ export function createOnlineUpdatesSubscriber(options: OnlineUpdatesOptions): On
       void Promise.resolve(reader.cancel()).catch(() => undefined);
     };
     cycle.controller.signal.addEventListener('abort', onAbort, { once: true });
+    armIdle();
     try {
       for (;;) {
         const chunk = await reader.read();
@@ -820,16 +826,23 @@ export function createOnlineUpdatesSubscriber(options: OnlineUpdatesOptions): On
           armIdle();
           for (const event of parser.push(text)) {
             await handleSseEvent(event, generation);
+            if (event.event === 'snapshot') sawSnapshot = true;
           }
         }
       }
       const tail = decoder.decode();
       if (tail.length > 0) {
-        for (const event of parser.push(tail)) await handleSseEvent(event, generation);
+        for (const event of parser.push(tail)) {
+          await handleSseEvent(event, generation);
+          if (event.event === 'snapshot') sawSnapshot = true;
+        }
       }
       for (const event of parser.flush()) await handleSseEvent(event, generation);
       if (idleExpired) {
         throw new OnlineUpdateError('protocol-error', 'The update stream stopped sending heartbeats.');
+      }
+      if (!sawSnapshot && !cycle.controller.signal.aborted) {
+        throw new OnlineUpdateError('protocol-error', 'The update stream ended without a complete snapshot.');
       }
     } finally {
       if (idleTimer !== undefined) clearTimeout(idleTimer);
@@ -842,16 +855,32 @@ export function createOnlineUpdatesSubscriber(options: OnlineUpdatesOptions): On
     }
   }
 
+  async function boundedRequest<T>(cycle: Cycle, work: () => Promise<T>): Promise<T> {
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      cycle.controller.abort();
+    }, maxIdleMs);
+    try {
+      return await work();
+    } catch (error) {
+      if (timedOut) throw new OnlineUpdateError('protocol-error', 'The update request timed out.');
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function runStream(cycle: Cycle): Promise<void> {
     status = 'connecting';
     const generation = session.generation;
     const headers = cursorHeaders();
-    const stream = await requester.open(scope, {
+    const stream = await boundedRequest(cycle, () => requester.open(scope, {
       path,
       accept: 'text/event-stream',
       ...(headers ? { headers } : {}),
       signal: cycle.controller.signal,
-    });
+    }));
     if (!stream.ok) {
       stream.close();
       throw statusError(stream.status);
@@ -868,12 +897,12 @@ export function createOnlineUpdatesSubscriber(options: OnlineUpdatesOptions): On
     status = 'polling';
     const generation = session.generation;
     const headers = cursorHeaders();
-    const result = await requester.request(scope, {
+    const result = await boundedRequest(cycle, () => requester.request(scope, {
       path,
       accept: 'application/json',
       ...(headers ? { headers } : {}),
       signal: cycle.controller.signal,
-    });
+    }));
     if (!result.ok) throw statusError(result.status);
     const envelope = parseOnlineUpdateEnvelope(result.data, matchId);
     await applyEnvelope(envelope, generation);
@@ -973,7 +1002,9 @@ export function createOnlineUpdatesSubscriber(options: OnlineUpdatesOptions): On
  * polling path. A temporary service failure is not: the stream is retried.
  */
 function prefersPolling(error: unknown): boolean {
-  if (!(error instanceof OnlineUpdateError)) return false;
+  if (error instanceof OnlineAuthError) return false;
+  // A proxy can fail the stream connection while ordinary JSON requests work.
+  if (!(error instanceof OnlineUpdateError)) return true;
   return error.code === 'unsupported'
     || error.code === 'protocol-error'
     || error.code === 'invalid-envelope'
@@ -983,7 +1014,8 @@ function prefersPolling(error: unknown): boolean {
 }
 
 /** Maps a service status onto a terminal or a retryable failure. */
-function statusError(status: number): Error {  switch (status) {
+function statusError(status: number): Error {
+  switch (status) {
     case 400:
       return new TerminalUpdateError('invalid-request', 'The update service refused the request.');
     case 401:
@@ -1023,6 +1055,9 @@ function classifyFailure(error: unknown): { terminal: boolean; reason: OnlineUpd
         return { terminal: true, reason: 'session-invalidated' };
       case 'no-credential':
         return { terminal: true, reason: 'no-participant' };
+      case 'credential-expired':
+      case 'invalid-credential':
+        return { terminal: true, reason: 'unauthorized' };
       case 'wrong-scope':
         return { terminal: true, reason: 'invalid-request' };
       case 'disposed':

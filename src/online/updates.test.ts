@@ -4,7 +4,7 @@ import { createAuthorizedRequester } from './request';
 import { createParticipantSession } from './session';
 import type { AccountIdentityPort } from './session';
 import type { AuthorizedRequester } from './request';
-import { createOnlineUpdatesSubscriber, createMemoryCursorStorage, createSseParser } from './updates';
+import { createOnlineUpdatesSubscriber, createMemoryCursorStorage, createSseParser, parseOnlineUpdateEnvelope } from './updates';
 import type { OnlineCursorScope, OnlineCursorStorage, OnlineUpdateSnapshot, OnlineUpdatesSubscriber } from './updates';
 
 interface RecordedCall {
@@ -670,6 +670,69 @@ describe('online match updates', () => {
     expect(updates[0]?.cursor).toBe(8);
 
     subscriber.dispose();
+  });
+
+  it('rejects an unsupported nested snapshot schema', () => {
+    const update = envelope(2);
+    update.snapshot.schemaVersion = 3;
+    expect(() => parseOnlineUpdateEnvelope(update, 'match_alpha')).toThrow(/schema version/);
+  });
+
+  it('recovers by polling when a stream never delivers its first byte', async () => {
+    const { fetcher, calls } = recordingFetch((_call, index) => index === 0
+      ? new Response(new ReadableStream<Uint8Array>(), { headers: { 'Content-Type': 'text/event-stream' } })
+      : jsonResponse(envelope(12)));
+    const { subscriber, updates } = harness({ fetcher, maxIdleMs: 20 });
+    try {
+      subscriber.start();
+      await vi.waitFor(() => expect(updates[0]?.cursor).toBe(12));
+      expect(calls[1]?.headers.Accept).toBe('application/json');
+    } finally {
+      subscriber.dispose();
+    }
+  });
+
+  it('recovers when the stream connection never answers', async () => {
+    const { fetcher, calls } = recordingFetch((_call, index) => index === 0
+      ? new Promise<Response>(() => undefined)
+      : jsonResponse(envelope(12)));
+    const { subscriber, updates } = harness({ fetcher, maxIdleMs: 20 });
+    try {
+      subscriber.start();
+      await vi.waitFor(() => expect(updates[0]?.cursor).toBe(12));
+      expect(calls[1]?.headers.Accept).toBe('application/json');
+    } finally {
+      subscriber.dispose();
+    }
+  });
+
+  it('falls back to polling after a streaming network failure', async () => {
+    const { fetcher, calls } = recordingFetch((call) => {
+      if (call.headers.Accept === 'text/event-stream') throw new TypeError('Stream transport unavailable');
+      return jsonResponse(envelope(12));
+    });
+    const { subscriber, updates } = harness({ fetcher, baseBackoffMs: 5 });
+    try {
+      subscriber.start();
+      await vi.waitFor(() => expect(updates[0]?.cursor).toBe(12));
+      expect(calls[1]?.headers.Accept).toBe('application/json');
+    } finally {
+      subscriber.dispose();
+    }
+  });
+
+  it('falls back after an empty finite stream', async () => {
+    const { fetcher } = recordingFetch((_call, index) => index === 0
+      ? sseResponse('')
+      : jsonResponse(envelope(12)));
+    const { subscriber, updates } = harness({ fetcher });
+    try {
+      subscriber.start();
+      await vi.waitFor(() => expect(updates[0]?.cursor).toBe(12));
+      expect(subscriber.transport).toBe('poll');
+    } finally {
+      subscriber.dispose();
+    }
   });
 
   it('reconnects at once when the caller wakes the subscriber', async () => {
