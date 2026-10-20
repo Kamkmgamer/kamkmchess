@@ -276,6 +276,32 @@ func (s *Service) AuthorizeSeat(ctx context.Context, q online.Querier, matchID s
 	return nil
 }
 
+// HasLiveSeatCredential reports whether the seat of a match still has a live
+// credential.
+//
+// A live credential is one that is neither revoked nor superseded and that
+// has not expired. The check runs against the caller's querier, so a caller
+// that holds a transaction reads the credential state of that transaction and
+// serializes with a concurrent rotation.
+//
+// The trusted allocation seam uses it to avoid an unnecessary rotation: a
+// credential that is already live is never superseded by a routine retry.
+func (s *Service) HasLiveSeatCredential(ctx context.Context, q online.Querier, matchID string, seat online.Seat) (bool, error) {
+	if q == nil {
+		return false, ErrUnauthenticated
+	}
+	if !matchIDShape(matchID) || (seat != online.SeatWhite && seat != online.SeatBlack) {
+		return false, ErrUnauthenticated
+	}
+	var live bool
+	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_guest_seat_credentials WHERE match_id=$1 AND seat=$2 AND revoked_at IS NULL AND superseded_at IS NULL AND expires_at > $3)`,
+		matchID, string(seat), s.now()).Scan(&live)
+	if err != nil {
+		return false, err
+	}
+	return live, nil
+}
+
 // RevokeAccountSession revokes one Clerk session. A revoked session is
 // rejected before its token would expire.
 //

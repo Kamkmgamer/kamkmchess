@@ -1,0 +1,1510 @@
+// Package invite owns friend invitations, one-use link joins, named account
+// challenges and mutual rematches for casual online chess.
+//
+// The package is a trusted server component. It never exposes a participant
+// command: an invitation is created, previewed, accepted or cancelled through
+// its own routes, and the canonical match is created through the trusted
+// allocation seam of backend/online.
+//
+// Two rules shape the whole package.
+//
+// An invitation is consumed exactly once. The consumption and the acceptance
+// record are written in one transaction, so two concurrent acceptances can
+// never both win.
+//
+// An acceptance is recoverable. The acceptance row owns the seat, the
+// declared control, the allocated guest identity and the created match, so a
+// retry after a lost answer resumes the same acceptance, returns the same
+// match and re-mints the guest seat credential instead of consuming a second
+// invitation. The resume capability is the high entropy acceptance key, which
+// is stored only as a hash; the public acceptance identifier is never enough
+// to resume an acceptance.
+package invite
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/Kamkmgamer/kamkmchess/backend/online"
+	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const (
+	// InvitationTTL is how long an invitation stays usable. An invitation
+	// that was not accepted within twelve hours expires and can never be
+	// consumed.
+	InvitationTTL = 12 * time.Hour
+	// StandardStartingFEN is the standard starting position. A friend game
+	// uses it unless the inviter chose a custom position.
+	StandardStartingFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+	// GuestLabel is the public label of a participant without a public name.
+	GuestLabel = "Guest"
+)
+
+var (
+	// ErrInvalidArgument reports a malformed caller value before database
+	// work.
+	ErrInvalidArgument = errors.New("invite: invalid argument")
+	// ErrInvalidContract reports a value that violates the invitation
+	// contract.
+	ErrInvalidContract = errors.New("invite: invalid contract")
+	// ErrNotFound reports an unknown invitation, acceptance or rematch offer.
+	ErrNotFound = errors.New("invite: not found")
+	// ErrConflict reports a state change the invitation does not allow.
+	ErrConflict = errors.New("invite: conflict")
+	// ErrNotAuthorized reports a caller that does not own the invitation.
+	ErrNotAuthorized = errors.New("invite: not authorized")
+	// ErrExpired reports an invitation whose lifetime has passed.
+	ErrExpired = errors.New("invite: expired")
+	// ErrAlreadyConsumed reports an invitation that somebody else already
+	// consumed.
+	ErrAlreadyConsumed = errors.New("invite: already consumed")
+	// ErrUnavailable reports a missing dependency, such as the private
+	// rules process.
+	ErrUnavailable = errors.New("invite: unavailable")
+)
+
+// Kind names the two invitation paths.
+type Kind string
+
+const (
+	// KindLink is a one-use shareable link. A guest may join it.
+	KindLink Kind = "link"
+	// KindChallenge is a named challenge for one account. Only the named
+	// account may accept it.
+	KindChallenge Kind = "challenge"
+)
+
+// Status is the durable state of an invitation.
+type Status string
+
+const (
+	// StatusOpen is an invitation that may still be accepted.
+	StatusOpen Status = "open"
+	// StatusConsumed is an invitation that was accepted.
+	StatusConsumed Status = "consumed"
+	// StatusCancelled is an invitation the inviter cancelled.
+	StatusCancelled Status = "cancelled"
+	// StatusExpired is an invitation whose lifetime passed.
+	StatusExpired Status = "expired"
+)
+
+// RematchStatus is the durable state of a rematch offer.
+type RematchStatus string
+
+const (
+	// RematchPending is an offer waiting for the opponent.
+	RematchPending RematchStatus = "pending"
+	// RematchAccepting is an offer the opponent is accepting right now.
+	RematchAccepting RematchStatus = "accepting"
+	// RematchAccepted is an offer both participants accepted.
+	RematchAccepted RematchStatus = "accepted"
+	// RematchSuperseded is an offer a newer proposal replaced.
+	RematchSuperseded RematchStatus = "superseded"
+	// RematchDeclined is an offer the opponent declined.
+	RematchDeclined RematchStatus = "declined"
+	// RematchExpired is an offer whose lifetime passed.
+	RematchExpired RematchStatus = "expired"
+)
+
+// Identity is the authenticated identity of one participant.
+//
+// The participant reference is an authorization identity. It never appears in
+// a public preview. The public label is what other participants see.
+type Identity struct {
+	Participant online.ParticipantRef
+	PublicLabel string
+}
+
+// Invitation is the public view of one invitation.
+//
+// It carries the inviter's public name or Guest, the inviter's seat, the
+// clock and the custom position. It never carries a pairing, a seat of the
+// invitee, a credential, an owner token or a participant reference.
+type Invitation struct {
+	InvitationID   string
+	Kind           Kind
+	Status         Status
+	InviterLabel   string
+	InviterSeat    online.Seat
+	InviterControl online.SeatControl
+	TimeControl    online.TimeControl
+	StartingFEN    string
+	ExpiresAt      time.Time
+	CreatedAt      time.Time
+	ConsumedAt     *time.Time
+	CancelledAt    *time.Time
+	MatchID        *string
+	// AcceptanceID is the acceptance that consumed the invitation.
+	AcceptanceID string
+	// inviterKind and inviterID are the stored inviter identity. They are
+	// never published; the created match needs them.
+	inviterKind string
+	inviterID   string
+}
+
+// GuestCredential is a freshly minted guest seat credential.
+//
+// The plaintext token exists only in the answer that delivered it. It is
+// never stored, logged or published.
+type GuestCredential struct {
+	GuestID   string
+	MatchID   string
+	Seat      online.Seat
+	Token     string
+	ExpiresAt time.Time
+	// CredentialID is the stored identifier of the credential. It is not
+	// secret and it is not published.
+	CredentialID string
+}
+
+// CreateRequest describes one new invitation.
+type CreateRequest struct {
+	// Kind is the invitation path. An empty value is a shareable link.
+	Kind Kind
+	// Inviter is the authenticated inviter. A nil value creates an anonymous
+	// guest invitation whose owner token is the only recoverable ownership.
+	Inviter *Identity
+	// RecipientAccountID names the account of a challenge. It is required
+	// for a challenge and forbidden for a link.
+	RecipientAccountID string
+	// Seat is the color the inviter chose.
+	Seat online.Seat
+	// TimeControl is the clock of the friend game.
+	TimeControl online.TimeControl
+	// StartingFEN is an optional custom position. An empty value means the
+	// standard position.
+	StartingFEN string
+	// Control is the inviter's own seat control: the inviter plays or the
+	// inviter's own agent plays.
+	Control online.SeatControl
+}
+
+// Created is the answer of one invitation creation.
+type Created struct {
+	Invitation Invitation
+	// OwnerToken is the inviter's revocable ownership secret. It is returned
+	// once and only its hash is stored.
+	OwnerToken string
+}
+
+// AcceptRequest describes one acceptance of an invitation.
+type AcceptRequest struct {
+	// InvitationID is the shareable link secret.
+	InvitationID string
+	// AcceptanceKey is the client-supplied idempotency key. It is the only
+	// capability that resumes an acceptance. It is required for a guest
+	// acceptor, because a guest has no other identity to resume with.
+	AcceptanceKey string
+	// Acceptor is the authenticated acceptor. A nil value creates an
+	// anonymous guest acceptor.
+	Acceptor *Identity
+	// Control is the acceptor's own seat control.
+	Control online.SeatControl
+	// Origin scopes the guest seat credential of a guest acceptor.
+	Origin string
+	// RotateCredential replaces a live guest seat credential of the seat. A
+	// caller that holds no working credential asks for the rotation; a
+	// routine retry never supersedes a credential another request already
+	// delivered.
+	RotateCredential bool
+}
+
+// Accepted is the answer of one accepted invitation.
+type Accepted struct {
+	AcceptanceID string
+	MatchID      string
+	Seat         online.Seat
+	// GuestCredential is present only when this request minted the guest
+	// seat credential of the seat.
+	GuestCredential *GuestCredential
+}
+
+// CancelRequest describes one cancellation of an invitation.
+type CancelRequest struct {
+	InvitationID string
+	// OwnerToken authorizes the cancellation of the inviter.
+	OwnerToken string
+	// Canceller is the authenticated inviter. It authorizes the
+	// cancellation on its own.
+	Canceller *Identity
+}
+
+// SeatCredentialRequest describes one request for the inviter's guest seat
+// credential of the created match.
+type SeatCredentialRequest struct {
+	InvitationID string
+	OwnerToken   string
+	Origin       string
+}
+
+// SeatCredentialResult is the answer of one seat credential request.
+type SeatCredentialResult struct {
+	MatchID string
+	Seat    online.Seat
+	// GuestCredential is nil for an account inviter.
+	GuestCredential *GuestCredential
+}
+
+// RematchRequest describes one proposed rematch.
+type RematchRequest struct {
+	MatchID       string
+	Proposer      online.ParticipantRef
+	ProposerLabel string
+	// TimeControl overrides the clock of the finished match when it is set.
+	TimeControl *online.TimeControl
+	// StartingFEN overrides the starting position of the finished match when
+	// it is set.
+	StartingFEN *string
+}
+
+// Rematch is the public view of one rematch offer.
+type Rematch struct {
+	RematchID     string
+	MatchID       string
+	Status        RematchStatus
+	ProposerLabel string
+	ProposerSeat  online.Seat
+	TimeControl   online.TimeControl
+	StartingFEN   string
+	ExpiresAt     time.Time
+	NewMatchID    *string
+	CreatedAt     time.Time
+	// proposerKind and proposerID are the stored proposer identity. They are
+	// never published; the acceptance rules need them.
+	proposerKind string
+	proposerID   string
+}
+
+// AcceptRematchRequest describes one acceptance of a rematch offer.
+type AcceptRematchRequest struct {
+	RematchID string
+	Acceptor  online.ParticipantRef
+	// Origin scopes a guest seat credential of the new match.
+	Origin string
+	// RotateCredential replaces a live guest seat credential of the seat.
+	RotateCredential bool
+}
+
+// RematchResult is the answer of one accepted rematch.
+type RematchResult struct {
+	Rematch Rematch
+	// MatchID is the created match.
+	MatchID string
+	// Seat is the seat the acceptor plays in the new match.
+	Seat online.Seat
+	// GuestCredential is present only when this request minted the guest
+	// seat credential of the acceptor.
+	GuestCredential *GuestCredential
+}
+
+// RematchSeatCredentialRequest describes one request for the guest seat
+// credential of the proposer of an accepted rematch.
+//
+// A rematch is a new match, so the credential of the finished match cannot
+// authorize it. A guest participant needs a fresh credential for the new
+// seat.
+type RematchSeatCredentialRequest struct {
+	RematchID string
+	Proposer  online.ParticipantRef
+	Origin    string
+}
+
+// MatchAllocator is the trusted seam that creates the canonical match of an
+// accepted invitation.
+//
+// It is the single canonical allocation seam of backend/online. The queue
+// worker uses the same seam, so an invitation and a queue pair never keep two
+// copies of the acceptance SQL.
+type MatchAllocator interface {
+	CreateMatchInTx(ctx context.Context, tx pgx.Tx, cmd online.Command) (online.CommandResult, error)
+	ValidateSetup(ctx context.Context, setup online.CreateMatchSetup) error
+}
+
+// MatchReader reads a canonical match for the rematch rules.
+type MatchReader interface {
+	GetMatch(ctx context.Context, matchID string) (online.Match, error)
+}
+
+// CredentialIssuer mints the guest seat credential of an accepted seat.
+type CredentialIssuer interface {
+	AcceptInvitation(ctx context.Context, request onlineauth.AcceptInvitationRequest) (onlineauth.IssuedSeatCredentials, error)
+	AcceptInvitationTx(ctx context.Context, tx pgx.Tx, request onlineauth.AcceptInvitationRequest) (onlineauth.IssuedSeatCredentials, error)
+	// HasLiveSeatCredential reports whether the seat still has a live
+	// credential.
+	HasLiveSeatCredential(ctx context.Context, q online.Querier, matchID string, seat online.Seat) (bool, error)
+}
+
+// Options configures the invitation service.
+type Options struct {
+	// Now overrides the clock. The tests use it to place an acceptance
+	// before or after the expiry of an invitation.
+	Now func() time.Time
+	// InvitationTTL bounds the lifetime of an invitation.
+	InvitationTTL time.Duration
+	// GuestCredentialTTL bounds the lifetime of an issued guest seat
+	// credential.
+	GuestCredentialTTL time.Duration
+	// Identifier mints a stored identifier. It is replaced in the tests to
+	// make the fixtures deterministic.
+	Identifier func(prefix string, length int) (string, error)
+	// Secret mints a bearer secret.
+	Secret func(prefix string, length int) (string, error)
+}
+
+// Service owns friend invitations and rematches.
+type Service struct {
+	db          *pgxpool.Pool
+	matches     MatchAllocator
+	reader      MatchReader
+	credentials CredentialIssuer
+	options     Options
+}
+
+// Open binds the invitation service to a pool. It does not mutate schema.
+func Open(_ context.Context, db *pgxpool.Pool, matches MatchAllocator, reader MatchReader, credentials CredentialIssuer, options Options) (*Service, error) {
+	if db == nil || matches == nil || reader == nil || credentials == nil {
+		return nil, ErrInvalidArgument
+	}
+	if options.Now == nil {
+		options.Now = time.Now
+	}
+	if options.InvitationTTL <= 0 {
+		options.InvitationTTL = InvitationTTL
+	}
+	if options.GuestCredentialTTL <= 0 {
+		options.GuestCredentialTTL = onlineauth.DefaultGuestCredentialTTL
+	}
+	if options.Identifier == nil {
+		options.Identifier = randomIdentifier
+	}
+	if options.Secret == nil {
+		options.Secret = randomSecret
+	}
+	return &Service{db: db, matches: matches, reader: reader, credentials: credentials, options: options}, nil
+}
+
+func (s *Service) now() time.Time { return s.options.Now().UTC() }
+
+// Create creates one invitation.
+//
+// The custom position is validated against the pinned rules policy before the
+// invitation exists, so an invalid position can never be offered and later
+// consume an invitation.
+func (s *Service) Create(ctx context.Context, request CreateRequest) (Created, error) {
+	kind := request.Kind
+	if kind == "" {
+		kind = KindLink
+	}
+	if kind != KindLink && kind != KindChallenge {
+		return Created{}, fmt.Errorf("%w: invitation kind", ErrInvalidContract)
+	}
+	recipient := strings.TrimSpace(request.RecipientAccountID)
+	if kind == KindChallenge {
+		if recipient == "" || len(recipient) > 128 {
+			return Created{}, fmt.Errorf("%w: a named challenge needs a recipient account", ErrInvalidContract)
+		}
+	} else if recipient != "" {
+		return Created{}, fmt.Errorf("%w: a shareable link has no named recipient", ErrInvalidContract)
+	}
+	if request.Seat != online.SeatWhite && request.Seat != online.SeatBlack {
+		return Created{}, fmt.Errorf("%w: inviter seat", ErrInvalidContract)
+	}
+	if err := validateTimeControl(request.TimeControl); err != nil {
+		return Created{}, err
+	}
+	if err := validateSeatControl(request.Control); err != nil {
+		return Created{}, err
+	}
+	inviterParticipant, inviterLabel, err := s.resolveInviter(request.Inviter)
+	if err != nil {
+		return Created{}, err
+	}
+	startingFEN := strings.TrimSpace(request.StartingFEN)
+	if err := s.validatePosition(ctx, startingFEN, request.TimeControl, inviterParticipant, inviterLabel, request.Control); err != nil {
+		return Created{}, err
+	}
+	invitationID, err := s.options.Identifier("inv_", 40)
+	if err != nil {
+		return Created{}, err
+	}
+	ownerToken, err := s.options.Secret("kmoi1_", 40)
+	if err != nil {
+		return Created{}, err
+	}
+	now := s.now()
+	expiresAt := now.Add(s.options.InvitationTTL)
+	var modelLabel any
+	if request.Control.ModelLabel != nil {
+		modelLabel = *request.Control.ModelLabel
+	}
+	_, err = s.db.Exec(ctx, `INSERT INTO online_friend_invitations(invitation_id,kind,status,version,inviter_kind,inviter_id,inviter_public_label,inviter_control_kind,inviter_model_label,inviter_seat,starting_time_ms,increment_ms,starting_fen,recipient_account_id,owner_token_hash,created_at,expires_at) VALUES($1,$2,$3,1,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+		invitationID, string(kind), string(StatusOpen), string(inviterParticipant.Kind), inviterParticipant.ID, inviterLabel, string(request.Control.Kind), modelLabel, string(request.Seat),
+		request.TimeControl.StartingTimeMs, request.TimeControl.IncrementMs, nullableString(startingFEN), nullableString(recipient), hashOwnerToken(ownerToken), now, expiresAt)
+	if err != nil {
+		return Created{}, err
+	}
+	invitation := Invitation{
+		InvitationID:   invitationID,
+		Kind:           kind,
+		Status:         StatusOpen,
+		InviterLabel:   inviterLabel,
+		InviterSeat:    request.Seat,
+		InviterControl: request.Control,
+		TimeControl:    request.TimeControl,
+		StartingFEN:    startingFEN,
+		ExpiresAt:      expiresAt,
+		CreatedAt:      now,
+		inviterKind:    string(inviterParticipant.Kind),
+		inviterID:      inviterParticipant.ID,
+	}
+	return Created{Invitation: invitation, OwnerToken: ownerToken}, nil
+}
+
+// validatePosition checks the starting position of a friend game.
+//
+// The check runs outside every transaction, so an invalid position is refused
+// before an invitation exists or before an invitation is consumed.
+func (s *Service) validatePosition(ctx context.Context, startingFEN string, timeControl online.TimeControl, participant online.ParticipantRef, label string, control online.SeatControl) error {
+	if startingFEN == "" {
+		return nil
+	}
+	other := online.ParticipantRef{Kind: online.ParticipantGuest, ID: "invitation-position-check"}
+	setup := online.CreateMatchSetup{
+		Variant:     "orthodox",
+		StartingFEN: startingFEN,
+		TimeControl: timeControl,
+		Seats: online.CreateMatchSeats{
+			White: online.CreateSeat{Participant: participant, PublicLabel: label, Control: control},
+			Black: online.CreateSeat{Participant: other, PublicLabel: GuestLabel, Control: control},
+		},
+	}
+	if err := setup.Validate(); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidContract, err)
+	}
+	if err := s.matches.ValidateSetup(ctx, setup); err != nil {
+		return fmt.Errorf("%w: the starting position is not playable", ErrInvalidContract)
+	}
+	return nil
+}
+
+// resolveInviter returns the inviter identity of a new invitation.
+//
+// An anonymous inviter is a guest with a fresh opaque identity and the public
+// label Guest. It owns the invitation through the owner token only.
+func (s *Service) resolveInviter(inviter *Identity) (online.ParticipantRef, string, error) {
+	if inviter == nil {
+		guestID, err := s.options.Identifier("guest_", 24)
+		if err != nil {
+			return online.ParticipantRef{}, "", err
+		}
+		return online.ParticipantRef{Kind: online.ParticipantGuest, ID: guestID}, GuestLabel, nil
+	}
+	if err := inviter.Participant.Validate(); err != nil {
+		return online.ParticipantRef{}, "", fmt.Errorf("%w: inviter identity", ErrInvalidArgument)
+	}
+	label := strings.TrimSpace(inviter.PublicLabel)
+	if label == "" {
+		label = GuestLabel
+	}
+	if err := validatePublicLabel(label); err != nil {
+		return online.ParticipantRef{}, "", err
+	}
+	return inviter.Participant, label, nil
+}
+
+// Get returns the public view of one invitation.
+//
+// A challenge is only visible to its named recipient. The check is by
+// recipient account, so an unknown caller learns nothing about a named
+// challenge.
+func (s *Service) Get(ctx context.Context, invitationID string, viewerAccountID string) (Invitation, error) {
+	invitation, recipient, err := s.readInvitation(ctx, invitationID)
+	if err != nil {
+		return Invitation{}, err
+	}
+	if recipient != "" && recipient != viewerAccountID {
+		return Invitation{}, ErrNotFound
+	}
+	return invitation, nil
+}
+
+// Accept consumes an invitation and creates the canonical match.
+//
+// The acceptance is idempotent for one acceptance key. A retry after a lost
+// answer returns the same match and the same seat. The guest seat credential
+// is minted again only when the caller asks for the rotation, so a routine
+// retry never supersedes a credential that another request already
+// delivered.
+func (s *Service) Accept(ctx context.Context, request AcceptRequest) (Accepted, error) {
+	if err := validateAcceptanceKey(request.AcceptanceKey); err != nil {
+		return Accepted{}, err
+	}
+	if err := validateSeatControl(request.Control); err != nil {
+		return Accepted{}, err
+	}
+	invitation, recipient, err := s.readInvitation(ctx, request.InvitationID)
+	if err != nil {
+		return Accepted{}, err
+	}
+	if request.Acceptor != nil {
+		if err := request.Acceptor.Participant.Validate(); err != nil {
+			return Accepted{}, fmt.Errorf("%w: acceptor identity", ErrInvalidArgument)
+		}
+		// The inviter cannot accept their own invitation. The check runs
+		// before the consumption, so a self acceptance never consumes an
+		// invitation.
+		if request.Acceptor.Participant.Kind == online.ParticipantKind(invitation.inviterKind) && request.Acceptor.Participant.ID == invitation.inviterID {
+			return Accepted{}, fmt.Errorf("%w: the inviter cannot accept their own invitation", ErrInvalidContract)
+		}
+	}
+	if recipient != "" {
+		// A named challenge is isolated: only the named account may accept
+		// it, and a guest never may.
+		if request.Acceptor == nil || request.Acceptor.Participant.Kind != online.ParticipantAccount || request.Acceptor.Participant.ID != recipient {
+			return Accepted{}, ErrNotAuthorized
+		}
+	}
+	// The position is checked before the consumption, so an invalid
+	// position never consumes an invitation.
+	if err := s.validatePosition(ctx, invitation.StartingFEN, invitation.TimeControl,
+		online.ParticipantRef{Kind: online.ParticipantKind(invitation.inviterKind), ID: invitation.inviterID},
+		invitation.InviterLabel, invitation.InviterControl); err != nil {
+		return Accepted{}, err
+	}
+	acceptance, err := s.claim(ctx, request, invitation)
+	if err != nil {
+		return Accepted{}, err
+	}
+	return s.complete(ctx, acceptance, invitation, request)
+}
+
+// claim consumes the invitation and records the acceptance in one
+// transaction.
+//
+// The conditional update is the atomic consumption: two concurrent
+// acceptances serialize on the invitation row and only one of them sees the
+// open status. The acceptance row is written in the same transaction, so an
+// invitation is never consumed without a recoverable acceptance.
+//
+// The identity of an anonymous guest acceptor is allocated inside that
+// transaction and stored as the seat owner of the created match, so the
+// identity and the minted credential always agree.
+func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation Invitation) (acceptance, error) {
+	keyHash := hashAcceptanceKey(request.AcceptanceKey)
+	existing, err := s.acceptanceByKey(ctx, request.InvitationID, keyHash)
+	if err == nil {
+		if request.Acceptor != nil && existing.AcceptorID != request.Acceptor.Participant.ID {
+			return acceptance{}, ErrConflict
+		}
+		return existing, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return acceptance{}, err
+	}
+	acceptanceID, err := s.options.Identifier("acc_", 24)
+	if err != nil {
+		return acceptance{}, err
+	}
+	acceptorID := ""
+	acceptorKind := string(online.ParticipantGuest)
+	acceptorLabel := GuestLabel
+	if request.Acceptor != nil {
+		acceptorKind = string(request.Acceptor.Participant.Kind)
+		acceptorID = request.Acceptor.Participant.ID
+		acceptorLabel = strings.TrimSpace(request.Acceptor.PublicLabel)
+		if acceptorLabel == "" {
+			acceptorLabel = GuestLabel
+		}
+	}
+	now := s.now()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return acceptance{}, err
+	}
+	defer tx.Rollback(ctx)
+	// The identity of an anonymous guest acceptor is allocated once, inside
+	// the transaction that consumes the invitation.
+	if acceptorID == "" {
+		guestID, idErr := s.options.Identifier("guest_", 24)
+		if idErr != nil {
+			return acceptance{}, idErr
+		}
+		acceptorID = guestID
+	}
+	var claimed string
+	err = tx.QueryRow(ctx, `UPDATE online_friend_invitations SET status='consumed',consumed_at=$2,acceptance_id=$3,version=version+1 WHERE invitation_id=$1 AND status='open' AND expires_at > $2 RETURNING invitation_id`,
+		request.InvitationID, now, acceptanceID).Scan(&claimed)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return acceptance{}, err
+		}
+		// Somebody else consumed it, or it expired. A concurrent acceptance
+		// with the same key may own it now.
+		existing, lookupErr := s.acceptanceByKey(ctx, request.InvitationID, keyHash)
+		if lookupErr == nil {
+			if request.Acceptor != nil && existing.AcceptorID != request.Acceptor.Participant.ID {
+				return acceptance{}, ErrConflict
+			}
+			return existing, nil
+		}
+		current, _, readErr := s.readInvitation(ctx, request.InvitationID)
+		if readErr != nil {
+			return acceptance{}, readErr
+		}
+		switch current.Status {
+		case StatusExpired:
+			return acceptance{}, ErrExpired
+		case StatusCancelled:
+			return acceptance{}, ErrConflict
+		}
+		if !s.now().Before(current.ExpiresAt) {
+			return acceptance{}, ErrExpired
+		}
+		return acceptance{}, ErrAlreadyConsumed
+	}
+	seat := invitation.InviterSeat
+	if other, ok := seat.Other(); ok {
+		seat = other
+	}
+	var modelLabel any
+	if request.Control.ModelLabel != nil {
+		modelLabel = *request.Control.ModelLabel
+	}
+	guestID := ""
+	if acceptorKind == string(online.ParticipantGuest) {
+		guestID = acceptorID
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO online_invitation_acceptances(acceptance_id,invitation_id,acceptance_key_hash,acceptor_kind,acceptor_id,acceptor_public_label,seat,control_kind,model_label,guest_id,status,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11,$11)`,
+		acceptanceID, request.InvitationID, keyHash, acceptorKind, acceptorID, acceptorLabel, string(seat), string(request.Control.Kind), modelLabel, nullableString(guestID), now)
+	if err != nil {
+		return acceptance{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return acceptance{}, err
+	}
+	return acceptance{
+		AcceptanceID:  acceptanceID,
+		InvitationID:  request.InvitationID,
+		AcceptorKind:  acceptorKind,
+		AcceptorID:    acceptorID,
+		AcceptorLabel: acceptorLabel,
+		GuestID:       guestID,
+		Seat:          seat,
+		ControlKind:   string(request.Control.Kind),
+		ModelLabel:    request.Control.ModelLabel,
+		Status:        "pending",
+	}, nil
+}
+
+// complete creates the canonical match of an acceptance and mints the guest
+// seat credential of a guest acceptor.
+//
+// The match, the acceptance state and the credential commit together. Every
+// step is idempotent: the match identifier is derived from the acceptance,
+// so a retry creates no second match.
+func (s *Service) complete(ctx context.Context, acceptance acceptance, invitation Invitation, request AcceptRequest) (Accepted, error) {
+	inviterParticipant := online.ParticipantRef{Kind: online.ParticipantKind(invitation.inviterKind), ID: invitation.inviterID}
+	acceptorParticipant := online.ParticipantRef{Kind: online.ParticipantKind(acceptance.AcceptorKind), ID: acceptance.AcceptorID}
+	if inviterParticipant == acceptorParticipant {
+		return Accepted{}, fmt.Errorf("%w: the inviter cannot accept their own invitation", ErrInvalidContract)
+	}
+	inviterControl := invitation.InviterControl
+	acceptorControl := online.SeatControl{Kind: online.ControlKind(acceptance.ControlKind), ModelLabel: acceptance.ModelLabel}
+	startingFEN := invitation.StartingFEN
+	if startingFEN == "" {
+		startingFEN = StandardStartingFEN
+	}
+	white := online.CreateSeat{Participant: inviterParticipant, PublicLabel: invitation.InviterLabel, Control: inviterControl}
+	black := online.CreateSeat{Participant: acceptorParticipant, PublicLabel: acceptance.AcceptorLabel, Control: acceptorControl}
+	if invitation.InviterSeat == online.SeatBlack {
+		white, black = black, white
+	}
+	setup := online.CreateMatchSetup{
+		Variant:     "orthodox",
+		StartingFEN: startingFEN,
+		TimeControl: invitation.TimeControl,
+		Seats:       online.CreateMatchSeats{White: white, Black: black},
+	}
+	cmd, err := online.NewAllocationCommand(inviterParticipant, setup, acceptance.AcceptanceID)
+	if err != nil {
+		return Accepted{}, err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Accepted{}, err
+	}
+	defer tx.Rollback(ctx)
+	result, err := s.matches.CreateMatchInTx(ctx, tx, cmd)
+	if err != nil {
+		return Accepted{}, err
+	}
+	matchID := result.Receipt.MatchID
+	// The acceptance state only moves forward. A retry of an acceptance
+	// that is already credentialed keeps its state.
+	if _, err = tx.Exec(ctx, `UPDATE online_invitation_acceptances SET status='matched',match_id=$2,updated_at=$3 WHERE acceptance_id=$1 AND status='pending'`,
+		acceptance.AcceptanceID, matchID, s.now()); err != nil {
+		return Accepted{}, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE online_friend_invitations SET match_id=$2 WHERE invitation_id=$1 AND status='consumed'`,
+		acceptance.InvitationID, matchID); err != nil {
+		return Accepted{}, err
+	}
+	accepted := Accepted{AcceptanceID: acceptance.AcceptanceID, MatchID: matchID, Seat: acceptance.Seat}
+	if acceptance.AcceptorKind == string(online.ParticipantGuest) {
+		credential, mintErr := s.mintAcceptanceCredential(ctx, tx, acceptance, matchID, request.Origin, request.RotateCredential)
+		if mintErr != nil {
+			return Accepted{}, mintErr
+		}
+		accepted.GuestCredential = credential
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Accepted{}, err
+	}
+	return accepted, nil
+}
+
+// mintAcceptanceCredential mints the guest seat credential of an accepted
+// seat inside the caller's transaction.
+//
+// The acceptance row is locked first, so two concurrent accepts of the same
+// acceptance serialize. A credential that is already live is never superseded
+// by a routine retry: the rotation happens only when the caller asks for it,
+// because the caller holds no working credential.
+func (s *Service) mintAcceptanceCredential(ctx context.Context, tx pgx.Tx, acceptance acceptance, matchID, origin string, rotate bool) (*GuestCredential, error) {
+	if acceptance.GuestID == "" {
+		return nil, ErrInvalidArgument
+	}
+	var status string
+	var storedMatch *string
+	if err := tx.QueryRow(ctx, `SELECT status,match_id FROM online_invitation_acceptances WHERE acceptance_id=$1 FOR UPDATE`, acceptance.AcceptanceID).Scan(&status, &storedMatch); err != nil {
+		return nil, err
+	}
+	live, err := s.credentials.HasLiveSeatCredential(ctx, tx, matchID, acceptance.Seat)
+	if err != nil {
+		return nil, err
+	}
+	if live && !rotate {
+		return nil, nil
+	}
+	issued, err := s.credentials.AcceptInvitationTx(ctx, tx, onlineauth.AcceptInvitationRequest{
+		MatchID: matchID,
+		Seat:    acceptance.Seat,
+		GuestID: acceptance.GuestID,
+		Origin:  origin,
+		TTL:     s.options.GuestCredentialTTL,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE online_invitation_acceptances SET status='credentialed',credential_id=$2,updated_at=$3 WHERE acceptance_id=$1`,
+		acceptance.AcceptanceID, issued.Credential.CredentialID, s.now()); err != nil {
+		return nil, err
+	}
+	return &GuestCredential{
+		GuestID:      issued.Credential.GuestID,
+		MatchID:      issued.Credential.MatchID,
+		Seat:         issued.Credential.Seat,
+		Token:        issued.Credential.Secret,
+		ExpiresAt:    issued.Credential.ExpiresAt,
+		CredentialID: issued.Credential.CredentialID,
+	}, nil
+}
+
+// Cancel cancels an open invitation.
+//
+// The inviter owns the invitation through the owner token or through its
+// authenticated account identity. A consumed invitation can never be
+// cancelled and a cancelled invitation can never be consumed.
+func (s *Service) Cancel(ctx context.Context, request CancelRequest) (Invitation, error) {
+	invitation, _, err := s.readInvitation(ctx, request.InvitationID)
+	if err != nil {
+		return Invitation{}, err
+	}
+	if invitation.Status == StatusCancelled {
+		return invitation, nil
+	}
+	if invitation.Status != StatusOpen {
+		return Invitation{}, ErrConflict
+	}
+	if !s.ownsInvitation(ctx, request.InvitationID, request.OwnerToken, request.Canceller) {
+		return Invitation{}, ErrNotAuthorized
+	}
+	now := s.now()
+	tag, err := s.db.Exec(ctx, `UPDATE online_friend_invitations SET status='cancelled',cancelled_at=$2,version=version+1 WHERE invitation_id=$1 AND status='open'`, request.InvitationID, now)
+	if err != nil {
+		return Invitation{}, err
+	}
+	// A concurrent acceptance may have consumed the invitation between the
+	// read and the update. The cancellation only wins when it changed the
+	// row.
+	if tag.RowsAffected() == 0 {
+		current, _, readErr := s.readInvitation(ctx, request.InvitationID)
+		if readErr != nil {
+			return Invitation{}, readErr
+		}
+		if current.Status == StatusCancelled {
+			return current, nil
+		}
+		return Invitation{}, ErrConflict
+	}
+	invitation.Status = StatusCancelled
+	invitation.CancelledAt = &now
+	return invitation, nil
+}
+
+// SeatCredential mints the guest seat credential of the inviter of a created
+// match.
+//
+// A guest seat credential is bound to a match seat, so it cannot exist before
+// the match exists. The owner token authorizes the request and the mint
+// supersedes an earlier credential of the same seat.
+func (s *Service) SeatCredential(ctx context.Context, request SeatCredentialRequest) (SeatCredentialResult, error) {
+	invitation, _, err := s.readInvitation(ctx, request.InvitationID)
+	if err != nil {
+		return SeatCredentialResult{}, err
+	}
+	if invitation.Status != StatusConsumed || invitation.MatchID == nil {
+		return SeatCredentialResult{}, ErrConflict
+	}
+	if !s.ownsInvitation(ctx, request.InvitationID, request.OwnerToken, nil) {
+		return SeatCredentialResult{}, ErrNotAuthorized
+	}
+	result := SeatCredentialResult{MatchID: *invitation.MatchID, Seat: invitation.InviterSeat}
+	if invitation.inviterKind != string(online.ParticipantGuest) {
+		return result, nil
+	}
+	credential, err := s.mintSeatCredential(ctx, *invitation.MatchID, invitation.InviterSeat, invitation.inviterID, request.Origin)
+	if err != nil {
+		return SeatCredentialResult{}, err
+	}
+	result.GuestCredential = credential
+	return result, nil
+}
+
+// mintSeatCredential mints a guest seat credential in its own transaction.
+func (s *Service) mintSeatCredential(ctx context.Context, matchID string, seat online.Seat, guestID, origin string) (*GuestCredential, error) {
+	if guestID == "" {
+		return nil, ErrInvalidArgument
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	issued, err := s.credentials.AcceptInvitationTx(ctx, tx, onlineauth.AcceptInvitationRequest{
+		MatchID: matchID,
+		Seat:    seat,
+		GuestID: guestID,
+		Origin:  origin,
+		TTL:     s.options.GuestCredentialTTL,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return &GuestCredential{
+		GuestID:      issued.Credential.GuestID,
+		MatchID:      issued.Credential.MatchID,
+		Seat:         issued.Credential.Seat,
+		Token:        issued.Credential.Secret,
+		ExpiresAt:    issued.Credential.ExpiresAt,
+		CredentialID: issued.Credential.CredentialID,
+	}, nil
+}
+
+// ProposeRematch proposes a new game after a finished match.
+//
+// The proposal is the proposer's consent. The opponent accepts the exact
+// offer, and only then a new match exists. The colors are reversed and the
+// setup is retained unless the proposal changes it.
+func (s *Service) ProposeRematch(ctx context.Context, request RematchRequest) (Rematch, error) {
+	match, err := s.reader.GetMatch(ctx, request.MatchID)
+	if err != nil {
+		return Rematch{}, err
+	}
+	if match.Status == online.MatchActive {
+		return Rematch{}, fmt.Errorf("%w: the match is still running", ErrConflict)
+	}
+	if !match.HasParticipant(request.Proposer) {
+		return Rematch{}, ErrNotAuthorized
+	}
+	label := strings.TrimSpace(request.ProposerLabel)
+	if label == "" {
+		label = GuestLabel
+	}
+	if err := validatePublicLabel(label); err != nil {
+		return Rematch{}, err
+	}
+	timeControl := match.TimeControl
+	if request.TimeControl != nil {
+		timeControl = *request.TimeControl
+	}
+	if err := validateTimeControl(timeControl); err != nil {
+		return Rematch{}, err
+	}
+	startingFEN := match.StartingFEN
+	if request.StartingFEN != nil {
+		startingFEN = strings.TrimSpace(*request.StartingFEN)
+	}
+	proposerSeat, err := seatOf(match, request.Proposer)
+	if err != nil {
+		return Rematch{}, err
+	}
+	// A rematch reverses the colors: the proposer plays the seat the
+	// opponent held in the finished match.
+	proposerSeat = reversedSeat(proposerSeat)
+	if startingFEN != "" {
+		if err := s.validatePosition(ctx, startingFEN, timeControl, request.Proposer, label, online.SeatControl{Kind: online.ControlHuman}); err != nil {
+			return Rematch{}, err
+		}
+	}
+	rematchID, err := s.options.Identifier("rmt_", 24)
+	if err != nil {
+		return Rematch{}, err
+	}
+	now := s.now()
+	expiresAt := now.Add(s.options.InvitationTTL)
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return Rematch{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err = tx.Exec(ctx, `UPDATE online_rematch_offers SET status='superseded',version=version+1,updated_at=$2 WHERE match_id=$1 AND status IN ('pending','accepting')`, request.MatchID, now); err != nil {
+		return Rematch{}, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO online_rematch_offers(rematch_id,match_id,proposer_kind,proposer_id,proposer_public_label,proposer_seat,starting_time_ms,increment_ms,starting_fen,status,version,created_at,updated_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',1,$10,$10,$11)`,
+		rematchID, request.MatchID, string(request.Proposer.Kind), request.Proposer.ID, label, string(proposerSeat),
+		timeControl.StartingTimeMs, timeControl.IncrementMs, nullableString(startingFEN), now, expiresAt); err != nil {
+		return Rematch{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Rematch{}, err
+	}
+	return Rematch{
+		RematchID:     rematchID,
+		MatchID:       request.MatchID,
+		Status:        RematchPending,
+		ProposerLabel: label,
+		ProposerSeat:  proposerSeat,
+		TimeControl:   timeControl,
+		StartingFEN:   startingFEN,
+		ExpiresAt:     expiresAt,
+		CreatedAt:     now,
+		proposerKind:  string(request.Proposer.Kind),
+		proposerID:    request.Proposer.ID,
+	}, nil
+}
+
+// AcceptRematch accepts a rematch offer and creates the new match.
+//
+// The offer is reserved before the match is created, so a concurrent
+// supersede, expiry or a second acceptance can never produce a second match.
+// A duplicate acceptance returns the same new match.
+//
+// The new match is a new game, so a guest participant needs a fresh seat
+// credential for it: the credential of the finished match cannot authorize
+// the new seat.
+func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchRequest) (RematchResult, error) {
+	offer, err := s.readRematch(ctx, request.RematchID)
+	if err != nil {
+		return RematchResult{}, err
+	}
+	match, err := s.reader.GetMatch(ctx, offer.MatchID)
+	if err != nil {
+		return RematchResult{}, err
+	}
+	if !match.HasParticipant(request.Acceptor) {
+		return RematchResult{}, ErrNotAuthorized
+	}
+	if offer.proposerID == request.Acceptor.ID && offer.proposerKind == string(request.Acceptor.Kind) {
+		return RematchResult{}, fmt.Errorf("%w: the proposer is already consenting", ErrConflict)
+	}
+	if offer.Status == RematchAccepted && offer.NewMatchID != nil {
+		seat, seatErr := seatOf(match, request.Acceptor)
+		if seatErr != nil {
+			return RematchResult{}, seatErr
+		}
+		return RematchResult{Rematch: offer, MatchID: *offer.NewMatchID, Seat: reversedSeat(seat)}, nil
+	}
+	if offer.Status != RematchPending && offer.Status != RematchAccepting {
+		return RematchResult{}, ErrConflict
+	}
+	// The offer is reserved before the match is created. The reservation
+	// names the accepter, so a retry by the same accepter resumes it and a
+	// different accepter is refused.
+	now := s.now()
+	var reserved string
+	err = s.db.QueryRow(ctx, `UPDATE online_rematch_offers SET status='accepting',accepted_by_kind=$2,accepted_by_id=$3,version=version+1,updated_at=$4 WHERE rematch_id=$1 AND status IN ('pending','accepting') AND expires_at > $4 AND (accepted_by_id IS NULL OR accepted_by_id=$3) RETURNING rematch_id`,
+		request.RematchID, string(request.Acceptor.Kind), request.Acceptor.ID, now).Scan(&reserved)
+	if err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return RematchResult{}, err
+		}
+		current, readErr := s.readRematch(ctx, request.RematchID)
+		if readErr != nil {
+			return RematchResult{}, readErr
+		}
+		if current.Status == RematchAccepted && current.NewMatchID != nil {
+			seat, seatErr := seatOf(match, request.Acceptor)
+			if seatErr != nil {
+				return RematchResult{}, seatErr
+			}
+			return RematchResult{Rematch: current, MatchID: *current.NewMatchID, Seat: reversedSeat(seat)}, nil
+		}
+		if !s.now().Before(current.ExpiresAt) {
+			return RematchResult{}, ErrExpired
+		}
+		return RematchResult{}, ErrConflict
+	}
+	white, black, err := rematchSeats(match, offer)
+	if err != nil {
+		return RematchResult{}, err
+	}
+	startingFEN := offer.StartingFEN
+	if startingFEN == "" {
+		startingFEN = StandardStartingFEN
+	}
+	setup := online.CreateMatchSetup{
+		Variant:     "orthodox",
+		StartingFEN: startingFEN,
+		TimeControl: offer.TimeControl,
+		Seats:       online.CreateMatchSeats{White: white, Black: black},
+	}
+	actor := white.Participant
+	if black.Participant == request.Acceptor {
+		actor = black.Participant
+	}
+	cmd, err := online.NewAllocationCommand(actor, setup, "rmt"+offer.RematchID)
+	if err != nil {
+		return RematchResult{}, err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return RematchResult{}, err
+	}
+	defer tx.Rollback(ctx)
+	result, err := s.matches.CreateMatchInTx(ctx, tx, cmd)
+	if err != nil {
+		return RematchResult{}, err
+	}
+	matchID := result.Receipt.MatchID
+	tag, err := tx.Exec(ctx, `UPDATE online_rematch_offers SET status='accepted',new_match_id=$2,version=version+1,updated_at=$3 WHERE rematch_id=$1 AND status='accepting'`,
+		offer.RematchID, matchID, s.now())
+	if err != nil {
+		return RematchResult{}, err
+	}
+	if tag.RowsAffected() == 0 {
+		return RematchResult{}, ErrConflict
+	}
+	accepted := RematchResult{Rematch: offer, MatchID: matchID}
+	if seat, seatErr := seatOf(match, request.Acceptor); seatErr == nil {
+		accepted.Seat = reversedSeat(seat)
+	}
+	if request.Acceptor.Kind == online.ParticipantGuest {
+		credential, mintErr := s.mintSeatCredential(ctx, matchID, accepted.Seat, request.Acceptor.ID, request.Origin)
+		if mintErr != nil {
+			return RematchResult{}, mintErr
+		}
+		accepted.GuestCredential = credential
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return RematchResult{}, err
+	}
+	offer.Status = RematchAccepted
+	offer.NewMatchID = &matchID
+	accepted.Rematch = offer
+	return accepted, nil
+}
+
+// RematchSeatCredential mints the guest seat credential of the proposer of an
+// accepted rematch.
+//
+// The new match is a new game, so the credential of the finished match cannot
+// authorize it.
+func (s *Service) RematchSeatCredential(ctx context.Context, request RematchSeatCredentialRequest) (SeatCredentialResult, error) {
+	offer, err := s.readRematch(ctx, request.RematchID)
+	if err != nil {
+		return SeatCredentialResult{}, err
+	}
+	if offer.Status != RematchAccepted || offer.NewMatchID == nil {
+		return SeatCredentialResult{}, ErrConflict
+	}
+	if offer.proposerKind != string(request.Proposer.Kind) || offer.proposerID != request.Proposer.ID {
+		return SeatCredentialResult{}, ErrNotAuthorized
+	}
+	match, err := s.reader.GetMatch(ctx, offer.MatchID)
+	if err != nil {
+		return SeatCredentialResult{}, err
+	}
+	oldSeat, err := seatOf(match, request.Proposer)
+	if err != nil {
+		return SeatCredentialResult{}, err
+	}
+	newSeat := reversedSeat(oldSeat)
+	result := SeatCredentialResult{MatchID: *offer.NewMatchID, Seat: newSeat}
+	if request.Proposer.Kind != online.ParticipantGuest {
+		return result, nil
+	}
+	credential, err := s.mintSeatCredential(ctx, *offer.NewMatchID, newSeat, request.Proposer.ID, request.Origin)
+	if err != nil {
+		return SeatCredentialResult{}, err
+	}
+	result.GuestCredential = credential
+	return result, nil
+}
+
+// PendingRematch returns the pending rematch offer of a finished match.
+func (s *Service) PendingRematch(ctx context.Context, matchID string, participant online.ParticipantRef) (Rematch, bool, error) {
+	match, err := s.reader.GetMatch(ctx, matchID)
+	if err != nil {
+		return Rematch{}, false, err
+	}
+	if !match.HasParticipant(participant) {
+		return Rematch{}, false, ErrNotAuthorized
+	}
+	row := s.db.QueryRow(ctx, `SELECT rematch_id,match_id,status,proposer_public_label,proposer_seat,starting_time_ms,increment_ms,starting_fen,expires_at,new_match_id,created_at FROM online_rematch_offers WHERE match_id=$1 AND status IN ('pending','accepting','accepted') ORDER BY created_at DESC LIMIT 1`, matchID)
+	offer, err := scanRematch(row)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return Rematch{}, false, nil
+		}
+		return Rematch{}, false, err
+	}
+	return offer, true, nil
+}
+
+// acceptance is the stored acceptance of one invitation.
+type acceptance struct {
+	AcceptanceID  string
+	InvitationID  string
+	AcceptorKind  string
+	AcceptorID    string
+	AcceptorLabel string
+	GuestID       string
+	Seat          online.Seat
+	ControlKind   string
+	ModelLabel    *string
+	Status        string
+	MatchID       *string
+}
+
+// acceptanceByKey loads the acceptance of one idempotency key.
+//
+// The key is compared as a hash. The stored row never holds the capability.
+func (s *Service) acceptanceByKey(ctx context.Context, invitationID string, keyHash []byte) (acceptance, error) {
+	row := s.db.QueryRow(ctx, `SELECT acceptance_id,invitation_id,acceptor_kind,acceptor_id,acceptor_public_label,COALESCE(guest_id,''),seat,control_kind,model_label,status,match_id FROM online_invitation_acceptances WHERE invitation_id=$1 AND acceptance_key_hash=$2`, invitationID, keyHash)
+	var (
+		record      acceptance
+		modelLabel  *string
+		matchID     *string
+		seat        string
+		controlKind string
+	)
+	err := row.Scan(&record.AcceptanceID, &record.InvitationID, &record.AcceptorKind, &record.AcceptorID, &record.AcceptorLabel, &record.GuestID, &seat, &controlKind, &modelLabel, &record.Status, &matchID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return acceptance{}, ErrNotFound
+		}
+		return acceptance{}, err
+	}
+	record.Seat = online.Seat(seat)
+	record.ControlKind = controlKind
+	record.ModelLabel = modelLabel
+	record.MatchID = matchID
+	return record, nil
+}
+
+// readInvitation loads one invitation and its named recipient.
+func (s *Service) readInvitation(ctx context.Context, invitationID string) (Invitation, string, error) {
+	if strings.TrimSpace(invitationID) == "" {
+		return Invitation{}, "", ErrInvalidArgument
+	}
+	row := s.db.QueryRow(ctx, `SELECT invitation_id,kind,status,inviter_public_label,inviter_seat,inviter_control_kind,inviter_model_label,starting_time_ms,increment_ms,starting_fen,recipient_account_id,expires_at,created_at,consumed_at,cancelled_at,match_id,inviter_kind,inviter_id,acceptance_id FROM online_friend_invitations WHERE invitation_id=$1`, invitationID)
+	return scanInvitation(row)
+}
+
+// scanInvitation reads one invitation row.
+func scanInvitation(row pgx.Row) (Invitation, string, error) {
+	var (
+		invitation  Invitation
+		kind        string
+		status      string
+		seat        string
+		controlKind string
+		modelLabel  *string
+		startingFEN *string
+		recipient   *string
+		matchID     *string
+		acceptance  *string
+	)
+	err := row.Scan(&invitation.InvitationID, &kind, &status, &invitation.InviterLabel, &seat, &controlKind, &modelLabel,
+		&invitation.TimeControl.StartingTimeMs, &invitation.TimeControl.IncrementMs, &startingFEN, &recipient,
+		&invitation.ExpiresAt, &invitation.CreatedAt, &invitation.ConsumedAt, &invitation.CancelledAt, &matchID,
+		&invitation.inviterKind, &invitation.inviterID, &acceptance)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Invitation{}, "", ErrNotFound
+		}
+		return Invitation{}, "", err
+	}
+	invitation.Kind = Kind(kind)
+	invitation.Status = Status(status)
+	invitation.InviterSeat = online.Seat(seat)
+	invitation.InviterControl = online.SeatControl{Kind: online.ControlKind(controlKind), ModelLabel: modelLabel}
+	if startingFEN != nil {
+		invitation.StartingFEN = *startingFEN
+	}
+	invitation.MatchID = matchID
+	if acceptance != nil {
+		invitation.AcceptanceID = *acceptance
+	}
+	name := ""
+	if recipient != nil {
+		name = *recipient
+	}
+	return invitation, name, nil
+}
+
+// scanRematch reads one rematch offer row.
+func scanRematch(row pgx.Row) (Rematch, error) {
+	var (
+		offer       Rematch
+		status      string
+		seat        string
+		startingFEN *string
+	)
+	err := row.Scan(&offer.RematchID, &offer.MatchID, &status, &offer.ProposerLabel, &seat, &offer.TimeControl.StartingTimeMs, &offer.TimeControl.IncrementMs, &startingFEN, &offer.ExpiresAt, &offer.NewMatchID, &offer.CreatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Rematch{}, ErrNotFound
+		}
+		return Rematch{}, err
+	}
+	offer.Status = RematchStatus(status)
+	offer.ProposerSeat = online.Seat(seat)
+	if startingFEN != nil {
+		offer.StartingFEN = *startingFEN
+	}
+	return offer, nil
+}
+
+// readRematch loads one rematch offer.
+func (s *Service) readRematch(ctx context.Context, rematchID string) (Rematch, error) {
+	row := s.db.QueryRow(ctx, `SELECT rematch_id,match_id,status,proposer_public_label,proposer_seat,starting_time_ms,increment_ms,starting_fen,expires_at,new_match_id,created_at,proposer_kind,proposer_id FROM online_rematch_offers WHERE rematch_id=$1`, rematchID)
+	var (
+		offer        Rematch
+		status       string
+		seat         string
+		startingFEN  *string
+		proposerKind string
+		proposerID   string
+	)
+	err := row.Scan(&offer.RematchID, &offer.MatchID, &status, &offer.ProposerLabel, &seat, &offer.TimeControl.StartingTimeMs, &offer.TimeControl.IncrementMs, &startingFEN, &offer.ExpiresAt, &offer.NewMatchID, &offer.CreatedAt, &proposerKind, &proposerID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return Rematch{}, ErrNotFound
+		}
+		return Rematch{}, err
+	}
+	offer.Status = RematchStatus(status)
+	offer.ProposerSeat = online.Seat(seat)
+	if startingFEN != nil {
+		offer.StartingFEN = *startingFEN
+	}
+	offer.proposerKind = proposerKind
+	offer.proposerID = proposerID
+	return offer, nil
+}
+
+// ownsInvitation reports whether the caller owns the invitation.
+func (s *Service) ownsInvitation(ctx context.Context, invitationID, ownerToken string, canceller *Identity) bool {
+	if ownerToken != "" {
+		var stored []byte
+		err := s.db.QueryRow(ctx, `SELECT owner_token_hash FROM online_friend_invitations WHERE invitation_id=$1`, invitationID).Scan(&stored)
+		if err == nil && len(stored) == 32 {
+			if subtleEqual(hashOwnerToken(ownerToken), stored) {
+				return true
+			}
+		}
+	}
+	if canceller != nil {
+		var (
+			kind string
+			id   string
+		)
+		err := s.db.QueryRow(ctx, `SELECT inviter_kind,inviter_id FROM online_friend_invitations WHERE invitation_id=$1`, invitationID).Scan(&kind, &id)
+		if err == nil && kind == string(canceller.Participant.Kind) && id == canceller.Participant.ID {
+			return true
+		}
+	}
+	return false
+}
+
+// seatOf returns the seat a participant holds in a match.
+func seatOf(match online.Match, participant online.ParticipantRef) (online.Seat, error) {
+	for _, seat := range match.Seats {
+		if seat.Participant == participant {
+			return seat.Seat, nil
+		}
+	}
+	return "", ErrNotAuthorized
+}
+
+// reversedSeat returns the other seat. A rematch reverses the colors.
+func reversedSeat(seat online.Seat) online.Seat {
+	other, ok := seat.Other()
+	if !ok {
+		return seat
+	}
+	return other
+}
+
+// rematchSeats builds the seats of the new match of a rematch.
+//
+// The colors are reversed and the setup of both participants is retained.
+func rematchSeats(match online.Match, offer Rematch) (online.CreateSeat, online.CreateSeat, error) {
+	white, ok := match.Seat(online.SeatWhite)
+	if !ok {
+		return online.CreateSeat{}, online.CreateSeat{}, ErrNotFound
+	}
+	black, ok := match.Seat(online.SeatBlack)
+	if !ok {
+		return online.CreateSeat{}, online.CreateSeat{}, ErrNotFound
+	}
+	newWhite := online.CreateSeat{Participant: black.Participant, PublicLabel: black.PublicLabel, Control: black.Control}
+	newBlack := online.CreateSeat{Participant: white.Participant, PublicLabel: white.PublicLabel, Control: white.Control}
+	return newWhite, newBlack, nil
+}
+
+// validateTimeControl checks the clock of a friend game.
+func validateTimeControl(timeControl online.TimeControl) error {
+	if timeControl.StartingTimeMs < 1 || timeControl.StartingTimeMs > 86_400_000 {
+		return fmt.Errorf("%w: time control", ErrInvalidContract)
+	}
+	if timeControl.IncrementMs < 0 || timeControl.IncrementMs > 60_000 {
+		return fmt.Errorf("%w: time control", ErrInvalidContract)
+	}
+	return nil
+}
+
+// validateSeatControl checks the declared control of a friend seat.
+//
+// A friend seat is a human seat or the seat of the owner's own agent. There
+// is no built-in engine seat in friend setup.
+func validateSeatControl(control online.SeatControl) error {
+	switch control.Kind {
+	case online.ControlHuman:
+		if control.ModelLabel != nil {
+			return fmt.Errorf("%w: a human seat declares no model", ErrInvalidContract)
+		}
+		return nil
+	case online.ControlAgent:
+		if control.ModelLabel == nil || !publicLabelShape(*control.ModelLabel) {
+			return fmt.Errorf("%w: the agent seat needs a public model label", ErrInvalidContract)
+		}
+		return nil
+	default:
+		return fmt.Errorf("%w: a friend seat is a human seat or an agent seat", ErrInvalidContract)
+	}
+}
+
+// validatePublicLabel checks a public label.
+func validatePublicLabel(label string) error {
+	if !publicLabelShape(label) {
+		return fmt.Errorf("%w: public label", ErrInvalidContract)
+	}
+	return nil
+}
+
+// publicLabelShape rejects a label that could publish an email address or a
+// private endpoint.
+func publicLabelShape(label string) bool {
+	if label == "" || len(label) > 64 || strings.TrimSpace(label) != label {
+		return false
+	}
+	for _, r := range label {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return !strings.Contains(label, "@") && !strings.Contains(label, "://")
+}
+
+// acceptanceKeyShape is the shape of a client-supplied idempotency key.
+var acceptanceKeyShape = regexp.MustCompile(`^[A-Za-z0-9_-]{16,128}$`)
+
+// validateAcceptanceKey checks the idempotency key of an acceptance.
+func validateAcceptanceKey(key string) error {
+	if !acceptanceKeyShape.MatchString(key) {
+		return fmt.Errorf("%w: the acceptance key must be 16 to 128 characters of letters, digits, dash or underscore", ErrInvalidContract)
+	}
+	return nil
+}
+
+// hashDomain separates the stored hash of one secret kind from another.
+const hashDomain = "kamkm.online.invite.v1:"
+
+// hashOwnerToken derives the stored hash of an owner token.
+func hashOwnerToken(secret string) []byte {
+	sum := sha256.Sum256([]byte(hashDomain + "owner-token:" + secret))
+	return sum[:]
+}
+
+// hashAcceptanceKey derives the stored hash of an acceptance key.
+//
+// The key is the only capability that resumes an acceptance, so only its hash
+// is stored. A leaked database row can never resume an acceptance.
+func hashAcceptanceKey(key string) []byte {
+	sum := sha256.Sum256([]byte(hashDomain + "acceptance-key:" + key))
+	return sum[:]
+}
+
+// subtleEqual compares two hashes without an early exit.
+func subtleEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	var diff byte
+	for i := range a {
+		diff |= a[i] ^ b[i]
+	}
+	return diff == 0
+}
+
+// nullableString maps an empty value to SQL NULL.
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+// randomIdentifier mints a stored identifier.
+func randomIdentifier(prefix string, length int) (string, error) {
+	raw := make([]byte, length)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("invite: secure random source unavailable")
+	}
+	return prefix + base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+// randomSecret mints a bearer secret.
+func randomSecret(prefix string, length int) (string, error) {
+	raw := make([]byte, length)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("invite: secure random source unavailable")
+	}
+	return prefix + base64.RawURLEncoding.EncodeToString(raw), nil
+}

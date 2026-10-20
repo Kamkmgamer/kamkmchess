@@ -11,6 +11,7 @@ import (
 
 	"github.com/Kamkmgamer/kamkmchess/backend/auth"
 	"github.com/Kamkmgamer/kamkmchess/backend/httpapi"
+	"github.com/Kamkmgamer/kamkmchess/backend/invite"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
 	"github.com/Kamkmgamer/kamkmchess/backend/profile"
@@ -60,6 +61,19 @@ type OnlineConfig struct {
 	// HealthCheckInterval is how often the server refreshes the durable
 	// service health.
 	HealthCheckInterval time.Duration
+	// FriendEnabled opens the friend invitation, link join and rematch
+	// surface. It is off by default: a configured service origin is not an
+	// enablement signal.
+	FriendEnabled bool
+	// QueueEnabled opens the public matchmaking surface. It is off by
+	// default and independent of the friend surface.
+	QueueEnabled bool
+}
+
+// flag reads an optional boolean setting. A missing or malformed value keeps
+// the surface closed.
+func flag(getenv func(string) string, key string) bool {
+	return strings.TrimSpace(getenv(key)) == "1" || strings.EqualFold(strings.TrimSpace(getenv(key)), "true")
 }
 
 // Load reads only server configuration. Its errors never include configured values.
@@ -81,6 +95,8 @@ func Load(getenv func(string) string) (Config, error) {
 			DeadlineSweepInterval: duration(getenv, "ONLINE_DEADLINE_SWEEP_INTERVAL", DefaultDeadlineSweepInterval),
 			DeadlineSweepBatch:    positiveInt(getenv, "ONLINE_DEADLINE_SWEEP_BATCH", DefaultDeadlineSweepBatch),
 			HealthCheckInterval:   duration(getenv, "ONLINE_HEALTH_CHECK_INTERVAL", DefaultHealthCheckInterval),
+			FriendEnabled:         flag(getenv, "ONLINE_FRIEND_ENABLED"),
+			QueueEnabled:          flag(getenv, "ONLINE_QUEUE_ENABLED"),
 		},
 	}
 	if cfg.DatabaseURL == "" || len(cfg.Clerk.AllowedOrigins) == 0 {
@@ -189,7 +205,41 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		return nil, nil, errors.New("public profile initialization failed")
 	}
 	root := http.NewServeMux()
-	root.Handle("/v1/online/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders, httpapi.NewOnline(onlineService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins})))
+	// The online surface carries the participant routes, the feature state
+	// and, when the friend switch is on, the friend routes. The feature
+	// state is always mounted: the browser asks it before it shows
+	// anything, and a configured service origin is not an enablement
+	// signal.
+	surface := http.NewServeMux()
+	surface.Handle("/v1/online/features", httpapi.NewFeatures(httpapi.OnlineFeatures{
+		Friends: cfg.Online.FriendEnabled,
+		Queue:   cfg.Online.QueueEnabled,
+	}))
+	surface.Handle("/", httpapi.NewOnline(onlineService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}))
+	if cfg.Online.FriendEnabled {
+		// The friend surface is independent of the participant commands. It
+		// is mounted only when the switch is on, so a closed surface is not
+		// reachable at all.
+		friendService, err := invite.Open(ctx, pool, onlineService, onlineService, onlineauth.NewAllocator(authorizer), invite.Options{
+			GuestCredentialTTL: cfg.Online.GuestCredentialTTL,
+			InvitationTTL:      invite.InvitationTTL,
+		})
+		if err != nil {
+			if closeWorker != nil {
+				closeWorker()
+			}
+			pool.Close()
+			return nil, nil, errors.New("friend invitation initialization failed")
+		}
+		friendHandler := httpapi.NewFriends(friendService, onlineService, authorizer, httpapi.FriendsOptions{
+			AllowedOrigins: cfg.Clerk.AllowedOrigins,
+			LabelResolver:  invite.NewAccountLabelResolver(pool),
+		})
+		surface.Handle("/v1/online/invitations/", friendHandler)
+		surface.Handle("/v1/online/rematches/", friendHandler)
+		surface.Handle("GET /v1/online/matches/{matchID}/rematch", friendHandler)
+	}
+	root.Handle("/v1/online/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders, surface))
 	// The public profile API is mounted under its own prefixes so it never
 	// widens the private single-owner sync API.
 	profileHandler := httpapi.CORSWithMethods(cfg.Clerk.AllowedOrigins, httpapi.ProfileRequestHeaders, "GET, POST, PUT, OPTIONS", httpapi.NewProfile(profileService, guestProofIssuer{allocator: onlineauth.NewAllocator(authorizer)}, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}))

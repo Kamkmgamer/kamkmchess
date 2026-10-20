@@ -77,6 +77,47 @@ func (a *Allocator) AcceptInvitation(ctx context.Context, request AcceptInvitati
 	if a == nil || a.service == nil {
 		return IssuedSeatCredentials{}, errors.New("onlineauth: no allocator is configured")
 	}
+	tx, err := a.service.db.Begin(ctx)
+	if err != nil {
+		return IssuedSeatCredentials{}, err
+	}
+	defer tx.Rollback(ctx)
+	issued, err := a.issueSeatCredentials(ctx, tx, request)
+	if err != nil {
+		return IssuedSeatCredentials{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return IssuedSeatCredentials{}, err
+	}
+	return issued, nil
+}
+
+// AcceptInvitationTx issues a seat credential inside a caller's transaction.
+//
+// The trusted invitation allocator uses it to record the issued credential and
+// its own acceptance state in one transaction, so a credential is never
+// minted without the acceptance that owns it, and an acceptance is never
+// recorded as credentialed without its credential.
+//
+// The caller owns the transaction: it commits or rolls it back. The plaintext
+// secret exists only in the returned value.
+func (a *Allocator) AcceptInvitationTx(ctx context.Context, tx pgx.Tx, request AcceptInvitationRequest) (IssuedSeatCredentials, error) {
+	if a == nil || a.service == nil {
+		return IssuedSeatCredentials{}, errors.New("onlineauth: no allocator is configured")
+	}
+	if tx == nil {
+		return IssuedSeatCredentials{}, errors.New("onlineauth: no transaction")
+	}
+	return a.issueSeatCredentials(ctx, tx, request)
+}
+
+// issueSeatCredentials mints the credential and its ownership proof for an
+// accepted invitation.
+//
+// The caller holds the transaction. The seat lock is taken inside it, so a
+// rotation is ordered against an accepted write and against a seat
+// revocation.
+func (a *Allocator) issueSeatCredentials(ctx context.Context, tx pgx.Tx, request AcceptInvitationRequest) (IssuedSeatCredentials, error) {
 	if !matchIDShape(request.MatchID) {
 		return IssuedSeatCredentials{}, errors.New("onlineauth: invalid match id")
 	}
@@ -132,11 +173,6 @@ func (a *Allocator) AcceptInvitation(ctx context.Context, request AcceptInvitati
 		IssuedAt:  issuedAt,
 		ExpiresAt: proofExpiresAt,
 	}
-	tx, err := a.service.db.Begin(ctx)
-	if err != nil {
-		return IssuedSeatCredentials{}, err
-	}
-	defer tx.Rollback(ctx)
 	if err = lockScope(ctx, tx, seatLockKey(request.MatchID, request.Seat)); err != nil {
 		return IssuedSeatCredentials{}, err
 	}
@@ -163,10 +199,21 @@ func (a *Allocator) AcceptInvitation(ctx context.Context, request AcceptInvitati
 		proof.ProofID, credential.CredentialID, proof.GuestID, proof.MatchID, string(proof.Seat), hashSecret("ownership-proof", proof.Secret), proof.IssuedAt, proof.ExpiresAt); err != nil {
 		return IssuedSeatCredentials{}, err
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return IssuedSeatCredentials{}, err
-	}
 	return IssuedSeatCredentials{Credential: credential, OwnershipProof: proof}, nil
+}
+
+// HasLiveSeatCredential reports whether the seat of a match still has a live
+// credential.
+//
+// The trusted allocation seam uses it to avoid an unnecessary rotation: a
+// credential that is already live is never superseded by a routine retry.
+// The check runs against the caller's querier, so a caller that holds a
+// transaction reads the credential state of that transaction.
+func (a *Allocator) HasLiveSeatCredential(ctx context.Context, q online.Querier, matchID string, seat online.Seat) (bool, error) {
+	if a == nil || a.service == nil {
+		return false, errors.New("onlineauth: no allocator is configured")
+	}
+	return a.service.HasLiveSeatCredential(ctx, q, matchID, seat)
 }
 
 // IssueOwnershipProof mints a fresh ownership proof for a guest seat.

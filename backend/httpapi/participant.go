@@ -133,3 +133,52 @@ func (p participantAuthenticator) account(w http.ResponseWriter, r *http.Request
 	}
 	return principal, true
 }
+
+// maybe authenticates a request that may carry no credential.
+//
+// It returns the verified principal, whether the request carried a credential
+// at all, and whether the request may continue. A request without a
+// credential is not an error here: the guest paths of the friend surface are
+// public, and a shareable link is a bearer secret rather than a credential.
+//
+// A credential that is present but invalid is still an error. The server
+// never falls back to the anonymous identity when a credential was presented.
+func (p participantAuthenticator) maybe(w http.ResponseWriter, r *http.Request, mutation bool) (onlineauth.Principal, bool, bool) {
+	origin, ok := p.origin(r, mutation)
+	if !ok {
+		writeError(w, http.StatusForbidden, "origin_required")
+		return onlineauth.Principal{}, false, false
+	}
+	authorization := r.Header.Values("Authorization")
+	guest := r.Header.Values(GuestCredentialHeader)
+	if len(authorization) > 1 || len(guest) > 1 {
+		writeError(w, http.StatusBadRequest, "invalid_request")
+		return onlineauth.Principal{}, false, false
+	}
+	if len(authorization) == 1 && len(guest) == 1 {
+		writeError(w, http.StatusBadRequest, "invalid_request")
+		return onlineauth.Principal{}, false, false
+	}
+	if len(authorization) == 1 {
+		fields := strings.Fields(authorization[0])
+		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
+			writeError(w, http.StatusUnauthorized, "unauthorized")
+			return onlineauth.Principal{}, false, false
+		}
+		principal, err := p.authenticator.AuthenticateAccount(r.Context(), fields[1], origin)
+		if err != nil {
+			writeOnlineError(w, err)
+			return onlineauth.Principal{}, false, false
+		}
+		return principal, true, true
+	}
+	if len(guest) == 1 {
+		principal, err := p.authenticator.AuthenticateGuest(r.Context(), guest[0], origin)
+		if err != nil {
+			writeOnlineError(w, err)
+			return onlineauth.Principal{}, false, false
+		}
+		return principal, true, true
+	}
+	return onlineauth.Principal{}, false, true
+}
