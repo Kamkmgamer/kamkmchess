@@ -30,10 +30,11 @@ import { createParticipantSession } from './session';
 import { createAuthorizedRequester } from './request';
 import { createOnlineMatchCommandClient } from './match-client';
 import { createOnlineRunnerLeaseClient } from './runner-lease';
-import type { OnlineRunnerLease } from './runner-lease';
+import type { ProviderRunnerLease } from './provider-runner';
 import type { GuestOnlineCredential } from './auth';
 import type { Seat } from './contracts';
 import type { OnlineMatchView } from './updates';
+import { onlineSeatToMove } from './turn';
 
 /** The outcome of one engine turn. */
 export type OnlineEngineTurnResult =
@@ -70,30 +71,11 @@ export interface OnlineEngineSeat {
   play(view: OnlineMatchView, signal?: AbortSignal): Promise<OnlineEngineTurnResult>;
   /** True when the seat was disposed. */
   readonly stopped: boolean;
-  /** Releases the engine seat. */
-  dispose(): void;
+  /** Releases the engine seat. The lease of the seat is released with it. */
+  dispose(): Promise<void>;
 }
 
-/**
- * Decides whose turn it is.
- *
- * The canonical position owns the side to move. While the opening reply
- * window is open, the seat that owes the reply moves, and no main clock runs.
- */
-export function onlineSeatToMove(view: OnlineMatchView, seat: Seat): boolean {
-  if (view.status !== 'active') return false;
-  const replySeat = view.clock.replySeat;
-  if (replySeat !== null) {
-    // The opening reply is outstanding. Only the seat that owes it moves.
-    return replySeat === seat;
-  }
-  const activeSeat = view.clock.activeSeat;
-  if (activeSeat !== null) return activeSeat === seat;
-  const sideToMove = view.positionFen.split(' ')[1];
-  if (sideToMove === 'w') return seat === 'white';
-  if (sideToMove === 'b') return seat === 'black';
-  return false;
-}
+export { onlineSeatToMove } from './turn';
 
 function defaultRunnerId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -136,7 +118,7 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
   let stopped = false;
   let prepared = false;
   /** The lease of the current turn. */
-  let lease: OnlineRunnerLease | null = null;
+  let lease: ProviderRunnerLease | null = null;
 
   async function releaseLease(): Promise<void> {
     const current = lease;
@@ -153,7 +135,7 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
     }
   }
 
-  async function holdLease(view: OnlineMatchView): Promise<OnlineRunnerLease | null> {
+  async function holdLease(view: OnlineMatchView): Promise<ProviderRunnerLease | null> {
     const current = lease;
     if (current && current.controlEpoch !== view.controlEpoch) {
       // A control change fences the old lease.
@@ -232,9 +214,11 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
         await releaseLease();
       }
     },
-    dispose() {
+    async dispose() {
       stopped = true;
-      lease = null;
+      // The lease of the seat is released before the requester goes away, so
+      // a new runner of the seat is never refused by an orphaned lease.
+      await releaseLease();
       session.dispose();
       requester.dispose();
     },

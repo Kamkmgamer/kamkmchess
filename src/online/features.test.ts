@@ -18,10 +18,14 @@ describe('the feature answer is public and strict', () => {
   });
 
   it('closes a surface for an unknown, missing or malformed answer', () => {
-    expect(parseOnlineFeatureFlags({ friends: 'yes', queue: true })).toEqual(ONLINE_FEATURES_DISABLED);
-    expect(parseOnlineFeatureFlags({ friends: true })).toEqual(ONLINE_FEATURES_DISABLED);
+    expect(parseOnlineFeatureFlags({ friends: 'yes', queue: true })).toEqual({ friends: false, queue: true });
+    expect(parseOnlineFeatureFlags({ friends: true })).toEqual({ friends: true, queue: false });
     expect(parseOnlineFeatureFlags(null)).toEqual(ONLINE_FEATURES_DISABLED);
     expect(parseOnlineFeatureFlags([{ friends: true }])).toEqual(ONLINE_FEATURES_DISABLED);
+  });
+
+  it('ignores an additive field of the service (B-15)', () => {
+    expect(parseOnlineFeatureFlags({ friends: true, queue: true, reason: 'rollout' })).toEqual({ friends: true, queue: true });
   });
 
   it('never opens a surface of a deployed service by itself', () => {

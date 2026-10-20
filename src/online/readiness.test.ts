@@ -83,6 +83,7 @@ interface Harness {
     prepareEngine: ReturnType<typeof vi.fn<() => Promise<void>>>;
     acceptReady: ReturnType<typeof vi.fn<(request: { control: SeatControl; timeControl: TimeControl }) => Promise<QueueEntry>>>;
     readEntry: ReturnType<typeof vi.fn<(entryId: string) => Promise<QueueEntry>>>;
+    readyEntry: ReturnType<typeof vi.fn<(entryId: string) => Promise<QueueEntry>>>;
     readMatch: ReturnType<typeof vi.fn<(matchId: string) => Promise<OnlineMatchView>>>;
     cancelEntry: ReturnType<typeof vi.fn<(entryId: string) => Promise<QueueEntry>>>;
     keepSearching: ReturnType<typeof vi.fn<(entryId: string) => Promise<QueueEntry>>>;
@@ -110,6 +111,7 @@ function createHarness(overrides: Partial<OnlineQueuePorts> = {}): Harness {
     prepareEngine: vi.fn<() => Promise<void>>(async () => undefined),
     acceptReady: vi.fn<(request: { control: SeatControl; timeControl: TimeControl }) => Promise<QueueEntry>>(async () => entry()),
     readEntry: vi.fn<(entryId: string) => Promise<QueueEntry>>(async () => entry()),
+    readyEntry: vi.fn<(entryId: string) => Promise<QueueEntry>>(async () => entry()),
     readMatch: vi.fn<(matchId: string) => Promise<OnlineMatchView>>(async () => matchView()),
     cancelEntry: vi.fn<(entryId: string) => Promise<QueueEntry>>(async () => entry({ status: 'cancelled' })),
     keepSearching: vi.fn<(entryId: string) => Promise<QueueEntry>>(async () => entry({ cutoffAt: null })),
@@ -463,13 +465,43 @@ describe('cancelling while the entry is being created (MAT-02)', () => {
 describe('an expired entry needs an explicit rejoin (QUE-07)', () => {
   it('reports the expiry and rejoins with a fresh window', async () => {
     const acceptReady = vi.fn<(request: { control: SeatControl; timeControl: TimeControl }) => Promise<QueueEntry>>(async () => entry());
-    const harness = createHarness({ acceptReady });
+    const readyEntry = vi.fn<(entryId: string) => Promise<QueueEntry>>(async () => entry({ readyAt: '2026-10-21T10:05:00.000Z', cutoffAt: '2026-10-21T10:05:10.000Z' }));
+    const harness = createHarness({ acceptReady, readyEntry });
     await harness.controller.enter({ control: agentControl, timeControl });
     harness.controller.observe(entry({ status: 'waiting', readyAt: null }));
     expect(harness.controller.state.phase).toBe('expired');
     expect(harness.controller.state.options).toContain('rejoin');
     await harness.controller.rejoin();
-    expect(acceptReady).toHaveBeenCalledTimes(2);
+    // The service re-arms the entry instead of creating a second one.
+    expect(harness.ports.readyEntry).toHaveBeenCalledWith('entry-0000001');
+    expect(acceptReady).toHaveBeenCalledTimes(1);
     expect(harness.controller.state.phase).toBe('searching');
+  });
+});
+
+describe('the owner always leaves an entry (B-9, B-14)', () => {
+  it('offers a cancel while the agent check runs', () => {
+    const harness = createHarness();
+    expect(harness.controller.state.options).toEqual([]);
+    expect(harness.controller.state.phase).toBe('idle');
+  });
+
+  it('reports an accepted entry that is not ready as expired', async () => {
+    const acceptReady = vi.fn<(request: { control: SeatControl; timeControl: TimeControl }) => Promise<QueueEntry>>(async () => entry({ readyAt: null, cutoffAt: null }));
+    const harness = createHarness({ acceptReady });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    expect(harness.controller.state.phase).toBe('expired');
+    expect(harness.controller.state.options).toContain('rejoin');
+    expect(harness.controller.state.options).toContain('cancel');
+  });
+
+  it('never lets a late cancellation replace a committed opponent', async () => {
+    const harness = createHarness();
+    await harness.controller.enter({ control: agentControl, timeControl });
+    harness.fireCutoff();
+    await tick();
+    expect(harness.controller.state.phase).toBe('matched');
+    harness.controller.observe(entry({ status: 'cancelled' }));
+    expect(harness.controller.state.phase).toBe('matched');
   });
 });

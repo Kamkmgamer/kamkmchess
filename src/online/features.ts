@@ -77,17 +77,17 @@ export function readLocalOptIn(search: string, config: PublicConfig = publicConf
 /**
  * Parses the service answer.
  *
- * The answer carries exactly two independent booleans. An unknown field, a
- * missing field or a non-boolean value closes every surface instead of
- * guessing one of them.
+ * The answer carries the two independent booleans. A missing field or a
+ * non-boolean value closes the surface it belongs to, and an unknown field is
+ * ignored, so an additive change on the service never closes the product.
  */
 export function parseOnlineFeatureFlags(value: unknown): OnlineFeatureFlags {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return ONLINE_FEATURES_DISABLED;
   const record = value as Record<string, unknown>;
-  const keys = Object.keys(record);
-  if (keys.length !== 2 || !keys.includes('friends') || !keys.includes('queue')) return ONLINE_FEATURES_DISABLED;
-  if (typeof record.friends !== 'boolean' || typeof record.queue !== 'boolean') return ONLINE_FEATURES_DISABLED;
-  return { friends: record.friends, queue: record.queue };
+  return {
+    friends: record.friends === true,
+    queue: record.queue === true,
+  };
 }
 
 /**

@@ -48,6 +48,22 @@ test('the online workspace fits a phone viewport', async ({ page }) => {
   await expectNoOverflow(page);
 });
 
+test('the offline game keeps its draw and resign icons', async ({ page }) => {
+  await page.goto('/play');
+  const draw = page.getByRole('button', { name: 'Agree a draw' });
+  const resign = page.getByRole('button', { name: 'Resign game' });
+  await expect(draw).toBeVisible();
+  await expect(resign).toBeVisible();
+  // The actions are icon-only: they carry a name and a hover label, never a
+  // visible button text.
+  expect(await draw.textContent()).toBe('');
+  expect(await draw.getAttribute('title')).toBe('Agree a draw');
+  expect(await resign.getAttribute('title')).toBe('Resign game');
+  // A draw needs an explicit confirmation.
+  await draw.click();
+  await expect(page.getByRole('heading', { name: 'Agree a draw?' })).toBeVisible();
+});
+
 test('the online workspace actions keep an accessible name and a visible focus', async ({ page }) => {
   await page.goto('/play?online=1');
   await page.getByRole('button', { name: 'Online play' }).click();

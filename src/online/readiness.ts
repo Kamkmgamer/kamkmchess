@@ -118,6 +118,13 @@ export interface OnlineQueuePorts {
   /** Reads the current entry, for example while polling for an assignment. */
   readonly readEntry: (entryId: string) => Promise<QueueEntry>;
   /**
+   * Re-arms the readiness of an existing entry.
+   *
+   * It is the explicit rejoin of an expired entry. The service keeps the
+   * entry and starts a fresh window.
+   */
+  readonly readyEntry: (entryId: string) => Promise<QueueEntry>;
+  /**
    * Reads the authoritative participant view of a match.
    *
    * The view owns the seat of the owner, the public label of the opponent
@@ -214,7 +221,7 @@ const PHASE_DETAIL: Record<OnlineQueuePhase, string> = {
   cancelled: 'The entry was cancelled.',
 };
 
-/** The options the owner may take in every phase. */
+  /** The options the owner may take in every phase. */
 function optionsFor(phase: OnlineQueuePhase): readonly OnlineQueueOption[] {
   switch (phase) {
     case 'agent-failed':
@@ -231,6 +238,9 @@ function optionsFor(phase: OnlineQueuePhase): readonly OnlineQueueOption[] {
     case 'expired':
       return ['rejoin', 'cancel'];
     case 'ready':
+      return ['cancel'];
+    case 'checking-agent':
+      // The owner can always leave an entry that is being checked.
       return ['cancel'];
     default:
       return [];
@@ -274,6 +284,9 @@ export function createOnlineQueueController(options: OnlineQueueOptions): Online
   function setPhase(next: OnlineQueuePhase, nextDetail?: string): void {
     // A committed opponent is never undone by a late asynchronous phase.
     if (phase === 'matched' && next !== 'matched' && next !== 'cancelled') return;
+    // A committed opponent is never undone by a late answer either. The
+    // interface shows one truth about the entry.
+    if (assignment !== null && next === 'cancelled') return;
     phase = next;
     detail = nextDetail ?? PHASE_DETAIL[next];
   }
@@ -396,6 +409,12 @@ export function createOnlineQueueController(options: OnlineQueueOptions): Online
     if (next.readyAt !== null) {
       setPhase('searching');
       armCutoff(next.cutoffAt);
+    } else {
+      // The service accepted the entry but it is not ready. The entry either
+      // expired or is still being prepared, and the owner leaves it with an
+      // explicit rejoin or a cancel.
+      setPhase('expired');
+      clearCutoffTimer();
     }
     publish();
   }
@@ -488,6 +507,10 @@ export function createOnlineQueueController(options: OnlineQueueOptions): Online
       return true;
     }
     if (current.status === 'cancelled') {
+      if (assignment !== null) {
+        // A late cancellation never replaces a committed opponent.
+        return true;
+      }
       entry = current;
       setPhase('cancelled');
       clearCutoffTimer();
@@ -676,6 +699,21 @@ export function createOnlineQueueController(options: OnlineQueueOptions): Online
 
   async function rejoin(): Promise<void> {
     if (disposed || request === null) return;
+    const current = entry;
+    if (current) {
+      // The service re-arms the entry and starts a fresh window.
+      try {
+        const rearmed = await ports.readyEntry(current.entryId);
+        if (disposed) return;
+        entry = rearmed;
+        assignment = null;
+        engineState = 'idle';
+        applyEntry(rearmed, generation);
+        return;
+      } catch {
+        // A refused rejoin falls back to a new entry below.
+      }
+    }
     // A rejoin is explicit. It creates a fresh entry with a fresh window.
     entry = null;
     assignment = null;

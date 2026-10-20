@@ -22,6 +22,7 @@
  *   compact control label.
  */
 import { useEffect, useState } from 'react';
+import { createGuestCredential } from '../online/auth.js';
 import { IconButton } from './Icon.js';
 import { ChessBoard } from './ChessBoard.js';
 import { MoveList } from './MoveList.js';
@@ -29,8 +30,11 @@ import { legalMoves, parsePosition } from '../rules/index.js';
 import type { CoordinateMove, Promotion } from '../rules/index.js';
 import { formatOnlineClock, onlineClockReading } from '../online/clock.js';
 import type { OnlineClockReading } from '../online/clock.js';
+import { onlineSideToMove } from '../online/turn.js';
 import type { OnlineComposition } from '../online/composition.js';
 import type { Seat, SeatControl, TimeControl } from '../online/contracts.js';
+import type { FriendInvitation } from '../online/friend-routes.js';
+import type { OnlineProfileHistory } from '../online/history.js';
 import {
   onlineAppliedMoves,
   onlineConnectionText,
@@ -96,6 +100,11 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
   const [shownMatchId, setShownMatchId] = useState<string | null>(null);
+  const [invitation, setInvitation] = useState<FriendInvitation | null>(null);
+  const [invitationLink, setInvitationLink] = useState('');
+  const [invitationCode, setInvitationCode] = useState('');
+  const [history, setHistory] = useState<OnlineProfileHistory | null>(null);
+  const [historyProfile, setHistoryProfile] = useState('');
 
   useEffect(() => composition.subscribe(() => setRevision(value => value + 1)), [composition]);
   useEffect(() => {
@@ -123,7 +132,14 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     : { whiteMs: 0, blackMs: 0, activeSeat: null, expired: false, replyDeadlineAt: null, replySeat: null };
   const appliedMoves = view ? onlineAppliedMoves(view) : [];
   const position = view ? parsePosition(onlinePositionFen(view, Math.min(ply, appliedMoves.length))) : null;
+  // The turn belongs to the seat the canonical position and the opening
+  // reply name. The main clock is never the authority for the turn.
+  const sideToMove = view ? onlineSideToMove(view) : null;
+  // A reviewed position is not the live game. The board refuses a move while
+  // the owner looks at an earlier position.
+  const reviewing = view !== null && ply !== appliedMoves.length;
   const rows = view ? onlineSeatRows(view, seat) : [];
+  const agentRunner = view && seat ? composition.agentRunnerState(view.matchId, seat) : null;
   const status = view
     ? (focused && focused.status !== 'live' ? onlineConnectionText(focused.status) : onlineStatusText(view, reading))
     : '';
@@ -228,7 +244,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     }
   }
 
-  async function eraseSharedReplays(): Promise<void> {
+  async function eraseGuestReplays(): Promise<void> {
     if (!privacy || !focusedId) return;
     setBusy(true);
     try {
@@ -241,11 +257,11 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     }
   }
 
-  async function enterQueue(control: SeatControl): Promise<void> {
+  async function enterQueue(control: SeatControl, intent: 'reuse' | 'new' = 'reuse'): Promise<void> {
     setBusy(true);
     try {
       const choice = CLOCK_CHOICES[clockIndex] ?? CLOCK_CHOICES[1]!;
-      await composition.enterQueue({ control, timeControl: timeControl(choice.minutes, choice.increment) });
+      await composition.enterQueue({ control, timeControl: timeControl(choice.minutes, choice.increment) }, { intent });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The entry could not be created.');
     } finally {
@@ -261,6 +277,117 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       else if (option === 'cancel') await composition.queue.cancel();
       else await composition.queue.rejoin();
     })();
+  }
+
+  /** Creates one shareable friend link. */
+  async function createInvitation(): Promise<void> {
+    setBusy(true);
+    try {
+      const choice = CLOCK_CHOICES[clockIndex] ?? CLOCK_CHOICES[1]!;
+      const created = await composition.friends.create({
+        kind: 'link',
+        seat: 'white',
+        timeControl: timeControl(choice.minutes, choice.increment),
+        control: { kind: 'human' },
+      });
+      setInvitation(created.invitation);
+      setInvitationLink(`${window.location.origin}/invite/${created.invitation.invitationId}`);
+      setMessage('Invitation created.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The invitation could not be created.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Reads the preview of an invitation. */
+  async function previewInvitation(): Promise<void> {
+    const code = invitationCode.trim().split('/').filter(Boolean).pop() ?? '';
+    if (code.length === 0) {
+      setMessage('Enter the invitation code.');
+      return;
+    }
+    setBusy(true);
+    try {
+      setInvitation(await composition.friends.preview(code));
+      setMessage('Invitation ready.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The invitation could not be read.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Accepts an invitation and shows the created match. */
+  async function acceptInvitation(): Promise<void> {
+    if (!invitation) return;
+    setBusy(true);
+    try {
+      const accepted = await composition.friends.accept(invitation.invitationId, {
+        acceptanceKey: `accept${invitation.invitationId}`,
+        control: { kind: 'human' },
+      });
+      if (accepted.guestCredential) {
+        composition.registerGuestCredential(createGuestCredential({
+          guestId: accepted.guestCredential.guestId,
+          matchId: accepted.guestCredential.matchId,
+          seat: accepted.guestCredential.seat,
+          token: accepted.guestCredential.token,
+        }), 'guest');
+      }
+      composition.attachAndFocus(accepted.match.matchId, accepted.seat);
+      setTab('games');
+      setMessage('Match started.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The invitation could not be accepted.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Proposes a rematch of the focused match. */
+  async function proposeRematch(): Promise<void> {
+    if (!focusedId) return;
+    setBusy(true);
+    try {
+      const rematch = await composition.friends.proposeRematch(focusedId);
+      setMessage(`Rematch proposed: ${rematch.status}.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The rematch could not be proposed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Reads the public game history of a profile. */
+  async function readHistory(): Promise<void> {
+    const profileId = historyProfile.trim();
+    if (profileId.length === 0) {
+      setMessage('Enter a profile id.');
+      return;
+    }
+    setBusy(true);
+    try {
+      setHistory(await composition.publicHistory.history(profileId));
+      setMessage('History loaded.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The history could not be read.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Erases the shared replays of the owner. */
+  async function eraseSharedReplays(): Promise<void> {
+    setBusy(true);
+    try {
+      await composition.privacy.removeAccount();
+      setMessage('Shared replays erased.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The replays were not erased.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   return <section className="focus-page online-workspace" aria-label="Online play">
@@ -286,6 +413,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       <div className="button-row">
         <button className="button primary" type="button" disabled={busy || !composition.features.queue} onClick={() => void enterQueue({ kind: 'human' })}>Play yourself</button>
         <button className="button" type="button" disabled={busy || !composition.features.queue || !agentLabel} onClick={() => void enterQueue({ kind: 'agent', modelLabel: agentLabel ?? 'Agent' })}>Watch agent</button>
+        <button className="button quiet" type="button" disabled={busy || !composition.features.queue} onClick={() => void enterQueue({ kind: 'human' }, 'new')}>Another entry</button>
       </div>
       {queue.detail && <p role="status">{queue.detail}</p>}
       {queue.options.length > 0 && <div className="button-row">
@@ -296,6 +424,24 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
         {queue.options.includes('cancel') && <button className="button quiet" type="button" onClick={() => queueOption('cancel')}>Cancel</button>}
       </div>}
       {queue.assignment && <p role="status">Matched. {queue.assignment.opponentLabel}</p>}
+
+      <h3>Friend</h3>
+      <div className="button-row">
+        <button className="button" type="button" disabled={busy || !composition.features.friends} onClick={() => void createInvitation()}>Invite a friend</button>
+      </div>
+      {invitationLink && <label className="online-field">Invitation link
+        <input readOnly value={invitationLink} aria-label="Invitation link" />
+      </label>}
+      <label className="online-field">Invitation code
+        <input value={invitationCode} aria-label="Invitation code" onChange={event => setInvitationCode(event.target.value)} />
+      </label>
+      <div className="button-row">
+        <button className="button quiet" type="button" disabled={busy || !composition.features.friends} onClick={() => void previewInvitation()}>Preview</button>
+        <button className="button" type="button" disabled={busy || !invitation || invitation.status !== 'open'} onClick={() => void acceptInvitation()}>Accept</button>
+      </div>
+      {invitation && <p role="status">
+        {invitation.inviterLabel} · {invitation.inviterSeat} · {Math.round(invitation.timeControl.startingTimeMs / 60000)}+{Math.round(invitation.timeControl.incrementMs / 1000)}
+      </p>}
     </section>}
 
     {tab === 'games' && <section className="online-panel" aria-label="Concurrent games">
@@ -309,17 +455,25 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
         </li>)}
       </ul>
       <div className="button-row">
-        <IconButton icon="plus" label="New game" onClick={() => setTab('new')} />
+        <IconButton icon="plus" label="New game" onClick={() => { setTab('new'); setMessage('Choose a clock and enter the queue for another game.'); }} />
       </div>
     </section>}
 
     {tab === 'profile' && <section className="online-panel" aria-label="Profile and history">
       <p>{games.length} online game{games.length === 1 ? '' : 's'}.</p>
       {onOpenProfile && <button className="button" type="button" onClick={onOpenProfile}>Profile and history</button>}
+      <label className="online-field">Profile id
+        <input value={historyProfile} aria-label="Profile id" onChange={event => setHistoryProfile(event.target.value)} />
+      </label>
+      <div className="button-row">
+        <button className="button quiet" type="button" disabled={busy} onClick={() => void readHistory()}>Public history</button>
+        <button className="button quiet" type="button" disabled={busy} onClick={() => void eraseSharedReplays()}>Erase shared replays</button>
+      </div>
+      {history && <p role="status">{history.totals.wins} wins · {history.totals.draws} draws · {history.totals.losses} losses</p>}
       {view && view.result !== null && <div className="button-row">
         <a className="button quiet" href={`/v1/public/matches/${encodeURIComponent(view.matchId)}/replay`} target="_blank" rel="noreferrer">Public replay</a>
         <IconButton icon="close" label="Remove public replay" disabled={busy} onClick={() => void removeReplay()} />
-        {privacy && <button className="button quiet" type="button" disabled={busy} onClick={() => void eraseSharedReplays()}>Erase shared replays</button>}
+        {privacy && <button className="button quiet" type="button" disabled={busy} onClick={() => void eraseGuestReplays()}>Erase shared replays</button>}
       </div>}
     </section>}
 
@@ -335,7 +489,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
           <ChessBoard
             orientation={seat === 'black' ? 'black' : 'white'}
             model={{ position, identity: view.matchId }}
-            disabled={busy || view.status !== 'active' || reading.activeSeat !== seat}
+            disabled={busy || view.status !== 'active' || sideToMove !== seat || reviewing}
             visible
             onMove={submitMove}
             view={{ position, lastMove: null }}
@@ -363,6 +517,18 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
             <button className="button primary" type="button" onClick={() => void sendAction(confirm)}>Confirm</button>
             <button className="button quiet" type="button" onClick={() => setConfirm(null)}>Keep playing</button>
           </div>
+        </div>}
+        {agentRunner && (agentRunner.phase === 'uncertain' || agentRunner.phase === 'paused' || agentRunner.phase === 'failed') &&
+          <div className="online-decisions" role="group" aria-label="Agent decisions">
+            <p>{agentRunner.phase === 'uncertain' ? 'The agent turn is uncertain.' : agentRunner.phase === 'paused' ? 'The agent turn waits for you.' : 'The agent turn failed.'}</p>
+            <div className="button-row">
+              <button className="button" type="button" disabled={busy} onClick={() => void composition.agentDecision(view.matchId, seat ?? 'white', 'retry')}>Retry</button>
+              <button className="button" type="button" disabled={busy} onClick={() => void composition.agentDecision(view.matchId, seat ?? 'white', 'switch-model')}>Switch model</button>
+              <button className="button" type="button" disabled={busy} onClick={() => void composition.agentDecision(view.matchId, seat ?? 'white', 'takeover')}>Take over</button>
+            </div>
+          </div>}
+        {view.result !== null && <div className="button-row">
+          <button className="button quiet" type="button" disabled={busy} onClick={() => void proposeRematch()}>Propose rematch</button>
         </div>}
         <div className="match-status" role="status">
           <h2 className="status-heading">{status}</h2>
