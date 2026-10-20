@@ -1,14 +1,14 @@
 # KHA-72 public profile and explicit guest linking evidence
 
 Locally verified on 2026-10-20 on `t3/public-profiles-guest-linking`.
-Tested source commit: `cf222f01116e89bf478d085e89cf0470a4fa5177`.
+Tested source commit: `16cb69b`.
 The branch starts at `a1e069e`, which includes the KHA-64 through KHA-67
 foundations.
 
 The implementation commits are `fc814b2` (the service, the routes, the
 storage and the PostgreSQL fixtures), `b5baafb` (the browser boundary, the
-panel state machine and the interface), and `cf222f0` (the browser check
-harness).
+panel state machine and the interface), `cf222f0` (the browser check
+harness), and `16cb69b` (the corrections an independent review found).
 
 ## Implemented contract
 
