@@ -96,6 +96,11 @@ the boot.
 The participant API keeps its narrow reader and writer interface, so the trusted mutation is not
 reachable from any HTTP route and there is no public cron endpoint.
 
+One correctness fix came with the shared transition. The participant path of the opening abort
+read the match without its accepted line, so the published replay of a participant-triggered
+opening abort carried no moves and the stored rules input hash described an empty line. The
+accepted line is now read under the match lock on that path too.
+
 ### Contract and schema changes
 
 `backend/online/contracts.go` and `src/online/contracts.ts` moved from schema version 1 to 2.
