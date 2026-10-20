@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/backup"
+	"github.com/Kamkmgamer/kamkmchess/backend/privacy"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -207,6 +208,10 @@ func createCommand(ctx context.Context, arguments []string) error {
 		return fmt.Errorf("--class must be daily or weekly, not %q", options.class)
 	}
 	tools := pgTools{dumpBinary: options.pgDump, loaderBinary: options.psql, environment: childEnvironment(connections)}
+	removals, err := openRemovalLedger(ctx, pool)
+	if err != nil {
+		return err
+	}
 	manifest, err := backup.Create(ctx, backup.CreateRequest{
 		Path:       options.out,
 		Label:      label,
@@ -214,15 +219,28 @@ func createCommand(ctx context.Context, arguments []string) error {
 		CreatedAt:  now,
 		Dumper:     tools,
 		Tombstones: postgresLedger{pool: pool},
+		Removals:   removals,
 	})
 	if err != nil {
 		return err
 	}
 	return emit(options.asJSON, manifestReport(manifest), func() {
-		fmt.Printf("sealed %s\n  label %s (%s)\n  created %s\n  tool %s\n  tombstones %d\n  plaintext sha256 %s\n  bytes %d\n",
+		fmt.Printf("sealed %s\n  label %s (%s)\n  created %s\n  tool %s\n  tombstones %d\n  removals %d\n  plaintext sha256 %s\n  bytes %d\n",
 			options.out, manifest.Label, options.class, manifest.CreatedAt.Format(time.RFC3339), manifest.DumpTool,
-			manifest.TombstoneCount, manifest.PlaintextSHA256, manifest.PlaintextBytes)
+			manifest.TombstoneCount, manifest.RemovalCount, manifest.PlaintextSHA256, manifest.PlaintextBytes)
 	})
+}
+
+// openRemovalLedger opens the online removal ledger of a database.
+//
+// The ledger is optional: a database without the online tables has no
+// removals, and the private single-owner backup tooling keeps working.
+func openRemovalLedger(ctx context.Context, pool *pgxpool.Pool) (postgresRemovalLedger, error) {
+	removals, err := privacy.Open(ctx, pool, nil, privacy.Options{})
+	if err != nil {
+		return postgresRemovalLedger{}, err
+	}
+	return postgresRemovalLedger{pool: pool, removals: removals}, nil
 }
 
 func verifyCommand(arguments []string) error {
@@ -346,7 +364,11 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 	}
 	defer pool.Close()
 	tools := pgTools{dumpBinary: options.pgDump, loaderBinary: options.psql, environment: childEnvironment(connections)}
-	request := backup.RestoreRequest{Path: options.file, Passphrase: secret, Restorer: tools, Tombstones: postgresLedger{pool: pool}}
+	removals, err := openRemovalLedger(ctx, pool)
+	if err != nil {
+		return err
+	}
+	request := backup.RestoreRequest{Path: options.file, Passphrase: secret, Restorer: tools, Tombstones: postgresLedger{pool: pool}, Removals: removals}
 	if len(options.newerLedgers) > 0 {
 		request.NewerLedgers = append(request.NewerLedgers, newer)
 	}
@@ -371,10 +393,15 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 		"recoveryCounts":    result.RecoveryCounts,
 		"tombstonesApplied": result.TombstonesApplied,
 		"tombstonesKept":    result.TombstonesKept,
+		"removalsApplied":   result.RemovalsApplied,
 	}
 	return emit(options.asJSON, report, func() {
 		printPlan(result.RestorePlan)
 		fmt.Printf("restored; deletion ledger reapplied for %d games (%d already honoured)\n", result.TombstonesApplied, result.TombstonesKept)
+		fmt.Printf("restored; online removal ledger replayed for %d shared games\n", result.RemovalsApplied)
+		if len(result.RemovalsPending) > 0 {
+			fmt.Printf("the online removal ledger has %d records that were not applied; the restored database must not serve traffic before they are applied\n", len(result.RemovalsPending))
+		}
 	})
 }
 

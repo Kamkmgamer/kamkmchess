@@ -135,6 +135,38 @@ Rules the browser must honour:
 * The browser owns every provider secret and every provider request. The server never receives
   them.
 
+## Removal ledger, retention and restore
+
+* Every removal is recorded in a durable removal ledger (`online_removal_ledger`) and in a
+  removal request (`online_removal_requests`). The request is unique per subject and scope, so a
+  repeated request never creates a second removal.
+* The legacy deletion marker (`online_deletion_markers`) is written in the same transaction. The
+  seat guard and the replay guard of the base schema require that marker, so the anonymization and
+  the erasure are only accepted when a recorded marker exists. The marker carries the one-way
+  reference of the subject, not the subject identifier.
+* The live service data and the public projections are removed inside the removal transaction, so
+  they are gone long before the twenty-four hour target. The answer states `liveDeleteDueAt` and
+  `liveDeletedAt`.
+* The recovery copies are sanitized within thirty days. The answer states
+  `recoverySanitizeDueAt`. The removal ledger travels inside the encrypted backup bundle, and a
+  restore replays it before the restored database serves traffic.
+* The restore gate (`online_restore_gates`) blocks the service while a restored database has not
+  released its gate. A restore releases the gate only after the removal ledger was replayed.
+* The operator tooling (`khabackup`) seals the removal ledger into the bundle, reports
+  `removalsApplied` after a restore, and reports the removals it could not apply.
+
+## Known limitations
+
+* The removal request and the removal ledger keep the subject identifier, because a restore has to
+  find the rows of that subject to replay the removal. The identifier is service-held, never
+  public, and it is not in the public payload, the public replay or the public history.
+* The public profile row of a deleted account stays as an anonymous shell: the base schema keeps
+  the profile identifier and the account reference immutable. The chosen name, the chosen avatar
+  and every public history row of the account are removed.
+* The declared label of a model opponent is published only when it is a known public model name or
+  a label the owner registered before the control was declared. Every other declared value is
+  stored as the neutral label `Custom model`.
+
 ## Typed browser modules
 
 * `src/online/history.ts` – `parseOnlinePublicReplay`, `parseOnlineProfileHistory`,

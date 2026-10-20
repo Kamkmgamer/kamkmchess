@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/backup"
+	"github.com/Kamkmgamer/kamkmchess/backend/privacy"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -139,6 +140,46 @@ func runTool(ctx context.Context, binary string, arguments []string, stdin io.Re
 		return fmt.Errorf("%s failed: %w", binary, err)
 	}
 	return nil
+}
+
+// postgresRemovalLedger reads and reapplies the online removal ledger.
+//
+// The online removal ledger is the record that an erased shared game or a
+// removed identity must not come back. A backup carries it, and a restore
+// replays it before the restored database serves traffic.
+//
+// A database without the online tables simply has no removals, so the private
+// single-owner backup tooling keeps working against a database that never had
+// the online schema.
+type postgresRemovalLedger struct {
+	pool     *pgxpool.Pool
+	removals *privacy.Service
+}
+
+// available reports whether the online removal ledger exists in the database.
+func (l postgresRemovalLedger) available(ctx context.Context) bool {
+	var exists bool
+	err := l.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='online_removal_ledger')`).Scan(&exists)
+	return err == nil && exists
+}
+
+// ListRemovalRecords reads the online removal ledger of the live database.
+func (l postgresRemovalLedger) ListRemovalRecords(ctx context.Context) ([]backup.RemovalRecord, error) {
+	if !l.available(ctx) {
+		return nil, nil
+	}
+	return l.removals.ListRemovalRecords(ctx)
+}
+
+// ApplyRemovalRecords replays the online removal ledger after a restore.
+//
+// The replay is the privacy service, so the restored rows are removed exactly
+// as the original removal removed them.
+func (l postgresRemovalLedger) ApplyRemovalRecords(ctx context.Context, records []backup.RemovalRecord) error {
+	if len(records) == 0 || !l.available(ctx) {
+		return nil
+	}
+	return l.removals.ApplyRemovalRecords(ctx, records)
 }
 
 // postgresLedger reads and reapplies the durable deletion ledger.

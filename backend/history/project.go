@@ -526,8 +526,9 @@ func controlAt(timeline map[online.Seat][]timelineRow, seat online.Seat, version
 // declaredControl builds a declared control from the stored values.
 //
 // The stored label is already publishable: the service resolves a declared
-// label before it is stored. The resolution is repeated here, so a payload can
-// never carry a label that the service would refuse to publish.
+// label before it is stored. The check is repeated here, so a payload can
+// never carry a label that the service would refuse to publish, even if a
+// stored row was written by an older version.
 func declaredControl(kind string, label *string) DeclaredControl {
 	control := DeclaredControl{Kind: online.ControlKind(kind), Declaration: DeclarationDeclared}
 	switch control.Kind {
@@ -543,7 +544,15 @@ func declaredControl(kind string, label *string) DeclaredControl {
 			control.ModelLabel = &neutral
 			return control
 		}
-		resolved := *label
+		resolved, err := NormalizePublicLabel(*label)
+		if err != nil {
+			// A label the service would not publish is never published. The
+			// neutral label states that a model was in control without naming
+			// a private routing identity.
+			neutral := NeutralModelLabel
+			control.ModelLabel = &neutral
+			return control
+		}
 		control.ModelLabel = &resolved
 		return control
 	default:

@@ -396,6 +396,35 @@ func TestPostgresMixedControlAttributesEveryMoveAndTheTerminalAction(t *testing.
 	}
 }
 
+// TestPostgresControlChangeAnswersWithThePublishableLabel covers the answer
+// of an accepted control change.
+//
+// The declared label is resolved before the command is accepted, so the
+// returned receipt never carries a private routing identity.
+func TestPostgresControlChangeAnswersWithThePublishableLabel(t *testing.T) {
+	fixture, _, _ := historyFixture(t)
+	matchID := "history-control-receipt-match"
+	white := accountSeat{Subject: "user_a", Seat: online.SeatWhite}
+	black := accountSeat{Subject: "user_b", Seat: online.SeatBlack}
+	historyCreate(t, fixture, matchID, white, black, online.SeatControl{Kind: online.ControlHuman}, online.SeatControl{Kind: online.ControlHuman})
+	secret := "sk-live-9f8a7b6c5d4e3f2a1b0c"
+	command := historyCommand(matchID, "op-control-receipt", black, 1, online.Action{
+		Kind:       online.ActionSetControl,
+		SetControl: &online.SetControlAction{Control: online.SeatControl{Kind: online.ControlAgent, ModelLabel: &secret}},
+	})
+	ctx := accountContext("user_b", "session-user_b")
+	result, err := fixture.service.Execute(ctx, online.ParticipantRef{Kind: online.ParticipantAccount, ID: "user_b"}, command)
+	if err != nil {
+		t.Fatalf("set control: %v", err)
+	}
+	if strings.Contains(string(result.Raw), secret) || strings.Contains(string(result.Raw), "sk-live") {
+		t.Fatalf("the accepted receipt carries the private label: %s", string(result.Raw))
+	}
+	if !strings.Contains(string(result.Raw), history.NeutralModelLabel) {
+		t.Fatalf("the accepted receipt does not carry the publishable label: %s", string(result.Raw))
+	}
+}
+
 // TestPostgresPublicHistoryExcludesPrivateLocalSaves covers the excluded game
 // types: a private single-owner save never reaches the public history.
 func TestPostgresPublicHistoryExcludesPrivateLocalSaves(t *testing.T) {
