@@ -678,13 +678,29 @@ func TestPostgresOnlineRecoveryBudgetsSurviveControlChangesAndTakebacks(t *testi
 	if seat.IllegalAttemptsSpent != 1 {
 		t.Fatalf("the control change reset the spent budget: %+v", seat)
 	}
-	// A takeback does not reset the budget either. The control change raised
-	// the control epoch, so the commands carry it.
-	if _, err = service.Execute(ctx, bob, offerTakebackOnlineCommandAt(matchID, "op-recovery-offer", online.SeatBlack, 5, 2, 1)); err != nil {
+	// The accepted move of that seat starts the budget again. The control
+	// change raised the control epoch, so the commands carry it.
+	if _, err = service.Execute(ctx, alice, moveOnlineCommandAt(matchID, "op-recovery-white-2", online.SeatWhite, 5, 2, "g1f3")); err != nil {
+		t.Fatalf("accepted move: %v", err)
+	}
+	afterMove, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seat, _ = afterMove.Seat(online.SeatWhite)
+	if seat.IllegalAttemptsSpent != 0 {
+		t.Fatalf("the accepted move did not start the budget again: %+v", seat)
+	}
+	if _, err = service.Execute(ctx, bob, moveOnlineCommandAt(matchID, "op-recovery-black-2", online.SeatBlack, 6, 2, "b8c6")); err != nil {
+		t.Fatalf("black second move: %v", err)
+	}
+	// A takeback of the position before White's own turn restores the turn it
+	// spent the attempt in, so the budget is not reset either.
+	if _, err = service.Execute(ctx, bob, offerTakebackOnlineCommandAt(matchID, "op-recovery-offer", online.SeatBlack, 7, 2, 3)); err != nil {
 		t.Fatalf("takeback offer: %v", err)
 	}
 	offer := pendingOffer(t, service, matchID, online.OfferTakeback)
-	if _, err = service.Execute(ctx, alice, acceptTakebackOnlineCommandAt(matchID, "op-recovery-accept", online.SeatWhite, 6, 2, offer.OfferID)); err != nil {
+	if _, err = service.Execute(ctx, alice, acceptTakebackOnlineCommandAt(matchID, "op-recovery-accept", online.SeatWhite, 8, 2, offer.OfferID)); err != nil {
 		t.Fatalf("takeback acceptance: %v", err)
 	}
 	afterTakeback, err := service.GetMatch(ctx, matchID)
@@ -695,18 +711,18 @@ func TestPostgresOnlineRecoveryBudgetsSurviveControlChangesAndTakebacks(t *testi
 	if seat.IllegalAttemptsSpent != 1 {
 		t.Fatalf("the takeback reset the spent budget: %+v", seat)
 	}
-	// Only an accepted move of that seat starts the budget again. The
-	// control epoch is still raised.
-	if _, err = service.Execute(ctx, alice, moveOnlineCommandAt(matchID, "op-recovery-white-2", online.SeatWhite, 7, 2, "e2e4")); err != nil {
-		t.Fatalf("accepted move: %v", err)
+	// The restored turn is the one White spent the attempt in, so the next
+	// attempt continues that turn instead of starting a fresh allowance.
+	if _, err = service.Execute(ctx, alice, recoveryAttemptOnlineCommandAt(matchID, "op-recovery-attempt-2", online.SeatWhite, 9, 2, online.RecoveryIllegalMove)); err != nil {
+		t.Fatalf("recovery attempt after the takeback: %v", err)
 	}
-	afterMove, err := service.GetMatch(ctx, matchID)
+	afterAttempt, err := service.GetMatch(ctx, matchID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	seat, _ = afterMove.Seat(online.SeatWhite)
-	if seat.IllegalAttemptsSpent != 0 {
-		t.Fatalf("the accepted move did not start the budget again: %+v", seat)
+	seat, _ = afterAttempt.Seat(online.SeatWhite)
+	if seat.IllegalAttemptsSpent != 2 {
+		t.Fatalf("the restored turn did not keep its spent budget: %+v", seat)
 	}
 }
 

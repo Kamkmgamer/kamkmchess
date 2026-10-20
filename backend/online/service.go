@@ -783,6 +783,11 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		for _, discardedMove := range discarded {
 			clock.setBank(discardedMove.Seat, clock.Bank(discardedMove.Seat)-match.TimeControl.IncrementMs)
 		}
+		// The restored turn keeps the recovery budget it had already spent,
+		// so a takeback never hands a seat a fresh attempt allowance.
+		if err = restoreTurnBudgets(ctx, tx, match, turnPrefixKey(match.Moves), decision); err != nil {
+			return CommandResult{}, err
+		}
 		event.Kind = EventTakebackAccept
 		event.TakebackTargetVersion = offer.TargetVersion
 		if err = resolveOffer(ctx, tx, offer, decision, OfferAccepted); err != nil {
@@ -829,6 +834,15 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		}
 		if _, err = tx.Exec(ctx, `UPDATE online_seats SET illegal_attempts_spent=$1,format_corrections_spent=$2,updated_at=$3 WHERE match_id=$4 AND seat=$5`,
 			seat.IllegalAttemptsSpent, seat.FormatCorrectionsSpent, decision, match.MatchID, string(cmd.Seat)); err != nil {
+			return CommandResult{}, err
+		}
+		// The spent budget of this turn is journalled. The seat counters are
+		// reset when that seat's own move is accepted, so the journal is what
+		// a takeback that restores the turn reads back.
+		if err = recordTurnBudget(ctx, tx, match.MatchID, cmd.Seat, clock.TurnNumber, turnPrefixKey(match.Moves), TurnBudget{
+			IllegalAttemptsSpent:   seat.IllegalAttemptsSpent,
+			FormatCorrectionsSpent: seat.FormatCorrectionsSpent,
+		}, decision); err != nil {
 			return CommandResult{}, err
 		}
 	case ActionSetControl:
