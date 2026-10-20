@@ -5,25 +5,15 @@
  * The service requires the lease on every command of such a seat, and it
  * fences a lease of an older control epoch or of an older turn.
  *
- * The wire contract is the one of the participant API:
+ * The client speaks the exact wire of the participant API. The request
+ * bodies are built by the shared builders of the provider runner, so a change
+ * of the contract lands in one place:
  *
  * ```
  * POST /v1/online/matches/{matchID}/runner/lease
- * { "schemaVersion": 2, "action": "acquire" | "renew" | "release",
- *   "seat": "white" | "black", "runnerId": "…",
- *   "leaseId"?: "…", "turnVersion"?: 7, "controlEpoch": 3 }
- *
- * GET /v1/online/matches/{matchID}/runner/lease?seat=white
- *
  * POST /v1/online/matches/{matchID}/runner/request
- * { "schemaVersion": 2, "action": "begin" | "clear",
- *   "seat": "white" | "black", "runnerId": "…",
- *   "leaseId": "…", "requestId": "…",
- *   "turnVersion"?: 7, "controlEpoch": 3 }
+ * GET  /v1/online/matches/{matchID}/runner/lease?seat=white
  * ```
- *
- * The service decodes the body strictly: an unknown field is refused. The
- * client therefore sends exactly the fields of the contract and nothing else.
  *
  * The rules this module keeps:
  *
@@ -36,71 +26,27 @@
  * - A released or revoked lease stops the runner. The runner never submits an
  *   answer under a lease it no longer holds.
  */
+import { buildRunnerLeaseBody, buildRunnerRequestBody, parseRunnerLeaseAnswer } from './provider-runner';
+import type { ProviderRunnerLease, ProviderRunnerLeasePort } from './provider-runner';
 import type { AuthorizedRequester } from './request';
 import type { ParticipantSession } from './session';
 import { matchSeatScope } from './auth';
-import type { LeaseStatus, Seat } from './contracts';
+import type { Seat } from './contracts';
 
-/** The lease the service answered. */
-export interface OnlineRunnerLease {
-  readonly leaseId: string;
-  readonly matchId: string;
-  readonly seat: Seat;
-  readonly controlEpoch: number;
-  readonly generation: number;
-  readonly runnerId: string;
-  readonly status: LeaseStatus;
-  readonly acquiredAt: string;
-  readonly expiresAt: string;
-  readonly revokedAt: string | null;
-  /** The version of the turn the lease was taken for, when the service names one. */
-  readonly turnVersion: number | null;
-}
-
-/** The failure of a lease request. */
-export class OnlineRunnerLeaseError extends Error {
-  readonly status: number;
-
-  constructor(message: string, status = 0) {
-    super(message);
-    this.name = 'OnlineRunnerLeaseError';
-    this.status = status;
-  }
-}
+export type { ProviderRunnerLease };
 
 export interface OnlineRunnerLeaseOptions {
   readonly requester: AuthorizedRequester;
   readonly session: ParticipantSession;
   readonly matchId: string;
   readonly seat: Seat;
-  /** The identifier of this browser runner. It never leaves the browser. */
+  /**
+   * The identifier of this browser runner.
+   *
+   * Two tabs of one owner must not share it, because the service refuses a
+   * second runner of a seat that a live lease holds.
+   */
   readonly runnerId: string;
-  /** The schema version of the shared contracts. */
-  readonly schemaVersion?: number;
-}
-
-/** The identity of one lease request. */
-export interface OnlineLeaseTurn {
-  /** The control epoch of the seat. A lease of an older epoch is fenced. */
-  readonly controlEpoch: number;
-  /** The version of the turn the lease belongs to. */
-  readonly turnVersion: number;
-}
-
-/** The client of one runner lease. */
-export interface OnlineRunnerLeaseClient {
-  /** Takes the lease of the current turn. */
-  acquire(input: OnlineLeaseTurn): Promise<OnlineRunnerLease>;
-  /** Renews the lease of the current turn. */
-  renew(input: OnlineLeaseTurn & { leaseId: string }): Promise<OnlineRunnerLease>;
-  /** Releases the lease of the current turn. */
-  release(input: OnlineLeaseTurn & { leaseId: string }): Promise<OnlineRunnerLease>;
-  /** Reads the lease of the seat. */
-  read(): Promise<OnlineRunnerLease | null>;
-  /** Records that a billable provider request started. */
-  beginRequest(input: OnlineLeaseTurn & { leaseId: string; requestId: string }): Promise<OnlineRunnerLease>;
-  /** Records that a billable provider request settled. */
-  clearRequest(input: OnlineLeaseTurn & { leaseId: string; requestId: string }): Promise<OnlineRunnerLease>;
 }
 
 /** The path of the runner lease route. */
@@ -114,131 +60,80 @@ export function onlineRunnerRequestPath(matchId: string): string {
 }
 
 /**
- * Reads a lease answer.
- *
- * The parser is tolerant about the fields the service may add: it reads the
- * lease identity and its state and ignores the rest.
- */
-export function parseRunnerLeaseAnswer(value: unknown, matchId: string): OnlineRunnerLease {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new OnlineRunnerLeaseError('The lease answer is not an object.');
-  }
-  const record = value as Record<string, unknown>;
-  const leaseId = record.leaseId;
-  const answerMatchId = record.matchId;
-  const seat = record.seat;
-  const controlEpoch = record.controlEpoch;
-  const generation = record.generation;
-  const runnerId = record.runnerId;
-  const status = record.status;
-  const acquiredAt = record.acquiredAt;
-  const expiresAt = record.expiresAt;
-  const revokedAt = record.revokedAt;
-  if (typeof leaseId !== 'string' || leaseId.length === 0) {
-    throw new OnlineRunnerLeaseError('The lease answer carries no lease.');
-  }
-  if (typeof answerMatchId !== 'string' || answerMatchId !== matchId) {
-    throw new OnlineRunnerLeaseError('The lease belongs to another match.');
-  }
-  if (seat !== 'white' && seat !== 'black') {
-    throw new OnlineRunnerLeaseError('The lease answer carries no seat.');
-  }
-  if (typeof controlEpoch !== 'number' || !Number.isSafeInteger(controlEpoch)) {
-    throw new OnlineRunnerLeaseError('The lease answer carries no control epoch.');
-  }
-  if (typeof generation !== 'number' || !Number.isSafeInteger(generation)) {
-    throw new OnlineRunnerLeaseError('The lease answer carries no generation.');
-  }
-  if (typeof runnerId !== 'string') {
-    throw new OnlineRunnerLeaseError('The lease answer carries no runner.');
-  }
-  if (status !== 'active' && status !== 'revoked' && status !== 'expired') {
-    throw new OnlineRunnerLeaseError('The lease answer carries no state.');
-  }
-  return {
-    leaseId,
-    matchId: answerMatchId,
-    seat,
-    controlEpoch,
-    generation,
-    runnerId,
-    status,
-    acquiredAt: typeof acquiredAt === 'string' ? acquiredAt : '',
-    expiresAt: typeof expiresAt === 'string' ? expiresAt : '',
-    revokedAt: typeof revokedAt === 'string' ? revokedAt : null,
-    turnVersion: typeof record.turnVersion === 'number' ? record.turnVersion : null,
-  };
-}
-
-/**
  * Creates the runner lease client.
  *
  * The client sends only the lease request fields and reads only the lease
  * answer. It never reads or writes a credential itself.
  */
-export function createOnlineRunnerLeaseClient(options: OnlineRunnerLeaseOptions): OnlineRunnerLeaseClient {
+export function createOnlineRunnerLeaseClient(options: OnlineRunnerLeaseOptions): ProviderRunnerLeasePort {
   const { requester, matchId, seat, runnerId } = options;
   const scope = matchSeatScope(matchId, seat);
   const leasePath = onlineRunnerLeasePath(matchId);
   const requestPath = onlineRunnerRequestPath(matchId);
-  const schemaVersion = options.schemaVersion ?? 2;
 
   async function sendLease(
     action: 'acquire' | 'renew' | 'release',
-    body: { controlEpoch: number; turnVersion: number; leaseId?: string },
-  ): Promise<OnlineRunnerLease> {
+    body: { controlEpoch: number; turnVersion: number | null; leaseId?: string | null },
+  ): Promise<ProviderRunnerLease> {
     const result = await requester.request(scope, {
       path: leasePath,
       method: 'POST',
-      body: {
-        schemaVersion,
+      body: buildRunnerLeaseBody({
         action,
         seat,
         runnerId,
         controlEpoch: body.controlEpoch,
-        turnVersion: body.turnVersion,
-        ...(body.leaseId ? { leaseId: body.leaseId } : {}),
-      },
+        leaseId: body.leaseId ?? null,
+        turnVersion: body.turnVersion ?? null,
+      }),
     });
     if (!result.ok) {
-      throw new OnlineRunnerLeaseError(`The service refused the runner lease (${result.status}).`, result.status);
+      throw new Error(`The service refused the runner lease (${result.status}).`);
     }
-    return parseRunnerLeaseAnswer(result.data, matchId);
+    return parseRunnerLeaseAnswer(result.data, matchId, seat);
   }
 
   async function sendRequest(
     action: 'begin' | 'clear',
-    body: { controlEpoch: number; turnVersion: number; leaseId: string; requestId: string },
-  ): Promise<OnlineRunnerLease> {
+    body: { controlEpoch: number; turnVersion: number | null; leaseId: string; requestId: string },
+  ): Promise<ProviderRunnerLease> {
     const result = await requester.request(scope, {
       path: requestPath,
       method: 'POST',
-      body: {
-        schemaVersion,
+      body: buildRunnerRequestBody({
         action,
         seat,
         runnerId,
         leaseId: body.leaseId,
         requestId: body.requestId,
         controlEpoch: body.controlEpoch,
-        turnVersion: body.turnVersion,
-      },
+        turnVersion: body.turnVersion ?? null,
+      }),
     });
     if (!result.ok) {
-      throw new OnlineRunnerLeaseError(`The service refused the runner request (${result.status}).`, result.status);
+      throw new Error(`The service refused the runner request (${result.status}).`);
     }
-    return parseRunnerLeaseAnswer(result.data, matchId);
+    return parseRunnerLeaseAnswer(result.data, matchId, seat);
   }
 
   return {
+    runnerId,
     acquire(input) {
-      return sendLease('acquire', input);
+      return sendLease('acquire', { controlEpoch: input.controlEpoch, turnVersion: input.turnVersion });
     },
     renew(input) {
-      return sendLease('renew', { controlEpoch: input.controlEpoch, turnVersion: input.turnVersion, leaseId: input.leaseId });
+      return sendLease('renew', {
+        controlEpoch: input.controlEpoch,
+        turnVersion: input.turnVersion,
+        leaseId: input.leaseId,
+      });
     },
     release(input) {
-      return sendLease('release', { controlEpoch: input.controlEpoch, turnVersion: input.turnVersion, leaseId: input.leaseId });
+      return sendLease('release', {
+        controlEpoch: input.controlEpoch,
+        turnVersion: input.turnVersion,
+        leaseId: input.leaseId,
+      });
     },
     async read() {
       const result = await requester.request(scope, {
@@ -246,9 +141,9 @@ export function createOnlineRunnerLeaseClient(options: OnlineRunnerLeaseOptions)
       });
       if (result.status === 404) return null;
       if (!result.ok) {
-        throw new OnlineRunnerLeaseError(`The service refused the runner lease (${result.status}).`, result.status);
+        throw new Error(`The service refused the runner lease (${result.status}).`);
       }
-      return parseRunnerLeaseAnswer(result.data, matchId);
+      return parseRunnerLeaseAnswer(result.data, matchId, seat);
     },
     beginRequest(input) {
       return sendRequest('begin', {

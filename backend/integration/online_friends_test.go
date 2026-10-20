@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -22,20 +23,55 @@ import (
 
 const friendOrigin = "https://app.example"
 
-// friendFixture composes the invitation service with the real writer and the
-// real allocator.
-type friendFixture struct {
-	pool      *pgxpool.Pool
-	service   *online.Service
-	allocator *onlineauth.Allocator
-	friends   *invite.Service
-	now       time.Time
+// friendTestPool builds an isolated pool with a bounded connection count.
+//
+// The bounded pool makes the contention of a contended acceptance
+// reproducible on any host: the pool is smaller than the number of racing
+// acceptances, so a claim that held its lock while it waited for a
+// connection would starve the winner of the race.
+func friendTestPool(t *testing.T, maxConns int32) *pgxpool.Pool {
+	t.Helper()
+	dsn := os.Getenv(databaseEnv)
+	if dsn == "" {
+		if os.Getenv("KHA41_REQUIRE_POSTGRES") == "1" {
+			t.Fatalf("%s is required", databaseEnv)
+		}
+		t.Skipf("PostgreSQL integration unavailable: set %s", databaseEnv)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	admin, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("connect isolated PostgreSQL: %v", err)
+	}
+	if err = admin.Ping(ctx); err != nil {
+		admin.Close()
+		t.Fatalf("ping isolated PostgreSQL: %v", err)
+	}
+	schema := fmt.Sprintf("kha75_%d_%s", time.Now().UnixNano(), randomSchemaSuffix())
+	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		admin.Close()
+		t.Fatalf("create test schema: %v", err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(context.Background(), "DROP SCHEMA "+schema+" CASCADE"); admin.Close() })
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	cfg.MaxConns = maxConns
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
 }
 
-func newFriendFixture(t *testing.T, evaluator online.Evaluator) *friendFixture {
+// newFriendFixtureWithPool composes the invitation service on a given pool.
+func newFriendFixtureWithPool(t *testing.T, evaluator online.Evaluator, pool *pgxpool.Pool) *friendFixture {
 	t.Helper()
 	ctx := context.Background()
-	pool := testPool(t)
 	if err := migrations.Apply(ctx, pool); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
@@ -56,6 +92,108 @@ func newFriendFixture(t *testing.T, evaluator online.Evaluator) *friendFixture {
 		t.Fatal(err)
 	}
 	return &friendFixture{pool: pool, service: service, allocator: allocator, friends: friends, now: time.Now().UTC()}
+}
+
+// TestPostgresFriendContendedAcceptanceDoesNotStarveTheWinner covers the
+// lock discipline of a contended acceptance.
+//
+// More acceptances race for one invitation than the pool has connections. A
+// claim that held the row lock of the invitation while it waited for a
+// connection of the pool would starve the winner of the race, and the race
+// would never finish.
+func TestPostgresFriendContendedAcceptanceDoesNotStarveTheWinner(t *testing.T) {
+	const (
+		connections = 4
+		racers      = 12
+	)
+	pool := friendTestPool(t, connections)
+	fixture := newFriendFixtureWithPool(t, moveEvaluator{}, pool)
+	ctx := context.Background()
+
+	created, err := fixture.friends.Create(ctx, invite.CreateRequest{
+		Inviter:     friendIdentity("user_inviter", "Alice"),
+		Seat:        online.SeatWhite,
+		TimeControl: online.TimeControl{StartingTimeMs: 300_000, IncrementMs: 0},
+		Control:     online.SeatControl{Kind: online.ControlHuman},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// The race is bounded, so a contended acceptance fails the test instead
+	// of hanging it.
+	raceCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	type outcome struct {
+		matchID string
+		err     error
+	}
+	results := make(chan outcome, racers)
+	var wait sync.WaitGroup
+	for index := 0; index < racers; index++ {
+		wait.Add(1)
+		go func(index int) {
+			defer wait.Done()
+			accepted, acceptErr := fixture.friends.Accept(raceCtx, invite.AcceptRequest{
+				InvitationID:  created.Invitation.InvitationID,
+				AcceptanceKey: acceptanceKey(fmt.Sprintf("contended-%d", index)),
+				Acceptor:      friendIdentity(fmt.Sprintf("user_racer_%d", index), "Racer"),
+				Control:       online.SeatControl{Kind: online.ControlHuman},
+				Origin:        friendOrigin,
+			})
+			if acceptErr != nil {
+				results <- outcome{err: acceptErr}
+				return
+			}
+			results <- outcome{matchID: accepted.MatchID}
+		}(index)
+	}
+	// Every racer reports, so no goroutine outlives the test.
+	wait.Wait()
+	close(results)
+	winners := 0
+	var winnerMatch string
+	for result := range results {
+		if result.err != nil {
+			if !errors.Is(result.err, invite.ErrAlreadyConsumed) && !errors.Is(result.err, invite.ErrConflict) {
+				t.Fatalf("a losing acceptance returned %v", result.err)
+			}
+			continue
+		}
+		winners++
+		winnerMatch = result.matchID
+	}
+	if winners != 1 {
+		t.Fatalf("the contended acceptance produced %d winners", winners)
+	}
+	var acceptances int
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM online_invitation_acceptances WHERE invitation_id=$1`, created.Invitation.InvitationID).Scan(&acceptances); err != nil {
+		t.Fatal(err)
+	}
+	if acceptances != 1 {
+		t.Fatalf("the invitation recorded %d acceptances", acceptances)
+	}
+	var matches int
+	if err = pool.QueryRow(ctx, `SELECT count(*) FROM online_matches WHERE match_id=$1`, winnerMatch).Scan(&matches); err != nil {
+		t.Fatal(err)
+	}
+	if matches != 1 {
+		t.Fatalf("the contested invitation produced %d matches", matches)
+	}
+}
+
+// friendFixture composes the invitation service with the real writer and the
+// real allocator.
+type friendFixture struct {
+	pool      *pgxpool.Pool
+	service   *online.Service
+	allocator *onlineauth.Allocator
+	friends   *invite.Service
+	now       time.Time
+}
+
+func newFriendFixture(t *testing.T, evaluator online.Evaluator) *friendFixture {
+	t.Helper()
+	return newFriendFixtureWithPool(t, evaluator, testPool(t))
 }
 
 // strictSetupEvaluator refuses one starting position, so an invalid position

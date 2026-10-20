@@ -64,6 +64,14 @@ describe('the compact control labels (UX-06)', () => {
     expect(onlineControlLabel({ kind: 'engine', modelLabel: 'Stockfish 19 Lite' })).toBe('Engine · Stockfish 19 Lite (browser)');
   });
 
+  it('never invents a control the view does not name (B-10)', () => {
+    expect(onlineControlLabel(null)).toBe('Unknown');
+    const rows = onlineSeatRows(matchView({ seats: [
+      { seat: 'white', publicLabel: 'Owner', control: { kind: 'human' }, controlEpoch: 1, illegalAttemptsSpent: 0, formatCorrectionsSpent: 0 },
+    ] }), 'white');
+    expect(rows[1]?.controlLabel).toBe('Unknown');
+  });
+
   it('shows one compact label per seat and no separate declared-models list', () => {
     const rows = onlineSeatRows(matchView(), 'white');
     expect(rows).toHaveLength(2);

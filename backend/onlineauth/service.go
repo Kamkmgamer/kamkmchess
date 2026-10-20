@@ -3,12 +3,13 @@ package onlineauth
 import (
 	"context"
 	"errors"
+	"hash/fnv"
 	"strings"
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/auth"
+	"github.com/Kamkmgamer/kamkmchess/backend/locks"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
-	"github.com/Kamkmgamer/kamkmchess/backend/onlinekeys"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -30,11 +31,13 @@ const DefaultStreamMaxDuration = 20 * time.Second
 // by the revocation path, so a revocation and an accepted write are ordered
 // instead of racing.
 //
-// The keys themselves live in the shared onlinekeys package, so the online
-// writer and the privacy service take exactly the same locks.
+// The account scope key lives in the shared locks package, so the online
+// writer, the privacy service and the profile service take exactly the same
+// lock. The guest seat scope stays here, because only the authorization
+// service orders the guest seat.
 const (
-	lockAccount = onlinekeys.LockAccount
-	lockSeat    = onlinekeys.LockSeat
+	lockAccount = "account"
+	lockSeat    = "guest-seat"
 )
 
 // Options configures the authorization service.
@@ -202,7 +205,7 @@ func (s *Service) AuthorizeSeat(ctx context.Context, q online.Querier, matchID s
 			return ErrUnauthenticated
 		}
 		// Serialize against a concurrent session revocation.
-		if err := lockScope(ctx, q, accountLockKey(principal.Subject)); err != nil {
+		if err := locks.LockAccountScopeQ(ctx, writeQuerier(q), locks.AccountScope(string(online.ParticipantAccount), principal.Subject)); err != nil {
 			return err
 		}
 		// The lock may have been held for a long time. The expiry is
@@ -325,7 +328,7 @@ func (s *Service) RevokeAccountSession(ctx context.Context, subject, sessionID, 
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err = lockScope(ctx, tx, accountLockKey(subject)); err != nil {
+	if err = locks.LockAccountScopeQ(ctx, writeQuerier(tx), locks.AccountScope(string(online.ParticipantAccount), subject)); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO online_session_revocations(subject_id,session_id,revoked_at,reason) VALUES($1,$2,clock_timestamp(),$3) ON CONFLICT (subject_id,session_id) DO NOTHING`, subject, sessionID, reason); err != nil {
@@ -351,7 +354,7 @@ func (s *Service) RevokeAccountSessions(ctx context.Context, subject, reason str
 		return err
 	}
 	defer tx.Rollback(ctx)
-	if err = lockScope(ctx, tx, accountLockKey(subject)); err != nil {
+	if err = locks.LockAccountScopeQ(ctx, writeQuerier(tx), locks.AccountScope(string(online.ParticipantAccount), subject)); err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO online_session_revocations(subject_id,session_id,revoked_at,reason) VALUES($1,'*',clock_timestamp(),$2) ON CONFLICT (subject_id,session_id) DO NOTHING`, subject, reason); err != nil {
@@ -479,18 +482,25 @@ func allowedRevocationReason(reason string) bool {
 }
 
 // accountLockKey is the advisory lock key for one account subject.
-func accountLockKey(subject string) int64 {
-	return onlinekeys.AccountLockKey(subject)
-}
-
+//
+// The account scope is shared with the online writer, the privacy service and
+// the profile service through the locks package, so the key is derived there.
+// The seat scope stays in this package, because only the authorization
+// service orders the guest seat.
+//
 // seatLockKey is the advisory lock key for one guest seat.
 func seatLockKey(matchID string, seat online.Seat) int64 {
-	return onlinekeys.SeatLockKey(matchID, string(seat))
+	return advisoryKey(lockSeat, matchID, string(seat))
 }
 
 // advisoryKey derives a stable 64-bit advisory lock key.
 func advisoryKey(parts ...string) int64 {
-	return onlinekeys.AdvisoryKey(parts...)
+	hash := fnv.New64a()
+	for _, part := range parts {
+		_, _ = hash.Write([]byte(part))
+		_, _ = hash.Write([]byte{0})
+	}
+	return int64(hash.Sum64() & 0x7fffffffffffffff)
 }
 
 // lockScope takes a transaction advisory lock. It is a no-op outside a real

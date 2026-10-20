@@ -115,10 +115,44 @@ answer is public, so a signed-out visitor discovers it too.
 | `/v1/online/matches/{matchID}` | GET | the participant live view |
 | `/v1/online/matches/{matchID}/updates` | GET | the finite update stream and its polling fallback |
 | `/v1/online/matches/{matchID}/commands` | POST | the versioned participant command |
+| `/v1/online/matches/{matchID}/presence` | POST/GET | the liveness heartbeat and the presence view |
 | `/v1/online/matches/{matchID}/runner/lease` | POST | the runner lease of an agent or engine seat |
 | `/v1/online/matches/{matchID}/runner/request` | POST | the uncertain provider request of a runner |
-| `/v1/online/queue/entries…` | GET/POST | the queue entry routes of the matching worker |
+| `/v1/online/queue/entries…` | GET/POST | the queue entry routes of the queue worker |
+| `/v1/online/invitations…` | GET/POST | the friend invitation routes of the matching worker |
+| `/v1/online/rematches…` | POST/GET | the rematch routes of the matching worker |
 | `/v1/public/matches/{matchID}/replay` | GET | the public replay of a finished match |
+| `/v1/public/profiles/{profileID}/history` | GET | the public game history of a profile |
+| `/v1/privacy/account/deletion` | POST | the ordinary account deletion |
+| `/v1/privacy/account/removal` | POST | the explicit removal of the shared replays |
+| `/v1/privacy/guest/removal` | POST | the explicit removal of a guest seat owner |
+| `/v1/privacy/account/model-labels` | POST | the public label of an owner chosen agent |
+
+The queue routes and their answers are published by the queue worker in
+`docs/online/queue-contract.md` and implemented by its typed client
+`src/online/queue.ts`. The browser uses that client; the workspace owns no
+second queue client.
+
+The friend routes and their answers are published in
+`docs/online/matching-interfaces.md`. The browser adapter of the workspace is
+`src/online/friend-routes.ts`; the matching worker's typed client
+`src/online/friends.ts` is the canonical one and replaces the adapter when the
+two are reconciled.
+
+The public reads and the removal flows are the typed clients of the privacy
+worker: `src/online/history.ts` and `src/online/privacy.ts`.
+
+### The queue answers the browser reads
+
+- The creation is the authoritative ready acceptance: `readyAt` is set and
+  `cutoffAt` is `readyAt + 10s`.
+- `cutoffAt: null` means the owner removed the automatic cutoff.
+- A waiting entry with `readyAt: null` is expired and needs an explicit
+  rejoin with `POST /entries/{id}/ready`.
+- The fallback answer carries the engine seat credential:
+  `schemaVersion, matchId, seat, opponentLabel, control,
+  guestCredential{guestId, matchId, seat, token, expiresAt}`.
+- The entry heartbeat renews the readiness lease of a waiting entry.
 
 The runner lease body is the one of the participant API:
 
@@ -137,14 +171,18 @@ The runner lease body is the one of the participant API:
 The service decodes the body strictly, so the browser sends exactly these
 fields. The command envelope carries the optional `leaseId` of the turn.
 
+### The agent label
+
+The service canonicalizes the label of an agent seat: a known public model
+name becomes its public form, and an unknown name becomes a generic one
+unless the owner registered it. The browser therefore registers the chosen
+public label with `POST /v1/privacy/account/model-labels` before it asks for
+a queue entry, a friend invitation or a control change, and it binds the
+canonical label the service answers to the private selection. The binding
+never guesses: the private routing identity stays in the browser.
+
 ## Privacy actions
 
 The privacy worker owns removal. The workspace renders a removal action and
-calls an injected port; it never deletes anything itself. The port contract is
-one method with the existing shared action:
-
-```ts
-export interface OnlinePrivacyPort {
-  removePublicReplay(matchId: string, reason: 'owner_request' | 'erasure_request'): Promise<void>;
-}
-```
+calls the typed client of that worker. The owner-requested removal of one
+replay is the participant command `remove_public_replay` of the match.

@@ -2,9 +2,8 @@ package online
 
 import (
 	"context"
-	"sort"
 
-	"github.com/Kamkmgamer/kamkmchess/backend/onlinekeys"
+	"github.com/Kamkmgamer/kamkmchess/backend/locks"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -149,16 +148,15 @@ func LockGate(ctx context.Context, tx pgx.Tx) error {
 // LockAccountScope takes the account scope lock of one participant.
 //
 // The scope lock orders a trusted allocation against the removal of the same
-// participant. The privacy flow takes the same lock through the shared
-// onlinekeys protocol, so an allocation and a removal of one account are
-// ordered instead of racing.
+// participant. The privacy flow and the profile flow take the same lock
+// through the shared locks package, so an allocation and a removal of one
+// account are ordered instead of racing.
 //
 // The lock is taken before the gate lock and before the match row locks, and
 // the scopes of one transaction are taken in ascending order, so two
 // allocations of the same two participants cannot deadlock.
-func LockAccountScope(ctx context.Context, tx pgx.Tx, subject string) error {
-	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, onlinekeys.AccountLockKey(subject))
-	return err
+func LockAccountScope(ctx context.Context, tx pgx.Tx, participant ParticipantRef) error {
+	return locks.LockAccountScope(ctx, tx, locks.AccountScope(string(participant.Kind), participant.ID))
 }
 
 // LockAccountScopes takes the account scope locks of several participants in
@@ -166,23 +164,12 @@ func LockAccountScope(ctx context.Context, tx pgx.Tx, subject string) error {
 //
 // The order is the deadlock rule: two transactions that lock the same scopes
 // take them in the same order, so they never wait for each other.
-func LockAccountScopes(ctx context.Context, tx pgx.Tx, subjects []string) error {
-	ordered := make([]string, 0, len(subjects))
-	seen := map[string]bool{}
-	for _, subject := range subjects {
-		if subject == "" || seen[subject] {
-			continue
-		}
-		seen[subject] = true
-		ordered = append(ordered, subject)
+func LockAccountScopes(ctx context.Context, tx pgx.Tx, participants []ParticipantRef) error {
+	scopes := make([]string, 0, len(participants))
+	for _, participant := range participants {
+		scopes = append(scopes, locks.AccountScope(string(participant.Kind), participant.ID))
 	}
-	sort.Strings(ordered)
-	for _, subject := range ordered {
-		if err := LockAccountScope(ctx, tx, subject); err != nil {
-			return err
-		}
-	}
-	return nil
+	return locks.LockAccountScopes(ctx, tx, scopes)
 }
 
 // gateState reads the durable admission state of the service.

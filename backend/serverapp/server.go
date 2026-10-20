@@ -281,6 +281,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		}
 		queueService, err = queue.Open(ctx, pool, queue.Options{
 			Allocator:   allocator,
+			Labels:      invite.NewAccountLabelResolver(pool),
 			Credentials: onlineauth.NewAllocator(authorizer),
 		})
 		if err != nil {
@@ -338,6 +339,21 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		Interval: cfg.Online.HistoryPublishInterval,
 		Batch:    cfg.Online.HistoryPublishBatch,
 	})
+	// The serving gate is the admission state of the restored database. A
+	// restore that has not replayed the newest removal ledger keeps the
+	// service closed, so an erased game is never served again. The check runs
+	// before the service starts, and every request is checked again while it
+	// runs.
+	allowed, err := privacyService.ServingAllowed(ctx)
+	if err != nil {
+		pool.Close()
+		return nil, nil, errors.New("the removal ledger could not be verified")
+	}
+	if !allowed {
+		pool.Close()
+		return nil, nil, errors.New("the restored database has an unreplayed removal ledger")
+	}
+	handler := httpapi.WithServingGate(privacyService, root)
 	release := func() {
 		// The loops stop before the pool closes, so no background sweep can
 		// use a closed connection.
@@ -350,7 +366,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		}
 		pool.Close()
 	}
-	return root, release, nil
+	return handler, release, nil
 }
 
 // openEvaluator starts the private rules process when one is configured.

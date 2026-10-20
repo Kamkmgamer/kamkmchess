@@ -11,18 +11,18 @@ import (
 //
 // A record states that a shared replay, an identifying snapshot or a private
 // owner record of one match was removed. The record never carries the removed
-// content. It carries the subject of the removal, because the replay of a
-// restored database has to find the rows of that subject.
+// content.
 //
-// The private single-owner deletion ledger and the online removal ledger are
-// two different things: the first one deletes a private game, the second one
-// erases a shared online game or an identity. A restore replays both.
+// The subject of the record is the one-way reference of the removed subject,
+// not the subject identifier. A restore finds the rows of that subject by the
+// reference, so neither the ledger nor the encrypted bundle retains the
+// identifier of a removed person.
 type RemovalRecord struct {
 	// RemovalID identifies the removal request.
 	RemovalID string `json:"removalId"`
 	// SubjectKind is account or guest.
 	SubjectKind string `json:"subjectKind"`
-	// SubjectID is the removed subject.
+	// SubjectID is the one-way reference of the removed subject.
 	SubjectID string `json:"subjectId"`
 	// MatchID is the shared match the removal touched.
 	MatchID string `json:"matchId"`

@@ -57,6 +57,12 @@ var (
 	ErrNotFound = errors.New("privacy: not found")
 	// ErrInvalidArgument reports a refused argument.
 	ErrInvalidArgument = errors.New("privacy: invalid argument")
+	// ErrLedgerNotApplied reports a removal ledger that was not replayed in
+	// the database.
+	//
+	// The service must not serve traffic in that state: a restored database
+	// that still holds the rows of a removed game would publish it again.
+	ErrLedgerNotApplied = errors.New("privacy: the removal ledger was not applied")
 )
 
 // Report is the answer of a removal flow.

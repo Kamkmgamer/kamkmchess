@@ -37,9 +37,11 @@ export interface OnlineSeatRow {
  * The compact control label of a seat.
  *
  * The label is a declaration, never a provider attestation. The browser
- * engine is named as such.
+ * engine is named as such. A seat the view does not name has no declared
+ * control, and the interface never invents one.
  */
-export function onlineControlLabel(control: SeatControl): string {
+export function onlineControlLabel(control: SeatControl | null | undefined): string {
+  if (!control) return 'Unknown';
   if (control.kind === 'human') return 'Human';
   if (control.kind === 'engine') {
     const label = control.modelLabel ?? 'Stockfish 19 Lite';
@@ -57,7 +59,7 @@ export function onlineSeatRows(view: OnlineMatchView, yourSeat: Seat | null): On
     rows.push({
       seat,
       label: found?.publicLabel ?? (seat === 'white' ? 'White' : 'Black'),
-      controlLabel: onlineControlLabel(found?.control ?? { kind: 'human' }),
+      controlLabel: onlineControlLabel(found?.control ?? null),
       yours: yourSeat === seat,
     });
   }
@@ -127,7 +129,7 @@ export function onlinePositionFen(view: OnlineMatchView, ply: number): string {
 export function onlineGameTitle(view: OnlineMatchView, yourSeat: Seat | null): string {
   const opponent = view.seats.find(candidate => candidate.seat !== yourSeat);
   const label = opponent?.publicLabel ?? 'Opponent';
-  const control = onlineControlLabel(opponent?.control ?? { kind: 'human' });
+  const control = onlineControlLabel(opponent?.control ?? null);
   return `${label} · ${control}`;
 }
 

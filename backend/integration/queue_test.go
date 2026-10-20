@@ -20,7 +20,7 @@ import (
 // The queue tests drive the service with a deterministic clock, so every
 // deadline, lease and cutoff is exact instead of approximate.
 
-// queueClock is the deterministic clock of one test.
+// queueClock is the deterministic clock of one queue test. It is named for the queue so it never collides with another integration fixture.
 type queueClock struct {
 	mu  sync.Mutex
 	now time.Time
@@ -42,20 +42,34 @@ func (c *queueClock) Advance(duration time.Duration) {
 	c.now = c.now.Add(duration)
 }
 
-// sharedAllocator mirrors the shared trusted allocation seam.
+// sharedAllocator uses the trusted allocation seam of the shared writer.
 //
-// The shared writer derives the match identifier from the operation
-// identifier and writes the match in its own transaction, so a retry names
-// the same match and finds the stored receipt.
+// The shared writer owns the trusted seam: it validates the setup against the
+// pinned rules policy, derives the match identifier from the idempotency key
+// and the participant that caused the allocation, and writes the match in one
+// transaction. When the branch provides that seam the test uses it, so the
+// regression exercises the production allocator and not a test double.
 type sharedAllocator struct {
 	service *online.Service
 }
 
-func (a sharedAllocator) ValidateSetup(_ context.Context, setup online.CreateMatchSetup) error {
+// productionSeam is the trusted allocation seam of the shared writer.
+type productionSeam interface {
+	CreateAllocatedMatch(ctx context.Context, actor online.ParticipantRef, setup online.CreateMatchSetup, operationID string) (online.CommandResult, error)
+	ValidateSetup(ctx context.Context, setup online.CreateMatchSetup) error
+}
+
+func (a sharedAllocator) ValidateSetup(ctx context.Context, setup online.CreateMatchSetup) error {
+	if seam, ok := any(a.service).(productionSeam); ok {
+		return seam.ValidateSetup(ctx, setup)
+	}
 	return setup.Validate()
 }
 
 func (a sharedAllocator) CreateAllocatedMatch(ctx context.Context, actor online.ParticipantRef, setup online.CreateMatchSetup, operationID string) (online.CommandResult, error) {
+	if seam, ok := any(a.service).(productionSeam); ok {
+		return seam.CreateAllocatedMatch(ctx, actor, setup, operationID)
+	}
 	if err := setup.Validate(); err != nil {
 		return online.CommandResult{}, err
 	}
@@ -214,6 +228,43 @@ func TestQueueRefusesGuestsAndConsumesAnEntryOnce(t *testing.T) {
 	// No game was created a second time.
 	if _, err = h.online.GetMatch(ctx, assignment.MatchID); err != nil {
 		t.Fatalf("read the assigned match: %v", err)
+	}
+}
+
+// The match identifiers of two allocations never collide, even when two
+// owners use the same client intent identifier. The intent is an owner
+// scoped value and it never becomes the idempotency key of a match.
+func TestQueueMatchIdentifiersNeverCollideAcrossOwners(t *testing.T) {
+	h := newQueueHarness(t)
+	ctx := context.Background()
+	first := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "intent-0001")
+	h.clock.Advance(time.Millisecond)
+	second := h.createEntry("user_b", agentControl("Claude"), standardClock(), "intent-0001")
+	h.clock.Advance(time.Millisecond)
+	third := h.createEntry("user_c", agentControl("Gemini"), standardClock(), "intent-0002")
+	h.clock.Advance(time.Millisecond)
+	fourth := h.createEntry("user_d", agentControl("Llama"), standardClock(), "intent-0002")
+	if first.EntryID == second.EntryID || third.EntryID == fourth.EntryID {
+		t.Fatal("two owners share one entry")
+	}
+	firstAssignment, err := h.service.Match(ctx, account("user_c"), third.EntryID, queue.Operation{})
+	if err != nil {
+		t.Fatalf("first match: %v", err)
+	}
+	secondAssignment, err := h.service.Match(ctx, account("user_d"), fourth.EntryID, queue.Operation{})
+	if err != nil {
+		t.Fatalf("second match: %v", err)
+	}
+	if firstAssignment.MatchID == secondAssignment.MatchID {
+		t.Fatalf("two allocations share the match %s", firstAssignment.MatchID)
+	}
+	// The retry of one allocation names the same game.
+	retry, err := h.service.Match(ctx, account("user_c"), third.EntryID, queue.Operation{})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if retry.MatchID != firstAssignment.MatchID {
+		t.Fatalf("the retry named another game: %s vs %s", retry.MatchID, firstAssignment.MatchID)
 	}
 }
 
@@ -417,6 +468,43 @@ func TestQueueUnresponsiveEntryExpiresAndNeedsAnExplicitRejoin(t *testing.T) {
 	}
 	if assignment.MatchID == "" {
 		t.Fatal("the rearmed entry produced no game")
+	}
+}
+
+// QUE-07: a responsive background owner stays eligible while it heartbeats.
+func TestQueueResponsiveBackgroundEntryStaysEligible(t *testing.T) {
+	h := newQueueHarness(t)
+	ctx := context.Background()
+	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
+	// The owner keeps reporting in while the search runs.
+	for step := 0; step < 3; step++ {
+		h.clock.Advance(queue.DefaultReadinessTTL / 2)
+		if _, err := h.service.Heartbeat(ctx, account("user_a"), entry.EntryID, queue.Operation{}); err != nil {
+			t.Fatalf("heartbeat %d: %v", step, err)
+		}
+	}
+	sweep, err := h.service.ExpireWaiting(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sweep.Expired != 0 {
+		t.Fatalf("a responsive entry expired: %d entries", sweep.Expired)
+	}
+	stored, err := h.service.Entry(ctx, account("user_a"), entry.EntryID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ReadyAt == nil || stored.Status != online.QueueWaiting {
+		t.Fatalf("the responsive entry left the eligibility: %+v", stored)
+	}
+	// The entry is still a candidate for a fresh opponent.
+	candidate := h.createEntry("user_b", agentControl("Claude"), standardClock(), "")
+	assignment, err := h.service.Match(ctx, account("user_b"), candidate.EntryID, queue.Operation{})
+	if err != nil {
+		t.Fatalf("the responsive entry was not a candidate: %v", err)
+	}
+	if assignment.MatchID == "" {
+		t.Fatal("the responsive entry produced no game")
 	}
 }
 
@@ -630,6 +718,70 @@ func TestQueueCommittedOpponentIsNeverReplaced(t *testing.T) {
 	}
 	if after.AssignedMatchID == nil || *after.AssignedMatchID != assignment.MatchID {
 		t.Fatalf("the committed opponent changed: %+v", after)
+	}
+}
+
+// F-10: the browser engine is its own participant. The requesting account
+// never owns the opponent seat, and the credential is scoped to that one
+// seat of that one match.
+func TestQueueFallbackEngineSeatIsASeparateParticipant(t *testing.T) {
+	h := newQueueHarness(t)
+	ctx := context.Background()
+	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
+	assignment, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.Operation{}, "https://app.example")
+	if err != nil {
+		t.Fatalf("fallback: %v", err)
+	}
+	if assignment.GuestCredential == nil {
+		t.Fatal("the fallback carried no engine credential")
+	}
+	match, err := h.online.GetMatch(ctx, assignment.MatchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var engineSeat, ownerSeat *online.MatchSeat
+	for index := range match.Seats {
+		switch match.Seats[index].Control.Kind {
+		case online.ControlEngine:
+			engineSeat = &match.Seats[index]
+		default:
+			ownerSeat = &match.Seats[index]
+		}
+	}
+	if engineSeat == nil || ownerSeat == nil {
+		t.Fatalf("the fallback match has no engine seat: %+v", match.Seats)
+	}
+	if engineSeat.Participant.Kind != online.ParticipantGuest {
+		t.Fatalf("the engine seat is not a guest participant: %+v", engineSeat.Participant)
+	}
+	if engineSeat.Participant.ID == ownerSeat.Participant.ID {
+		t.Fatal("the engine seat belongs to the requesting account")
+	}
+	if ownerSeat.Participant.ID != "user_a" || ownerSeat.Participant.Kind != online.ParticipantAccount {
+		t.Fatalf("the owner does not own its own seat: %+v", ownerSeat.Participant)
+	}
+	if engineSeat.PublicLabel != queue.DefaultEngineLabel {
+		t.Fatalf("the engine seat is not identified as the engine: %q", engineSeat.PublicLabel)
+	}
+	// The credential is scoped to the engine seat of that match only.
+	if len(h.credentials.issued) != 1 {
+		t.Fatalf("issued credentials=%d, want 1", len(h.credentials.issued))
+	}
+	issued := h.credentials.issued[0]
+	if issued.MatchID != assignment.MatchID {
+		t.Fatalf("the credential names another match: %s", issued.MatchID)
+	}
+	if issued.Seat != engineSeat.Seat {
+		t.Fatalf("the credential names another seat: %s", issued.Seat)
+	}
+	if issued.GuestID != engineSeat.Participant.ID {
+		t.Fatalf("the credential names another participant: %s", issued.GuestID)
+	}
+	if issued.Origin != "https://app.example" {
+		t.Fatalf("the credential is scoped to another origin: %q", issued.Origin)
+	}
+	if assignment.GuestCredential.Seat != engineSeat.Seat || assignment.GuestCredential.MatchID != assignment.MatchID {
+		t.Fatalf("the answer carries another credential: %+v", assignment.GuestCredential)
 	}
 }
 

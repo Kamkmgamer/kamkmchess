@@ -18,6 +18,8 @@ import { createParticipantSession } from './online/session.js';
 import type { ParticipantSession } from './online/session.js';
 import { createOnlineComposition } from './online/composition.js';
 import type { OnlineComposition } from './online/composition.js';
+import { createAgentReadinessCheck } from './online/agent-readiness.js';
+import { createBrowserEnginePreparation } from './online/engine-preparation.js';
 import type { GuestOnlineCredential } from './online/auth.js';
 import { publicConfig } from './public-config.js';
 import './account-workspace.css';
@@ -108,13 +110,26 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       // The online workspace follows the signed-in identity. An identity
       // change disposes the matches of the previous identity at once.
       if (publicConfig.apiBaseUrl) {
+        // The browser engine and the own-agent check are browser-owned. The
+        // service never sees a provider credential and never runs an engine.
+        const enginePreparation = createBrowserEnginePreparation();
+        const checkModel = createAgentReadinessCheck({
+          opponentService: guestView.composition.opponentService,
+          connectionStore: guestView.composition.connectionStore,
+          namespace: guestView.composition.namespace,
+        });
         const composition = createOnlineComposition({
           baseUrl: publicConfig.apiBaseUrl,
           accountSession: created,
+          prepareEngine: () => enginePreparation.prepare(),
+          checkModel,
+          connectionStore: guestView.composition.connectionStore,
+          namespace: guestView.composition.namespace,
         });
         onlineRef.current = composition;
         setOnline(composition);
         void composition.loadFeatures();
+        composition.resume();
       }
       // The profile surface is bound to the signed-in account and to the
       // guest seat this browser holds. A new account makes a new binding and

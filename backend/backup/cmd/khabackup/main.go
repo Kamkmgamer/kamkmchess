@@ -384,6 +384,23 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
+	if len(result.RemovalsPending) > 0 {
+		// The removals were not applied, so the restored database must not
+		// serve traffic. The service refuses to start while the removal
+		// ledger is not applied, so the operator replays the ledger and
+		// releases the gate before the service starts.
+		return fmt.Errorf("the online removal ledger has %d records that were not applied; the restored database must not serve traffic", len(result.RemovalsPending))
+	}
+	// The restore is recorded and the gate is released only after the removal
+	// ledger was replayed and the replay was verified. A gate that is not
+	// released keeps the service closed.
+	restoreID := "restore-" + time.Now().UTC().Format("20060102T150405Z")
+	if _, err = removals.RecordRestore(ctx, restoreID); err != nil {
+		return err
+	}
+	if err = removals.ReleaseRestoreGate(ctx, restoreID); err != nil {
+		return fmt.Errorf("the restore gate stays closed: %w", err)
+	}
 	report := map[string]any{
 		"command":           "restore",
 		"applied":           true,
@@ -394,14 +411,12 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 		"tombstonesApplied": result.TombstonesApplied,
 		"tombstonesKept":    result.TombstonesKept,
 		"removalsApplied":   result.RemovalsApplied,
+		"restoreId":         restoreID,
 	}
 	return emit(options.asJSON, report, func() {
 		printPlan(result.RestorePlan)
 		fmt.Printf("restored; deletion ledger reapplied for %d games (%d already honoured)\n", result.TombstonesApplied, result.TombstonesKept)
 		fmt.Printf("restored; online removal ledger replayed for %d shared games\n", result.RemovalsApplied)
-		if len(result.RemovalsPending) > 0 {
-			fmt.Printf("the online removal ledger has %d records that were not applied; the restored database must not serve traffic before they are applied\n", len(result.RemovalsPending))
-		}
 	})
 }
 

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createOnlineRunnerLeaseClient, onlineRunnerLeasePath, onlineRunnerRequestPath, parseRunnerLeaseAnswer } from './runner-lease';
+import { createOnlineRunnerLeaseClient, onlineRunnerLeasePath, onlineRunnerRequestPath } from './runner-lease';
+import { parseRunnerLeaseAnswer } from './provider-runner';
 import { createParticipantSession } from './session';
 import { createAuthorizedRequester } from './request';
 import { createGuestCredential } from './auth';
@@ -108,11 +109,11 @@ describe('the runner lease wire', () => {
   });
 
   it('refuses a lease of another match', () => {
-    expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, matchId: 'match-00000002' }, 'match-00000001')).toThrow(/another match/);
+    expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, matchId: 'match-00000002' }, 'match-00000001', 'black')).toThrow(/another match/);
   });
 
   it('refuses a lease without an identity', () => {
-    expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, leaseId: '' }, 'match-00000001')).toThrow(/no lease/);
-    expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, status: 'unknown' }, 'match-00000001')).toThrow(/no state/);
+    expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, leaseId: '' }, 'match-00000001', 'black')).toThrow(/no lease/);
+    expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, status: 'unknown' }, 'match-00000001', 'black')).toThrow(/no state/);
   });
 });

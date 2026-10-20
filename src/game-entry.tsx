@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 import { App } from './ui/App.js';
 import { MatchComposition } from './ui/match-composition.js';
 import { createOnlineComposition } from './online/composition.js';
+import { createAgentReadinessCheck } from './online/agent-readiness.js';
+import { createBrowserEnginePreparation } from './online/engine-preparation.js';
 import './ui/styles.css';
 import './ui/mobile.css';
 import { publicConfig } from './public-config.js';
@@ -17,8 +19,21 @@ const composition = new MatchComposition();
 // online surface stays closed when the service does not open it.
 const onlineOptIn = new URLSearchParams(window.location.search).has('online');
 const onlineOrigin = publicConfig.apiBaseUrl ?? (onlineOptIn ? window.location.origin : null);
+// The browser engine and the own-agent check are browser-owned. The service
+// never sees a provider credential and never runs an engine.
+const enginePreparation = createBrowserEnginePreparation();
+const checkModel = createAgentReadinessCheck({
+  opponentService: composition.opponentService,
+  connectionStore: composition.connectionStore,
+  namespace: composition.namespace,
+});
 const online = onlineOrigin
-  ? createOnlineComposition({ baseUrl: onlineOrigin, search: window.location.search })
+  ? createOnlineComposition({
+    baseUrl: onlineOrigin,
+    search: window.location.search,
+    prepareEngine: () => enginePreparation.prepare(),
+    checkModel,
+  })
   : null;
 const rootView = createRoot(root);
 void composition.openActiveGame().then(async (session) => {

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -29,6 +30,12 @@ func historyFixture(t *testing.T) (*onlineAuthFixture, *history.Service, *profil
 		t.Fatal(err)
 	}
 	return fixture, historyService, profileService
+}
+
+// profileServiceFor opens the profile service of an existing fixture.
+func profileServiceFor(t *testing.T, fixture *onlineAuthFixture) (*profile.Service, error) {
+	t.Helper()
+	return profile.Open(context.Background(), fixture.pool, fixture.authorizer, profile.Options{})
 }
 
 // historyServiceFor opens the history publisher of an existing fixture.
@@ -357,6 +364,127 @@ func TestPostgresOwnerChosenPublicLabelIsPublished(t *testing.T) {
 	}
 }
 
+// historyAcquireLease takes the browser runner lease of one seat.
+//
+// The lease is the fence of an agent action: a seat that is under agent
+// control acts through the browser runner that holds the lease of the seat.
+// The lease is taken from the real service, through the lease route when the
+// build mounts it and through the lease seam of the service otherwise, so the
+// test never weakens the production fence.
+func historyAcquireLease(t *testing.T, fixture *onlineAuthFixture, handler http.Handler, matchID string, seat online.Seat, turnVersion, controlEpoch int64) (string, bool) {
+	t.Helper()
+	subject := "user_a"
+	if seat == online.SeatBlack {
+		subject = "user_b"
+	}
+	token := profileToken(t, fixture, subject, "session-"+subject)
+	body, err := json.Marshal(map[string]any{
+		"schemaVersion": online.ContractsSchemaVersion,
+		"action":        "acquire",
+		"seat":          string(seat),
+		"runnerId":      "runner-" + string(seat),
+		"turnVersion":   turnVersion,
+		"controlEpoch":  controlEpoch,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := onlineHTTPRequest(handler, http.MethodPost, "/v1/online/matches/"+matchID+"/runner/lease", authTestOrigin, "", map[string]string{"Authorization": "Bearer " + token}, string(body))
+	if response.Code == http.StatusOK {
+		payload := decodeProfile(t, response.Body.Bytes())
+		leaseID, _ := payload["leaseId"].(string)
+		if leaseID != "" {
+			return leaseID, true
+		}
+	}
+	if response.Code != http.StatusNotFound && response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("the runner lease status=%d body=%s", response.Code, response.Body.String())
+	}
+	// The build does not mount the lease route. The service seam is used
+	// instead, so the test still drives the real lease.
+	return historyAcquireServiceLease(t, fixture.service, matchID, seat, turnVersion, controlEpoch)
+}
+
+// historyAcquireServiceLease takes the runner lease through the lease seam of
+// the online service.
+//
+// The seam is called reflectively, because the lease contract belongs to the
+// online service and the test must stay compilable in every build. A service
+// without the seam reports that no lease is available, and the caller sends
+// the command without one.
+func historyAcquireServiceLease(t *testing.T, service *online.Service, matchID string, seat online.Seat, turnVersion, controlEpoch int64) (string, bool) {
+	t.Helper()
+	method := reflect.ValueOf(service).MethodByName("AcquireRunnerLease")
+	if !method.IsValid() {
+		return "", false
+	}
+	methodType := method.Type()
+	if methodType.NumIn() != 3 || methodType.NumOut() != 2 {
+		return "", false
+	}
+	request := reflect.New(methodType.In(2).Elem())
+	fields := map[string]any{
+		"SchemaVersion": online.ContractsSchemaVersion,
+		"MatchID":       matchID,
+		"Seat":          seat,
+		"RunnerID":      "runner-" + string(seat),
+		"TurnVersion":   turnVersion,
+		"ControlEpoch":  controlEpoch,
+	}
+	for name, value := range fields {
+		field := request.Elem().FieldByName(name)
+		if !field.IsValid() || !field.CanSet() {
+			return "", false
+		}
+		field.Set(reflect.ValueOf(value))
+	}
+	results := method.Call([]reflect.Value{reflect.ValueOf(context.Background()), reflect.ValueOf(online.ParticipantRef{Kind: online.ParticipantAccount, ID: "user_b"}), request.Elem()})
+	if err, _ := results[1].Interface().(error); err != nil {
+		t.Fatalf("acquire runner lease: %v", err)
+	}
+	lease := results[0]
+	if lease.Kind() == reflect.Ptr {
+		lease = lease.Elem()
+	}
+	leaseID := lease.FieldByName("LeaseID")
+	if !leaseID.IsValid() {
+		return "", false
+	}
+	value, _ := leaseID.Interface().(string)
+	return value, value != ""
+}
+
+// historyAgentCommand sends one command of an agent seat.
+//
+// The command is sent through the command route, so the command envelope can
+// carry the runner lease of the seat. A seat that is under agent control acts
+// through the browser runner, and the service refuses the command without a
+// live lease.
+func historyAgentCommand(t *testing.T, fixture *onlineAuthFixture, handler http.Handler, matchID, subject, operationID, seat string, expectedVersion, controlEpoch int64, leaseID string, action map[string]any) {
+	t.Helper()
+	command := map[string]any{
+		"schemaVersion":   online.ContractsSchemaVersion,
+		"matchId":         matchID,
+		"operationId":     operationID,
+		"expectedVersion": expectedVersion,
+		"seat":            seat,
+		"controlEpoch":    controlEpoch,
+		"action":          action,
+	}
+	if leaseID != "" {
+		command["leaseId"] = leaseID
+	}
+	raw, err := json.Marshal(command)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := profileToken(t, fixture, subject, "session-"+subject)
+	response := onlineHTTPRequest(handler, http.MethodPost, "/v1/online/matches/"+matchID+"/commands", authTestOrigin, "", map[string]string{"Authorization": "Bearer " + token}, string(raw))
+	if response.Code != http.StatusOK {
+		t.Fatalf("the agent command %s status=%d body=%s", operationID, response.Code, response.Body.String())
+	}
+}
+
 // TestPostgresMixedControlAttributesEveryMoveAndTheTerminalAction covers the
 // control change in the middle of a game.
 func TestPostgresMixedControlAttributesEveryMoveAndTheTerminalAction(t *testing.T) {
@@ -368,8 +496,13 @@ func TestPostgresMixedControlAttributesEveryMoveAndTheTerminalAction(t *testing.
 	historyExecute(t, fixture, matchID, "op-move-1", white, 1, 1, online.Action{Kind: online.ActionSubmitMove, SubmitMove: &online.SubmitMoveAction{UCI: "e2e4"}})
 	public := "gpt-4o"
 	historyExecute(t, fixture, matchID, "op-control-1", black, 2, 1, online.Action{Kind: online.ActionSetControl, SetControl: &online.SetControlAction{Control: online.SeatControl{Kind: online.ControlAgent, ModelLabel: &public}}})
-	historyExecute(t, fixture, matchID, "op-move-2", black, 3, 2, online.Action{Kind: online.ActionSubmitMove, SubmitMove: &online.SubmitMoveAction{UCI: "e7e5"}})
-	historyExecute(t, fixture, matchID, "op-resign-1", black, 4, 2, online.Action{Kind: online.ActionResign})
+	handler := historyHTTPFixture(t, fixture, historyService)
+	// The agent seat acts through the browser runner that holds the lease of
+	// the seat. The lease is bound to the turn it acts for.
+	leaseID, _ := historyAcquireLease(t, fixture, handler, matchID, online.SeatBlack, 3, 2)
+	historyAgentCommand(t, fixture, handler, matchID, "user_b", "op-move-2", "black", 3, 2, leaseID, map[string]any{"kind": "submit_move", "move": "e7e5"})
+	leaseID, _ = historyAcquireLease(t, fixture, handler, matchID, online.SeatBlack, 4, 2)
+	historyAgentCommand(t, fixture, handler, matchID, "user_b", "op-resign-1", "black", 4, 2, leaseID, map[string]any{"kind": "resign"})
 
 	replay, err := historyService.ProjectMatch(context.Background(), matchID)
 	if err != nil {

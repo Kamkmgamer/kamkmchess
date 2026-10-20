@@ -3,6 +3,7 @@ package onlineauth
 import (
 	"context"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/locks"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 )
 
@@ -19,7 +20,7 @@ func LockAccountScope(ctx context.Context, q online.Querier, subject string) err
 	if subject == "" {
 		return ErrUnauthenticated
 	}
-	return lockScope(ctx, q, accountLockKey(subject))
+	return locks.LockAccountScopeQ(ctx, writeQuerier(q), locks.AccountScope(string(online.ParticipantAccount), subject))
 }
 
 // LockSeatScope takes the guest seat advisory lock inside a transaction.
@@ -32,4 +33,17 @@ func LockSeatScope(ctx context.Context, q online.Querier, matchID string, seat o
 		return ErrUnauthenticated
 	}
 	return lockScope(ctx, q, seatLockKey(matchID, seat))
+}
+
+// writeQuerier adapts the authorization read surface to the write surface the
+// shared locks package needs.
+//
+// A caller that is not inside a transaction cannot hold a lock, and the shared
+// lock helper treats that case as a no-op.
+func writeQuerier(q online.Querier) locks.Querier {
+	writer, ok := q.(locks.Querier)
+	if !ok {
+		return nil
+	}
+	return writer
 }
