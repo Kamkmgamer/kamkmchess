@@ -284,10 +284,17 @@ accepted move.
 The lease of the service lives for thirty seconds and the runner renews it
 every five seconds. A renewal that fails is armed again with a bounded
 backoff, so a single transient failure never ends the heartbeat of the seat.
-The runner fails closed when the lease is about to expire, because the seat
-belongs to another runner from that moment on, and it fails closed when the
-credential was refused. A lease that was revoked or that expired is given up
-and taken again, at most a few times per turn.
+
+The backoff never grows past the life of the lease. The next renewal happens
+before the lease expires and it keeps a safety margin of one interval, so the
+runner knows that it lost the seat before the seat belongs to another runner.
+The runner fails closed when the lease is about to expire, when the credential
+was refused, and when the backoff would reach past the expiry. The fail close
+happens on the timer alone: it never waits for another provider answer or for
+another snapshot.
+
+A lease that was revoked or that expired is given up and taken again, at most
+a few times per turn.
 
 ## The uncertainty of a lost runner
 
@@ -352,6 +359,7 @@ seat with an accepted move, exactly like the service does.
 | — | The published label of the seat is the identity of the agent |
 | — | The budget of the browser follows the canonical counts of the turn |
 | — | The heartbeat of the lease survives a transient failure and fails closed near the lease expiry |
+| — | No renewal is ever armed behind the life of the lease |
 | — | A stopped runner plays again and keeps an open uncertainty |
 | — | A refused credential stops the runner instead of retrying |
 | — | A finished match keeps no lease |

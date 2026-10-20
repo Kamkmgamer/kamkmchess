@@ -190,8 +190,11 @@ export function createFakeOnlineService(options: {
   readonly positionFen?: string;
   readonly sideToMove?: Seat;
   readonly leaseFence?: FakeLeaseFence;
+  /** The clock of the fixture. A test moves it to age a lease. */
+  readonly now?: () => number;
 } = {}): FakeOnlineService {
   const leaseFence = options.leaseFence ?? 'moves-only';
+  const clock = options.now ?? ((): number => Date.now());
   const match: FakeMatch = {
     matchId: options.matchId ?? 'match-0001',
     seat: options.seat ?? 'white',
@@ -258,7 +261,7 @@ export function createFakeOnlineService(options: {
       if (current !== null && current.status === 'active') {
         if (current.runnerId !== body.runnerId) throw conflict('Another runner holds the seat.');
         current.turnVersion = turnVersion;
-        current.lastRenewedAt = new Date().toISOString();
+        current.lastRenewedAt = new Date(clock()).toISOString();
         return cloneLease(current);
       }
       leaseCounter += 1;
@@ -270,8 +273,8 @@ export function createFakeOnlineService(options: {
         generation: leaseCounter,
         runnerId: body.runnerId,
         status: 'active',
-        acquiredAt: new Date().toISOString(),
-        expiresAt: new Date(Date.now() + 30000).toISOString(),
+        acquiredAt: new Date(clock()).toISOString(),
+        expiresAt: new Date(clock() + 30000).toISOString(),
         revokedAt: null,
         turnVersion,
         runnerEpoch: 1,
@@ -279,7 +282,7 @@ export function createFakeOnlineService(options: {
         pendingRequestId: current?.pendingRequestId ?? null,
         pendingRequestStartedAt: current?.pendingRequestStartedAt ?? null,
         revokedReason: null,
-        lastRenewedAt: new Date().toISOString(),
+        lastRenewedAt: new Date(clock()).toISOString(),
       };
       lease = created;
       return cloneLease(created);
@@ -287,7 +290,7 @@ export function createFakeOnlineService(options: {
     if (body.action === 'renew') {
       const current = requireActiveLease({ ...body, leaseId: body.leaseId ?? '' }, { boundTurn: false });
       current.turnVersion = turnVersion;
-      current.lastRenewedAt = new Date().toISOString();
+      current.lastRenewedAt = new Date(clock()).toISOString();
       return cloneLease(current);
     }
     const current = lease;
@@ -295,7 +298,7 @@ export function createFakeOnlineService(options: {
     if (current.runnerId !== body.runnerId) throw notFound('The lease belongs to another runner.');
     if (current.status === 'active') {
       current.status = 'revoked';
-      current.revokedAt = new Date().toISOString();
+      current.revokedAt = new Date(clock()).toISOString();
       current.revokedReason = 'released';
     }
     return cloneLease(current);
@@ -310,7 +313,7 @@ export function createFakeOnlineService(options: {
         throw conflict('Another provider request is still recorded.');
       }
       current.pendingRequestId = body.requestId;
-      current.pendingRequestStartedAt = new Date().toISOString();
+      current.pendingRequestStartedAt = new Date(clock()).toISOString();
       return cloneLease(current);
     }
     if (current.pendingRequestId !== null && current.pendingRequestId !== body.requestId) {
@@ -405,13 +408,13 @@ export function createFakeOnlineService(options: {
           kind: 'control_change',
           seat: match.seat,
           controlEpoch: match.controlEpoch,
-          decisionAt: new Date().toISOString(),
-          acceptedAt: new Date().toISOString(),
+          decisionAt: new Date(clock()).toISOString(),
+          acceptedAt: new Date(clock()).toISOString(),
           control: match.control,
         };
         if (lease !== null && lease.status === 'active') {
           lease.status = 'revoked';
-          lease.revokedAt = new Date().toISOString();
+          lease.revokedAt = new Date(clock()).toISOString();
           lease.revokedReason = 'control_change';
         }
       }
@@ -422,7 +425,7 @@ export function createFakeOnlineService(options: {
         outcome,
         version: match.version,
         controlEpoch: match.controlEpoch,
-        decidedAt: new Date().toISOString(),
+        decidedAt: new Date(clock()).toISOString(),
         ...(event === undefined ? {} : { event }),
         ...(match.result === null ? {} : { result: match.result }),
       };
@@ -530,7 +533,7 @@ export function createFakeOnlineService(options: {
     revokeLease(reason = 'control_change') {
       if (lease === null || lease.status !== 'active') return;
       lease.status = 'revoked';
-      lease.revokedAt = new Date().toISOString();
+      lease.revokedAt = new Date(clock()).toISOString();
       lease.revokedReason = reason;
     },
     expireLease() {

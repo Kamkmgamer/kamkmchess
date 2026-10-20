@@ -811,6 +811,57 @@ describe('the heartbeat of the lease', () => {
     await until(() => runner.state.phase === 'waiting-lease' || runner.state.phase === 'uncertain', 'the runner fails closed');
     expect(timers.armed).toHaveLength(0);
   });
+
+  it('never arms a renewal behind the life of the lease', async () => {
+    const clock = { at: Date.now() };
+    const service = createFakeOnlineService({ now: () => clock.at });
+    const provider = createFakeProvider();
+    const port = service.leasePort('runner-a');
+    const failing: ProviderRunnerLeasePort = {
+      ...port,
+      runnerId: port.runnerId,
+      async renew() {
+        throw new Error('the network failed');
+      },
+    };
+    const timers = createFakeTimers();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: failing,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+      timers,
+      renewIntervalMs: 5000,
+      now: () => clock.at,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+
+    // The lease of the service lives for thirty seconds. Every armed renewal
+    // has to happen before the lease expires and has to keep the safety
+    // margin of one interval.
+    const margin = 5000;
+    const expiry = clock.at + 30_000;
+    for (let round = 0; round < 6; round += 1) {
+      if (timers.armed.length === 0) break;
+      const armed = timers.armed[0];
+      expect(armed?.delayMs ?? 0).toBeGreaterThan(0);
+      expect((armed?.delayMs ?? 0) + clock.at).toBeLessThanOrEqual(expiry - margin);
+      clock.at += armed?.delayMs ?? 0;
+      timers.fire();
+      await new Promise((resolve) => { setTimeout(resolve, 5); });
+    }
+
+    // The runner failed closed before the lease of the service expired, even
+    // though no provider answer and no snapshot arrived.
+    expect(clock.at).toBeLessThan(expiry);
+    expect(runner.state.phase === 'waiting-lease' || runner.state.phase === 'uncertain').toBe(true);
+    expect(timers.armed).toHaveLength(0);
+  });
 });
 
 describe('the stop of the runner', () => {

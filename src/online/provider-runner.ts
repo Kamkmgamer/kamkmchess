@@ -1359,6 +1359,29 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   }
 
   /**
+   * The time the lease of the seat still lives, or null when the lease does
+   * not name an expiry.
+   */
+  function leaseRemainingMs(): number | null {
+    if (leaseRecord === null) return null;
+    const expiresAt = Date.parse(leaseRecord.expiresAt);
+    if (!Number.isFinite(expiresAt)) return null;
+    return expiresAt - now();
+  }
+
+  /**
+   * The margin the runner keeps between the last renewal and the expiry of
+   * the lease.
+   *
+   * The runner has to know that it lost the seat before the lease expires,
+   * because the seat belongs to another runner from that moment on. One
+   * renewal interval is the margin.
+   */
+  function expirySafetyMarginMs(): number {
+    return renewIntervalMs;
+  }
+
+  /**
    * Reports whether the lease of the seat is about to expire.
    *
    * The lease of the service lives for thirty seconds. A runner that cannot
@@ -1366,16 +1389,27 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
    * seat belongs to another runner from that moment on.
    */
   function leaseIsAboutToExpire(): boolean {
-    if (leaseRecord === null) return true;
-    const expiresAt = Date.parse(leaseRecord.expiresAt);
-    if (!Number.isFinite(expiresAt)) return false;
-    return expiresAt - now() <= renewIntervalMs * 2;
+    const remaining = leaseRemainingMs();
+    if (remaining === null) return false;
+    return remaining <= expirySafetyMarginMs();
   }
 
-  /** The delay of the next renewal after a failed one. */
+  /**
+   * The delay of the next renewal after a failed one.
+   *
+   * The backoff grows, but it never grows past the life of the lease: the
+   * next renewal has to happen before the lease expires, and the safety
+   * margin is kept. A delay of zero means that there is no time left for
+   * another renewal, so the runner has to fail closed.
+   */
   function renewalBackoffMs(): number {
     const factor = Math.min(2 ** renewalFailures, MAX_RENEWAL_BACKOFF_FACTOR);
-    return Math.min(renewIntervalMs * factor, renewIntervalMs * MAX_RENEWAL_BACKOFF_FACTOR);
+    const backoff = Math.min(renewIntervalMs * factor, renewIntervalMs * MAX_RENEWAL_BACKOFF_FACTOR);
+    const remaining = leaseRemainingMs();
+    if (remaining === null) return backoff;
+    const latest = remaining - expirySafetyMarginMs();
+    if (latest <= 0) return 0;
+    return Math.min(backoff, latest);
   }
 
   /**
@@ -1515,8 +1549,16 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         return { ok: false, kind, state: 'unusable' };
       }
       // A transient failure. The heartbeat of the seat is armed again with a
-      // bounded backoff, so one failed renewal never ends it.
-      scheduleRenewal(renewalBackoffMs());
+      // bounded backoff, so one failed renewal never ends it. The backoff
+      // never reaches past the life of the lease.
+      const delay = renewalBackoffMs();
+      if (delay <= 0) {
+        // There is no time left for another renewal before the lease
+        // expires, so the runner fails closed.
+        clearRenewal();
+        return { ok: false, kind, state: 'unusable' };
+      }
+      scheduleRenewal(delay);
       return { ok: false, kind, state: 'transient' };
     }
   }
