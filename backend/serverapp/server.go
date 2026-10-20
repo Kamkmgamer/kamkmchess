@@ -12,10 +12,25 @@ import (
 	"github.com/Kamkmgamer/kamkmchess/backend/httpapi"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/Kamkmgamer/kamkmchess/backend/profile"
 	"github.com/Kamkmgamer/kamkmchess/backend/rulesworker"
 	"github.com/Kamkmgamer/kamkmchess/backend/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// guestProofIssuer issues guest ownership proofs through the trusted
+// allocator.
+//
+// The allocator is the only component that may mint a proof, and it mints one
+// only from a live guest seat credential. The HTTP surface never receives the
+// allocator itself.
+type guestProofIssuer struct {
+	allocator *onlineauth.Allocator
+}
+
+func (i guestProofIssuer) IssueOwnershipProof(ctx context.Context, seatSecret, origin string) (onlineauth.IssuedOwnershipProof, error) {
+	return i.allocator.IssueOwnershipProof(ctx, seatSecret, origin)
+}
 
 type Config struct {
 	DatabaseURL string
@@ -115,8 +130,24 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		pool.Close()
 		return nil, nil, errors.New("online service initialization failed")
 	}
+	// The public profile service owns the stable public identity of an
+	// account and the explicit guest link. It writes only its own tables.
+	profileService, err := profile.Open(ctx, pool, authorizer, profile.Options{})
+	if err != nil {
+		if closeWorker != nil {
+			closeWorker()
+		}
+		pool.Close()
+		return nil, nil, errors.New("public profile initialization failed")
+	}
 	root := http.NewServeMux()
 	root.Handle("/v1/online/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders, httpapi.NewOnline(onlineService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins})))
+	// The public profile API is mounted under its own prefixes so it never
+	// widens the private single-owner sync API.
+	profileHandler := httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.ProfileRequestHeaders, httpapi.NewProfile(profileService, guestProofIssuer{allocator: onlineauth.NewAllocator(authorizer)}, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}))
+	root.Handle("/v1/profiles/", profileHandler)
+	root.Handle("/v1/account/", profileHandler)
+	root.Handle("/v1/guest-seats/", profileHandler)
 	root.Handle("/", httpapi.CORS(cfg.Clerk.AllowedOrigins, httpapi.NewAuthenticated(store, verifier)))
 	release := func() {
 		if closeWorker != nil {

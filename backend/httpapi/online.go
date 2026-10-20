@@ -6,8 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
@@ -50,9 +48,8 @@ type OnlineOptions struct {
 }
 
 type onlineAPI struct {
-	service       OnlineService
-	authenticator OnlineAuthenticator
-	options       OnlineOptions
+	service OnlineService
+	auth    participantAuthenticator
 }
 
 // NewOnline returns the participant-authorized online API.
@@ -66,8 +63,10 @@ type onlineAPI struct {
 //
 // There is no route that creates a match. Creating a match is a trusted
 // allocator operation, and an invitation link never becomes a control token.
+// The explicit guest-link path, including the guest ownership proof, belongs
+// to the public profile API.
 func NewOnline(service OnlineService, authenticator OnlineAuthenticator, options OnlineOptions) http.Handler {
-	api := &onlineAPI{service: service, authenticator: authenticator, options: options}
+	api := &onlineAPI{service: service, auth: newParticipantAuthenticator(authenticator, options)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/online/matches/{matchID}/replay", api.replay)
 	mux.HandleFunc("GET /v1/online/matches/{matchID}", api.live)
@@ -173,88 +172,7 @@ func (a *onlineAPI) command(w http.ResponseWriter, r *http.Request) {
 // request, so the request origin is resolved from the configured origins by
 // request host. A cross-site request is rejected.
 func (a *onlineAPI) participant(w http.ResponseWriter, r *http.Request, mutation bool) (onlineauth.Principal, bool) {
-	origin, ok := a.requestOrigin(r, mutation)
-	if !ok {
-		writeError(w, http.StatusForbidden, "origin_required")
-		return onlineauth.Principal{}, false
-	}
-	authorization := r.Header.Values("Authorization")
-	guest := r.Header.Values(GuestCredentialHeader)
-	if len(authorization) > 1 || len(guest) > 1 {
-		writeError(w, http.StatusBadRequest, "invalid_request")
-		return onlineauth.Principal{}, false
-	}
-	if len(authorization) == 1 && len(guest) == 1 {
-		writeError(w, http.StatusBadRequest, "invalid_request")
-		return onlineauth.Principal{}, false
-	}
-	if len(authorization) == 1 {
-		fields := strings.Fields(authorization[0])
-		if len(fields) != 2 || !strings.EqualFold(fields[0], "Bearer") {
-			writeError(w, http.StatusUnauthorized, "unauthorized")
-			return onlineauth.Principal{}, false
-		}
-		principal, err := a.authenticator.AuthenticateAccount(r.Context(), fields[1], origin)
-		if err != nil {
-			writeOnlineError(w, err)
-			return onlineauth.Principal{}, false
-		}
-		return principal, true
-	}
-	if len(guest) == 1 {
-		principal, err := a.authenticator.AuthenticateGuest(r.Context(), guest[0], origin)
-		if err != nil {
-			writeOnlineError(w, err)
-			return onlineauth.Principal{}, false
-		}
-		return principal, true
-	}
-	writeError(w, http.StatusUnauthorized, "unauthorized")
-	return onlineauth.Principal{}, false
-}
-
-// requestOrigin resolves the origin of a request.
-//
-// An explicit Origin header always wins. A mutation must carry one. A read
-// may omit it, and then the origin is resolved from the configured origins by
-// request host, which only succeeds for a same-origin deployment.
-func (a *onlineAPI) requestOrigin(r *http.Request, mutation bool) (string, bool) {
-	origins := r.Header.Values("Origin")
-	if len(origins) > 1 {
-		return "", false
-	}
-	if len(origins) == 1 {
-		origin := strings.TrimSpace(origins[0])
-		if origin == "" {
-			return "", false
-		}
-		return origin, true
-	}
-	if mutation {
-		return "", false
-	}
-	if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
-		return "", false
-	}
-	return a.sameOrigin(r)
-}
-
-// sameOrigin resolves the request origin from the configured origins by
-// request host. It never trusts a forwarded scheme header.
-func (a *onlineAPI) sameOrigin(r *http.Request) (string, bool) {
-	if r.Host == "" {
-		return "", false
-	}
-	for _, candidate := range a.options.AllowedOrigins {
-		parsed, err := url.Parse(candidate)
-		if err != nil || parsed.Host == "" {
-			continue
-		}
-		if parsed.Host == r.Host {
-			return candidate, true
-		}
-	}
-	return "", false
+	return a.auth.participant(w, r, mutation)
 }
 
 // onlineSeatResponse is the allowlisted seat view. The participant reference
