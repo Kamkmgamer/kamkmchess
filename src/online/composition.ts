@@ -45,8 +45,9 @@ import type { OnlineProviderRunner, ProviderRunnerState } from './provider-runne
 import { createOnlineRunnerLeaseClient } from './runner-lease';
 import { createOnlinePresenceClient } from './presence-client';
 import type { OnlinePresenceClient } from './presence-client';
-import { createFriendClient } from './friend-routes';
-import type { FriendClient } from './friend-routes';
+import { createFriendSurface } from './friend-routes';
+import { createFriendSecretStore } from './friend-secrets';
+import type { FriendSurface } from './friend-routes';
 import { fetchOnlineProfileHistory, fetchOnlinePublicReplay } from './history';
 import type { OnlineProfileHistory, OnlinePublicReplay } from './history';
 import {
@@ -91,6 +92,8 @@ interface QueueIntent {
   readonly clientRequestId: string;
   /** The settings of the entry, so a change can be detected. */
   readonly settings: string;
+  /** The entry the intent created, when the service answered. */
+  readonly entryId: string | null;
 }
 
 /** The interval of the background poll of a waiting entry. */
@@ -144,6 +147,20 @@ export interface OnlineCompositionOptions {
   readonly namespace?: ConnectionNamespace;
 }
 
+/** One explicit queue entry of the browser. */
+export interface OnlineQueueEntryView {
+  /** The local identifier of the entry. */
+  readonly id: string;
+  /** The identifier of the entry in the service, when it was created. */
+  readonly entryId: string | null;
+  /** The state of the entry. */
+  readonly state: OnlineQueueState;
+  /** Cancels this entry. An older entry keeps its own state and timer. */
+  cancel(): Promise<void>;
+  /** Shows this entry in the interface. */
+  focus(): void;
+}
+
 export interface OnlineComposition {
   /** The open online surfaces. */
   readonly features: OnlineFeatureFlags;
@@ -151,10 +168,12 @@ export interface OnlineComposition {
   readonly workspace: OnlineWorkspace;
   /** The queue flow of this browser. */
   readonly queue: OnlineQueueController;
+  /** Every explicit entry of this browser. */
+  readonly queueEntries: readonly OnlineQueueEntryView[];
   /** The current queue state. */
   readonly queueState: OnlineQueueState;
-  /** The friend invitation and rematch client. */
-  readonly friends: FriendClient;
+  /** The friend invitation and rematch client of this browser. */
+  readonly friends: FriendSurface;
   /** The public reads of the replay and the game history. */
   readonly publicHistory: {
     /** Reads the public replay of a completed match. */
@@ -256,7 +275,8 @@ function readIntent(storage: OnlineCompositionOptions['storage'], identity: stri
     const id = record.clientRequestId;
     if (typeof id !== 'string' || id.length < 8) return null;
     const settings = typeof record.settings === 'string' ? record.settings : '';
-    return { accountId: identity, clientRequestId: id, settings };
+    const entryId = typeof record.entryId === 'string' ? record.entryId : null;
+    return { accountId: identity, clientRequestId: id, settings, entryId };
   } catch {
     return null;
   }
@@ -302,6 +322,19 @@ function intentSettings(control: SeatControl, timeControl: TimeControl): string 
  */
 function operationId(kind: string, entryId: string): string {
   return `${kind}-${entryId}`.replace(/[^A-Za-z0-9_-]/g, '-');
+}
+
+/**
+ * True when the service definitively refused a request.
+ *
+ * A refusal with a status means the service did not perform the operation.
+ * A transport failure or a server failure means the outcome is unknown: the
+ * service may have committed it, so the idempotency key has to survive.
+ */
+function isDefinitiveRefusal(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null)?.status;
+  if (typeof status !== 'number' || !Number.isFinite(status)) return false;
+  return status >= 400 && status < 500;
 }
 
 function createIntentId(): string {
@@ -379,7 +412,6 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     cutoffAt: null,
     options: [],
   };
-  let pollTimer: unknown = null;
   let heartbeatTimer: unknown = null;
   let disposed = false;
 
@@ -458,10 +490,12 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       : { 'X-Guest-Seat-Token': token };
   }
 
-  const friends: FriendClient = createFriendClient({
+  const friendSecrets = createFriendSecretStore({ identity: queueIdentity() });
+  const friends: FriendSurface = createFriendSurface({
     baseUrl,
     ...(fetcher ? { fetch: fetcher } : {}),
-    credentials: { header: credentialHeader },
+    credential: () => credentialHeader(),
+    secrets: friendSecrets,
   });
 
   const publicHistory = {
@@ -550,104 +584,202 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     return result.data;
   });
 
-  const queue = createOnlineQueueController({
-    timers,
-    ports: {
-      checkAgent: async (control: SeatControl): Promise<OnlineAgentCheck> => {
-        if (control.kind !== 'agent') return { ready: true, detail: '' };
-        if (!agent) return { ready: false, detail: 'Choose your agent first.' };
-        if (!options.checkModel) return { ready: false, detail: 'The agent check is unavailable.' };
-        return options.checkModel(agent.selection);
-      },
-      prepareEngine: options.prepareEngine ?? (async () => {
-        throw new Error('The browser engine is not available.');
-      }),
-      acceptReady: async request => {
-        const identity = queueIdentity();
-        const settings = intentSettings(request.control, request.timeControl);
-        const stored = readIntent(storage, identity);
-        // A settings change is a new explicit intent. The stored intent never
-        // blocks the owner with a conflict.
-        const reusable = stored !== null && stored.settings === settings;
-        const intent = reusable
-          ? stored
-          : { accountId: identity, clientRequestId: createIntentId(), settings };
-        if (!reusable) {
-          if (stored !== null) clearIntent(storage, identity);
-          writeIntent(storage, intent);
-        }
-        try {
-          const created = await queueClient.createEntry({
-            schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
-            control: request.control,
-            timeControl: request.timeControl,
-            clientRequestId: intent.clientRequestId,
-          });
-          // The service canonicalizes the label of the seat. The canonical
-          // label binds the private selection of the agent.
-          if (created.control.kind === 'agent' && created.control.modelLabel) {
-            bindAgentLabel(created.control.modelLabel);
+  /**
+   * The ports of one queue entry.
+   *
+   * Every explicit entry owns its own controller, its own poll timer and its
+   * own state. An older entry keeps waiting while a newer one is created.
+   */
+  const queuePorts = {
+    checkAgent: async (control: SeatControl): Promise<OnlineAgentCheck> => {
+      if (control.kind !== 'agent') return { ready: true, detail: '' };
+      if (!agent) return { ready: false, detail: 'Choose your agent first.' };
+      if (!options.checkModel) return { ready: false, detail: 'The agent check is unavailable.' };
+      return options.checkModel(agent.selection);
+    },
+    prepareEngine: options.prepareEngine ?? (async () => {
+      throw new Error('The browser engine is not available.');
+    }),
+    acceptReady: async (request: { control: SeatControl; timeControl: TimeControl }) => {
+      const identity = queueIdentity();
+      const settings = intentSettings(request.control, request.timeControl);
+      const stored = readIntent(storage, identity);
+      // A settings change is a new explicit intent. The previous entry is
+      // resolved first, so the service never keeps an abandoned entry.
+      if (stored !== null && stored.settings !== settings) {
+        if (stored.entryId) {
+          try {
+            await queueClient.cancel(stored.entryId, queueOperationBody(operationId('cancel', stored.entryId)));
+          } catch {
+            // The entry was committed or is gone. Its game stays visible.
           }
-          return created;
-        } catch (error) {
-          // A refused creation releases the intent, so the owner can try
-          // again with the same or with other settings.
-          clearIntent(storage, identity);
-          throw error;
         }
-      },
-      readEntry: entryId => queueClient.readEntry(entryId),
-      readyEntry: entryId => queueClient.ready(entryId),
-      readMatch: async matchId => {
-        const requester = accountRequester();
-        if (!requester) throw new Error('No participant credential is available.');
-        const result = await requester.request({ kind: 'account' }, { path: `/v1/online/matches/${encodeURIComponent(matchId)}` });
-        if (!result.ok) throw new Error('The match could not be read.');
-        return parseOnlineMatchView(result.data, matchId);
-      },
-      cancelEntry: entryId => queueClient.cancel(entryId, queueOperationBody(operationId('cancel', entryId))),
-      keepSearching: entryId => queueClient.keepSearching(entryId, queueOperationBody(operationId('keep', entryId))),
-      findCompatibleEntry: async entryId => {
-        try {
-          const assignment = await queueClient.match(entryId, queueOperationBody(operationId('match', entryId)));
-          return toQueueAssignment(assignment);
-        } catch (error) {
-          // A missing candidate is not an error.
-          if ((error as { status?: number }).status === 404) return null;
-          throw error;
+        clearIntent(storage, identity);
+      }
+      const reusable = stored !== null && stored.settings === settings;
+      const intent = reusable && stored !== null
+        ? stored
+        : { accountId: identity, clientRequestId: createIntentId(), settings, entryId: null };
+      if (!reusable) writeIntent(storage, intent);
+      try {
+        const created = await queueClient.createEntry({
+          schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
+          control: request.control,
+          timeControl: request.timeControl,
+          clientRequestId: intent.clientRequestId,
+        });
+        // The entry of the intent is tracked, so a later settings change can
+        // resolve it instead of abandoning it.
+        writeIntent(storage, { ...intent, entryId: created.entryId });
+        // The service canonicalizes the label of the seat. The canonical
+        // label binds the private selection of the agent.
+        if (created.control.kind === 'agent' && created.control.modelLabel) {
+          bindAgentLabel(created.control.modelLabel);
         }
-      },
-      commitFallback: async entryId => {
-        const assignment = await queueClient.fallback(entryId, queueOperationBody(operationId('fallback', entryId)));
-        const credential = assignment.guestCredential;
-        if (credential) {
-          const expiry = readExpiry(credential.expiresAt);
-          registerGuestCredential(createGuestCredential({
-            guestId: credential.guestId,
-            matchId: credential.matchId,
-            seat: credential.seat,
-            token: credential.token,
-            ...(expiry === undefined ? {} : { expiresAt: expiry }),
-          }), 'account');
-        }
+        return created;
+      } catch (error) {
+        // A definitive refusal releases the intent. An unknown answer keeps
+        // it, so the retry reaches the same entry instead of a second one.
+        if (isDefinitiveRefusal(error)) clearIntent(storage, identity);
+        throw error;
+      }
+    },
+    readEntry: (entryId: string) => queueClient.readEntry(entryId),
+    readyEntry: (entryId: string) => queueClient.ready(entryId),
+    readMatch: async (matchId: string) => {
+      const requester = accountRequester();
+      if (!requester) throw new Error('No participant credential is available.');
+      const result = await requester.request({ kind: 'account' }, { path: `/v1/online/matches/${encodeURIComponent(matchId)}` });
+      if (!result.ok) throw new Error('The match could not be read.');
+      return parseOnlineMatchView(result.data, matchId);
+    },
+    cancelEntry: (entryId: string) => queueClient.cancel(entryId, queueOperationBody(operationId('cancel', entryId))),
+    keepSearching: (entryId: string) => queueClient.keepSearching(entryId, queueOperationBody(operationId('keep', entryId))),
+    findCompatibleEntry: async (entryId: string) => {
+      try {
+        const assignment = await queueClient.match(entryId, queueOperationBody(operationId('match', entryId)));
         return toQueueAssignment(assignment);
+      } catch (error) {
+        // A missing candidate is not an error.
+        if ((error as { status?: number }).status === 404) return null;
+        throw error;
+      }
+    },
+    commitFallback: async (entryId: string) => {
+      const assignment = await queueClient.fallback(entryId, queueOperationBody(operationId('fallback', entryId)));
+      const credential = assignment.guestCredential;
+      if (credential) {
+        const expiry = readExpiry(credential.expiresAt);
+        registerGuestCredential(createGuestCredential({
+          guestId: credential.guestId,
+          matchId: credential.matchId,
+          seat: credential.seat,
+          token: credential.token,
+          ...(expiry === undefined ? {} : { expiresAt: expiry }),
+        }), 'account');
+      }
+      return toQueueAssignment(assignment);
+    },
+  };
+
+  /**
+   * One explicit queue entry of this browser.
+   *
+   * The record owns its controller, its state and its poll timer. An older
+   * entry keeps its own timer, so it stays eligible while a newer entry is
+   * created.
+   */
+  interface QueueRecord {
+    readonly id: string;
+    controller: OnlineQueueController;
+    state: OnlineQueueState;
+    pollTimer: unknown;
+  }
+
+  const queueRecords = new Map<string, QueueRecord>();
+  let activeQueueId: string | null = null;
+
+  function createQueueRecord(): QueueRecord {
+    const id = `queue-${queueRecords.size + 1}`;
+    const record: QueueRecord = {
+      id,
+      controller: null as unknown as OnlineQueueController,
+      state: {
+        phase: 'idle',
+        entry: null,
+        detail: '',
+        assignment: null,
+        engineState: 'idle',
+        cutoffAt: null,
+        options: [],
       },
+      pollTimer: null,
+    };
+    record.controller = createOnlineQueueController({
+      timers,
+      ports: queuePorts,
+      onState: state => {
+        record.state = state;
+        if (activeQueueId === id) queueState = state;
+        // A terminal entry releases the stored intent. The next explicit
+        // entry starts a fresh one.
+        if (state.phase === 'matched' || state.phase === 'cancelled' || state.phase === 'expired') {
+          clearIntent(storage, queueIdentity());
+        }
+        // A committed assignment is attached and shown.
+        if (state.phase === 'matched' && state.assignment) {
+          attachAndFocus(state.assignment.matchId, state.assignment.seat);
+        }
+        notify();
+        scheduleQueueWork(record);
+      },
+    });
+    queueRecords.set(id, record);
+    activeQueueId = id;
+    return record;
+  }
+
+  /** The controller of the active entry. */
+  const queue: OnlineQueueController = {
+    get state() {
+      const record = activeQueueId === null ? null : queueRecords.get(activeQueueId) ?? null;
+      return record?.state ?? queueState;
     },
-    onState: state => {
-      queueState = state;
-      // A terminal entry releases the stored intent. The next explicit entry
-      // starts a fresh one.
-      if (state.phase === 'matched' || state.phase === 'cancelled' || state.phase === 'expired') {
-        clearIntent(storage, queueIdentity());
-      }
-      // A committed assignment is attached and shown.
-      if (state.phase === 'matched' && state.assignment) {
-        attachAndFocus(state.assignment.matchId, state.assignment.seat);
-      }
-      notify();
-      scheduleBackgroundWork();
+    enter: async (request: { control: SeatControl; timeControl: TimeControl }) => {
+      const record = createQueueRecord();
+      await record.controller.enter(request);
     },
-  });
+    retry: async () => {
+      const record = activeQueueId === null ? null : queueRecords.get(activeQueueId) ?? null;
+      await record?.controller.retry();
+    },
+    playYourself: async () => {
+      const record = activeQueueId === null ? null : queueRecords.get(activeQueueId) ?? null;
+      await record?.controller.playYourself();
+    },
+    keepSearching: async () => {
+      const record = activeQueueId === null ? null : queueRecords.get(activeQueueId) ?? null;
+      await record?.controller.keepSearching();
+    },
+    cancel: async () => {
+      const record = activeQueueId === null ? null : queueRecords.get(activeQueueId) ?? null;
+      await record?.controller.cancel();
+    },
+    rejoin: async () => {
+      const record = activeQueueId === null ? null : queueRecords.get(activeQueueId) ?? null;
+      await record?.controller.rejoin();
+    },
+    observe: (entry) => {
+      const record = activeQueueId === null ? null : queueRecords.get(activeQueueId) ?? null;
+      record?.controller.observe(entry);
+    },
+    reset: () => {
+      for (const record of queueRecords.values()) record.controller.reset();
+    },
+    dispose: () => {
+      for (const record of queueRecords.values()) record.controller.dispose();
+    },
+  };
 
   function registerGuestCredential(credential: GuestOnlineCredential, owner: 'account' | 'guest' = 'guest'): void {
     const key = `${credential.matchId}:${credential.seat}`;
@@ -883,47 +1015,62 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     }
   }
 
-  /** Polls a waiting entry and reports in for every attached match. */
+  /**
+   * Arms the background work of one entry and of the attached matches.
+   *
+   * Every entry keeps its own poll timer, so an older entry stays eligible
+   * while a newer entry is created.
+   */
   function scheduleBackgroundWork(): void {
-    if (pollTimer !== null) {
-      timers.clearTimer(pollTimer);
-      pollTimer = null;
+    if (disposed) return;
+    for (const record of queueRecords.values()) scheduleQueueWork(record);
+    scheduleHeartbeat();
+  }
+
+  /** Renews the readiness lease of one entry and reads its answer. */
+  function scheduleQueueWork(record: QueueRecord): void {
+    if (record.pollTimer !== null) {
+      timers.clearTimer(record.pollTimer);
+      record.pollTimer = null;
     }
+    if (disposed) return;
+    const entry = record.state.entry;
+    if (record.state.phase !== 'searching' || !entry) return;
+    record.pollTimer = timers.setTimer(() => {
+      record.pollTimer = null;
+      // The entry is renewed and read. The heartbeat keeps the readiness
+      // lease alive while the owner waits.
+      void queueClient.heartbeat(entry.entryId).catch(() => undefined);
+      void queueClient.readEntry(entry.entryId).then(current => {
+        if (disposed) return;
+        record.controller.observe(current);
+      }).catch(() => {
+        // A failed poll is retried by the next interval.
+      });
+      scheduleQueueWork(record);
+    }, ONLINE_QUEUE_POLL_INTERVAL_MS);
+  }
+
+  /** Reports in for every attached match. */
+  function scheduleHeartbeat(): void {
     if (heartbeatTimer !== null) {
       timers.clearTimer(heartbeatTimer);
       heartbeatTimer = null;
     }
     if (disposed) return;
-    const entry = queueState.entry;
-    if (queueState.phase === 'searching' && entry) {
-      pollTimer = timers.setTimer(() => {
-        pollTimer = null;
-        // The entry is renewed and read. The heartbeat keeps the readiness
-        // lease alive while the owner waits.
-        void queueClient.heartbeat(entry.entryId).catch(() => undefined);
-        void queueClient.readEntry(entry.entryId).then(current => {
-          if (disposed) return;
-          queue.observe(current);
-        }).catch(() => {
-          // A failed poll is retried by the next interval.
-        });
-        scheduleBackgroundWork();
-      }, ONLINE_QUEUE_POLL_INTERVAL_MS);
-    }
     const attached = workspace.games;
-    if (attached.length > 0) {
-      heartbeatTimer = timers.setTimer(() => {
-        heartbeatTimer = null;
-        for (const game of attached) {
-          const client = presenceClient(game.matchId, game.seat);
-          if (!client) continue;
-          void client.heartbeat().catch(() => {
-            // A failed heartbeat is retried by the next interval.
-          });
-        }
-        scheduleBackgroundWork();
-      }, ONLINE_PRESENCE_HEARTBEAT_MS);
-    }
+    if (attached.length === 0) return;
+    heartbeatTimer = timers.setTimer(() => {
+      heartbeatTimer = null;
+      for (const game of attached) {
+        const client = presenceClient(game.matchId, game.seat);
+        if (!client) continue;
+        void client.heartbeat().catch(() => {
+          // A failed heartbeat is retried by the next interval.
+        });
+      }
+      scheduleHeartbeat();
+    }, ONLINE_PRESENCE_HEARTBEAT_MS);
   }
 
   return {
@@ -932,6 +1079,19 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     },
     workspace,
     queue,
+    get queueEntries() {
+      return [...queueRecords.values()].map(record => ({
+        id: record.id,
+        entryId: record.state.entry?.entryId ?? null,
+        state: record.state,
+        cancel: async () => { await record.controller.cancel(); },
+        focus: () => {
+          activeQueueId = record.id;
+          queueState = record.state;
+          notify();
+        },
+      }));
+    },
     friends,
     publicHistory,
     privacy,
@@ -1023,9 +1183,11 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       disposed = true;
       unsubscribeAccount?.();
       unsubscribeAccount = null;
-      if (pollTimer !== null) timers.clearTimer(pollTimer);
       if (heartbeatTimer !== null) timers.clearTimer(heartbeatTimer);
-      pollTimer = null;
+      for (const record of queueRecords.values()) {
+        if (record.pollTimer !== null) timers.clearTimer(record.pollTimer);
+        record.pollTimer = null;
+      }
       heartbeatTimer = null;
       workspace.dispose();
       queue.dispose();

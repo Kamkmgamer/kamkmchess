@@ -40,7 +40,7 @@ void composition.openActiveGame().then(async (session) => {
   const snapshot = await session.controller.initialize();
   if (publicConfig.accountsEnabled) {
     const { AccountWorkspace } = await import('./AccountWorkspace.js');
-    rootView.render(<StrictMode><AccountWorkspace composition={composition} initialSession={session} initialSnapshot={snapshot} /></StrictMode>);
+    rootView.render(<StrictMode><AccountWorkspace composition={composition} initialSession={session} initialSnapshot={snapshot} online={online} /></StrictMode>);
     return;
   }
   rootView.render(

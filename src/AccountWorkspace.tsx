@@ -25,6 +25,8 @@ import { publicConfig } from './public-config.js';
 import './account-workspace.css';
 
 interface WorkspaceView {
+  /** The online composition of the guest workspace. */
+  readonly online?: OnlineComposition | null;
   readonly composition: MatchComposition;
   readonly initialSession: LocalGameSession;
   readonly initialSnapshot: ControllerSnapshotV1;
@@ -70,7 +72,11 @@ export function AccountWorkspace(initialView: WorkspaceView) {
   const identityRef = useRef<AccountIdentity | null>(null);
   const guestCredentialRef = useRef<GuestOnlineCredential | null>(null);
   const [profileIdentity, setProfileIdentity] = useState<ProfileIdentityBinding | null>(null);
-  const [online, setOnline] = useState<OnlineComposition | null>(null);
+  // The account composition owns the online surface while an account is
+  // signed in. The guest composition keeps the surface reachable while the
+  // browser is signed out.
+  const guestOnline = initialView.online ?? null;
+  const [accountOnline, setAccountOnline] = useState<OnlineComposition | null>(null);
   const onlineRef = useRef<OnlineComposition | null>(null);
   useEffect(() => { activeView.current = view; }, [view]);
 
@@ -127,7 +133,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
           namespace: guestView.composition.namespace,
         });
         onlineRef.current = composition;
-        setOnline(composition);
+        setAccountOnline(composition);
         void composition.loadFeatures();
         composition.resume();
       }
@@ -370,7 +376,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
         {message && <p role="status">{busy ? 'Syncing…' : message.startsWith('Complete game') ? 'Synced.' : message.startsWith('Cloud history') ? 'Sync conflict. Choose continuation.' : message.startsWith('Account game opened') || message.startsWith('Guest workspace opened') || message.startsWith('The accepted cloud game') ? 'Opened.' : 'Sync failed. Retry.'}</p>}
       </>}
     </section>}
-    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} onOpenAccount={() => setAccountPage('account')} online={online} onOpenProfile={() => setAccountPage('profile')} /></div>
+    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} onOpenAccount={() => setAccountPage('account')} online={accountOnline ?? guestOnline} onOpenProfile={() => setAccountPage('profile')} /></div>
   </>;
 }
 

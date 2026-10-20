@@ -73,7 +73,9 @@ function createFetchDouble(answers: {
     for (const [name, value] of Object.entries((init?.headers ?? {}) as Record<string, string>)) headers[name.toLowerCase()] = value;
     wires.push({ path, method, body, headers });
     let result: { status: number; data: unknown } = { status: 404, data: { error: 'not_found' } };
-    if (path.includes('/queue/entries') && method === 'POST' && path.endsWith('/entries')) {
+    if (path.endsWith('/cancel')) {
+      result = { status: 200, data: { ...entryAnswer(null), status: 'cancelled' } };
+    } else if (path.includes('/queue/entries') && method === 'POST' && path.endsWith('/entries')) {
       result = answers.entry?.(body) ?? { status: 201, data: entryAnswer(body) };
     } else if (path.endsWith('/fallback')) {
       result = answers.fallback ?? { status: 200, data: fallbackAnswer() };
@@ -174,7 +176,7 @@ function createComposition(overrides: {
 }
 
 /** A timer seam that never fires on its own. */
-function manualTimers(): { timers: { setTimer: (callback: () => void, delayMs: number) => unknown; clearTimer: (handle: unknown) => void }; fire: () => void } {
+function manualTimers(): { timers: { setTimer: (callback: () => void, delayMs: number) => unknown; clearTimer: (handle: unknown) => void }; fire: () => void; pending: number } {
   const pending = new Map<number, () => void>();
   let next = 0;
   return {
@@ -188,6 +190,9 @@ function manualTimers(): { timers: { setTimer: (callback: () => void, delayMs: n
       clearTimer(handle) {
         pending.delete(handle as number);
       },
+    },
+    get pending() {
+      return pending.size;
     },
     fire() {
       const callbacks = [...pending.values()];
@@ -238,9 +243,26 @@ describe('the online composition wires the product (B-2, B-5, B-7, B-12)', () =>
     composition.dispose();
   });
 
-  it('releases the intent when the creation fails', async () => {
+  it('keeps an earlier entry alive with its own timer and its own cancel (B-5)', async () => {
+    const clock = manualTimers();
+    const { composition } = createComposition({ timers: clock.timers });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    const firstId = composition.queueEntries[0]?.id;
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl }, { intent: 'new' });
+    expect(composition.queueEntries).toHaveLength(2);
+    expect(composition.queueEntries[0]?.id).toBe(firstId);
+    // Both entries keep a poll timer of their own.
+    expect(clock.pending).toBeGreaterThanOrEqual(2);
+    // The older entry can be cancelled on its own.
+    await composition.queueEntries[0]?.cancel();
+    expect(composition.queueEntries[0]?.state.phase).toBe('cancelled');
+    expect(composition.queueEntries[1]?.state.phase).toBe('searching');
+    composition.dispose();
+  });
+
+  it('releases the intent when the creation is definitively refused', async () => {
     const { fetcher, wires } = createFetchDouble({
-      entry: () => ({ status: 503, data: { error: 'temporarily_unavailable' } }),
+      entry: () => ({ status: 400, data: { error: 'invalid_request' } }),
     });
     const storage = createStorage();
     const composition = createOnlineComposition({
@@ -250,9 +272,51 @@ describe('the online composition wires the product (B-2, B-5, B-7, B-12)', () =>
       accountSession: accountSession(),
     });
     await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    // A definitive refusal releases the intent, so the owner can try again.
     expect(storage.data.size).toBe(0);
     composition.dispose();
     expect(wires.length).toBeGreaterThan(0);
+  });
+
+  it('keeps the intent when the answer of the creation is unknown (B-4)', async () => {
+    // The service committed the entry, but the answer never reached the
+    // browser. The retry has to reach the same entry.
+    let committed = false;
+    const { fetcher, wires } = createFetchDouble({
+      entry: (body) => {
+        committed = true;
+        void body;
+        throw new Error('The connection was lost.');
+      },
+    });
+    const storage = createStorage();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    expect(committed).toBe(true);
+    const stored = [...storage.data.values()][0] ?? '';
+    expect(stored).toContain('clientRequestId');
+    const key = JSON.parse(stored) as { clientRequestId: string; entryId: string | null };
+    // A new composition of the same identity and the same settings reuses
+    // the key, so the service answers with the same entry.
+    const retry = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+    });
+    await retry.enterQueue({ control: { kind: 'human' }, timeControl });
+    const second = JSON.parse([...storage.data.values()][0] ?? '{}') as { clientRequestId: string };
+    expect(second.clientRequestId).toBe(key.clientRequestId);
+    const creates = wires.filter(wire => wire.path.endsWith('/entries') && wire.method === 'POST');
+    expect(creates).toHaveLength(2);
+    expect(creates[0]?.body?.clientRequestId).toBe(creates[1]?.body?.clientRequestId);
+    composition.dispose();
+    retry.dispose();
   });
 
   it('namespaces the intent by the identity', async () => {

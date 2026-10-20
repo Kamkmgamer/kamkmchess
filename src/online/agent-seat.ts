@@ -42,7 +42,7 @@ import type { OnlineMatchView } from './updates';
  * active clock names, else the side the canonical position names. The runner
  * acts on the same turn the service does.
  */
-export function providerRunnerSnapshot(view: OnlineMatchView, seat: Seat): ProviderRunnerSnapshot {
+export function providerRunnerSnapshot(view: OnlineMatchView, seat: Seat): ProviderRunnerSnapshot & { readonly seatControlEpoch: number } {
   const seatView = view.seats.find(candidate => candidate.seat === seat);
   const replySeat = view.clock.replySeat;
   const activeSeat = view.clock.activeSeat;
@@ -52,6 +52,9 @@ export function providerRunnerSnapshot(view: OnlineMatchView, seat: Seat): Provi
     matchId: view.matchId,
     version: view.version,
     controlEpoch: view.controlEpoch,
+    // The per-seat epoch of the canonical view. The match-wide epoch never
+    // replaces it: the seat binding owns the epoch of the runner.
+    seatControlEpoch: seatView?.controlEpoch ?? view.controlEpoch,
     status: view.status,
     sideToMove,
     positionFen: view.positionFen,

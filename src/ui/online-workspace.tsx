@@ -323,10 +323,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     if (!invitation) return;
     setBusy(true);
     try {
-      const accepted = await composition.friends.accept(invitation.invitationId, {
-        acceptanceKey: `accept${invitation.invitationId}`,
-        control: { kind: 'human' },
-      });
+      const accepted = await composition.friends.accept(invitation.invitationId, { kind: 'human' });
       if (accepted.guestCredential) {
         composition.registerGuestCredential(createGuestCredential({
           guestId: accepted.guestCredential.guestId,
