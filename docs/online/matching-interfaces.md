@@ -8,6 +8,9 @@ without guessing.
 It describes the *wire contract only*. It grants no deployment, no public
 launch and no paid provider traffic.
 
+The friend routes below are implemented and committed. The queue routes are
+owned by the queue worker (KHA-76) and are marked as such.
+
 ## Feature gates
 
 The service owns the rollout. Two independent switches, both **default off**:
@@ -132,15 +135,18 @@ Request body:
 {
   "schemaVersion": 2,
   "acceptanceKey": "…",            // optional for an account acceptor, REQUIRED for a guest
-  "control": { "kind": "human" | "agent", "modelLabel": "…" }  // the invitee's seat
+  "control": { "kind": "human" | "agent", "modelLabel": "…" },  // the invitee's seat
+  "rotateCredential": false         // optional, see below
 }
 ```
 
-`acceptanceKey` is a client-generated idempotency key (at least 16 characters
-of `[A-Za-z0-9_-]`). The browser generates it once per accept intent, keeps it
+`acceptanceKey` is a client-generated idempotency key (16 to 128 characters of
+`[A-Za-z0-9_-]`). The browser generates it once per accept intent, keeps it
 for the page lifetime and reuses it on every retry, so a lost answer is
 recovered instead of consuming a second invitation. It is required when the
 acceptor is a guest, because a guest has no other identity to resume with.
+The service stores only its hash, and the key is the only capability that
+resumes an acceptance.
 
 Answer `200`:
 
@@ -165,9 +171,12 @@ field, and it is byte-compatible with `onlineMatchResponse`
 (`parseOnlineMatchView` accepts it unchanged).
 
 Retrying the same accept with the same `acceptanceKey` returns the same
-`matchId`, the same `seat` and a freshly minted `guestCredential`. The earlier
-credential is superseded, so a lost answer never leaves the guest without a
-working credential.
+`matchId` and the same `seat`. A routine retry never supersedes a guest
+credential that another request already delivered: the credential is minted
+only when the seat has no live credential. A browser that holds no working
+credential asks for the replacement explicitly with `"rotateCredential": true`;
+the earlier credential is then superseded, so a lost answer never leaves the
+guest without a working credential.
 
 Errors: `404` unknown or cancelled invitation, `409` already consumed by
 somebody else, `409` expired, `403` a challenge accepted by a non-recipient,
@@ -212,6 +221,7 @@ while a working credential is held. An account inviter receives `null` for
 ```
 POST /v1/online/rematches                                   // propose
 POST /v1/online/rematches/{rematchId}/accept               // accept
+POST /v1/online/rematches/{rematchId}/seat-credential      // the guest seat credential of the proposer
 GET  /v1/online/matches/{matchId}/rematch                   // the pending offer
 ```
 
@@ -236,7 +246,7 @@ Answer `201` with the offer:
     "matchId": "…",
     "status": "pending",
     "proposerLabel": "Alice",
-    "proposerSeat": "white",      // the seat the proposer plays in the new match
+    "proposerSeat": "black",      // the seat the proposer plays in the new match
     "timeControl": { … },
     "startingFen": "…",
     "expiresAt": "…",
@@ -251,6 +261,9 @@ opponent's acceptance creates the new match with **reversed colors** and the
 naming the exact offer. The old match keeps its final result; a rematch is a
 new match and never revives the old one.
 
+The offer is reserved before the new match is created, so a concurrent
+supersede, an expiry or a second acceptance can never produce a second match.
+
 Accept body `{"schemaVersion": 2}`. Answer `200`:
 
 ```jsonc
@@ -258,12 +271,18 @@ Accept body `{"schemaVersion": 2}`. Answer `200`:
   "schemaVersion": 2,
   "rematch": { … "status": "accepted", "newMatchId": "…" },
   "match": { …the participant live view of the new match… },
-  "seat": "black"
+  "seat": "black",
+  "guestCredential": { … }        // present only for a guest acceptor
 }
 ```
 
 A duplicate acceptance returns the same `newMatchId` instead of creating a
 second match.
+
+A rematch is a **new match**, so the credential of the finished match cannot
+authorize it. A guest proposer claims its own seat credential of the new match
+with `POST /v1/online/rematches/{rematchId}/seat-credential`, which answers
+`{ "schemaVersion": 2, "matchId": "…", "seat": "…", "guestCredential": { … } }`.
 
 ## Public queue routes
 
@@ -404,14 +423,18 @@ explicitly". An expired entry is never revived: the owner creates a new entry.
 | Module | Owner | Purpose |
 | --- | --- | --- |
 | `src/online/friends.ts` | matching | typed invitation and rematch client plus the domain rules |
-| `src/online/queue.ts` | matching | typed queue client plus the queue domain rules |
+| `src/online/queue.ts` | queue worker | typed queue client plus the queue domain rules |
 | `src/online/queue-client.ts` | workspace | HTTP adapter for the queue routes |
 | `src/online/match-client.ts` | workspace | participant command client |
 
+`src/online/friends.ts` is written and committed. It exports the route
+constants, the request and answer types, the strict parsers, the typed client
+and the domain helpers (`isAcceptableInvitation`, `needsGuestSeatCredential`,
+`needsCredentialRotation`, `createAcceptanceKey`). The transport is an
+injected port, so the module owns no credential and no URL.
+
 The workspace should call the matching modules instead of re-declaring the
-bodies. `src/online/queue.ts` exports the route constants, the request and
-answer types, the parsers and the domain helpers (`isExpiredEntry`,
-`isAssignedEntry`, `queuePhaseOf`).
+bodies.
 
 ## Status
 

@@ -608,19 +608,23 @@ func (a *friendsAPI) identity(ctx context.Context, principal onlineauth.Principa
 }
 
 // label returns the public label of an authenticated principal.
+//
+// An account without a resolved public name keeps the neutral Player label.
+// A guest keeps the Guest label. The service never publishes an email
+// address, a legal name or an authentication identifier as a label.
 func (a *friendsAPI) label(ctx context.Context, principal onlineauth.Principal) (string, error) {
 	if principal.Kind != online.ParticipantAccount {
 		return invite.GuestLabel, nil
 	}
 	if a.options.LabelResolver == nil {
-		return invite.GuestLabel, nil
+		return "Player", nil
 	}
 	label, err := a.options.LabelResolver.PublicLabel(ctx, principal.Participant.ID)
 	if err != nil {
 		return "", err
 	}
 	if strings.TrimSpace(label) == "" {
-		return invite.GuestLabel, nil
+		return "Player", nil
 	}
 	return label, nil
 }
@@ -637,7 +641,10 @@ func (a *friendsAPI) matchView(ctx context.Context, principal onlineauth.Princip
 	if !authenticated && actor.Participant.ID == "" {
 		return onlineMatchResponse{}, invite.ErrNotAuthorized
 	}
-	match, err := a.online.GetMatchForParticipant(ctx, accepted.MatchID, actor.Participant)
+	// The reader re-checks the credential of the participant, so the
+	// verified identity travels with the request.
+	readCtx := onlineauth.WithPrincipal(ctx, actor)
+	match, err := a.online.GetMatchForParticipant(readCtx, accepted.MatchID, actor.Participant)
 	if err != nil {
 		return onlineMatchResponse{}, err
 	}

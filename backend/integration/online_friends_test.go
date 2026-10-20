@@ -440,11 +440,11 @@ func TestPostgresFriendLostAnswerRetryRecoversTheSameAcceptance(t *testing.T) {
 	// The rotation is explicit: the caller that holds no working
 	// credential asks for it.
 	rotated, err := fixture.friends.Accept(ctx, invite.AcceptRequest{
-		InvitationID:    created.Invitation.InvitationID,
-		AcceptanceKey:   key,
-		Acceptor:        nil,
-		Control:         online.SeatControl{Kind: online.ControlHuman},
-		Origin:          friendOrigin,
+		InvitationID:     created.Invitation.InvitationID,
+		AcceptanceKey:    key,
+		Acceptor:         nil,
+		Control:          online.SeatControl{Kind: online.ControlHuman},
+		Origin:           friendOrigin,
 		RotateCredential: true,
 	})
 	if err != nil {
@@ -488,9 +488,9 @@ func TestPostgresFriendConcurrentAcceptanceHasOneWinner(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 	var (
-		wait   sync.WaitGroup
-		mutex  sync.Mutex
-		wins   []string
+		wait    sync.WaitGroup
+		mutex   sync.Mutex
+		wins    []string
 		errors_ []error
 	)
 	for index := 0; index < 4; index++ {
