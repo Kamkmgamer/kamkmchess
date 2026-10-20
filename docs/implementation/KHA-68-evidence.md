@@ -255,6 +255,16 @@ The participant-lock race fixture holds the credential lock across the deadline 
 The deadline fixtures use the same deterministic deadline shift, and the concurrent sweeps and the
 sweeps against a participant command are real PostgreSQL races over the same match row.
 
+The local PostgreSQL container used for this verification steps its clock backwards by up to about
+0.9 seconds roughly every fifteen seconds, while the host clock stays steady. A probe over 241
+seconds recorded sixteen such steps. An absolute deadline with a sub-second window can therefore
+be un-passed by the clock itself, so the lock-wait fixture waits for the database clock to reach
+past the deadline instead of sleeping for a fixed duration. The deadline fixtures of this
+correction move the deadline an hour into the past, so a clock step cannot reach them. The
+underlying clock behaviour is an environment property of the local container, not of the writer:
+the writer reads one authoritative database clock for every deadline decision, and the participant
+path and the trusted path read the same clock.
+
 ### Red evidence
 
 The new fixtures were checked against the behaviour they replace. Removing the opening branch of
