@@ -10,7 +10,7 @@ services:
       # path has to be set here as well as for the API. Without it the restore
       # refuses to run, which is the correct fail-closed behaviour but an
       # unusable procedure.
-      ONLINE_RESTORE_FENCE_PATH: /var/lib/kamkmchess/restore-fence/fence.json
+      ONLINE_RESTORE_FENCE_PATH: /var/lib/kamkmchess/restore-fence
     networks:
       default:
         aliases:
@@ -43,7 +43,7 @@ services:
         mkdir -p /var/lib/kamkmchess/restore-fence
         chown 65532:65532 /var/lib/kamkmchess/restore-fence
         chmod 700 /var/lib/kamkmchess/restore-fence
-        exec /usr/local/bin/docker-entrypoint.sh "$@"
+        exec /usr/local/bin/docker-entrypoint.sh "$$@"
       - --
 
     command:

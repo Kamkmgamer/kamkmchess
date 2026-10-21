@@ -16,7 +16,7 @@ services:
       # The API reads the same file from the same volume and refuses to serve
       # while the fence is open. The server must load this setting; an
       # ignored setting silently disables the fence.
-      ONLINE_RESTORE_FENCE_PATH: /var/lib/kamkmchess/restore-fence/fence.json
+      ONLINE_RESTORE_FENCE_PATH: /var/lib/kamkmchess/restore-fence
     volumes:
       # Read-only for the API: the service only reads the fence. The restore
       # command writes and clears it in the database container.

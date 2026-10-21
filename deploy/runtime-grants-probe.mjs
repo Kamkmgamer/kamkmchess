@@ -260,6 +260,40 @@ ${scenario(
   )}
 
 ${scenario(
+    'agent-seat-redaction',
+    `INSERT INTO online_removal_requests (removal_id, subject_kind, subject_id, scope, status, requested_at, verified_at, live_delete_due_at, recovery_sanitize_due_at)
+      VALUES ('rm_probe_0123456789ab', 'account', encode(sha256(convert_to('kamkm.online.removal.v1:probe-owner', 'UTF8')), 'hex'), 'account_deletion', 'verified', clock_timestamp(), clock_timestamp(), clock_timestamp() + interval '1 day', clock_timestamp() + interval '30 days');
+        INSERT INTO online_matches (match_id, schema_version, variant, starting_fen, position_fen, starting_time_ms, increment_ms, version, control_epoch, input_hash, rules_policy_version, status)
+      VALUES ('probe_match_queue', 1, 'orthodox', '${fen}', '${fen}', 60000, 0, 1, 1, decode(repeat('00',32),'hex'), 'online-rules/1', 'active');
+    INSERT INTO online_queue_entries (entry_id, owner_kind, owner_id, seat_control_kind, seat_control_model_label, starting_time_ms, increment_ms, status, internal_state, version, ready_at, cutoff_at, assigned_match_id)
+      VALUES ('probeentry01', 'account', 'probe-owner', 'agent', 'Probe model', 60000, 0, 'assigned', 'assigned', 1, clock_timestamp(), clock_timestamp() + interval '10 seconds', 'probe_match_queue');
+        UPDATE online_queue_entries
+      SET owner_id = 'anonymized', seat_control_model_label = 'Custom model', version = version + 1
+      WHERE entry_id = 'probeentry01';`,
+    `CASE WHEN (SELECT count(*) FROM online_queue_entries WHERE entry_id = 'probeentry01' AND owner_id = 'anonymized' AND seat_control_model_label = 'Custom model' AND version = 2) = 1 THEN 'passed' ELSE 'failed' END`,
+    'passed',
+    'the removal of an account anonymized the owner of the agent seat and replaced its label with the neutral one',
+  )}
+
+${scenario(
+    'agent-seat-redaction-without-a-request-refused',
+    `INSERT INTO online_matches (match_id, schema_version, variant, starting_fen, position_fen, starting_time_ms, increment_ms, version, control_epoch, input_hash, rules_policy_version, status)
+      VALUES ('probe_match_queue_2', 1, 'orthodox', '${fen}', '${fen}', 60000, 0, 1, 1, decode(repeat('00',32),'hex'), 'online-rules/1', 'active');
+    INSERT INTO online_queue_entries (entry_id, owner_kind, owner_id, seat_control_kind, seat_control_model_label, starting_time_ms, increment_ms, status, internal_state, version, ready_at, cutoff_at, assigned_match_id)
+      VALUES ('probeentry02', 'account', 'probe-owner', 'agent', 'Probe model', 60000, 0, 'assigned', 'assigned', 1, clock_timestamp(), clock_timestamp() + interval '10 seconds', 'probe_match_queue_2');
+        BEGIN
+          UPDATE online_queue_entries
+          SET owner_id = 'anonymized', seat_control_model_label = 'Custom model', version = version + 1
+          WHERE entry_id = 'probeentry02';
+        EXCEPTION WHEN OTHERS THEN
+          NULL;
+        END;`,
+    `CASE WHEN (SELECT count(*) FROM online_queue_entries WHERE entry_id = 'probeentry02' AND owner_id = 'probe-owner') = 1 THEN 'passed' ELSE 'failed' END`,
+    'passed',
+    'the redaction without a removal request was refused and the row kept its owner',
+  )}
+
+${scenario(
     'immutable-event-update-refused',
     `UPDATE online_events SET decision_at = clock_timestamp() WHERE false;`,
     `'completed'`,

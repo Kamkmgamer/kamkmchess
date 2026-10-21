@@ -81,6 +81,51 @@ The local load report is `docs/evidence/online/KHA-83-local-load.json` when a
 load run has been made. It is a loopback measurement with synthetic accounts.
 It is **not** a capacity claim.
 
+## The restore, the compose files and the evidence
+
+- The restore procedure **stops and drains the API** before the import and
+  starts it again afterwards. The fence refuses new admissions, but it cannot
+  take back a request that was already admitted: an accepted write that is
+  still in flight would not be excluded by the restored copy. The drain is
+  part of the procedure, and the evidence does not claim that new admissions
+  are refused to drain work in flight.
+- The database service and the API service are started **together**: the API
+  file refers to the database service, so
+  `docker compose -f postgres.compose.yml -f api.compose.yml` is the only
+  usable invocation. The API file alone fails with an undefined service.
+- The shell argument of the database entrypoint is written in the escaped form
+  (`"$$@"`). The reviewer of round four verified that the plain and the
+  escaped form forward the arguments identically, so the change is a
+  portability and clarity change, **not** a fix for a lost argument. The
+  proof reads the settings from the running server either way.
+- The native restore stages are prepared and green: the database tools of the
+  server, the backup command built from the checked-in source, a database of
+  the run with the checked-in migrations, an encrypted bundle created and
+  verified with the real tool, and the bundle copied to the host. The restore,
+  the wrong clear, the overlap and the take-over **are** run now, by
+  `node scripts/online/restore-proof.mjs`, against the fence lifecycle of the
+  privacy service: the restore is refused without a fence, a second restore
+  is refused while the fence is held, a close with a digest that does not
+  belong to the fence is refused, the death of the holder leaves the marker,
+  the take-over finishes and closes the fence, and the service serves again
+  afterwards. The **crash of the restore during its import** is still not
+  run: that case belongs to the privacy work, and the proof says so in its
+  own limits.
+- The runbook, the deployment note and the rendered compose configuration name
+  the **same** fence: the parent directory `/var/lib/kamkmchess/restore-fence`.
+  A path below the parent is a different fence, and a restore that held it
+  would leave the service serving during the import. The proof compares the
+  three names and measures that the service reads the fence the runbook
+  opens.
+- The private secret of the restore stays private: the file is owned by the
+  operator and has mode `0600`, so the restore user cannot read it. The
+  documented command reads it as root and hands the values to the restore
+  through the environment (`gosu 65532:65532`), so the restore user receives
+  them without ever reading the file. `node deploy/verify-compose-config.mjs`
+  measures that inside the real service container, with a negative control:
+  the restore user is refused the file, the documented reading side hands the
+  values over, and the file is still `0600` and owned by root afterwards.
+
 ## Open blockers
 
 1. **The fence access is fixed in the deployment, and the proof is green.**
@@ -93,22 +138,23 @@ It is **not** a capacity claim.
    | the database user cannot write the fence into the shared directory | passed |
    | the API user observes the **open** fence the restore wrote | passed |
    | the API user observes the **closed** fence after the restore finished | passed |
+   | the runbook, the configuration and the note name the same fence | passed |
+   | the service reads the fence the runbook opens | passed |
+   | the schema of the run is dropped in the selected target | passed |
 
    The remedy is a deployment choice, not a mode decision: the database
    service prepares the shared directory for the user the API reads it as, and
-   the restore runs as that user. The fence file keeps its private mode. The
+   the restore runs as that user. The marker keeps its private mode. The
    API therefore observes the open fence and refuses traffic during the
    restore, and observes the closed fence and resumes afterwards.
 
    **What this proof is not.** It proves the shared ownership, the permission
-   boundary and the serving gate with the fence code and the gate of the
-   current privacy service. It is **not** the restore proof: the encrypted
-   restore with the real `pg_dump` and `psql`, a crash during the restore, a
-   wrong clear and an overlapping restore still need the stable fence
-   lifecycle of the privacy service. The candidate that introduces it
-   (`7413931`, `ed480a9`) is not integrated and the parent has it open, so
-   the lifecycle proof waits for that candidate rather than freezing an
-   unsafe interface.
+   boundary, the serving gate and the agreement between the runbook and the
+   configuration. The encrypted restore itself is proved by
+   `node scripts/online/restore-proof.mjs`, which runs the real
+   `khabackup` against the fence lifecycle of the privacy service. The one
+   case neither proof runs is a **crash of the restore during its import**:
+   that belongs to the privacy work, and both proofs say so in their limits.
 2. **The host has not been verified.** Apache flushing, finite stream
    delivery, the delivered CSP and CORS, the TLS chain, the private worker
    reachability and the capacity need the real host and an authorized staging

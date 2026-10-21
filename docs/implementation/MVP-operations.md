@@ -156,18 +156,42 @@ retention requires it; this tool only rotates its own directory.
 go run ./backend/backup/cmd/khabackup plan --file /backups/weekly-2026-W42.kha
 
 # 2. Execute, reapplying the newer daily ledger so nothing deleted since is resurrected.
+#
+# The service is stopped and drained before the import. The fence refuses new
+# admissions, but it cannot take back a request that was already admitted, so a
+# write that is still in flight would not be excluded by the restored copy.
 # The restore refuses to run without a durable fence, and it has to run as the
 # user the API reads the fence as, so the fence stays private and readable.
-# The restore runs as the user the API reads the fence as, so the fence
-# file stays private to that user and the API can observe it. The passphrase
-# and the database URL are never passed as arguments: they are read from the
-# environment, and the environment comes from the private backup file.
-docker compose -f postgres.compose.yml -f api.compose.yml exec --user 65532 postgres sh -c '
+#
+# The secret file stays private: it is owned by the operator and has mode
+# 0600, so the restore user cannot read it. The shell of the container reads
+# it as root and hands the values to the restore through the environment; the
+# restore itself never reads the file and never sees a secret as an argument.
+# `gosu` drops to the restore user with that environment, so the fence stays
+# private to the user the API reads it as.
+#
+# The fence path is the **parent directory** the compose files configure in
+# both services with `ONLINE_RESTORE_FENCE_PATH`. The restore writes the owner
+# of the fence into `<parent>/restore-fence/owner` and takes the sibling
+# `<parent>/restore-fence.lock`. A path below the parent would be a *different*
+# fence: the restore would hold a fence the API never reads, and the API would
+# keep serving during the import.
+docker compose -f postgres.compose.yml -f api.compose.yml stop api
+docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
   set -a; . /run/secrets/backup.env; set +a
-  exec /opt/kamkmchess/khabackup restore --file /backups/weekly-2026-W42.kha \
+  exec gosu 65532:65532 /opt/kamkmchess/khabackup restore --file /backups/weekly-2026-W42.kha \
     --newer-ledger /backups/daily-2026-10-18.kha \
-    --fence /var/lib/kamkmchess/restore-fence/fence.json \
+    --fence /var/lib/kamkmchess/restore-fence \
     --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE --apply'
+docker compose -f postgres.compose.yml -f api.compose.yml start api
+
+# The API is stopped and drained before the restore, and it is started again
+# after the removal ledger was replayed and the fence was closed.
+#
+# The fence refuses new admissions, but it cannot take back a request that
+# was already admitted: an accepted write that is still in flight would not
+# be excluded by the fence, and the restored copy would not carry it. The
+# drain is therefore part of the procedure and not a convenience.
 ```
 
 The order inside a restore is fixed and tested:

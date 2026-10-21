@@ -13,6 +13,7 @@ import {
   auditLiveGrants,
   loadTree,
   parseMigrationTables,
+  parseMigrationReads,
   parsePolicy,
   renderGrantSql,
   scanGoUsage,
@@ -126,4 +127,24 @@ test('comment stripping leaves executable statements alone', () => {
   const stripped = stripGoLiterals('a := "text" // note\nb := 2');
   assert.ok(!stripped.includes('"text"'));
   assert.ok(stripped.includes('b := 2'));
+});
+
+test('a read that is not a table is not a read of a table', () => {
+  const sql = `
+    CREATE OR REPLACE FUNCTION online_public_replay_guard() RETURNS trigger AS $$
+    BEGIN
+      IF NEW.replay_json IS DISTINCT FROM raw_label THEN
+        RETURN NEW;
+      END IF;
+      SELECT count(*) FROM OLD.replay_json;
+      SELECT count(*) FROM online_public_replays;
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  `;
+  const reads = parseMigrationReads(sql);
+  // The right side of a comparison and a row reference are not tables.
+  assert.ok(!reads.includes('raw_label'));
+  assert.ok(!reads.includes('replay_json'));
+  assert.ok(reads.includes('online_public_replays'));
 });

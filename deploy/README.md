@@ -78,9 +78,9 @@ A restore replaces the schema of the target database. A fence inside that
 schema would be replaced with it, so a crash between the import and the
 replay of the removal ledger would leave the restored database with the old
 ledger and nothing inside it to say so. The fence therefore lives outside the
-database, in a small file that the restore writes before it imports anything
-and that it removes only after the newest merged removal ledger was replayed
-and verified.
+database, in a marker directory that the restore writes before it imports
+anything and that it removes only after the newest merged removal ledger was
+replayed and verified.
 
 The deployment wires it as one shared volume:
 
@@ -89,7 +89,20 @@ The deployment wires it as one shared volume:
   command writes and clears the fence there;
 - the API service mounts the same volume at the same path, read-only, because
   the service only reads it;
-- the API receives `ONLINE_RESTORE_FENCE_PATH=/var/lib/kamkmchess/restore-fence/fence.json`.
+- both services receive
+  `ONLINE_RESTORE_FENCE_PATH=/var/lib/kamkmchess/restore-fence`.
+
+The setting names the **parent** of the fence, not a file. The restore writes
+the owner of the fence into `<parent>/restore-fence/owner` and takes the
+sibling `<parent>/restore-fence.lock`; the service only traverses the parent
+and reads the owner. The runbook in
+[`MVP-operations.md`](../docs/implementation/MVP-operations.md) names the same
+parent, and the proof below compares the runbook, this note and the rendered
+compose configuration, so the three cannot drift apart again.
+
+A path below the parent is a *different* fence: a restore that holds it
+leaves the service serving during the import, because the service never sees
+an open fence.
 
 The volume must be the same volume for both services and it must outlive a
 container restart. A container-local file, a path inside the database schema
@@ -100,8 +113,11 @@ was not applied.
 The restore command runs inside the database container, so the setting is
 configured for that service as well, and the documented restore command names
 the fence path explicitly. The restore also has to run as the user the API
-reads the fence as: the fence file is private to its owner, and the API
-refuses every request while it cannot read it.
+reads the fence as: the marker is private to its owner, and the API refuses
+every request while it cannot read it. The secret file of the restore stays
+private as well: the shell of the container reads it as root and hands the
+values to the restore through the environment, so the restore user never
+reads a file it may not read.
 
 ```sh
 node verify-fence-access.mjs      # proves the access with two throwaway containers
@@ -109,11 +125,12 @@ node verify-fence-access.mjs      # proves the access with two throwaway contain
 
 The proof writes a fence with the modes the restore uses, in a container that
 runs as the database user, and reads it from the same volume as the API user.
-At the moment it **fails**: the fence is `0600` and its directory is `0700`,
-so the API user cannot read it and the service refuses every request for the
-wrong reason. Writing the fence as the API user makes it readable without
-loosening the mode; the fence code owns the mode and the deployment owns the
-user.
+It also proves that the fence the runbook opens is the fence the service
+reads: the volume is mounted at the path of the configuration and at the path
+the runbook names, and the service has to see the marker the runbook wrote.
+At the moment it **passes**: the fence is written by the API user, so it is
+readable without loosening the mode; the fence code owns the mode and the
+deployment owns the user.
 
 The server must load `ONLINE_RESTORE_FENCE_PATH` into its online configuration.
 `node scripts/online/service-wiring.mjs` reports it as a blocker while the

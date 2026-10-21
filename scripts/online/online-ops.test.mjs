@@ -4,7 +4,7 @@
 // a database, a network service or a credential.
 
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -15,8 +15,10 @@ import { buildPacket, evaluateEvidence, GATE_SCENARIOS } from './feature-gates.m
 import { mapScenarios, parseGoTestJson } from './integration-suite.mjs';
 import { percentiles } from './load-suite.mjs';
 import { auditServiceWiring, switchDefaultState } from './service-wiring.mjs';
+import { composeFencePaths, documentedFencePath, fencePathAgreement, holderDatabaseUrl, ownedSchemaName, planCleanup as planFenceCleanup, proofExitCode as fenceExitCode, readmeFencePath, resolveTarget, RUN_SCHEMA, targetFromEnvironment, verifyFenceAccess } from '../../deploy/verify-fence-access.mjs';
+import { completeReport, createAndMigrate, planCleanup as planRestoreCleanup, reportFailure, REQUIRED_STEPS, RUN_SCHEMA as RESTORE_RUN_SCHEMA } from './restore-proof.mjs';
 import { buildProbes, evaluateProbe } from '../../deploy/runtime-grants-probe.mjs';
-import { auditGrants, parseMigrationFunctions, parseMigrationGrants, parseMigrationTables, parsePolicy, scanGoUsage } from '../../deploy/runtime-grants.mjs';
+import { auditGrants, parseMigrationFunctions, parseMigrationGrants, parseMigrationReads, parseMigrationTables, parseMigrationWrites, parsePolicy, scanGoUsage } from '../../deploy/runtime-grants.mjs';
 
 /**
  * Runs the grant audit against a throwaway tree.
@@ -411,4 +413,494 @@ test('a role the deployment does not use and does not strip is a blocker', () =>
   const blockers = findings.filter((finding) => finding.code === 'migration-grants-unreviewed-role');
   assert.equal(blockers.length, 1);
   assert.equal(blockers[0].severity, 'blocker');
+});
+
+test('a statement outside a function does not justify a runtime grant', () => {
+  // A one-time seed runs as the owner of the migration, so it says nothing
+  // about the runtime role.
+  const seed = 'INSERT INTO online_seed_rows(id) VALUES (1);';
+  assert.deepEqual(parseMigrationWrites(seed), []);
+  assert.deepEqual(parseMigrationReads(seed), []);
+});
+
+test('an insert only trigger justifies the insert and nothing else', () => {
+  const migration = [
+    'CREATE OR REPLACE FUNCTION online_record_initial_control() RETURNS trigger',
+    'LANGUAGE plpgsql AS $$',
+    'BEGIN',
+    '  INSERT INTO online_seat_control_timeline(match_id, seat) VALUES (NEW.match_id, NEW.seat);',
+    '  RETURN NEW;',
+    'END',
+    '$$;',
+  ].join('\n');
+  const writes = parseMigrationWrites(migration);
+  assert.deepEqual(writes, ['online_seat_control_timeline:INSERT']);
+  assert.ok(!writes.some((entry) => entry.endsWith(':UPDATE')));
+  assert.ok(!writes.some((entry) => entry.endsWith(':DELETE')));
+});
+
+test('a schema qualified write inside a function is recognised', () => {
+  const migration = [
+    'CREATE OR REPLACE FUNCTION online_guard() RETURNS trigger',
+    'LANGUAGE plpgsql AS $$',
+    'BEGIN',
+    '  UPDATE public.online_queue_entries SET owner_id = $1;',
+    '  RETURN NEW;',
+    'END',
+    '$$;',
+  ].join('\n');
+  assert.deepEqual(parseMigrationWrites(migration), ['online_queue_entries:UPDATE']);
+});
+
+test('a table that a function only reads does not bless a write', () => {
+  const policy = parsePolicy({
+    role: 'kamkmchess_runtime',
+    privileges: { online_public_model_allowlist: ['SELECT', 'UPDATE'] },
+  });
+  const findings = auditGrants({
+    policy,
+    tables: ['online_public_model_allowlist'],
+    usage: new Map(),
+    migrationReads: ['online_public_model_allowlist'],
+    migrationWrites: [],
+  });
+  const unused = findings.filter((finding) => finding.code === 'grant-unused-privilege');
+  assert.equal(unused.length, 1);
+  assert.match(unused[0].message, /UPDATE/);
+  // The read stays justified.
+  assert.ok(findings.some((finding) => finding.code === 'grant-used-by-migration-function'));
+});
+
+test('the verb of a migration write matches the verb of the policy', () => {
+  const policy = parsePolicy({
+    role: 'kamkmchess_runtime',
+    privileges: { online_seat_control_timeline: ['SELECT', 'INSERT'] },
+  });
+  const findings = auditGrants({
+    policy,
+    tables: ['online_seat_control_timeline'],
+    usage: new Map([['online_seat_control_timeline', new Set(['SELECT'])]]),
+    migrationWrites: ['online_seat_control_timeline:INSERT'],
+  });
+  assert.ok(!findings.some((finding) => finding.code === 'grant-unused-privilege'));
+});
+
+test('a one-time block is not a function body', () => {
+  // A DO block runs once, as the owner of the migration.
+  const once = [
+    'DO $$',
+    'BEGIN',
+    '  INSERT INTO online_seed_rows(id) VALUES (1);',
+    'END',
+    '$$;',
+  ].join('\n');
+  assert.deepEqual(parseMigrationWrites(once), []);
+});
+
+test('a declaration inside a comment and a statement inside a string justify nothing', () => {
+  const commented = [
+    '-- CREATE FUNCTION online_x() RETURNS trigger AS $$ BEGIN INSERT INTO online_seed_rows VALUES (1); END $$;',
+  ].join('\n');
+  assert.deepEqual(parseMigrationWrites(commented), []);
+  const quoted = [
+    'CREATE FUNCTION online_x() RETURNS trigger AS $$',
+    "  RAISE NOTICE 'INSERT INTO online_seed_rows VALUES (1)';",
+    '  RETURN NEW;',
+    'END $$;',
+  ].join('\n');
+  assert.deepEqual(parseMigrationWrites(quoted), []);
+});
+
+test('a function with a tagged delimiter is a function body', () => {
+  const tagged = [
+    'CREATE OR REPLACE FUNCTION online_guard() RETURNS trigger',
+    'LANGUAGE plpgsql AS $body$',
+    'BEGIN',
+    '  INSERT INTO online_seat_control_timeline(match_id) VALUES (NEW.match_id);',
+    '  RETURN NEW;',
+    'END',
+    '$body$;',
+  ].join('\n');
+  assert.deepEqual(parseMigrationWrites(tagged), ['online_seat_control_timeline:INSERT']);
+});
+
+test('a function body is read with its own delimiter', () => {
+  const tagged = [
+    'CREATE OR REPLACE FUNCTION online_guard() RETURNS trigger',
+    'LANGUAGE plpgsql AS $body$',
+    'BEGIN',
+    '  UPDATE online_queue_entries SET owner_id = $1;',
+    '  RETURN NEW;',
+    'END',
+    '$body$;',
+  ].join('\n');
+  assert.deepEqual(parseMigrationWrites(tagged), ['online_queue_entries:UPDATE']);
+});
+
+
+test('the access proof refuses a target it cannot serve before it changes anything', () => {
+  // A remote target is refused, so the proof never migrates or drops a
+  // database that is not the local fixture.
+  const remote = resolveTarget({ databaseUrl: 'postgres://user@db.example.internal:5432/production' });
+  assert.equal(remote.ok, false);
+  assert.match(remote.detail, /not a local database/);
+
+  const unparsable = resolveTarget({ databaseUrl: 'not a url' });
+  assert.equal(unparsable.ok, false);
+
+  const notPostgres = resolveTarget({ databaseUrl: 'https://db.example.internal:5432/x' });
+  assert.equal(notPostgres.ok, false);
+
+  const noPort = resolveTarget({ databaseUrl: 'postgres://postgres@127.0.0.1/kamkmchess_online_test' });
+  assert.equal(noPort.ok, false);
+  assert.match(noPort.detail, /no port/);
+
+  const local = resolveTarget({ databaseUrl: 'postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable' });
+  assert.equal(local.ok, true);
+  assert.equal(local.database, 'kamkmchess_online_test');
+  assert.equal(local.url.port, '55467');
+});
+
+test('the keep option preserves the resources of the run and names them', () => {
+  const kept = planFenceCleanup({
+    keep: true,
+    containers: ['container-1'],
+    databases: ['database-1'],
+    volumes: ['volume-1'],
+    directory: '/tmp/run',
+    logs: ['holder: serving'],
+  });
+  assert.equal(kept.keep, true);
+  assert.deepEqual(kept.removeContainers, []);
+  assert.deepEqual(kept.removeVolumes, []);
+  assert.equal(kept.removeDirectory, false);
+  assert.deepEqual(kept.manifest.containers, ['container-1']);
+  assert.deepEqual(kept.manifest.volumes, ['volume-1']);
+  assert.deepEqual(kept.manifest.logs, ['holder: serving']);
+
+  const removed = planFenceCleanup({
+    keep: false,
+    containers: ['container-1'],
+    databases: ['database-1'],
+    volumes: ['volume-1'],
+    directory: '/tmp/run',
+    logs: [],
+  });
+  assert.deepEqual(removed.removeContainers, ['container-1']);
+  assert.deepEqual(removed.removeVolumes, ['volume-1']);
+  assert.equal(removed.removeDirectory, true);
+});
+
+test('the native proof keeps its resources on request and names them', () => {
+  const kept = planRestoreCleanup({
+    keep: true,
+    containers: ['holder-1'],
+    databases: ['source-1', 'target-1'],
+    volumes: ['volume-1'],
+    directory: '/tmp/run',
+    logs: ['holder: serving'],
+  });
+  assert.equal(kept.keep, true);
+  assert.deepEqual(kept.removeDatabases, []);
+  assert.deepEqual(kept.manifest.databases, ['source-1', 'target-1']);
+  assert.deepEqual(kept.manifest.containers, ['holder-1']);
+});
+
+test('a run that stopped early is never green', () => {
+  const empty = completeReport([], [], ['the run stopped early']);
+  const missing = empty.steps.filter((step) => step.id.endsWith('-ran'));
+  assert.equal(missing.length, REQUIRED_STEPS.length);
+  assert.ok(missing.every((step) => step.passed === false));
+
+  const complete = completeReport(
+    REQUIRED_STEPS.map((id) => ({ id, passed: true, detail: '' })),
+    [],
+    [],
+  );
+  assert.equal(complete.steps.filter((step) => step.id.endsWith('-ran')).length, 0);
+});
+
+
+/**
+ * A stand-in for the container port of the proof.
+ *
+ * It records every call, so the tests can observe the order of the
+ * orchestration and the outcome of every step, instead of a plan that only
+ * mirrors the implementation.
+ */
+function fakeIo(options = {}) {
+  const calls = [];
+  const image = options.image ?? 'postgres:17';
+  const network = options.network ?? 'bridge';
+  const publishedPort = options.publishedPort ?? '55467';
+  const volumeCreateFails = options.volumeCreateFails === true;
+  const volumeRemoveFails = options.volumeRemoveFails === true;
+  const schemaName = options.schemaName ?? 'fence_probe_testrun';
+  // The schema of the run exists until the proof drops it.
+  const state = { schemaExists: options.schemaExists !== false };
+  const io = async (command, args) => {
+    calls.push({ command, args: [...args] });
+    const text = args.join(' ');
+    if (command === 'docker' && text.includes('{{.Config.Image}}')) {
+      return { code: 0, stdout: image + '\n', stderr: '' };
+    }
+    if (command === 'docker' && text.includes('NetworkSettings.Networks')) {
+      return { code: 0, stdout: JSON.stringify({ [network]: { IPAddress: '172.20.0.2' } }) + '\n', stderr: '' };
+    }
+    if (command === 'docker' && args[0] === 'port' && text.includes('5432/tcp')) {
+      return { code: 0, stdout: '127.0.0.1:' + publishedPort + '\n', stderr: '' };
+    }
+    if (command === 'docker' && args[0] === 'port' && text.includes('8099/tcp')) {
+      return { code: 0, stdout: '127.0.0.1:32768\n', stderr: '' };
+    }
+    if (command === 'docker' && args[0] === 'volume' && args[1] === 'create') {
+      return volumeCreateFails
+        ? { code: 1, stdout: '', stderr: 'the volume could not be created\n' }
+        : { code: 0, stdout: 'volume\n', stderr: '' };
+    }
+    if (command === 'docker' && args[0] === 'volume' && args[1] === 'rm') {
+      return volumeRemoveFails
+        ? { code: 1, stdout: '', stderr: 'the volume could not be removed\n' }
+        : { code: 0, stdout: '', stderr: '' };
+    }
+    if (command === 'docker' && text.includes('/fixtures/fenceprobe') && args.includes('fence-only')) {
+      return { code: 1, stdout: '', stderr: 'open /backups/fence-test/restore-fence.lock: permission denied\n' };
+    }
+    if (command === 'docker' && text.includes('/fixtures/fenceprobe') && args.includes('serve')) {
+      return { code: 0, stdout: 'holder-container\n', stderr: '' };
+    }
+    if (command === 'docker' && args[0] === 'logs') {
+      return { code: 0, stdout: 'serving\n', stderr: '' };
+    }
+    if (command === 'docker' && text.includes('schema-name')) {
+      return { code: 0, stdout: schemaName + '\n', stderr: '' };
+    }
+    if (command === 'docker' && text.includes('restore-fence/owner')) {
+      return { code: 0, stdout: 'open\n', stderr: '' };
+    }
+    if (command === 'docker' && text.includes('DROP SCHEMA IF EXISTS')) {
+      state.schemaExists = false;
+      return { code: 0, stdout: 'DROP SCHEMA\n', stderr: '' };
+    }
+    if (command === 'docker' && text.includes("pg_namespace WHERE nspname")) {
+      return { code: 0, stdout: (state.schemaExists ? '1' : '0') + '\n', stderr: '' };
+    }
+    if (command === 'go') {
+      return { code: 0, stdout: '', stderr: '' };
+    }
+    return { code: 0, stdout: '', stderr: '' };
+  };
+  io.calls = calls;
+  io.state = state;
+  return io;
+}
+
+/**
+ * The gate of the service, as the proof sees it: the traffic is refused
+ * while the fence is held, the close answers, and the traffic is served
+ * again.
+ */
+function fakeGate() {
+  let healthChecks = 0;
+  return async (url) => {
+    const target = String(url);
+    if (target.includes('/finish')) return { status: 200 };
+    healthChecks += 1;
+    return { status: healthChecks === 1 ? 503 : 200 };
+  };
+}
+
+/**
+ * Runs the access proof with a stand-in for the container port and for the
+ * gate, so the orchestration of the proof can be observed without a
+ * container.
+ */
+async function runAccessProof(options) {
+  const original = globalThis.fetch;
+  globalThis.fetch = fakeGate();
+  try {
+    return await verifyFenceAccess(options);
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+test('the access proof validates the port before it creates anything', async () => {
+  const io = fakeIo({ publishedPort: '6000' });
+  const report = await runAccessProof({ io, databaseUrl: 'postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable' });
+  assert.ok(report.steps.some((step) => step.id === 'the-target-addresses-the-published-port' && !step.passed));
+  // Nothing was created before the port was checked.
+  assert.equal(io.calls.some((call) => call.args.includes('volume') && call.args.includes('create')), false);
+  assert.equal(fenceExitCode(report.steps), 1);
+});
+
+test('the access proof refuses a target it cannot serve and touches nothing', async () => {
+  const io = fakeIo();
+  const report = await runAccessProof({ io, databaseUrl: 'postgres://user@db.example.internal:5432/production' });
+  assert.ok(report.steps.some((step) => step.id === 'the-target-of-the-proof-is-accepted' && !step.passed));
+  assert.equal(io.calls.length, 0);
+  assert.equal(fenceExitCode(report.steps), 1);
+});
+
+test('the access proof drops only the schema of its own run, in the selected target', async () => {
+  const io = fakeIo({ schemaName: 'fence_probe_abc123' });
+  const report = await runAccessProof({ io, databaseUrl: 'postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable' });
+  const drops = io.calls.filter((call) => call.args.some((argument) => String(argument).includes('DROP SCHEMA IF EXISTS fence_probe_')));
+  assert.equal(drops.length, 1);
+  // The drop names the database of the selected target.
+  assert.ok(drops[0].args.includes('kamkmchess_online_test'));
+  assert.ok(report.steps.some((step) => step.id === 'the-schema-of-the-run-is-dropped' && step.passed));
+  // The schema is gone after the run.
+  assert.equal(io.state.schemaExists, false);
+});
+
+test('a removal that fails is a failure of the proof', async () => {
+  const io = fakeIo({ volumeRemoveFails: true });
+  const report = await runAccessProof({ io, databaseUrl: 'postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable' });
+  assert.ok(report.steps.some((step) => step.id === 'the-probe-volume-is-removed' && !step.passed));
+  assert.equal(fenceExitCode(report.steps), 1);
+});
+
+test('the holder keeps the credentials and the options of the selected target', () => {
+  const url = new URL('postgres://probe:secret@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable');
+  const holder = holderDatabaseUrl(url);
+  assert.match(holder, /probe:secret@host\.docker\.internal:55467/);
+  assert.match(holder, /sslmode=disable/);
+  assert.match(holder, /kamkmchess_online_test/);
+});
+
+test('a refusal with the keep option touches nothing and writes no manifest', async () => {
+  const base = join('.scratch', 'fence-access');
+  const before = await readdir(base).catch(() => []);
+  const io = fakeIo();
+  const report = await runAccessProof({
+    io,
+    keep: true,
+    databaseUrl: 'postgres://user@db.example.internal:5432/production',
+  });
+  const after = await readdir(base).catch(() => []);
+  assert.deepEqual(after, before);
+  assert.equal(io.calls.length, 0);
+  assert.ok(report.steps.some((step) => !step.passed));
+});
+
+test('the report never names the secret of the target', async () => {
+  const io = fakeIo();
+  const report = await runAccessProof({
+    io,
+    databaseUrl: 'postgres://probe:s3cr3t@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable',
+  });
+  assert.equal(JSON.stringify(report).includes('s3cr3t'), false);
+});
+test('the command line takes the target of the proof from the environment', () => {
+  const fromEnvironment = targetFromEnvironment({
+    ONLINE_FIXTURE_CONTAINER: 'other-container',
+    ONLINE_FIXTURE_DATABASE_URL: 'postgres://postgres@127.0.0.1:1234/other?sslmode=disable',
+  }, {});
+  assert.equal(fromEnvironment.container, 'other-container');
+  assert.match(String(fromEnvironment.databaseUrl), /127\.0\.0\.1:1234\/other/);
+
+  // An explicit option wins over the environment.
+  const explicit = targetFromEnvironment({ ONLINE_FIXTURE_CONTAINER: 'other-container' }, { container: 'chosen' });
+  assert.equal(explicit.container, 'chosen');
+  assert.equal(explicit.databaseUrl, undefined);
+
+  assert.deepEqual(targetFromEnvironment({}, {}), {});
+});
+
+test('the runbook, the deployment note and the configuration name the same fence', async () => {
+  const runbook = await readFile(join('docs', 'implementation', 'MVP-operations.md'), 'utf8');
+  const note = await readFile(join('deploy', 'README.md'), 'utf8');
+  const database = await readFile(join('deploy', 'postgres.compose.yml'), 'utf8');
+  const api = await readFile(join('deploy', 'api.compose.yml'), 'utf8');
+  const documented = documentedFencePath(runbook);
+  const readme = readmeFencePath(note);
+  const configured = /ONLINE_RESTORE_FENCE_PATH:\s*(\S+)/.exec(database)?.[1] ?? '';
+  const configuredApi = /ONLINE_RESTORE_FENCE_PATH:\s*(\S+)/.exec(api)?.[1] ?? '';
+  assert.notEqual(documented, '');
+  assert.equal(documented, readme);
+  assert.equal(documented, configured);
+  assert.equal(configured, configuredApi);
+  const agreement = fencePathAgreement({ documented, compose: configured, readme });
+  assert.equal(agreement.ok, true);
+  assert.deepEqual(agreement.distinct, [documented]);
+});
+
+test('the rendered configuration of the services names the fence', () => {
+  const rendered = JSON.stringify({
+    services: {
+      postgres: { environment: { ONLINE_RESTORE_FENCE_PATH: '/var/lib/kamkmchess/restore-fence' } },
+      api: { environment: { ONLINE_RESTORE_FENCE_PATH: '/var/lib/kamkmchess/restore-fence' } },
+    },
+  });
+  const paths = composeFencePaths(rendered);
+  assert.equal(paths.postgres, '/var/lib/kamkmchess/restore-fence');
+  assert.equal(paths.api, '/var/lib/kamkmchess/restore-fence');
+  // A configuration that cannot be parsed names no fence at all.
+  assert.deepEqual(composeFencePaths('not json'), { postgres: '', api: '' });
+});
+
+test('the proof owns the schema of its run and never the schema of another run', () => {
+  assert.equal(ownedSchemaName(RUN_SCHEMA), RUN_SCHEMA);
+  assert.equal(ownedSchemaName('fence_probe_somethingelse'), null);
+  assert.equal(ownedSchemaName(''), null);
+  assert.notEqual(RUN_SCHEMA, RESTORE_RUN_SCHEMA);
+});
+
+test('the keep option keeps the schema of the run and says so', async () => {
+  const io = fakeIo();
+  const report = await runAccessProof({
+    io,
+    keep: true,
+    databaseUrl: 'postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable',
+  });
+  const drops = io.calls.filter((call) => call.args.some((argument) => String(argument).includes('DROP SCHEMA IF EXISTS')));
+  assert.equal(drops.length, 0);
+  const step = report.steps.find((entry) => entry.id === 'the-schema-of-the-run-is-kept');
+  assert.ok(step);
+  assert.match(step.detail, /kept/i);
+  assert.equal(io.state.schemaExists, true);
+
+  const plan = planFenceCleanup({
+    keep: true,
+    containers: [],
+    databases: [],
+    volumes: ['volume-1'],
+    directory: '/tmp/run',
+    logs: [],
+    schema: RUN_SCHEMA,
+    schemaKept: true,
+  });
+  assert.equal(plan.manifest.schema, RUN_SCHEMA);
+  assert.equal(plan.manifest.schemaKept, true);
+});
+
+test('the native proof owns a database as soon as it exists', async () => {
+  const order = [];
+  const registered = [];
+  await assert.rejects(async () => {
+    await createAndMigrate('kamkmchess_proof_source_x', {
+      create: async () => { order.push('create'); },
+      register: (name) => { order.push('register'); registered.push(name); },
+      migrate: async () => { order.push('migrate'); throw new Error('the migrations could not be applied'); },
+    });
+  }, /the migrations could not be applied/);
+  // The database is owned before the migration runs, so a failed migration
+  // still leaves a database the cleanup drops.
+  assert.deepEqual(order, ['create', 'register', 'migrate']);
+  assert.deepEqual(registered, ['kamkmchess_proof_source_x']);
+});
+
+test('a proof that stops with an error still reports every step it did not run', () => {
+  const report = reportFailure([], [], new Error('the database could not be created'));
+  const failed = report.steps.find((step) => step.id === 'the-proof-failed');
+  assert.ok(failed);
+  assert.equal(failed.passed, false);
+  const missing = report.steps.filter((step) => step.id.endsWith('-ran'));
+  assert.equal(missing.length, REQUIRED_STEPS.length);
+  assert.ok(missing.every((step) => step.passed === false));
+});
+
+test('the service that serves again after the fence is closed is a required step', () => {
+  assert.ok(REQUIRED_STEPS.includes('the-service-serves-again-after-the-fence-is-closed'));
 });

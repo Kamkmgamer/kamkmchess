@@ -53,11 +53,116 @@ function finding(severity, code, message, remediation = null) {
  * @returns {string[]}
  */
 export function parseMigrationWrites(sql) {
+  // The verb matters: a function that inserts into the control timeline needs
+  // the insert privilege, while a function that updates or deletes a table
+  // does not give the runtime role a write on it.
+  //
+  // Only the bodies of the functions are scanned. A statement outside a
+  // function runs once, as the owner of the migration, and it says nothing
+  // about the runtime role.
   const writes = new Set();
-  for (const match of sql.matchAll(/INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) writes.add(match[1].toLowerCase());
-  for (const match of sql.matchAll(/UPDATE\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?[A-Za-z_][A-Za-z0-9_]*)?\s+SET\b/gi)) writes.add(match[1].toLowerCase());
-  for (const match of sql.matchAll(/DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) writes.add(match[1].toLowerCase());
+  for (const body of parseMigrationFunctionBodies(sql)) {
+    for (const match of body.matchAll(/INSERT\s+INTO\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)/gi)) {
+      writes.add(`${match[1].toLowerCase()}:INSERT`);
+    }
+    for (const match of body.matchAll(/UPDATE\s+(?:ONLY\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?[A-Za-z_][A-Za-z0-9_]*)?\s+SET\b/gi)) {
+      writes.add(`${match[1].toLowerCase()}:UPDATE`);
+    }
+    for (const match of body.matchAll(/DELETE\s+FROM\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)/gi)) {
+      writes.add(`${match[1].toLowerCase()}:DELETE`);
+    }
+  }
   return [...writes].sort();
+}
+
+/**
+ * Returns the bodies of the functions a migration creates.
+ *
+ * Only what a function does at run time can justify a privilege of the
+ * runtime role.
+ * @param {string} sql
+ * @returns {string[]}
+ */
+/**
+ * Removes the comments and the quoted strings of a migration.
+ *
+ * A declaration inside a comment and a statement inside a string never
+ * justify a privilege of the runtime role. A dollar quoted body is kept,
+ * because that is where the statements of a function live.
+ * @param {string} sql
+ * @returns {string}
+ */
+export function stripSqlCommentsAndStrings(sql) {
+  let result = '';
+  let index = 0;
+  while (index < sql.length) {
+    const character = sql[index];
+    if (character === '-' && sql[index + 1] === '-') {
+      const end = sql.indexOf('\n', index);
+      index = end < 0 ? sql.length : end;
+      continue;
+    }
+    if (character === '/' && sql[index + 1] === '*') {
+      const end = sql.indexOf('*/', index + 2);
+      index = end < 0 ? sql.length : end + 2;
+      result += ' ';
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      const quote = character;
+      let cursor = index + 1;
+      while (cursor < sql.length) {
+        if (sql[cursor] === quote) {
+          if (sql[cursor + 1] === quote) {
+            cursor += 2;
+            continue;
+          }
+          break;
+        }
+        cursor += 1;
+      }
+      index = cursor + 1;
+      result += ' ';
+      continue;
+    }
+    if (character === '$') {
+      const delimiter = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(index));
+      if (delimiter) {
+        const tag = delimiter[0];
+        const end = sql.indexOf(tag, index + tag.length);
+        result += sql.slice(index, end < 0 ? sql.length : end + tag.length);
+        index = end < 0 ? sql.length : end + tag.length;
+        continue;
+      }
+    }
+    result += character;
+    index += 1;
+  }
+  return result;
+}
+
+export function parseMigrationFunctionBodies(sql) {
+  const bodies = [];
+  // Only the body of a declared function counts. A dollar quoted block of a
+  // one-time statement, a DO block or a comment is not a function body, and a
+  // function may use a tagged delimiter. The comments and the quoted strings
+  // are removed first, so a declaration inside a comment and a statement
+  // inside a string never count.
+  const clean = stripSqlCommentsAndStrings(sql);
+  const declarations = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\b/gi;
+  for (const match of clean.matchAll(declarations)) {
+    const tail = clean.slice(match.index + match[0].length);
+    const asMatch = /\bAS\s+(\$[A-Za-z_][A-Za-z0-9_]*\$|\$\$)/i.exec(tail);
+    if (!asMatch) continue;
+    const delimiter = asMatch[1];
+    const start = asMatch.index + asMatch[0].length;
+    const end = tail.indexOf(delimiter, start);
+    if (end < 0) continue;
+    // The statements of the body are read without its strings, so a
+    // statement inside a string never counts.
+    bodies.push(stripSqlCommentsAndStrings(tail.slice(start, end)));
+  }
+  return bodies;
 }
 
 /**
@@ -71,8 +176,14 @@ export function parseMigrationWrites(sql) {
  */
 export function parseMigrationReads(sql) {
   const reads = new Set();
-  for (const match of sql.matchAll(/\b(?:FROM|JOIN)\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) {
-    reads.add(match[1].toLowerCase());
+  for (const body of parseMigrationFunctionBodies(sql)) {
+    // A row reference (`FROM OLD.column`) and the right side of a comparison
+    // (`IS DISTINCT FROM expression`) are not tables, so a read of them must
+    // not excuse a grant.
+    const pattern = /(?<!\bDISTINCT\s)\b(?:FROM|JOIN)\s+(?!(?:OLD|NEW)\b)(?:[A-Za-z_][A-Za-z0-9_]*\.)?([A-Za-z_][A-Za-z0-9_]*)/gi;
+    for (const match of body.matchAll(pattern)) {
+      reads.add(match[1].toLowerCase());
+    }
   }
   return [...reads].sort();
 }
@@ -272,7 +383,12 @@ export function parsePolicy(raw) {
  */
 export function auditGrants({ policy, tables, usage, migrationGrants = [], sequences = [], functions = [], migrationReads = [], migrationWrites = [] }) {
   const reads = new Set(migrationReads.map((table) => table.toLowerCase()));
-  const written = new Set(migrationWrites.map((table) => table.toLowerCase()));
+  // The table of a write is lowercased and the verb is uppercased, so the
+  // entry matches the way the privileges are named.
+  const written = new Set(migrationWrites.map((entry) => {
+    const [table, verb] = String(entry).split(':');
+    return `${(table ?? '').toLowerCase()}:${(verb ?? '').toUpperCase()}`;
+  }));
   /** @type {Finding[]} */
   const findings = [];
   const migrated = new Set(tables.map((table) => table.toLowerCase()));
@@ -400,29 +516,41 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
   for (const [table, granted] of [...policy.privileges.entries()].sort()) {
     const used = usage.get(table);
     if (!used) {
-      if (reads.has(table)) {
-        // A SQL function reads the table with the privileges of the invoking
-        // role, so the grant is required even without a Go statement.
+      // No statement of the writer names the table, so every privilege is
+      // assessed on its own: a read never blesses a write, and a write is
+      // only used when a function writes exactly that verb.
+      for (const verb of granted) {
+        if (verb === 'SELECT' && reads.has(table)) {
+          findings.push(finding(
+            'info',
+            'grant-used-by-migration-function',
+            `The policy grants SELECT on ${table}, which a migration function reads with the privileges of the invoking role.`,
+            null,
+          ));
+          continue;
+        }
+        if (verb !== 'SELECT' && written.has(`${table}:${verb}`)) {
+          findings.push(finding(
+            'info',
+            'grant-used-by-migration-function',
+            `The policy grants ${verb} on ${table}, which a migration function writes with the privileges of the invoking role.`,
+            null,
+          ));
+          continue;
+        }
         findings.push(finding(
-          'info',
-          'grant-used-by-migration-function',
-          `The policy grants ${[...granted].join(', ')} on ${table}, which a migration function reads at run time.`,
-          null,
+          'warning',
+          'grant-unused-privilege',
+          `The policy grants ${verb} on ${table}, but neither the writer nor a migration function uses ${verb}.`,
+          'Remove the privilege so the role stays least-privilege.',
         ));
-        continue;
       }
-      findings.push(finding(
-        'warning',
-        'grant-unused-table',
-        `The policy grants ${[...granted].join(', ')} on ${table}, but no writer statement names that table.`,
-        'Check whether the table is written by another component, or remove the grant.',
-      ));
       continue;
     }
     for (const verb of granted) {
       if (used.has(verb)) continue;
       if (verb === 'SELECT') continue;
-      if (written.has(table)) {
+      if (written.has(`${table}:${verb}`)) {
         // A trigger function writes the table as the role that caused the
         // trigger, so the privilege is used even when no Go statement names
         // the table. Removing it would break the write.
