@@ -31,6 +31,13 @@
 // and the guest seat credential commit in one transaction. A crash can never
 // leave a spent invitation without a game, and no sweeper has to look for an
 // orphaned acceptance.
+//
+// A write that names a participant is ordered against the removal of that
+// participant. The account scope lock of the online service is taken before
+// the row lock of the invitation or of the rematch offer, and the durable
+// removal of every participant is rechecked after the lock, so a request
+// that was authenticated before the removal never creates a personal row
+// after it and never revives a credential of a removed participant.
 package invite
 
 import (
@@ -44,8 +51,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/locks"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/Kamkmgamer/kamkmchess/backend/subject"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -83,6 +92,13 @@ var (
 	// ErrUnavailable reports a missing dependency, such as the private
 	// rules process.
 	ErrUnavailable = errors.New("invite: unavailable")
+	// ErrRemoved reports a participant whose account was removed.
+	//
+	// A removed participant may not name a new personal row, so the write
+	// that would name it is refused. The refusal is ordered against the
+	// removal itself, so a request that was authenticated before the
+	// removal never creates a row after it.
+	ErrRemoved = errors.New("invite: the participant was removed")
 )
 
 // Kind names the two invitation paths.
@@ -478,12 +494,49 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Created, e
 	if inviterControl.ModelLabel != nil {
 		modelLabel = *inviterControl.ModelLabel
 	}
-	_, err = s.db.Exec(ctx, `INSERT INTO online_friend_invitations(invitation_id,kind,status,version,inviter_kind,inviter_id,inviter_public_label,inviter_control_kind,inviter_model_label,inviter_seat,starting_time_ms,increment_ms,starting_fen,recipient_account_id,owner_token_hash,created_at,expires_at) VALUES($1,$2,$3,1,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-		invitationID, string(kind), string(StatusOpen), string(inviterParticipant.Kind), inviterParticipant.ID, inviterLabel, string(inviterControl.Kind), modelLabel, string(request.Seat),
-		request.TimeControl.StartingTimeMs, request.TimeControl.IncrementMs, nullableString(startingFEN), nullableString(recipient), hashOwnerToken(ownerToken), now, expiresAt)
+	// The account scope lock orders the creation against the removal of the
+	// inviter and of the named recipient. The removal of a participant takes
+	// the same lock and then the row locks of the rows it sanitizes, so the
+	// two flows are ordered instead of racing and never deadlock.
+	participants := []online.ParticipantRef{inviterParticipant}
+	if recipient != "" {
+		participants = append(participants, online.ParticipantRef{Kind: online.ParticipantAccount, ID: recipient})
+	}
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return Created{}, err
 	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if err = lockParticipants(ctx, tx, participants...); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return Created{}, err
+	}
+	// The removal of a participant is rechecked after the lock, so a request
+	// that was authenticated before the removal cannot create a personal row
+	// after it.
+	if err = recheckParticipants(ctx, tx, participants...); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return Created{}, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO online_friend_invitations(invitation_id,kind,status,version,inviter_kind,inviter_id,inviter_public_label,inviter_control_kind,inviter_model_label,inviter_seat,starting_time_ms,increment_ms,starting_fen,recipient_account_id,owner_token_hash,created_at,expires_at) VALUES($1,$2,$3,1,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+		invitationID, string(kind), string(StatusOpen), string(inviterParticipant.Kind), inviterParticipant.ID, inviterLabel, string(inviterControl.Kind), modelLabel, string(request.Seat),
+		request.TimeControl.StartingTimeMs, request.TimeControl.IncrementMs, nullableString(startingFEN), nullableString(recipient), hashOwnerToken(ownerToken), now, expiresAt)
+	if err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return Created{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Created{}, err
+	}
+	closed = true
 	invitation := Invitation{
 		InvitationID:   invitationID,
 		Kind:           kind,
@@ -499,6 +552,73 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Created, e
 		inviterID:      inviterParticipant.ID,
 	}
 	return Created{Invitation: invitation, OwnerToken: ownerToken}, nil
+}
+
+// lockParticipants takes the account scope locks of the participants that a
+// write names.
+//
+// The account scope lock is the shared lock of the online service. The
+// removal of a participant takes the same lock and then the row locks of the
+// rows it sanitizes, so a write that names a participant and the removal of
+// that participant are ordered instead of racing, and the two flows never
+// deadlock against each other.
+//
+// The scopes of one write are taken in ascending order, so two writes that
+// name the same participants take them in the same order.
+//
+// The lock is always taken before the row lock of the invitation or of the
+// rematch offer, because the removal takes the row locks of the rows it
+// sanitizes after its own scope lock.
+func lockParticipants(ctx context.Context, tx pgx.Tx, participants ...online.ParticipantRef) error {
+	scopes := make([]string, 0, len(participants))
+	for _, participant := range participants {
+		if participant.ID == "" {
+			continue
+		}
+		scopes = append(scopes, locks.AccountScope(string(participant.Kind), participant.ID))
+	}
+	return locks.LockAccountScopes(ctx, tx, scopes)
+}
+
+// recheckParticipants reports whether one of the participants was removed.
+//
+// The check runs inside the transaction of the write, after the locks and
+// before the row is written. A request that was authenticated before the
+// removal therefore cannot create a personal row after the removal, and it
+// cannot reintroduce one.
+//
+// The removal tables name a subject by its one-way reference, so the check
+// never handles the raw identifier of a removed subject.
+func recheckParticipants(ctx context.Context, q online.Querier, participants ...online.ParticipantRef) error {
+	for _, participant := range participants {
+		if participant.ID == "" {
+			continue
+		}
+		query := subject.GuestRemovedSQL
+		if participant.Kind == online.ParticipantAccount {
+			query = subject.AccountRemovedSQL
+		}
+		var removed bool
+		if err := q.QueryRow(ctx, query, subject.Reference(participant.ID)).Scan(&removed); err != nil {
+			return err
+		}
+		if removed {
+			return fmt.Errorf("%w: the participant was removed", ErrRemoved)
+		}
+	}
+	return nil
+}
+
+// seatParticipants returns the participants of the seats of a match.
+//
+// The participants are the ones a rematch names, so their scopes are locked
+// and their removal is rechecked before a new game is created for them.
+func seatParticipants(match online.Match) []online.ParticipantRef {
+	participants := make([]online.ParticipantRef, 0, len(match.Seats))
+	for _, seat := range match.Seats {
+		participants = append(participants, seat.Participant)
+	}
+	return participants
 }
 
 // resolvePublicModelLabel resolves a declared model control to the control
@@ -685,6 +805,18 @@ func (s *Service) accept(ctx context.Context, request AcceptRequest, invitation 
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	// The account scope locks come first. The removal of a participant takes
+	// the same lock and then the row locks of the rows it sanitizes, so the
+	// scope locks have to be taken before the row lock of the invitation.
+	participants := []online.ParticipantRef{{Kind: online.ParticipantKind(invitation.inviterKind), ID: invitation.inviterID}}
+	if request.Acceptor != nil {
+		participants = append(participants, request.Acceptor.Participant)
+	}
+	if err = lockParticipants(ctx, tx, participants...); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return Accepted{}, err
+	}
 	// The invitation row is locked for the acceptance. The lock is taken
 	// before the state is read, so a concurrent acceptance is observed
 	// after it committed.
@@ -699,6 +831,14 @@ func (s *Service) accept(ctx context.Context, request AcceptRequest, invitation 
 			_ = tx.Rollback(ctx)
 			return Accepted{}, ErrNotFound
 		}
+		return Accepted{}, err
+	}
+	// The removal of a participant is rechecked after the locks, so a
+	// request that was authenticated before the removal cannot consume an
+	// invitation or create a personal row after it.
+	if err = recheckParticipants(ctx, tx, participants...); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
 		return Accepted{}, err
 	}
 	acceptance, err := s.claim(ctx, tx, request, invitation, keyHash, status, expiresAt)
@@ -997,7 +1137,7 @@ func (s *Service) SeatCredential(ctx context.Context, request SeatCredentialRequ
 	if invitation.inviterKind != string(online.ParticipantGuest) {
 		return result, nil
 	}
-	credential, err := s.mintSeatCredential(ctx, *invitation.MatchID, invitation.InviterSeat, invitation.inviterID, request.Origin)
+	credential, err := s.mintSeatCredential(ctx, *invitation.MatchID, invitation.InviterSeat, online.ParticipantRef{Kind: online.ParticipantGuest, ID: invitation.inviterID}, request.Origin)
 	if err != nil {
 		return SeatCredentialResult{}, err
 	}
@@ -1006,22 +1146,46 @@ func (s *Service) SeatCredential(ctx context.Context, request SeatCredentialRequ
 }
 
 // mintSeatCredential mints a guest seat credential in its own transaction.
-func (s *Service) mintSeatCredential(ctx context.Context, matchID string, seat online.Seat, guestID, origin string) (*GuestCredential, error) {
-	if guestID == "" {
+//
+// The account scope lock of the owner of the seat orders the mint against
+// the removal of that participant, and the removal is rechecked after the
+// lock. A removed participant therefore never receives a fresh credential,
+// and a request that was authenticated before the removal cannot revive one
+// after it.
+func (s *Service) mintSeatCredential(ctx context.Context, matchID string, seat online.Seat, participant online.ParticipantRef, origin string) (*GuestCredential, error) {
+	if participant.ID == "" {
 		return nil, ErrInvalidArgument
 	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
-	credential, err := s.mintSeatCredentialInTx(ctx, tx, matchID, seat, guestID, origin)
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if err = lockParticipants(ctx, tx, participant); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	if err = recheckParticipants(ctx, tx, participant); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	credential, err := s.mintSeatCredentialInTx(ctx, tx, matchID, seat, participant.ID, origin)
 	if err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
 		return nil, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	closed = true
 	return credential, nil
 }
 
@@ -1106,22 +1270,50 @@ func (s *Service) ProposeRematch(ctx context.Context, request RematchRequest) (R
 	}
 	now := s.now()
 	expiresAt := now.Add(s.options.InvitationTTL)
+	// The account scope locks of the participants of the finished match come
+	// first. The removal of a participant takes the same lock and then the
+	// row locks of the rows it sanitizes, so the scope locks have to be
+	// taken before the row lock of the superseded offer.
+	participants := seatParticipants(match)
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return Rematch{}, err
 	}
-	defer tx.Rollback(ctx)
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if err = lockParticipants(ctx, tx, participants...); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return Rematch{}, err
+	}
 	if _, err = tx.Exec(ctx, `UPDATE online_rematch_offers SET status='superseded',version=version+1,updated_at=$2 WHERE match_id=$1 AND status IN ('pending','accepting')`, request.MatchID, now); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return Rematch{}, err
+	}
+	// The removal of a participant is rechecked after the locks, so a
+	// request that was authenticated before the removal cannot create a
+	// personal row after it.
+	if err = recheckParticipants(ctx, tx, participants...); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
 		return Rematch{}, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO online_rematch_offers(rematch_id,match_id,proposer_kind,proposer_id,proposer_public_label,proposer_seat,starting_time_ms,increment_ms,starting_fen,status,version,created_at,updated_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'pending',1,$10,$10,$11)`,
 		rematchID, request.MatchID, string(request.Proposer.Kind), request.Proposer.ID, label, string(proposerSeat),
 		timeControl.StartingTimeMs, timeControl.IncrementMs, nullableString(startingFEN), now, expiresAt); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
 		return Rematch{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return Rematch{}, err
 	}
+	closed = true
 	return Rematch{
 		RematchID:     rematchID,
 		MatchID:       request.MatchID,
@@ -1171,6 +1363,11 @@ func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchReques
 		return RematchResult{}, err
 	}
 	newSeat := reversedSeat(oldSeat)
+	// The account scope locks of the participants of the finished match come
+	// first. The removal of a participant takes the same lock and then the
+	// row locks of the rows it sanitizes, so the scope locks have to be
+	// taken before the row lock of the offer.
+	participants := seatParticipants(match)
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return RematchResult{}, err
@@ -1181,10 +1378,23 @@ func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchReques
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	if err = lockParticipants(ctx, tx, participants...); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return RematchResult{}, err
+	}
 	// The offer is locked before its state is read, so a concurrent
 	// supersede or a second acceptance is observed after it committed.
 	locked, err := s.lockRematch(ctx, tx, request.RematchID)
 	if err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return RematchResult{}, err
+	}
+	// The removal of a participant is rechecked after the locks, so a
+	// request that was authenticated before the removal cannot accept an
+	// offer or create a personal row after it.
+	if err = recheckParticipants(ctx, tx, participants...); err != nil {
 		closed = true
 		_ = tx.Rollback(ctx)
 		return RematchResult{}, err
@@ -1355,7 +1565,7 @@ func (s *Service) RematchSeatCredential(ctx context.Context, request RematchSeat
 	if request.Proposer.Kind != online.ParticipantGuest {
 		return result, nil
 	}
-	credential, err := s.mintSeatCredential(ctx, *offer.NewMatchID, newSeat, request.Proposer.ID, request.Origin)
+	credential, err := s.mintSeatCredential(ctx, *offer.NewMatchID, newSeat, request.Proposer, request.Origin)
 	if err != nil {
 		return SeatCredentialResult{}, err
 	}

@@ -751,6 +751,11 @@ func writeInviteError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found")
 	case errors.Is(err, invite.ErrNotAuthorized):
 		writeError(w, http.StatusForbidden, "not_authorized")
+	case errors.Is(err, invite.ErrRemoved):
+		// A removed participant may not name a new personal row. The
+		// browser sees the same refusal as an unauthorized caller, so the
+		// error vocabulary of the surface does not change.
+		writeError(w, http.StatusForbidden, "not_authorized")
 	case errors.Is(err, invite.ErrInvalidContract), errors.Is(err, invite.ErrInvalidArgument):
 		writeError(w, http.StatusBadRequest, "invalid_request")
 	case errors.Is(err, invite.ErrExpired):
