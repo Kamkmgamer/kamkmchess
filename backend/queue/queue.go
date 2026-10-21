@@ -864,8 +864,8 @@ func ValidateEntryRequest(request CreateEntryRequest) error {
 // inside the transaction, so an account that was authenticated before its
 // removal cannot write queue state afterwards.
 //
-// The lock order of the shared seams is fixed: the account scope locks come
-// before the queue bucket lock and before every row lock.
+// Queue writes take the bucket lock, then the account scope locks, then
+// the entry row locks. Participant removal does not take a bucket lock.
 func lockAccount(ctx context.Context, tx pgx.Tx, accountID string) error {
 	if err := locks.LockAccountScope(ctx, tx, locks.AccountScope("account", accountID)); err != nil {
 		return err
