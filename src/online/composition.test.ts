@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+﻿import { describe, expect, it, vi } from 'vitest';
 import { createOnlineComposition } from './composition';
 import type { QueueEntry } from './contracts';
 import type { ModelSelection } from '../controller/index.js';
@@ -828,10 +828,22 @@ interface AgentServiceState {
   mode: 'online' | 'lost';
   version: number;
   controlEpoch: number;
+  /** The control of the seat of the owner. */
+  control: { kind: 'human' | 'agent'; modelLabel?: string };
+  /** True while the seat of the owner has to move. */
+  seatToMove: boolean;
   commands: Array<Record<string, unknown>>;
   leases: number;
   /** The lease of the seat. */
   leaseId: string | null;
+  /** The generation of the lease of the seat. */
+  leaseGeneration: number;
+  /** The status of the lease of the seat. */
+  leaseStatus: 'active' | 'revoked';
+  /** The runner that holds the lease of the seat. */
+  leaseRunnerId: string | null;
+  /** The billable request the service recorded on the lease of the seat. */
+  pendingRequestId: string | null;
   /** The command route waits for the test. */
   holdCommand: boolean;
   /** The command route waits for the test now. */
@@ -842,6 +854,14 @@ interface AgentServiceState {
   heldLease: boolean;
   /** The releases the service saw. */
   releases: number;
+  /**
+   * The opponent answers the move of the seat.
+   *
+   * The service plays the move of the owner on and the opponent answers it, so
+   * the seat of the owner is to move again and the version of the match moves
+   * on. The test uses it to give the turn back to the seat of the owner.
+   */
+  opponentReplies(): void;
   /** The gate the command route waits for. */
   commandGate: Promise<void>;
   /** The gate the lease route waits for. */
@@ -872,29 +892,96 @@ function agentServiceDouble(state: AgentServiceState): typeof fetch {
         state.heldLease = true;
         await state.leaseGate;
       }
-      if (String(body?.action ?? '') === 'release') state.releases += 1;
-      state.leases += 1;
-      // The lease of the seat keeps its identifier while the runner renews it.
-      if (state.leaseId === null) state.leaseId = `lease-0000000${state.leases}`;
-      return json({
+      const leaseAction = String(body?.action ?? '');
+      // The answer of the service about the lease of the seat.
+      const leaseAnswer = (): Record<string, unknown> => ({
         schemaVersion: 2,
-        leaseId: state.leaseId,
+        leaseId: state.leaseId ?? `lease-0000000${state.leaseGeneration}`,
         matchId: 'match-00000001',
         seat: 'white',
         controlEpoch: state.controlEpoch,
-        generation: 1,
-        runnerId: String(body?.runnerId ?? 'runner-1'),
-        status: 'active',
+        generation: state.leaseGeneration,
+        runnerId: state.leaseRunnerId ?? String(body?.runnerId ?? 'runner-1'),
+        status: state.leaseStatus,
         acquiredAt: '2026-10-21T10:00:00.000Z',
         expiresAt: '2035-01-01T00:00:00.000Z',
         revokedAt: null,
         turnVersion: state.version,
         runnerEpoch: 1,
-        pendingRequestId: path.endsWith('/runner/request') ? String(body?.requestId ?? '') : null,
+        pendingRequestId: state.pendingRequestId,
         pendingRequestStartedAt: null,
-        revokedReason: null,
+        revokedReason: state.leaseStatus === 'revoked' ? 'control_change' : null,
         lastRenewedAt: '2026-10-21T10:00:00.000Z',
       });
+      if (leaseAction === 'release') {
+        // The release gives a lease back. The service checks the lease and the
+        // runner of the release, and nothing else: a lease of an older epoch is
+        // given back as well.
+        if (state.leaseId !== null && String(body?.leaseId ?? '') !== state.leaseId) {
+          return json({ error: 'not_found' }, 404);
+        }
+        if (state.leaseRunnerId !== null && String(body?.runnerId ?? '') !== state.leaseRunnerId) {
+          return json({ error: 'not_found' }, 404);
+        }
+        state.leaseStatus = 'revoked';
+        state.releases += 1;
+        state.leases += 1;
+        return json(leaseAnswer());
+      }
+      // The service fences a lease or a request whose control epoch or whose
+      // turn moved on: the request has to name the state the service holds.
+      if (Number(body?.controlEpoch ?? 0) !== state.controlEpoch) {
+        return json({ error: 'conflict' }, 409);
+      }
+      const requestedTurn = Number(body?.turnVersion ?? 0);
+      if (requestedTurn !== 0 && requestedTurn !== state.version) {
+        return json({ error: 'conflict' }, 409);
+      }
+      if (leaseAction === 'acquire') {
+        if (state.leaseStatus === 'active' && state.leaseId !== null) {
+          // The same runner keeps its lease. Another runner holds the seat.
+          if (state.leaseRunnerId !== null && String(body?.runnerId ?? '') !== state.leaseRunnerId) {
+            return json({ error: 'conflict' }, 409);
+          }
+        } else {
+          // The control change revoked the lease of the seat, so a new lease is
+          // taken and it carries the uncertain request of the old lease over.
+          state.leaseGeneration += 1;
+          state.leaseId = `lease-0000000${state.leaseGeneration}`;
+          state.leaseStatus = 'active';
+          state.leaseRunnerId = String(body?.runnerId ?? 'runner-1');
+        }
+      } else {
+        // A request about a lease names the lease of the seat and the runner
+        // that holds it. A lease of another runner, of another generation or
+        // a lease that is not active any more is refused.
+        if (state.leaseId === null || String(body?.leaseId ?? '') !== state.leaseId) {
+          return json({ error: 'not_found' }, 404);
+        }
+        if (state.leaseRunnerId !== null && String(body?.runnerId ?? '') !== state.leaseRunnerId) {
+          return json({ error: 'not_found' }, 404);
+        }
+        if (state.leaseStatus !== 'active') {
+          return json({ error: 'conflict' }, 409);
+        }
+      }
+      if (leaseAction === 'begin') {
+        // Only one billable request is recorded on the lease of the seat.
+        if (state.pendingRequestId !== null && state.pendingRequestId !== String(body?.requestId ?? '')) {
+          return json({ error: 'conflict' }, 409);
+        }
+        state.pendingRequestId = String(body?.requestId ?? '');
+      }
+      if (leaseAction === 'clear') {
+        // Only the record the request names is closed: a request of another
+        // runner keeps its record.
+        if (state.pendingRequestId !== null && state.pendingRequestId !== String(body?.requestId ?? '')) {
+          return json({ error: 'conflict' }, 409);
+        }
+        state.pendingRequestId = null;
+      }
+      state.leases += 1;
+      return json(leaseAnswer());
     }
     if (path.endsWith('/commands')) {
       if (state.holdCommand) {
@@ -913,11 +1000,29 @@ function agentServiceDouble(state: AgentServiceState): typeof fetch {
         return json(stored);
       }
       const action = (body?.action ?? {}) as { kind?: string; control?: { kind?: string; modelLabel?: string } };
-      if (Number(body?.expectedVersion ?? 0) > state.version) {
+      // The service fences a command whose version or control epoch moved on:
+      // the command has to name the exact state the service holds.
+      if (Number(body?.expectedVersion ?? 0) !== state.version) {
+        return json({ error: 'conflict' }, 409);
+      }
+      if (Number(body?.controlEpoch ?? 0) !== state.controlEpoch) {
         return json({ error: 'conflict' }, 409);
       }
       state.version += 1;
-      if (action.kind === 'set_control') state.controlEpoch += 1;
+      if (action.kind === 'set_control') {
+        state.controlEpoch += 1;
+        state.control = (action.control ?? { kind: 'agent' }) as { kind: 'human' | 'agent'; modelLabel?: string };
+        // The service revokes the lease of the seat with the control change.
+        state.leaseStatus = 'revoked';
+      }
+      if (action.kind === 'submit_move') {
+        // The service plays the move on, so the other seat answers it and the
+        // seat of the owner is not to move any more.
+        state.seatToMove = false;
+      }
+      // The service publishes the state it holds now, so the next command of
+      // the browser names the version the service knows.
+      state.view = agentView(state);
       const receipt: Record<string, unknown> = {
         schemaVersion: 2,
         matchId: 'match-00000001',
@@ -1031,19 +1136,24 @@ function providerFixture(): {
   vi.stubGlobal('fetch', (async (input: RequestInfo | URL, init?: RequestInit) => {
     const headers = new Headers((init?.headers ?? {}) as HeadersInit);
     requests.push({ url: String(input), authorization: headers.get('authorization') });
-    return new Response(JSON.stringify({
-      choices: [{
-        index: 0,
-        message: { role: 'assistant', content: '{"move":"e2e4"}' },
-        finish_reason: 'stop',
-      }],
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    // The provider answers with the stream of the chat-completions protocol,
+    // like the real one does. The decoder of the browser reads that stream, so
+    // a plain JSON body would never reach the runner as an answer.
+    const chunk = {
+      choices: [{ index: 0, delta: { content: '{"move":"e2e4"}' }, finish_reason: 'stop' }],
+    };
+    return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
   }) as unknown as typeof fetch);
   return { requests, restore: () => vi.unstubAllGlobals() };
 }
 
 /** The canonical view of the agent seat of the fixture. */
-function agentView(state: AgentServiceState, control: { kind: 'human' | 'agent'; modelLabel?: string }, seatToMove: boolean): OnlineMatchView {
+function agentView(state: AgentServiceState): OnlineMatchView {
+  const control = state.control;
+  const seatToMove = state.seatToMove;
   return matchView({
     version: state.version,
     controlEpoch: state.controlEpoch,
@@ -1078,9 +1188,15 @@ describe('the recovery of an applied handoff (R10-A)', () => {
       mode: 'lost',
       version: 1,
       controlEpoch: 1,
+      control: { kind: 'agent', modelLabel: 'Custom model' },
+      seatToMove,
       commands: [],
       leases: 0,
       leaseId: null,
+      leaseGeneration: 0,
+      leaseStatus: 'active',
+      leaseRunnerId: null,
+      pendingRequestId: null,
       holdCommand: false,
       heldCommand: false,
       holdLease: false,
@@ -1088,14 +1204,26 @@ describe('the recovery of an applied handoff (R10-A)', () => {
       releases: 0,
       commandGate: commandGate.promise,
       leaseGate: leaseGate.promise,
+      opponentReplies() {
+        // The opponent answers the move of the seat: the seat is to move again
+        // and the version of the match moves on.
+        state.version += 1;
+        state.seatToMove = true;
+        state.view = agentView(state);
+      },
     };
-    state.view = agentView(state, { kind: 'agent', modelLabel: 'Custom model' }, seatToMove);
+    state.view = agentView(state);
     return state;
   }
 
-  /** Waits for a condition of the test. */
+  /**
+   * Waits for a condition of the test.
+   *
+   * The service publishes the canonical state of the match on its poll, so a
+   * test waits a little longer than one poll interval for a runner to learn it.
+   */
   async function until(condition: () => boolean, label: string): Promise<void> {
-    const deadline = Date.now() + 2_000;
+    const deadline = Date.now() + 5_000;
     while (!condition()) {
       if (Date.now() > deadline) throw new Error(`The condition (${label}) was not reached.`);
       await new Promise<void>(resolve => { setTimeout(resolve, 5); });
@@ -1123,7 +1251,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     composition.setAgent({ label: 'Custom model', selection: first });
     composition.attachAndFocus('match-00000001', 'white', {
       kind: 'guest',
-      guestId: 'guest-1',
+      guestId: 'guest-r10a-1',
       matchId: 'match-00000001',
       seat: 'white',
       issue: async () => 'guest-token',
@@ -1138,6 +1266,12 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     // The owner switches the seat to the other private model. The service
     // applies the command and the browser never learns the receipt, so the
     // outcome is unknown and the binding of the seat stays the old one.
+    // The runner learned the version of the service before the owner decides:
+    // a command that names a version the service already left is refused.
+    await until(
+      () => (composition.agentRunnerState('match-00000001', 'white')?.version ?? 0) >= state.version,
+      'the runner learned the version of the service',
+    );
     const unknown = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'private-b');
     expect(unknown.kind).toBe('unknown');
     expect(composition.agentBindingLabelFor('match-00000001', 'white')).toBe('Custom model');
@@ -1163,6 +1297,8 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     // provider, and the request carries the credential of that selection. The
     // runner of the old selection never plays again: only the private
     // binding of the proven control may play the seat.
+    // The opponent answered the move of the seat, so the seat is to move again.
+    state.opponentReplies();
     await until(() => provider.requests.length > askedBefore, 'the provider is asked again');
     const after = provider.requests.slice(askedBefore);
     expect(after.length).toBeGreaterThan(0);
@@ -1174,7 +1310,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     expect(composition.agentRunnerState('match-00000001', 'white')?.publicModelLabel).toBe('Custom model');
     composition.dispose();
     provider.restore();
-  });
+  }, 20_000);
 
   it('plays the seat with the new private selection after a direct switch and never with the old credential again', async () => {
     const provider = providerFixture();
@@ -1197,7 +1333,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     composition.setAgent({ label: 'Custom model', selection: first });
     composition.attachAndFocus('match-00000001', 'white', {
       kind: 'guest',
-      guestId: 'guest-1',
+      guestId: 'guest-r10a-2',
       matchId: 'match-00000001',
       seat: 'white',
       issue: async () => 'guest-token',
@@ -1212,20 +1348,29 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     // The owner switches the seat to the other private model. The service
     // answers the command, so the switch is proven.
     state.mode = 'online';
+    // The runner learned the version of the service before the owner decides:
+    // a command that names a version the service already left is refused.
+    await until(
+      () => (composition.agentRunnerState('match-00000001', 'white')?.version ?? 0) >= state.version,
+      'the runner learned the version of the service',
+    );
     const askedBefore = provider.requests.length;
     const accepted = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'private-b');
     expect(accepted.kind).toBe('accepted');
+    // The control of the seat changed at the service. From this moment the
+    // browser never asks the provider with the credential of the old model
+    // again.
+    // The seat plays the private selection the owner chose: the runner of the
+    // new selection asks the provider with the credential of that selection.
+    // The opponent answered the move of the seat, so the seat is to move again
+    // and the runner of the new selection plays the turn.
+    state.opponentReplies();
     await until(
       () => composition.agentRunnerState('match-00000001', 'white')?.boundSeatControlEpoch === state.controlEpoch,
       'the replacement runner binds the proven control epoch',
     );
     expect(composition.agentRunnerState('match-00000001', 'white')?.boundSeatControlEpoch)
       .toBe(state.controlEpoch);
-    // The control of the seat changed at the service. From this moment the
-    // browser never asks the provider with the credential of the old model
-    // again.
-    // The seat plays the private selection the owner chose: the runner of the
-    // new selection asks the provider with the credential of that selection.
     await until(() => provider.requests.length > askedBefore, 'the provider is asked again');
     const after = provider.requests.slice(askedBefore);
     expect(after.length).toBeGreaterThan(0);
@@ -1234,7 +1379,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     expect(connections.asked).toContain('c2');
     composition.dispose();
     provider.restore();
-  });
+  }, 20_000);
 
   it('removes the binding of a seat that a recovered takeover gave to the owner', async () => {
     const provider = providerFixture();
@@ -1252,7 +1397,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     composition.setAgent({ label: 'Custom model', selection: first });
     composition.attachAndFocus('match-00000001', 'white', {
       kind: 'guest',
-      guestId: 'guest-1',
+      guestId: 'guest-r10a-3',
       matchId: 'match-00000001',
       seat: 'white',
       issue: async () => 'guest-token',
@@ -1261,6 +1406,12 @@ describe('the recovery of an applied handoff (R10-A)', () => {
 
     // The owner takes the seat over. The service applies the command and the
     // browser never learns the receipt.
+    // The runner learned the version of the service before the owner decides:
+    // a command that names a version the service already left is refused.
+    await until(
+      () => (composition.agentRunnerState('match-00000001', 'white')?.version ?? 0) >= state.version,
+      'the runner learned the version of the service',
+    );
     const unknown = await composition.agentDecision('match-00000001', 'white', 'takeover');
     expect(unknown.kind).toBe('unknown');
     // The binding of the seat stays: the takeover is not proven.
@@ -1281,7 +1432,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     expect(provider.requests).toHaveLength(0);
     composition.dispose();
     provider.restore();
-  });
+  }, 20_000);
 
   it('keeps the decision of a newer owner and never applies the older one', async () => {
     const provider = providerFixture();
@@ -1309,7 +1460,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     composition.setAgent({ label: 'Custom model', selection: first });
     composition.attachAndFocus('match-00000001', 'white', {
       kind: 'guest',
-      guestId: 'guest-1',
+      guestId: 'guest-r10a-4',
       matchId: 'match-00000001',
       seat: 'white',
       issue: async () => 'guest-token',
@@ -1318,6 +1469,12 @@ describe('the recovery of an applied handoff (R10-A)', () => {
 
     // The owner switches the seat to the second private model. The service
     // applies the command and the browser never learns the receipt.
+    // The runner learned the version of the service before the owner decides:
+    // a command that names a version the service already left is refused.
+    await until(
+      () => (composition.agentRunnerState('match-00000001', 'white')?.version ?? 0) >= state.version,
+      'the runner learned the version of the service',
+    );
     const unknown = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'private-b');
     expect(unknown.kind).toBe('unknown');
     expect(persistedSelection(storage, 'match-00000001', 'white')).toBe('c1');
@@ -1348,7 +1505,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     expect(provider.requests.map(request => request.authorization)).not.toContain('Bearer key-c2');
     composition.dispose();
     provider.restore();
-  });
+  }, 20_000);
 
   it('never applies the decision of an identity that left and came back', async () => {
     const provider = providerFixture();
@@ -1373,7 +1530,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     composition.setAgent({ label: 'Custom model', selection: first });
     composition.attachAndFocus('match-00000001', 'white', {
       kind: 'guest',
-      guestId: 'guest-1',
+      guestId: 'guest-r10a-5',
       matchId: 'match-00000001',
       seat: 'white',
       issue: async () => 'guest-token',
@@ -1382,6 +1539,12 @@ describe('the recovery of an applied handoff (R10-A)', () => {
 
     // The owner switches the seat to the other private model. The service
     // applies the command and the browser never learns the receipt.
+    // The runner learned the version of the service before the owner decides:
+    // a command that names a version the service already left is refused.
+    await until(
+      () => (composition.agentRunnerState('match-00000001', 'white')?.version ?? 0) >= state.version,
+      'the runner learned the version of the service',
+    );
     const unknown = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'private-b');
     expect(unknown.kind).toBe('unknown');
 
@@ -1402,7 +1565,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     expect(provider.requests.map(request => request.authorization)).not.toContain('Bearer key-c2');
     composition.dispose();
     provider.restore();
-  });
+  }, 20_000);
 });
 
 /** The private selection the device holds for one seat. */
