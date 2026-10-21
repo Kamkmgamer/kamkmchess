@@ -73,6 +73,41 @@ change.
 | the failure class | depended on which case the select picked | a specific failure always wins over a generic timeout |
 | a worker that answered late | killed with the exchange | stays alive, so the next request does not pay a cold start |
 
+## The end-to-end bound of one call
+
+The call is bounded by three things, and the caller must know all of them:
+
+- the **caller's context** bounds the whole call, start included. The online
+  path passes the request context of the command, so a caller that has a
+  deadline keeps it.
+- the **exchange budget** (`RequestTimeout`) covers the queue wait and the
+  exchange. A request that waits behind another request spends that budget
+  while it waits.
+- the **start budget** (`StartTimeout`) covers each cold start, and a call
+  starts the worker at most twice: once for the request and once for the
+  retry after a crash.
+
+The wall-clock bound of one call is therefore `RequestTimeout + StartTimeout`
+for a call that starts the worker once, and `RequestTimeout + 2 *
+StartTimeout` for a call that starts it twice. The start durations are added
+back to the exchange deadline, so the exchange always keeps its own budget.
+
+**The cold start is charged to the requests that are queued behind it.** The
+worker has one slot, and the request that triggers a cold start holds that
+slot while the worker boots. The queued requests spend their own queue budget
+while they wait, so a slow start on a loaded host can make a *different*
+request run out of time. The queue wait is not reset and a queued request
+does not get a fresh budget; the remedy is to keep the worker warm, not to
+relax the budget.
+
+The server composition keeps the worker warm through the health monitor: the
+periodic rules probe of `backend/serverapp/health.go` evaluates a position
+through the same client, so the worker is started and ready again after a
+crash. The probe runs on its interval, so the first requests after a server
+start still meet a cold worker; a `client.Warm(ctx)` call next to the
+creation of the client in the composition closes that window. The composition
+is not part of this change.
+
 ## The failure class and the late answer
 
 A second defect shared the same symptom. The exchange ended as soon as its
@@ -101,11 +136,17 @@ what stops the failure from repeating itself under load.
 ## The fixture budgets
 
 A fixture budget must cover the bounded work the fixture performs. The size
-limit fixture installs a line of twice the response limit, so its budget
-covers that transfer. The other fixtures perform one bounded exchange and use
-the production budget of the client. The cold start of the worker is not
-part of any of these budgets: the client budgets the start separately, and
-the regressions below cover it.
+limit fixture installs a line that is longer than the limit, and it
+configures a **small response limit** (8 KiB) for that fixture, so the
+violation is detected after a modest transfer instead of after a megabyte of
+pipe traffic. The assertion stays exact: an oversized answer is malformed.
+The other fixtures perform one bounded exchange and use the production
+budget of the client.
+
+The cold start of the worker is not part of any of these budgets: the client
+budgets the start separately, and the regressions below cover it. The
+warm-up of a fixture client runs under a bounded context, so a stalled
+warm-up fails the fixture instead of the package.
 
 ## Evidence
 
@@ -133,8 +174,32 @@ Two further regressions cover the failure class and the late answer:
   deadline. The request fails with a timeout, and the worker stays alive, so
   the next request does not pay a cold start. The regression compares the
   process identifier of the worker before and after the failure.
+- `TestTheRealBundleColdStartIsOutsideTheExchangeBudget`: the same cold
+  start regression against the pinned worker bundle, with an exchange budget
+  far shorter than the real boot. The assertion does not depend on how long
+  the boot takes.
 
 The real worker bundle is covered as well: with `KHA66_WORKER_ENTRY` set to
 the built `build/rules-worker/worker.mjs`, the readiness probe is accepted by
 the real process and the online integration fixtures that use the real rules
-process (checkmate, timeout policy, candidate fencing) pass unchanged.
+process (checkmate, timeout policy, candidate fencing) pass.
+
+### What was measured, and what was not
+
+- The two start regressions and the two failure-class regressions fail with
+  the old behaviour (the add-back removed, the classification grace removed
+  and the failure precedence removed) and pass with the current one.
+- The failure that was reported on the assembled root is a load-fragile
+  fixture, not the start accounting. The fixture installed a line of twice
+  the response limit, so the client had to read about a megabyte through a
+  pipe before it could report the violation, and that transfer exceeded the
+  fixture's exchange budget on a starved host. The fixture now detects the
+  violation after a modest transfer, and the failure class of a crash no
+  longer depends on which case the select picks.
+- The load measurements of the whole package are **not** a proof: an
+  independent review reproduced a failure of that fixture in 12 of 60 runs
+  under a 16-CPU load before the fixture was separated, and the same review
+  could not reproduce the reported assertion of the assembled root. The
+  honest statement is that the fixture was the fragile part, that its
+  remaining fragility came from a bounded transfer that the fixture itself
+  chose, and that the fixture no longer performs that transfer.

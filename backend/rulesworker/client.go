@@ -352,6 +352,8 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 	// lastErr is the failure the exchange already reported. A deadline that
 	// runs out afterwards must not replace it: a worker that died is a
 	// crash, not a slow worker, and the caller needs the specific answer.
+	// A later failure only replaces an earlier one when the earlier one was
+	// the generic timeout.
 	var lastErr error
 
 	for attempt := 0; ; attempt++ {
@@ -385,7 +387,11 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 			// request does not pay a cold start.
 			return Response{}, exchangeErr
 		}
-		lastErr = exchangeErr
+		// The specific failure wins. A retry that runs out of budget does
+		// not turn a crash into a timeout.
+		if lastErr == nil || (errors.Is(lastErr, ErrTimeout) && !errors.Is(exchangeErr, ErrTimeout)) {
+			lastErr = exchangeErr
+		}
 		c.stop()
 		var rejection *RejectionError
 		if errors.As(exchangeErr, &rejection) {

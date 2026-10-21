@@ -134,7 +134,7 @@ for await (const line of rl) {
       await new Promise((resolve) => setTimeout(resolve, 700));
       break;
     case 'oversized':
-      process.stdout.write('x'.repeat(2000000) + '\n');
+      process.stdout.write('x'.repeat(65536) + '\n');
       continue;
     case 'reject':
       process.stdout.write(JSON.stringify({
@@ -211,16 +211,18 @@ func testEntryWithBootDelay(t *testing.T, delay time.Duration) string {
 // The budgets of the fixtures.
 //
 // The exchange budget must cover the bounded work a fixture performs. The
-// size limit fixture transfers a line of twice the response limit, so its
-// budget covers that transfer. The other fixtures perform one bounded
-// exchange and use the production budget of the client.
+// other fixtures perform one bounded exchange and use the production budget
+// of the client.
 //
 // The cold start of the worker is not part of any of these budgets. The
-// client budgets the start of the worker separately, and the regression
-// below covers it.
+// client budgets the start of the worker separately, and the regressions
+// below cover it.
 const (
-	exchangeBudget  = 2 * time.Second
-	sizeLimitBudget = 5 * time.Second
+	exchangeBudget = 2 * time.Second
+	// warmBudget bounds the warm-up of a fixture client. A warm-up that
+	// cannot finish is a failure of the fixture, not a stall of the
+	// package.
+	warmBudget = 30 * time.Second
 )
 
 func testClient(t *testing.T, timeout time.Duration) *Client {
@@ -234,7 +236,9 @@ func testClient(t *testing.T, timeout time.Duration) *Client {
 	// its own budget now, and the dedicated regression below covers it, so
 	// the other fixtures measure the protocol instead of the host's
 	// process start latency.
-	if err := client.Warm(context.Background()); err != nil {
+	warm, cancel := context.WithTimeout(context.Background(), warmBudget)
+	defer cancel()
+	if err := client.Warm(warm); err != nil {
 		t.Fatalf("warm the worker: %v", err)
 	}
 	return client
@@ -366,6 +370,33 @@ func TestALateAnswerKeepsTheWorkerAlive(t *testing.T) {
 	}
 }
 
+// TestTheRealBundleColdStartIsOutsideTheExchangeBudget runs the regression
+// against the pinned worker bundle.
+//
+// The exchange budget is far shorter than the cold start of the real Node
+// process, so the request can only succeed when the start has its own
+// budget. The assertion does not depend on how long the boot takes: the
+// start is bounded by its own budget, and the exchange by the budget of the
+// request.
+func TestTheRealBundleColdStartIsOutsideTheExchangeBudget(t *testing.T) {
+	entry := os.Getenv("KHA66_WORKER_ENTRY")
+	if entry == "" {
+		t.Skip("set KHA66_WORKER_ENTRY to a built build/rules-worker/worker.mjs")
+	}
+	client, err := New(Config{Entry: entry, RequestTimeout: 300 * time.Millisecond, StartTimeout: 30 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	response, err := client.Evaluate(context.Background(), moveRequest("real-cold"))
+	if err != nil {
+		t.Fatalf("the real cold start consumed the exchange budget: %v", err)
+	}
+	if response.Candidate == nil || response.Candidate.Move.From != "e2" {
+		t.Fatalf("candidate = %+v", response.Candidate)
+	}
+}
+
 func TestEvaluateReturnsValidatedMoveCandidate(t *testing.T) {
 	client := testClient(t, exchangeBudget)
 	response, err := client.Evaluate(context.Background(), moveRequest("ok"))
@@ -462,8 +493,10 @@ func TestRejectedOrMismatchedOutputCannotReturnACandidate(t *testing.T) {
 }
 
 func TestTimeoutKillsTheWorkerAndTheNextRequestRestartsIt(t *testing.T) {
-	// Include cold Node startup under CI load, while staying below the fake
-	// worker's five-second stall and the two-second elapsed-time assertion.
+	// The worker is warm, so the measured timeout is the timeout of the
+	// exchange and not the cold start of the worker. The restart after the
+	// timeout is bounded by the start budget of the client, because the
+	// restart pays the cold start of a fresh worker.
 	client := testClient(t, 500*time.Millisecond)
 	started := time.Now()
 	response, err := client.Evaluate(context.Background(), request("slow"))
@@ -476,8 +509,14 @@ func TestTimeoutKillsTheWorkerAndTheNextRequestRestartsIt(t *testing.T) {
 	if elapsed := time.Since(started); elapsed > 2*time.Second {
 		t.Fatalf("timeout took %s", elapsed)
 	}
+	restarted := time.Now()
 	if _, err := client.Evaluate(context.Background(), request("ok")); err != nil {
 		t.Fatalf("restart after timeout: %v", err)
+	}
+	// The restart pays the cold start of the worker, so it is bounded by
+	// the start budget of the client and not by the exchange budget.
+	if elapsed := time.Since(restarted); elapsed > client.config.StartTimeout+exchangeBudget {
+		t.Fatalf("the restart took %s, more than the start budget and one exchange", elapsed)
 	}
 }
 
@@ -515,22 +554,36 @@ func TestCanceledRequestDoesNotAttemptToStartWorker(t *testing.T) {
 }
 
 func TestCrashAndMalformedOutputAreBoundedAndRecoverable(t *testing.T) {
-	// The fixture installs a line of twice the response limit, so its budget
-	// covers that bounded transfer.
-	client := testClient(t, sizeLimitBudget)
-	if _, err := client.Evaluate(context.Background(), request("crash")); !errors.Is(err, ErrCrashed) {
+	// The size limit of the fixture is small, so the oversized line is
+	// detected after a modest transfer instead of after a megabyte of pipe
+	// traffic. The assertion stays exact: an oversized answer is malformed.
+	client, err := New(Config{
+		Entry:            testEntry(t),
+		RequestTimeout:   exchangeBudget,
+		MaxResponseBytes: 8 << 10,
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	warm, cancel := context.WithTimeout(context.Background(), warmBudget)
+	defer cancel()
+	if err = client.Warm(warm); err != nil {
+		t.Fatalf("warm the worker: %v", err)
+	}
+	if _, err = client.Evaluate(context.Background(), request("crash")); !errors.Is(err, ErrCrashed) {
 		t.Fatalf("crash error = %v", err)
 	}
-	if _, err := client.Evaluate(context.Background(), request("ok")); err != nil {
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
 		t.Fatalf("restart after crash: %v", err)
 	}
-	if _, err := client.Evaluate(context.Background(), request("malformed")); !errors.Is(err, ErrMalformed) {
+	if _, err = client.Evaluate(context.Background(), request("malformed")); !errors.Is(err, ErrMalformed) {
 		t.Fatalf("malformed error = %v", err)
 	}
-	if _, err := client.Evaluate(context.Background(), request("ok")); err != nil {
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
 		t.Fatalf("restart after malformed output: %v", err)
 	}
-	if _, err := client.Evaluate(context.Background(), request("oversized")); !errors.Is(err, ErrMalformed) {
+	if _, err = client.Evaluate(context.Background(), request("oversized")); !errors.Is(err, ErrMalformed) {
 		t.Fatalf("oversized error = %v", err)
 	}
 }
