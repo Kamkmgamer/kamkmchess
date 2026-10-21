@@ -132,14 +132,28 @@ outcome for a request that ran out of time.
 - The class of a **timeout** follows the deadlines, not the moment of the
   check. The cleanup of the worker process can outlive the deadline of the
   caller, and the cause of the caller must never be invented from that.
-  - The deadline of the caller, when it is the deadline that ended the
-    exchange, is carried as the cause.
+  - The internal deadline of the client is kept **explicitly**. A derived
+    context clamps its own deadline to the earlier of the requested deadline
+    and the deadline of its parent, so the class must not be read from the
+    clamped value: when the deadline of the caller ends first, the clamped
+    deadline equals the deadline of the caller and the internal budget would
+    look like the one that ended the exchange.
+  - The deadline of the caller, when it is strictly earlier than the internal
+    deadline, is carried as the cause.
   - An internal timeout of the request or of the start carries **no** cause,
     so a genuine outage of the worker is never recorded as the deadline of a
     caller.
+  - At the boundary the two deadlines are equal and the internal budget
+    wins: the worker had its whole budget, and the caller had no more than
+    that.
 - The cancellation carries the **cause** of the context, so that every caller
   of the client can tell a cancellation from a failure of the worker. An
   internal timeout carries none.
+- A canceled call **reaps the worker**. The exchange kills the worker when
+  the deadline passes, and a killed worker must be reaped and must never stay
+  the ready worker of the client: the next request has to start a fresh one.
+  A write that fails while the caller goes away keeps the class of the
+  cancellation as well.
 - A **specific** failure survives the retry and the restart. A worker that
   died on the first exchange and hung on the second is reported as the crash,
   and a replacement worker that never becomes ready does not replace it
@@ -226,6 +240,15 @@ Three further regressions cover the causes and the starts:
   cancellation of the caller. The call reports the cancellation.
 - `TestTheClassOfATimeoutFollowsTheDeadlines`: the class of a timeout
   follows the deadlines and not the moment of the check.
+- `TestTheCallerDeadlineIsCarriedDuringTheReadiness` and
+  `TestTheCallerDeadlineIsCarriedInAWarmedExchange`: the deadline of the
+  caller is carried when it ends the call, in the readiness phase and in a
+  warmed exchange.
+- `TestAnInternalTimeoutCarriesNoCause`: a worker that does not answer
+  inside its own budget is an outage of the worker.
+- `TestTheEqualBoundaryBelongsToTheInternalBudget`: the boundary rule.
+- `TestACanceledCallReapsTheWorker`: a canceled call leaves no dead worker
+  behind, and the next request starts a fresh one.
 
 `TestTheRealBundleAnswersAColdRequest` is the smoke test of the pinned worker
 bundle: the real process accepts the readiness probe and answers a cold

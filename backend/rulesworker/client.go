@@ -322,27 +322,32 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// The request budget covers the queue wait and the exchange.
-	wait, cancelWait := context.WithTimeout(ctx, c.config.RequestTimeout)
+	// The request budget covers the queue wait and the exchange. The internal
+	// deadline is kept explicitly, because a derived context clamps its own
+	// deadline to the earlier of the requested deadline and the deadline of
+	// its parent.
+	waitDeadline := time.Now().Add(c.config.RequestTimeout)
+	wait, cancelWait := context.WithDeadline(ctx, waitDeadline)
 	defer cancelWait()
 
 	line, err := c.buildRequest(request)
 	if err != nil {
 		return Response{}, err
 	}
-	if err := c.acquire(wait); err != nil {
+	if err := c.acquire(wait, waitDeadline); err != nil {
 		return Response{}, err
 	}
 	defer c.release()
 
 	if err := wait.Err(); err != nil {
-		return Response{}, contextError(wait, ctx)
+		return Response{}, exchangeError(waitDeadline, ctx)
 	}
 	if c.closed {
 		return Response{}, ErrClosed
 	}
-	waitExpiry, _ := wait.Deadline()
-	expiry := waitExpiry
+	// The internal deadline is the one the client asked for, not the
+	// clamped deadline of the derived context.
+	expiry := waitDeadline
 	// lastErr is the failure the exchange already reported. A deadline that
 	// runs out afterwards must not replace it: a worker that died is a
 	// crash, not a slow worker, and the caller needs the specific answer.
@@ -364,9 +369,10 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 		}
 		// The start has its own budget, and the caller's context still
 		// bounds the whole call.
-		startCtx, cancelStart := context.WithTimeout(ctx, c.config.StartTimeout)
+		startDeadline := time.Now().Add(c.config.StartTimeout)
+		startCtx, cancelStart := context.WithDeadline(ctx, startDeadline)
 		started := time.Now()
-		readyErr := c.ensureReady(ctx, startCtx)
+		readyErr := c.ensureReady(ctx, startCtx, startDeadline)
 		startElapsed := time.Since(started)
 		cancelStart()
 		if readyErr != nil {
@@ -384,11 +390,15 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 		// The start is not charged to the exchange budget.
 		expiry = expiry.Add(startElapsed)
 		exchange, cancelExchange := context.WithDeadline(ctx, expiry)
-		response, retry, exchangeErr := c.exchange(exchange, ctx, line, request)
+		response, retry, exchangeErr := c.exchange(exchange, ctx, expiry, line, request)
 		cancelExchange()
 		if exchangeErr == nil {
 			return response, nil
 		}
+		// The worker is stopped first. The exchange may have killed it, and
+		// a killed worker must be reaped and must never stay the ready one
+		// of the client.
+		c.stop()
 		// The cancellation of the caller keeps its class, even when a
 		// specific failure of an earlier attempt is known.
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -399,7 +409,6 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 		if lastErr == nil || (errors.Is(lastErr, ErrTimeout) && !errors.Is(exchangeErr, ErrTimeout)) {
 			lastErr = exchangeErr
 		}
-		c.stop()
 		var rejection *RejectionError
 		if errors.As(exchangeErr, &rejection) {
 			return Response{}, rejection
@@ -422,16 +431,17 @@ func (c *Client) Warm(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := c.acquire(ctx); err != nil {
+	if err := c.acquire(ctx, time.Now().Add(c.config.StartTimeout)); err != nil {
 		return err
 	}
 	defer c.release()
 	if c.closed {
 		return ErrClosed
 	}
-	startCtx, cancel := context.WithTimeout(ctx, c.config.StartTimeout)
+	startDeadline := time.Now().Add(c.config.StartTimeout)
+	startCtx, cancel := context.WithDeadline(ctx, startDeadline)
 	defer cancel()
-	return c.ensureReady(ctx, startCtx)
+	return c.ensureReady(ctx, startCtx, startDeadline)
 }
 
 // ensureReady makes sure that a worker process is running and has answered
@@ -445,13 +455,13 @@ func (c *Client) Warm(ctx context.Context) error {
 //
 // A probe that fails stops the worker. The next request starts a fresh one;
 // the client never retries the probe in a loop.
-func (c *Client) ensureReady(ctx context.Context, startCtx context.Context) error {
+func (c *Client) ensureReady(ctx context.Context, startCtx context.Context, startDeadline time.Time) error {
 	if c.proc != nil && c.ready {
 		return nil
 	}
 	// A canceled caller never starts a worker.
 	if err := ctx.Err(); err != nil {
-		return contextError(ctx, nil)
+		return callerError(ctx)
 	}
 	if c.proc == nil {
 		if err := c.start(); err != nil {
@@ -464,7 +474,7 @@ func (c *Client) ensureReady(ctx context.Context, startCtx context.Context) erro
 		c.stop()
 		return err
 	}
-	if _, _, err = c.exchange(startCtx, ctx, line, probe); err != nil {
+	if _, _, err = c.exchange(startCtx, ctx, startDeadline, line, probe); err != nil {
 		c.stop()
 		return err
 	}
@@ -487,9 +497,9 @@ func readinessRequest() Request {
 // acquire takes the single worker slot without ignoring the caller's deadline.
 // Running out of budget while queued returns immediately and leaves the
 // in-flight request and process untouched.
-func (c *Client) acquire(ctx context.Context) error {
+func (c *Client) acquire(ctx context.Context, internal time.Time) error {
 	if err := ctx.Err(); err != nil {
-		return contextError(ctx, nil)
+		return callerError(ctx)
 	}
 	select {
 	case c.slot <- struct{}{}:
@@ -500,7 +510,7 @@ func (c *Client) acquire(ctx context.Context) error {
 	case c.slot <- struct{}{}:
 		return nil
 	case <-ctx.Done():
-		return contextError(ctx, nil)
+		return exchangeError(internal, ctx)
 	}
 }
 
@@ -510,7 +520,7 @@ func (c *Client) release() {
 
 // Close terminates a running worker. It is safe to call more than once.
 func (c *Client) Close() error {
-	if err := c.acquire(context.Background()); err != nil {
+	if err := c.acquire(context.Background(), time.Now().Add(c.config.StartTimeout)); err != nil {
 		return err
 	}
 	defer c.release()
@@ -634,7 +644,7 @@ type readResult struct {
 // The caller's context is passed separately, because the class of the failure
 // depends on whether the caller's own context ended or the internal budget
 // of the exchange did.
-func (c *Client) exchange(ctx context.Context, caller context.Context, line []byte, request Request) (Response, bool, error) {
+func (c *Client) exchange(ctx context.Context, caller context.Context, internal time.Time, line []byte, request Request) (Response, bool, error) {
 	writeDone := make(chan error, 1)
 	stdin := c.stdin
 	go func() {
@@ -644,11 +654,17 @@ func (c *Client) exchange(ctx context.Context, caller context.Context, line []by
 	select {
 	case err := <-writeDone:
 		if err != nil {
+			// A write that failed because the worker died is a crash,
+			// unless the caller went away in the same moment: the
+			// cancellation of the caller keeps its class.
+			if errors.Is(caller.Err(), context.Canceled) {
+				return Response{}, false, ErrCanceled
+			}
 			return Response{}, true, fmt.Errorf("%w: write failed", ErrCrashed)
 		}
 	case <-ctx.Done():
 		c.kill()
-		return Response{}, false, contextError(ctx, caller)
+		return Response{}, false, exchangeError(internal, caller)
 	}
 
 	readDone := make(chan readResult, 1)
@@ -665,7 +681,7 @@ func (c *Client) exchange(ctx context.Context, caller context.Context, line []by
 		// context: a cancellation stays a cancellation and a deadline stays
 		// a timeout.
 		c.kill()
-		return Response{}, false, contextError(ctx, caller)
+		return Response{}, false, exchangeError(internal, caller)
 	case result := <-readDone:
 		// The answer may have arrived after the deadline of the exchange.
 		// A request that ran out of its budget is never answered with a
@@ -673,7 +689,7 @@ func (c *Client) exchange(ctx context.Context, caller context.Context, line []by
 		// answer is accepted.
 		if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
 			c.kill()
-			return Response{}, false, contextError(ctx, caller)
+			return Response{}, false, exchangeError(internal, caller)
 		}
 		if result.err != nil {
 			if errors.Is(result.err, errLineTooLong) {
@@ -948,44 +964,51 @@ func (c *Client) stop() {
 	c.ready = false
 }
 
-// contextError maps the end of an exchange onto the class of the failure.
+// exchangeError maps the end of an exchange onto the class of the failure.
 //
-// The class follows the **deadlines**, not the moment of the check. The
-// cleanup of the worker process can outlive the deadline of the caller, and
-// the cause of the caller must never be invented from that.
+// The internal deadline of the phase is passed **explicitly**, because a
+// derived context clamps its own deadline to the earlier of the requested
+// deadline and the deadline of its parent. The class of a failure must not
+// be read from that clamped value: when the deadline of the caller ends
+// first, the derived deadline equals the deadline of the caller, and the
+// internal budget would look like the one that ended the exchange.
 //
 //   - An explicit cancellation of the caller is a cancellation. The caller
 //     knows that it went away.
-//   - The deadline of the caller, when it is the deadline that ended the
-//     exchange, is carried as the cause. A caller that gave up is not a
-//     failure of the worker.
-//   - An internal timeout of the request or of the start carries **no** cause.
+//   - The deadline of the caller, when it is strictly earlier than the
+//     internal deadline, ended the exchange, and the cause is carried.
+//   - Otherwise the internal budget ended it, and it carries **no** cause.
 //     A worker that did not answer inside its own budget is an outage of the
 //     worker, and it must never be recorded as the deadline of a caller.
 //
-// The comparison of the deadlines decides which of the two ended the
-// exchange, so the answer does not depend on the schedule of the runtime.
-func contextError(exchange context.Context, caller context.Context) error {
+// At the boundary the two deadlines are equal, and the internal budget wins:
+// the worker had its whole budget, and the caller had no more than that.
+func exchangeError(internal time.Time, caller context.Context) error {
 	if caller == nil {
-		caller = exchange
+		return ErrTimeout
 	}
-	// An explicit cancellation of the caller is a cancellation. The caller
-	// knows that it went away.
 	if errors.Is(caller.Err(), context.Canceled) {
 		return ErrCanceled
 	}
-	if exchange == caller {
-		// The exchange ended with the context of the caller itself, so the
-		// deadline of the caller ended it.
-		if caller.Err() != nil {
-			return fmt.Errorf("%w: %w", ErrTimeout, context.DeadlineExceeded)
-		}
+	if deadline, ok := caller.Deadline(); ok && deadline.Before(internal) && caller.Err() != nil {
+		return fmt.Errorf("%w: %w", ErrTimeout, context.DeadlineExceeded)
+	}
+	return ErrTimeout
+}
+
+// callerError maps the end of the caller's own context.
+//
+// It is used where the context that ended is the caller's own: a canceled
+// caller is a cancellation, and a deadline that the caller set is carried as
+// the cause.
+func callerError(caller context.Context) error {
+	if caller == nil {
 		return ErrTimeout
 	}
-	exchangeDeadline, hasExchange := exchange.Deadline()
-	callerDeadline, hasCaller := caller.Deadline()
-	if hasExchange && hasCaller && callerDeadline.Before(exchangeDeadline) && caller.Err() != nil {
-		// The deadline of the caller is the one that ended the call.
+	if errors.Is(caller.Err(), context.Canceled) {
+		return ErrCanceled
+	}
+	if errors.Is(caller.Err(), context.DeadlineExceeded) {
 		return fmt.Errorf("%w: %w", ErrTimeout, context.DeadlineExceeded)
 	}
 	return ErrTimeout

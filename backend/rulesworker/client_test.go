@@ -115,11 +115,16 @@ for await (const line of rl) {
     if (bootDelay > 0) {
       await new Promise((resolve) => setTimeout(resolve, bootDelay));
     }
-    // A fixture can ask the worker to stop answering the readiness probe of
-    // a replacement worker, so the start of the replacement fails. The first
-    // probe still answers, so the first request reaches the worker.
-    const marker = join(dirname(process.argv[1]), 'hang-probe');
-    if (existsSync(marker)) {
+    // A fixture can ask the worker to stop answering the readiness probe,
+    // so the start of the worker fails.
+    if (existsSync(join(dirname(process.argv[1]), 'hang-probe'))) {
+      await new Promise(() => {});
+    }
+    // A fixture can ask the worker to answer the first readiness probe and
+    // to stop answering the later ones, so the start of a replacement worker
+    // fails while the first request still reaches the worker.
+    const replacement = join(dirname(process.argv[1]), 'hang-replacement-probe');
+    if (existsSync(replacement)) {
       const counter = join(dirname(process.argv[1]), 'probe-counter');
       let seen = 0;
       try { seen = Number.parseInt(readFileSync(counter, 'utf8').trim(), 10) || 0; } catch { seen = 0; }
@@ -244,14 +249,14 @@ func testEntryWithBootDelay(t *testing.T, delay time.Duration) string {
 
 // testEntryWithHangingProbe writes a fake worker that never answers the
 // readiness probe. It simulates a replacement worker that never becomes ready.
-func testEntryWithHangingProbe(t *testing.T) string {
+func testEntryWithHangingProbe(t *testing.T, marker string) string {
 	t.Helper()
 	directory := t.TempDir()
 	path := filepath.Join(directory, "worker.mjs")
 	if err := os.WriteFile(path, []byte(fakeWorkerSource()), 0o600); err != nil {
 		t.Fatalf("write fake worker: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "hang-probe"), []byte("1"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, marker), []byte("1"), 0o600); err != nil {
 		t.Fatalf("write the probe marker: %v", err)
 	}
 	return path
@@ -471,41 +476,125 @@ func TestTheRealBundleAnswersAColdRequest(t *testing.T) {
 	}
 }
 
-// TestTheClassOfATimeoutFollowsTheDeadlines proves that the class of a
-// timeout follows the deadlines and not the moment of the check.
+// TestTheCallerDeadlineIsCarriedDuringTheReadiness proves that the deadline
+// of the caller is carried when it ends the call before the internal budget.
 //
-// The cleanup of the worker process can outlive the deadline of the caller.
-// The cause of the caller must never be invented from that, and an internal
-// timeout must never be reported as the deadline of a caller: a worker that
-// did not answer inside its own budget is an outage of the worker.
-func TestTheClassOfATimeoutFollowsTheDeadlines(t *testing.T) {
-	now := time.Now()
-	// The deadline of the caller ends the exchange.
-	callerExpired, cancelExpired := context.WithDeadline(context.Background(), now.Add(-time.Second))
-	defer cancelExpired()
-	// The internal budget ends the exchange.
-	internal, cancelInternal := context.WithDeadline(context.Background(), now.Add(time.Second))
-	defer cancelInternal()
-	expiredInternal, cancelExpiredInternal := context.WithDeadline(context.Background(), now.Add(-time.Second))
-	defer cancelExpiredInternal()
-
-	// The deadline of the caller is the earlier one: the cause is carried.
-	if err := contextError(internal, callerExpired); !errors.Is(err, context.DeadlineExceeded) {
+// The worker never answers the readiness probe, and the deadline of the
+// caller is the earlier one. The derived context of the exchange clamps its
+// own deadline to the deadline of the caller, so the class must not be read
+// from that clamped value.
+func TestTheCallerDeadlineIsCarriedDuringTheReadiness(t *testing.T) {
+	client, err := New(Config{Entry: testEntryWithHangingProbe(t, "hang-probe"), RequestTimeout: 30 * time.Second, StartTimeout: 30 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	caller, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err = client.Evaluate(caller, request("ok"))
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("the deadline of the caller was not carried: %v", err)
 	}
-	// The internal budget is the earlier one: no cause is carried, even
-	// when the context of the caller has ended in the meantime.
-	if err := contextError(expiredInternal, callerExpired); errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, ErrTimeout) && !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the call was reported as an internal timeout: %v", err)
+	}
+}
+
+// TestTheCallerDeadlineIsCarriedInAWarmedExchange proves the same for a
+// worker that is already ready.
+func TestTheCallerDeadlineIsCarriedInAWarmedExchange(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 30 * time.Second, StartTimeout: 30 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	warm, cancelWarm := context.WithTimeout(context.Background(), warmBudget)
+	defer cancelWarm()
+	if err = client.Warm(warm); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	caller, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	_, err = client.Evaluate(caller, request("slow"))
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the deadline of the caller was not carried: %v", err)
+	}
+}
+
+// TestAnInternalTimeoutCarriesNoCause proves that a worker that does not
+// answer inside its own budget is an outage of the worker and not the
+// deadline of a caller, even when the caller has a later deadline.
+func TestAnInternalTimeoutCarriesNoCause(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 200 * time.Millisecond, StartTimeout: 30 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	warm, cancelWarm := context.WithTimeout(context.Background(), warmBudget)
+	defer cancelWarm()
+	if err = client.Warm(warm); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	caller, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err = client.Evaluate(caller, request("slow"))
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("the internal timeout is not a timeout: %v", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("an internal timeout was reported as the deadline of the caller: %v", err)
 	}
-	if err := contextError(expiredInternal, callerExpired); !errors.Is(err, ErrTimeout) {
-		t.Fatalf("an internal timeout is not a timeout: %v", err)
+}
+
+// TestTheEqualBoundaryBelongsToTheInternalBudget proves the rule of the
+// boundary: when the two deadlines are equal, the internal budget wins.
+func TestTheEqualBoundaryBelongsToTheInternalBudget(t *testing.T) {
+	boundary := time.Now().Add(time.Second)
+	caller, cancel := context.WithDeadline(context.Background(), boundary)
+	defer cancel()
+	if err := exchangeError(boundary, caller); errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the boundary was reported as the deadline of the caller: %v", err)
 	}
-	// An explicit cancellation of the caller keeps its class.
-	canceled, cancelNow := context.WithCancel(context.Background())
-	cancelNow()
-	if err := contextError(internal, canceled); !errors.Is(err, ErrCanceled) {
-		t.Fatalf("a cancellation lost its class: %v", err)
+	if err := exchangeError(boundary, caller); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("the boundary is not a timeout: %v", err)
+	}
+}
+
+// TestACanceledCallReapsTheWorker proves that a canceled call leaves no dead
+// worker behind.
+//
+// The exchange kills the worker when the deadline passes. A canceled call
+// must still reap it, so the client does not keep a dead worker as its ready
+// one, and the next request starts a fresh worker.
+func TestACanceledCallReapsTheWorker(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 5 * time.Second, StartTimeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	warm, cancelWarm := context.WithTimeout(context.Background(), warmBudget)
+	defer cancelWarm()
+	if err = client.Warm(warm); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	_, err = client.Evaluate(ctx, request("slow"))
+	if !errors.Is(err, ErrCanceled) {
+		t.Fatalf("a canceled caller got %v instead of a cancellation", err)
+	}
+	if client.proc != nil {
+		t.Fatal("the killed worker was not reaped")
+	}
+	if client.ready {
+		t.Fatal("the client still holds the dead worker as its ready one")
+	}
+	// The next request starts a fresh worker and succeeds.
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the next request: %v", err)
 	}
 }
 
@@ -536,7 +625,7 @@ func TestTheCancellationCarriesTheCauseOfTheCaller(t *testing.T) {
 // the readiness probe. The call reports the crash: an operator must be able
 // to tell "the worker died" from "the replacement never became ready".
 func TestTheCrashSurvivesAFailedStartOfTheReplacement(t *testing.T) {
-	client, err := New(Config{Entry: testEntryWithHangingProbe(t), RequestTimeout: 2 * time.Second, StartTimeout: time.Second})
+	client, err := New(Config{Entry: testEntryWithHangingProbe(t, "hang-replacement-probe"), RequestTimeout: 2 * time.Second, StartTimeout: time.Second})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
