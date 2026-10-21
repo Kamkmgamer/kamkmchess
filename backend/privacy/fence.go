@@ -289,7 +289,15 @@ func (h *FenceHandle) Finish(applied backup.AppliedRemovalLedger) error {
 //
 // The cancel is only safe before the import of a restore: an import that ran
 // may have changed the database, and the marker of the lifecycle keeps the
-// service closed until the restore is resolved.
+// service closed until the restore is resolved. That is a precondition of the
+// caller - the restore of the backup package sets it - and there is no other
+// caller of the cancellation today.
+//
+// The cancel undoes the **marker** of the lifecycle, not the durable evidence
+// that the binding wrote. The evidence is deliberately kept: it is a
+// conservative obligation for the next import, and the next restore that
+// applies the removals discharges it. The removals are over-applied rather
+// than lost, which is the safe direction.
 func (h *FenceHandle) Cancel() error {
 	if h == nil || h.service == nil {
 		return errors.New("privacy: there is no restore fence to cancel")

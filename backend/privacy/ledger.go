@@ -916,6 +916,12 @@ func (s *Service) RecordRestore(ctx context.Context, restoreID string) (string, 
 // ReleaseRestoreGate releases a restore gate after the removal ledger has
 // been replayed.
 //
+// The release is **all or nothing**: the facts of the release and the release
+// itself run in one transaction, so a release that fails releases nothing. The
+// direction is fail closed: fewer gates are open, never more. The ownership of
+// the lifecycle is not taken here: the caller of the release holds it, and a
+// lock is never taken again inside a lock that is already held.
+//
 // The release is final, and it is refused while the removal ledger is not
 // applied. A gate is never opened for a database that still serves a removed
 // game.

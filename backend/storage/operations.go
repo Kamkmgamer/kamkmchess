@@ -218,6 +218,13 @@ func (s *Store) Delete(ctx context.Context, owner string, r CASRequest) error {
 		return e
 	}
 	defer tx.Rollback(ctx)
+	// The account gate is consulted inside the transaction, so a fenced
+	// account cannot delete a game: a deleted account must not mutate its own
+	// data any more. The gate takes the account scope lock before the row
+	// lock of the game, exactly like the other writes of the store.
+	if e = s.allowAccount(ctx, tx, owner); e != nil {
+		return e
+	}
 	g, e := scanGame(tx.QueryRow(ctx, `SELECT `+gameCols+` FROM games WHERE owner_id=$1 AND game_id=$2 FOR UPDATE`, owner, r.GameID))
 	if errors.Is(e, pgx.ErrNoRows) {
 		var deleted bool

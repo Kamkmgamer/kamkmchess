@@ -278,6 +278,8 @@ Rules the browser must honour:
   transaction with the facts it depends on. It never releases a gate outside the recovery of a
   restore.
 * The evidence an operator hands to the recovery is **always opened and validated**, even when the
+  evidence directory still holds a record of the restore: a file that names another restore, that
+  does not match its own digest or that conflicts with the record of the directory is refused
   instead of being ignored.
 * A **gate is released only when the database holds the removal ledger the gate waits for**. The
   gate names the digest of that ledger, and the digest names the durable evidence of it, so the
@@ -316,11 +318,12 @@ Rules the browser must honour:
   still wait for their removal ledger. A gate that waits keeps the service closed, so the recovery
   never claims that the service serves while one of them waits.
 * A **restore that has a fence and no removal ledger sink** is refused while an evidence record of
-* A **restore that has a fence and no removal ledger sink** is refused while an evidence record of
   a removal is pending. The fence owns the durable evidence of the removals, so the fence itself
   says whether any are owed, and the refusal happens under the ownership of the lifecycle and
   before the import: the database is not touched, the evidence stays pending, and the marker of the
-  lifecycle that this attempt created is removed, so the service keeps the state it had.
+  lifecycle that this attempt created is removed, so the service keeps the state it had. A marker
+  that was already there - the history of a crashed restore - is never removed. An import that ran
+  keeps the marker in place, so the service stays closed until the restore is resolved.
 * A **take-over that is refused before its import restores the owner marker of the crashed
   restore exactly**. A take-over replaces the owner marker of the lifecycle, so the bytes of the
   marker of the crashed restore are captured before the replacement, and the cancellation writes
@@ -333,8 +336,18 @@ Rules the browser must honour:
   given back whatever the outcome of the cleanup is, and a failure of the cleanup is reported with
   the failure of the restore. A caller that could not clean up does not hold the lifecycle for
   ever, so an operator can recover the restore.
-  An import that ran keeps the marker in place, so the service stays closed until the restore is
-  resolved.
+* The **cancellation of a restore undoes its marker, not its evidence**. The evidence that the
+  restore wrote when it bound the removal ledger it had to apply is deliberately kept:
+  it is a conservative obligation for the next import, and it is discharged by the next restore
+  that applies the removals. The removals are therefore over-applied rather than lost,
+  which is the safe direction, and the cancellation is not the inverse of the binding.
+* The **cancellation is only safe before the import** of a restore, and that is an API precondition
+  of the caller: the restore sets it, and no other caller of the cancellation exists today.
+  A cancellation after an import would remove the marker of a database that was half
+  imported, so a caller that imports has to keep the marker.
+* The **release of a gate is all or nothing**: the facts of the release and the release itself
+  run in one transaction, so a release that fails releases nothing. The direction is fail
+  closed: fewer gates are open, never more.
 * The obligation of a pending evidence record is for the **next import**, not for the database of
   the moment. The import of a restore replaces the schema of the database, so the removals that the
   evidence names are gone afterwards, and the restore that comes next has to replay them: the

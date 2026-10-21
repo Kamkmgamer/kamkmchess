@@ -94,6 +94,7 @@ wrote next to the fence, restored from the protected backup of the evidence
 directory. A recovery that is given the evidence of a restore does not need the
 bundle of the restore, and the bundle is only read when there is no evidence
 at all.
+When both are named, the evidence wins and the bundle is not read.
 
 Secrets are read only from the environment variable named by --passphrase-env
 and --database-url-env. Nothing is provisioned and no network service is used.`))
