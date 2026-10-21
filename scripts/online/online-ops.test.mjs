@@ -1101,3 +1101,25 @@ test('the native proof never writes the secret of the target to the report', () 
   });
   assert.equal(JSON.stringify(cleanup.manifest).includes('s3cr3t'), false);
 });
+
+
+test('the manifest of the run carries neither form of the secret of the target', () => {
+  const url = new URL('postgres://proof:s3cr3t%20with%20space@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable');
+  const logs = ['password s3cr3t with space', 'password s3cr3t%20with%20space'];
+  const cleanup = planFenceCleanup({
+    keep: true,
+    containers: ['owned-container'],
+    databases: ['owned-database'],
+    volumes: ['owned-volume'],
+    directory: 'owned-directory',
+    logs,
+    url,
+  });
+  const manifest = JSON.stringify(cleanup.manifest);
+  assert.equal(manifest.includes('s3cr3t'), false);
+  assert.equal(manifest.includes('s3cr3t%20with%20space'), false);
+  assert.equal(manifest.includes('s3cr3t with space'), false);
+  // The logs are still there, only the secret is gone.
+  assert.equal(cleanup.manifest.logs.length, 2);
+  assert.match(cleanup.manifest.logs[0], /\*\*\*/);
+});

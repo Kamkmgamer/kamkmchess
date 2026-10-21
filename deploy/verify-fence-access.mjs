@@ -113,7 +113,7 @@ export function planCleanup(options) {
       schema: options.schema ?? null,
       schemaKept: options.schemaKept === true,
       target: options.target ?? null,
-      logs: [...options.logs],
+      logs: options.logs.map(entry => redact(entry, options.url)),
     },
   };
 }
@@ -791,6 +791,7 @@ export async function verifyFenceAccess(options = {}) {
       schema: schema ?? RUN_SCHEMA,
       schemaKept: options.keep === true,
       target: target ? `${target.container}/${target.database}` : null,
+      url: target?.url,
     });
     for (const id of plan.removeContainers) {
       const removed = await io('docker', ['rm', '--force', id]);
