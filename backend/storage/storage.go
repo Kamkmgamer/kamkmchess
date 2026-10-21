@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/locks"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -75,6 +76,7 @@ func WithAccountGate(gate AccountGate) Option {
 		s.gate = gate
 	}
 }
+
 type Game struct {
 	ID             string     `json:"id"`
 	OwnerID        string     `json:"ownerId"`
@@ -146,13 +148,22 @@ func Open(_ context.Context, db *pgxpool.Pool, options ...Option) (*Store, error
 
 // allowAccount consults the account gate inside the write transaction.
 //
+// The account scope lock is taken first. It is the shared lock of the online
+// service, and the removal of an account takes the same lock, so a write of
+// the account and the removal of its data are ordered instead of racing: a
+// write that passed the gate can never insert a new game after the removal
+// committed.
+//
 // A gate that cannot be read refuses the write: the store fails closed
 // instead of writing for an account whose state is unknown.
-func (s *Store) allowAccount(ctx context.Context, q Querier, owner string) error {
+func (s *Store) allowAccount(ctx context.Context, tx pgx.Tx, owner string) error {
+	if err := locks.LockAccountScope(ctx, tx, locks.AccountScope("account", owner)); err != nil {
+		return err
+	}
 	if s.gate == nil {
 		return nil
 	}
-	allowed, err := s.gate.AccountAllowed(ctx, q, owner)
+	allowed, err := s.gate.AccountAllowed(ctx, tx, owner)
 	if err != nil {
 		return err
 	}

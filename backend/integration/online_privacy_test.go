@@ -633,6 +633,3 @@ func TestPostgresServingIsBlockedUntilTheRemovalLedgerIsReplayed(t *testing.T) {
 		t.Fatal("a released restore must serve traffic")
 	}
 }
-
-// The removal service keeps the account and the guest apart.
-var _ = onlineauth.Principal{}

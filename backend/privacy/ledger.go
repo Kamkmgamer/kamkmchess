@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/backup"
@@ -13,11 +14,95 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// ListRemovalRecords reads the removal ledger of the live database.
+// ListSubjectRemovalRecords reads the subject level removal ledger.
 //
-// The ledger is the durable record of every removal. A backup carries it, so
-// a restore of an older bundle can replay the removals before the restored
-// database serves traffic.
+// The subject record is the record of a removed subject itself, whatever it
+// played and whatever private data it held. It is the record that survives a
+// restore of an older backup, where the deletion table of the account is
+// absent.
+func (s *Service) ListSubjectRemovalRecords(ctx context.Context) ([]backup.SubjectRemovalRecord, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT subject_id,subject_kind,subject_ref,scope,removed_at
+		FROM online_removal_subjects
+		ORDER BY subject_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]backup.SubjectRemovalRecord, 0)
+	for rows.Next() {
+		var record backup.SubjectRemovalRecord
+		if err = rows.Scan(&record.RecordID, &record.SubjectKind, &record.SubjectRef, &record.Scope, &record.RemovedAt); err != nil {
+			return nil, err
+		}
+		record.RemovedAt = record.RemovedAt.UTC()
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
+// ApplySubjectRemovalRecords replays the subject level removal ledger.
+//
+// The replay is what a restore of an older backup runs: the subject is fenced
+// again and its private data is removed again, even when the restored
+// database has no deletion record of its own.
+func (s *Service) ApplySubjectRemovalRecords(ctx context.Context, records []backup.SubjectRemovalRecord) error {
+	for _, record := range records {
+		if err := s.applySubjectRemoval(ctx, record); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// applySubjectRemoval replays one subject removal.
+func (s *Service) applySubjectRemoval(ctx context.Context, record backup.SubjectRemovalRecord) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	// The request row of the removal is recreated, so the ledger and the
+	// request agree again. The removal identifier is derived from the subject
+	// record identifier, so the replay is idempotent.
+	removalID := "rm_" + strings.TrimPrefix(record.RecordID, "rs_")
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO online_removal_requests(removal_id,subject_kind,subject_id,scope,status,requested_at,verified_at,applied_at,live_delete_due_at,live_deleted_at,recovery_sanitize_due_at)
+		VALUES($1,$2,$3,$4,'applied',$5,$5,$5,$6,$5,$7)
+		ON CONFLICT (subject_kind, subject_id, scope) DO NOTHING`,
+		removalID, record.SubjectKind, record.SubjectRef, record.Scope, record.RemovedAt,
+		record.RemovedAt.Add(s.options.LiveRemovalDelay), record.RemovedAt.Add(s.options.RecoverySanitizeDelay)); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO online_removal_subjects(subject_id,removal_id,subject_kind,subject_ref,scope,removed_at)
+		VALUES($1,(SELECT removal_id FROM online_removal_requests WHERE subject_kind=$2 AND subject_id=$3 AND scope=$4),$2,$3,$4,$5)
+		ON CONFLICT (subject_kind, subject_ref, scope) DO NOTHING`,
+		record.RecordID, record.SubjectKind, record.SubjectRef, record.Scope, record.RemovedAt); err != nil {
+		return err
+	}
+	// The private data of the subject is removed again, and the subject is
+	// fenced again.
+	owners, err := s.privateOwners(ctx, record.SubjectRef)
+	if err != nil {
+		return err
+	}
+	for _, owner := range owners {
+		if _, err = s.removePrivateGames(ctx, tx, owner); err != nil {
+			return err
+		}
+		if err = s.fenceAccount(ctx, tx, owner, revocationReason(record.Scope)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// The ledger is the durable record of every match bound removal. A backup
+// carries it, so a restore of an older bundle can replay the removals before
+// the restored database serves traffic. The subject level removals live in
+// their own ledger, because a subject that played no match still has to stay
+// removed.
 func (s *Service) ListRemovalRecords(ctx context.Context) ([]backup.RemovalRecord, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT removal_id,subject_kind,subject_id,match_id,scope,removed_at
@@ -152,6 +237,33 @@ func RemovalLedgerDigestHex(records []backup.RemovalRecord) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(digest), nil
+}
+
+// RemovalLedgerDigestOf is the digest of the whole removal ledger: the match
+// bound records and the subject level records.
+//
+// The durable fence stores this digest, so a restore that applied a different
+// ledger than the one the fence expected is visible.
+func RemovalLedgerDigestOf(matches []backup.RemovalRecord, subjects []backup.SubjectRemovalRecord) ([]byte, error) {
+	digest := sha256.New()
+	for _, record := range matches {
+		digest.Write([]byte(record.MatchID))
+		digest.Write([]byte{0})
+		digest.Write([]byte(record.RemovalID))
+		digest.Write([]byte{0})
+		digest.Write([]byte(record.Scope))
+		digest.Write([]byte{0})
+	}
+	for _, record := range subjects {
+		digest.Write([]byte("subject:"))
+		digest.Write([]byte(record.SubjectKind))
+		digest.Write([]byte{0})
+		digest.Write([]byte(record.SubjectRef))
+		digest.Write([]byte{0})
+		digest.Write([]byte(record.Scope))
+		digest.Write([]byte{0})
+	}
+	return digest.Sum(nil), nil
 }
 
 // RecordRestore records that a database was restored from a backup.

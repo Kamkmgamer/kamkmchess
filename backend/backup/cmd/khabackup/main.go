@@ -128,7 +128,7 @@ func parseFlags(name string, arguments []string, configure func(*flag.FlagSet, *
 	set.IntVar(&options.daily, "daily", backup.DefaultDailyCopies, "daily copies to keep")
 	set.IntVar(&options.weekly, "weekly", backup.DefaultWeeklyCopies, "weekly copies to keep")
 	set.BoolVar(&options.apply, "apply", false, "actually apply the plan; without it nothing is written or deleted")
-	set.StringVar(&options.fence, "fence", "", "path of the durable restore fence; the service refuses to serve while it is open")
+	set.StringVar(&options.fence, "fence", os.Getenv("ONLINE_RESTORE_FENCE_PATH"), "path of the durable restore fence; the service refuses to serve while it is open (defaults to ONLINE_RESTORE_FENCE_PATH)")
 	set.BoolVar(&options.asJSON, "json", false, "print a machine-readable report")
 	if configure != nil {
 		configure(set, &options)
@@ -389,6 +389,13 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 	// replacement and a crash of this process. A restore that dies between the
 	// import and the replay of the removal ledger therefore leaves the service
 	// closed, instead of a restored database that lost the newest removals.
+	//
+	// A restore without a configured fence is refused: the fence is the only
+	// control that survives the schema replacement, and a restore without it
+	// could leave a served database with a lost removal.
+	if options.fence == "" {
+		return errors.New("a restore needs a durable restore fence; set --fence or ONLINE_RESTORE_FENCE_PATH")
+	}
 	verified, err := backup.Verify(options.file, secret)
 	if err != nil {
 		return err
@@ -402,8 +409,17 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 			return err
 		}
 	}
+	mergedSubjects, err := backup.MergeSubjectRemovalLedgers(verified.Payload.SubjectRemovals, nil)
+	if err != nil {
+		return err
+	}
+	for _, set := range request.NewerSubjectRemovalLedgers {
+		if mergedSubjects, err = backup.MergeSubjectRemovalLedgers(mergedSubjects, set); err != nil {
+			return err
+		}
+	}
 	restoreID := "restore-" + time.Now().UTC().Format("20060102T150405Z")
-	digest, err := privacy.RemovalLedgerDigest(merged)
+	digest, err := privacy.RemovalLedgerDigestOf(merged, mergedSubjects)
 	if err != nil {
 		return err
 	}

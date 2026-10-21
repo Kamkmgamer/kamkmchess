@@ -226,6 +226,36 @@ func (l postgresRemovalLedger) ListRemovalRecords(ctx context.Context) ([]backup
 	return l.removals.ListRemovalRecords(ctx)
 }
 
+// ListSubjectRemovalRecords reads the subject level removal ledger.
+func (l postgresRemovalLedger) ListSubjectRemovalRecords(ctx context.Context) ([]backup.SubjectRemovalRecord, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !available {
+		return nil, nil
+	}
+	return l.removals.ListSubjectRemovalRecords(ctx)
+}
+
+// ApplySubjectRemovalRecords replays the subject level removal ledger.
+//
+// The subject stays removed after a restore, even when the restored database
+// has no deletion record of its own.
+func (l postgresRemovalLedger) ApplySubjectRemovalRecords(ctx context.Context, records []backup.SubjectRemovalRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	available, err := l.available(ctx)
+	if err != nil {
+		return err
+	}
+	if !available {
+		return errors.New("the online removal ledger is missing; the restored database must not serve traffic")
+	}
+	return l.removals.ApplySubjectRemovalRecords(ctx, records)
+}
+
 // ApplyRemovalRecords replays the online removal ledger after a restore.
 //
 // The replay is the privacy service, so the restored rows are removed exactly

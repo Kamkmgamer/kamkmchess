@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 
-	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/storage"
 	"github.com/Kamkmgamer/kamkmchess/backend/subject"
 	"github.com/jackc/pgx/v5"
@@ -227,6 +226,3 @@ func privateTablesPresent(ctx context.Context, q storage.Querier) (bool, error) 
 	}
 	return exists, nil
 }
-
-// ensure the online package stays imported for the seat kinds.
-var _ = online.ParticipantAccount

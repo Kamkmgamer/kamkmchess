@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/locks"
@@ -228,6 +227,21 @@ func (s *Service) applyRemoval(ctx context.Context, tx pgx.Tx, principal onlinea
 		}
 	}
 	if err = s.removePrivateOwnerData(ctx, tx, subjectKind, reference, subjectID, scope); err != nil {
+		return Report{}, err
+	}
+	// The subject level record states that the subject itself was removed,
+	// whatever it played and whatever private data it held. It is the record
+	// that survives a restore of an older backup, where the deletion table of
+	// the subject is absent.
+	subjectRecordID, err := newIdentifier("rs_")
+	if err != nil {
+		return Report{}, err
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO online_removal_subjects(subject_id,removal_id,subject_kind,subject_ref,scope,removed_at)
+		VALUES($1,$2,$3,$4,$5,$6)
+		ON CONFLICT (subject_kind, subject_ref, scope) DO NOTHING`,
+		subjectRecordID, request.RemovalID, subjectKind, reference, scope, now); err != nil {
 		return Report{}, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE online_removal_requests SET status='applied', applied_at=$1, live_deleted_at=$1, removed_match_count=$2, anonymized_match_count=$3 WHERE removal_id=$4`,
@@ -520,6 +534,3 @@ func newIdentifier(prefix string) (string, error) {
 	}
 	return prefix + base64.RawURLEncoding.EncodeToString(raw), nil
 }
-
-// unusedStringsImport keeps the strings dependency honest for future use.
-var _ = strings.TrimSpace

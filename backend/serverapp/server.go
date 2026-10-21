@@ -84,7 +84,10 @@ type OnlineConfig struct {
 	// RestoreFencePath is the path of the durable restore fence.
 	//
 	// The fence lives outside the restored database, so it survives the
-	// schema replacement of a restore and a crash of the restore process.
+	// schema replacement of a restore and a crash of the restore process. The
+	// service and the restore tool have to use the same path, and the path
+	// has to be a shared persistent location: a per container or per host
+	// path would let two instances disagree about the state of a restore.
 	RestoreFencePath string
 }
 
@@ -119,6 +122,7 @@ func Load(getenv func(string) string) (Config, error) {
 			QueueSweepBatch:        positiveInt(getenv, "ONLINE_QUEUE_SWEEP_BATCH", DefaultQueueSweepBatch),
 			HistoryPublishInterval: duration(getenv, "ONLINE_HISTORY_PUBLISH_INTERVAL", history.DefaultPublishInterval),
 			HistoryPublishBatch:    positiveInt(getenv, "ONLINE_HISTORY_PUBLISH_BATCH", history.DefaultPublishBatch),
+			RestoreFencePath:       strings.TrimSpace(getenv("ONLINE_RESTORE_FENCE_PATH")),
 		},
 	}
 	if cfg.DatabaseURL == "" || len(cfg.Clerk.AllowedOrigins) == 0 {

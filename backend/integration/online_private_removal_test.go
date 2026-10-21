@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/httpapi"
-	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/storage"
 )
 
@@ -155,6 +154,3 @@ func TestPostgresRemovalLedgerReplaysThePrivateOwnerData(t *testing.T) {
 		t.Fatal("the restored private game is live again")
 	}
 }
-
-// The account of a guest never reaches the private store.
-var _ = online.ParticipantGuest
