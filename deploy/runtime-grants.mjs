@@ -661,10 +661,14 @@ export function renderGrantSql(policy, options = {}) {
   // privilege at all, so it never receives the usage.
   for (const [sequence, verbs] of Object.entries(policy.sequences ?? {}).sort()) {
     const granted = [...verbs].map((verb) => String(verb).toUpperCase()).sort();
-    lines.push(`REVOKE ALL ON SEQUENCE ${policy.schema}.${sequence} FROM PUBLIC;`);
+    // The privileges the role may already hold are taken away first, so the
+    // grant of the policy is the whole set the role has. The privileges of
+    // PUBLIC are taken away by the migration, like the ones of the tables.
+    lines.push(`REVOKE ALL ON SEQUENCE ${policy.schema}.${sequence} FROM ${policy.role};`);
     lines.push(`GRANT ${granted.join(', ')} ON SEQUENCE ${policy.schema}.${sequence} TO ${policy.role};`);
   }
-  const functionNames = Object.keys(policy.functions ?? {}).sort();  if (functionNames.length > 0) {
+  const functionNames = Object.keys(policy.functions ?? {}).sort();
+  if (functionNames.length > 0) {
     const list = functionNames.map((name) => `'${name}'`).join(', ');
     lines.push('-- A function that is not a trigger function can be called directly. PostgreSQL');
     lines.push('-- grants EXECUTE on it to PUBLIC, so the deployment takes it away again.');
@@ -716,6 +720,43 @@ export async function readLiveGrants(databaseUrl, psqlPath, role, schema) {
 }
 
 /**
+ * Reads the privileges the runtime role holds on the sequences of a schema.
+ *
+ * The sequences are not tables, so the table grants of the role do not
+ * describe them. The live audit of the sequences needs its own reading.
+ * @param {string} databaseUrl
+ * @param {string} psqlPath
+ * @param {string} role
+ * @param {string} schema
+ * @returns {Promise<Map<string, Set<string>>>}
+ */
+export async function readLiveSequenceGrants(databaseUrl, psqlPath, role, schema) {
+  const { execFile } = await import('node:child_process');
+  const { promisify } = await import('node:util');
+  const run = promisify(execFile);
+  const query = [
+    'SELECT sequence_name, privilege_type',
+    "FROM information_schema.role_usage_grants",
+    `WHERE grantee = '${role.replace(/'/g, "''")}'`,
+    `AND sequence_schema = '${schema.replace(/'/g, "''")}'`,
+    'ORDER BY sequence_name, privilege_type;',
+  ].join(' ');
+  const { stdout } = await run(psqlPath, ['--no-psqlrc', '--tuples-only', '--no-align', '--field-separator', '|', '--command', query], {
+    env: { ...process.env, PGPASSWORD: passwordOf(databaseUrl) },
+    windowsHide: true,
+  });
+  /** @type {Map<string, Set<string>>} */
+  const grants = new Map();
+  for (const line of stdout.split(/\r?\n/)) {
+    const [sequence, privilege] = line.split('|').map((part) => part.trim());
+    if (!sequence || !privilege) continue;
+    if (!grants.has(sequence.toLowerCase())) grants.set(sequence.toLowerCase(), new Set());
+    grants.get(sequence.toLowerCase()).add(privilege.toUpperCase());
+  }
+  return grants;
+}
+
+/**
  * Extracts the password from a database URL for the psql environment.
  * @param {string} databaseUrl
  * @returns {string}
@@ -734,7 +775,7 @@ export function passwordOf(databaseUrl) {
  * @param {Map<string, Set<string>>} live
  * @returns {Finding[]}
  */
-export function auditLiveGrants(policy, live) {
+export function auditLiveGrants(policy, live, liveSequences = new Map()) {
   /** @type {Finding[]} */
   const findings = [];
   for (const [table, granted] of [...policy.privileges.entries()].sort()) {
@@ -756,6 +797,29 @@ export function auditLiveGrants(policy, live) {
   for (const table of [...live.keys()].sort()) {
     if (policy.privileges.has(table)) continue;
     findings.push(finding('warning', 'live-grant-unknown-table', `The runtime role holds grants on ${table}, which the policy does not mention.`, 'Revoke the grants or extend the policy.'));
+  }
+  // The sequences of the policy are audited as well: the order of the
+  // checkpoints comes from the sequence, so the runtime role needs its usage
+  // and nothing else.
+  for (const [sequence, granted] of Object.entries(policy.sequences ?? {}).sort()) {
+    const actual = liveSequences.get(sequence.toLowerCase());
+    if (!actual) {
+      findings.push(finding('blocker', 'live-sequence-missing', `The runtime role has no grant on the sequence ${sequence}.`, 'Run the generated SQL.'));
+      continue;
+    }
+    for (const verb of granted) {
+      if (!actual.has(verb)) {
+        findings.push(finding('blocker', 'live-sequence-missing-privilege', `The runtime role is missing ${verb} on the sequence ${sequence}.`, 'Run the generated SQL.'));
+      }
+    }
+    for (const verb of actual) {
+      if (granted.includes(verb)) continue;
+      findings.push(finding('blocker', 'live-sequence-extra', `The runtime role holds ${verb} on the sequence ${sequence}, which the policy does not grant.`, 'Revoke the extra privilege.'));
+    }
+  }
+  for (const sequence of [...liveSequences.keys()].sort()) {
+    if (policy.sequences?.[sequence]) continue;
+    findings.push(finding('warning', 'live-sequence-unknown', `The runtime role holds grants on the sequence ${sequence}, which the policy does not mention.`, 'Revoke the grants or extend the policy.'));
   }
   return findings;
 }
@@ -875,7 +939,8 @@ async function main() {
     const psqlPath = psqlIndex >= 0 ? arguments_[psqlIndex + 1] : 'psql';
     try {
       const live = await readLiveGrants(databaseUrl, psqlPath, policy.role, policy.schema);
-      findings.push(...auditLiveGrants(policy, live));
+      const liveSequences = await readLiveSequenceGrants(databaseUrl, psqlPath, policy.role, policy.schema);
+      findings.push(...auditLiveGrants(policy, live, liveSequences));
     } catch (error) {
       findings.push(finding('warning', 'live-verify-unavailable', `The live grant check could not run: ${error instanceof Error ? error.message : String(error)}`, 'Install psql or pass --psql.'));
     }

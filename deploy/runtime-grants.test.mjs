@@ -108,8 +108,8 @@ test('a live grant set that drifts from the policy is reported', () => {
 
 test('the checked-in policy matches the checked-in tree', async () => {
   const root = process.cwd();
-  const { policy, tables, usage } = await loadTree(root);
-  const findings = auditGrants({ policy, tables, usage });
+  const { policy, tables, usage, sequences, functions } = await loadTree(root);
+  const findings = auditGrants({ policy, tables, usage, sequences, functions });
   const blockers = findings.filter((finding) => finding.severity === 'blocker');
   assert.equal(blockers.length, 0, JSON.stringify(blockers, null, 2));
 });

@@ -569,15 +569,16 @@ func TestOnlineComposedRulesClosedGateRecoversWithTheSameClient(t *testing.T) {
 		t.Fatal("the recovered match has no deadline")
 	}
 	refund := recovered.Clock.DeadlineAt.Sub(beforeDeadline)
-	if refund <= 0 {
-		t.Fatalf("the clock of the unfinished match was not refunded: it moved by %v", refund)
-	}
 	var interruption int64
 	if err = fixture.pool.QueryRow(ctx, `SELECT interruption_ms FROM online_suspension_boundaries WHERE kind='planned' ORDER BY created_at LIMIT 1`).Scan(&interruption); err != nil {
 		t.Fatalf("read the interruption: %v", err)
 	}
-	if interruption <= 0 {
-		t.Fatalf("the interruption = %d ms, want a positive interval", interruption)
+	// The clock was refunded by exactly the interval of the interruption that
+	// the service recorded, so the refund is the outage itself and not a guess
+	// about the clock of the host. The interval may be shorter than a
+	// millisecond, so the refund is compared in milliseconds.
+	if refund.Milliseconds() != interruption {
+		t.Fatalf("the clock of the unfinished match moved by %v, want the recorded interruption of %d ms", refund, interruption)
 	}
 	if refund.Milliseconds() != interruption {
 		t.Fatalf("the clock moved by %v, want the interruption of %d ms", refund, interruption)

@@ -14,7 +14,9 @@ const policy = parsePolicy(JSON.parse(readFileSync(new URL('./runtime-grants.pol
 
 test('the deployment grants the sequence of the checkpoints explicitly', () => {
   const sql = renderGrantSql(policy);
-  assert.match(sql, /REVOKE ALL ON SEQUENCE public\.online_service_health_order FROM PUBLIC;/);
+  // The privileges the role may already hold are taken away first, so the
+  // grant of the policy is the whole set the role has.
+  assert.match(sql, /REVOKE ALL ON SEQUENCE public\.online_service_health_order FROM kamkmchess_runtime;/);
   assert.match(sql, /GRANT USAGE ON SEQUENCE public\.online_service_health_order TO kamkmchess_runtime;/);
 });
 

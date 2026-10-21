@@ -16,11 +16,18 @@
 
 CREATE SEQUENCE IF NOT EXISTS online_service_health_order;
 
+-- A sequence grants its usage to PUBLIC by default, like a table grants its
+-- rights. The order of the checkpoints is private to the role that writes the
+-- health of the service.
+REVOKE ALL ON SEQUENCE online_service_health_order FROM PUBLIC;
+
 ALTER TABLE online_service_health ADD COLUMN IF NOT EXISTS observation_order bigint;
 
 -- The backfill of the rows that existed before the order existed. The order
--- follows the recorded_at and the identity, so it is the order in which the
--- checkpoints were written.
+-- follows the recorded_at and the identity, so it is a deterministic order
+-- over the rows of the old release. It is not the order in which the rows
+-- were written: two rows with the same moment have no order of their own, and
+-- the identity breaks that tie.
 WITH backfill AS (
   SELECT checkpoint_id, row_number() OVER (ORDER BY recorded_at, checkpoint_id) AS ordinal
   FROM online_service_health
