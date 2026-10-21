@@ -15,8 +15,8 @@ import { buildPacket, evaluateEvidence, GATE_SCENARIOS } from './feature-gates.m
 import { mapScenarios, parseGoTestJson } from './integration-suite.mjs';
 import { percentiles } from './load-suite.mjs';
 import { auditServiceWiring, switchDefaultState } from './service-wiring.mjs';
-import { composeFencePaths, documentedFencePath, fencePathAgreement, holderDatabaseUrl, ownedSchemaName, planCleanup as planFenceCleanup, proofExitCode as fenceExitCode, readmeFencePath, resolveTarget, RUN_SCHEMA, targetFromEnvironment, verifyFenceAccess } from '../../deploy/verify-fence-access.mjs';
-import { completeReport, createAndMigrate, planCleanup as planRestoreCleanup, reportFailure, REQUIRED_STEPS, RUN_SCHEMA as RESTORE_RUN_SCHEMA } from './restore-proof.mjs';
+import { composeFencePaths, documentedFencePath, fencePathAgreement, fenceVolumeAgreement, fenceVolumeControl, holderDatabaseUrl, ownedSchemaName, planCleanup as planFenceCleanup, proofExitCode as fenceExitCode, readmeFencePath, resolveTarget, RUN_SCHEMA, targetFromEnvironment, verifyFenceAccess } from '../../deploy/verify-fence-access.mjs';
+import { completeReport, createAndMigrate, insideDatabaseUrl, planCleanup as planRestoreCleanup, redactReport, reportFailure, REQUIRED_STEPS, RUN_SCHEMA as RESTORE_RUN_SCHEMA } from './restore-proof.mjs';
 import { buildProbes, evaluateProbe } from '../../deploy/runtime-grants-probe.mjs';
 import { auditGrants, parseMigrationFunctions, parseMigrationGrants, parseMigrationReads, parseMigrationTables, parseMigrationWrites, parsePolicy, scanGoUsage } from '../../deploy/runtime-grants.mjs';
 
@@ -837,7 +837,11 @@ test('the rendered configuration of the services names the fence', () => {
   assert.equal(paths.postgres, '/var/lib/kamkmchess/restore-fence');
   assert.equal(paths.api, '/var/lib/kamkmchess/restore-fence');
   // A configuration that cannot be parsed names no fence at all.
-  assert.deepEqual(composeFencePaths('not json'), { postgres: '', api: '' });
+  const empty = composeFencePaths('not json');
+  assert.equal(empty.postgres, '');
+  assert.equal(empty.api, '');
+  assert.equal(empty.volumes.postgres, null);
+  assert.equal(empty.volumes.api, null);
 });
 
 test('the proof owns the schema of its run and never the schema of another run', () => {
@@ -903,4 +907,197 @@ test('a proof that stops with an error still reports every step it did not run',
 
 test('the service that serves again after the fence is closed is a required step', () => {
   assert.ok(REQUIRED_STEPS.includes('the-service-serves-again-after-the-fence-is-closed'));
+});
+
+
+test('the two services have to mount the same fence volume', () => {
+  const shared = {
+    postgres: { source: 'restorefence', target: '/var/lib/kamkmchess/restore-fence', readOnly: false },
+    api: { source: 'restorefence', target: '/var/lib/kamkmchess/restore-fence', readOnly: true },
+  };
+  const agreement = fenceVolumeAgreement(shared);
+  assert.equal(agreement.ok, true);
+  assert.match(agreement.detail, /restorefence/);
+
+  // Another volume at the same path is a different fence.
+  const diverging = fenceVolumeAgreement({
+    postgres: shared.postgres,
+    api: { ...shared.api, source: 'otherfence' },
+  });
+  assert.equal(diverging.ok, false);
+  assert.match(diverging.detail, /different volumes/);
+
+  // The service that observes the fence may not write it.
+  const writableApi = fenceVolumeAgreement({ postgres: shared.postgres, api: { ...shared.api, readOnly: false } });
+  assert.equal(writableApi.ok, false);
+  assert.match(writableApi.detail, /writable/);
+
+  // The restore has to be able to write it.
+  const readOnlyDatabase = fenceVolumeAgreement({ postgres: { ...shared.postgres, readOnly: true }, api: shared.api });
+  assert.equal(readOnlyDatabase.ok, false);
+  assert.match(readOnlyDatabase.detail, /read-only/);
+
+  // A service that mounts nothing is not a fence.
+  assert.equal(fenceVolumeAgreement({ postgres: shared.postgres, api: null }).ok, false);
+});
+
+test('the rendered configuration carries the volume of every service', () => {
+  const rendered = JSON.stringify({
+    services: {
+      postgres: {
+        environment: { ONLINE_RESTORE_FENCE_PATH: '/var/lib/kamkmchess/restore-fence' },
+        volumes: [{ type: 'volume', source: 'restorefence', target: '/var/lib/kamkmchess/restore-fence', read_only: false }],
+      },
+      api: {
+        environment: { ONLINE_RESTORE_FENCE_PATH: '/var/lib/kamkmchess/restore-fence' },
+        volumes: [{ type: 'volume', source: 'restorefence', target: '/var/lib/kamkmchess/restore-fence', read_only: true }],
+      },
+    },
+  });
+  const paths = composeFencePaths(rendered);
+  assert.equal(paths.postgres, '/var/lib/kamkmchess/restore-fence');
+  assert.equal(paths.api, '/var/lib/kamkmchess/restore-fence');
+  assert.equal(paths.volumes.postgres.source, 'restorefence');
+  assert.equal(paths.volumes.postgres.readOnly, false);
+  assert.equal(paths.volumes.api.readOnly, true);
+  assert.equal(fenceVolumeAgreement(paths.volumes).ok, true);
+});
+
+test('the native proof reaches the database of the target with a parsed url', () => {
+  // The url of the container is the url of the target with only the host
+  // changed, so a target that is spelled localhost works as well.
+  const inside = insideDatabaseUrl('postgres://postgres@localhost:55467/kamkmchess_online_test?sslmode=disable', 'kamkmchess_proof_target_x');
+  assert.match(inside, /host\.docker\.internal:55467/);
+  assert.match(inside, /kamkmchess_proof_target_x/);
+  assert.match(inside, /sslmode=disable/);
+
+  // The credentials of the target are kept.
+  const withSecret = insideDatabaseUrl('postgres://proof:secret@127.0.0.1:55467/kamkmchess_online_test?sslmode=require', 'kamkmchess_proof_target_x');
+  assert.match(withSecret, /proof:secret@host\.docker\.internal:55467/);
+  assert.match(withSecret, /sslmode=require/);
+});
+
+test('no operator-facing file ships the restore command that cannot read its secret', async () => {
+  // The command that sources the private file as the restore user was the
+  // defect of the round five, and it must not come back in any file.
+  const broken = /exec --user 65532[^\n]*[\s\S]{0,200}?\. \/run\/secrets\/backup\.env/;
+  const offenders = [];
+  const walk = async (directory) => {
+    for (const entry of await readdir(directory, { withFileTypes: true })) {
+      if (entry.name === '.git' || entry.name === 'node_modules' || entry.name === '.scratch' || entry.name === 'dist') continue;
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await walk(full);
+        continue;
+      }
+      if (!/\.(mjs|js|md|sh|py|yml|yaml|json|go|ts)$/.test(entry.name)) continue;
+      const content = await readFile(full, 'utf8');
+      if (broken.test(content)) offenders.push(full);
+    }
+  };
+  await walk('.');
+  assert.deepEqual(offenders, []);
+});
+
+
+test('only a named volume can be the shared fence volume', () => {
+  const fence = '/var/lib/kamkmchess/restore-fence';
+  const service = (volume) => JSON.stringify({
+    services: {
+      postgres: {
+        environment: { ONLINE_RESTORE_FENCE_PATH: fence },
+        volumes: [{ type: 'volume', source: 'restorefence', target: fence, read_only: false }, ...(volume ? [volume] : [])],
+      },
+      api: {
+        environment: { ONLINE_RESTORE_FENCE_PATH: fence },
+        volumes: [{ type: 'volume', source: 'restorefence', target: fence, read_only: true }, ...(volume ? [volume] : [])],
+      },
+    },
+  });
+
+  // The named volume is found.
+  const named = composeFencePaths(service(null));
+  assert.equal(named.volumes.postgres.source, 'restorefence');
+  assert.equal(named.volumes.api.source, 'restorefence');
+  assert.equal(fenceVolumeAgreement(named.volumes).ok, true);
+
+  // An anonymous volume has no name to share.
+  const anonymous = composeFencePaths(service({ type: 'volume', target: '/other' }));
+  assert.equal(anonymous.volumes.postgres.source, 'restorefence');
+  assert.equal(fenceVolumeAgreement(anonymous.volumes).ok, true);
+
+  // A tmpfs and a bind mount are not volumes, and two of them with an empty
+  // source would look like the same volume.
+  const tmpfs = composeFencePaths(service({ type: 'tmpfs', target: fence }));
+  assert.equal(tmpfs.volumes.postgres.source, 'restorefence');
+  const bind = composeFencePaths(service({ type: 'bind', source: '/srv/fence', target: fence }));
+  assert.equal(bind.volumes.api.source, 'restorefence');
+
+  // A service that mounts nothing named at the fence path has no volume.
+  const empty = JSON.stringify({
+    services: {
+      postgres: { environment: { ONLINE_RESTORE_FENCE_PATH: fence }, volumes: [{ type: 'tmpfs', target: fence }] },
+      api: { environment: { ONLINE_RESTORE_FENCE_PATH: fence }, volumes: [{ type: 'volume', source: 'restorefence', target: fence, read_only: true }] },
+    },
+  });
+  const withoutVolume = composeFencePaths(empty);
+  assert.equal(withoutVolume.volumes.postgres, null);
+  assert.equal(fenceVolumeAgreement(withoutVolume.volumes).ok, false);
+});
+
+test('the negative control of the volume comparison has to qualify', () => {
+  // A configuration that did not render is not a detection.
+  const failed = fenceVolumeControl({ rendered: false, volumes: { postgres: null, api: null } });
+  assert.equal(failed.qualified, false);
+  assert.match(failed.detail, /could not be rendered/);
+
+  // A configuration without a named volume is not a detection either.
+  const missing = fenceVolumeControl({ rendered: true, volumes: { postgres: null, api: { source: 'otherfence' } } });
+  assert.equal(missing.qualified, false);
+  assert.match(missing.detail, /mounts no named volume/);
+
+  // A configuration that mounts the same volume is no control at all.
+  const same = fenceVolumeControl({
+    rendered: true,
+    volumes: { postgres: { source: 'restorefence' }, api: { source: 'restorefence' } },
+  });
+  assert.equal(same.qualified, false);
+  assert.match(same.detail, /no control at all/);
+
+  // A configuration with another volume qualifies, and the agreement has to
+  // refuse it.
+  const diverging = fenceVolumeControl({
+    rendered: true,
+    volumes: { postgres: { source: 'restorefence' }, api: { source: 'otherfence' } },
+  });
+  assert.equal(diverging.qualified, true);
+  const agreement = fenceVolumeAgreement({
+    postgres: { source: 'restorefence', target: '/var/lib/kamkmchess/restore-fence', readOnly: false },
+    api: { source: 'otherfence', target: '/var/lib/kamkmchess/restore-fence', readOnly: true },
+  });
+  assert.equal(agreement.ok, false);
+  assert.match(agreement.detail, /different volumes/);
+});
+
+test('the native proof never writes the secret of the target to the report', () => {
+  const url = new URL('postgres://proof:s3cr3t%20with%20space@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable');
+  const steps = [
+    { id: 'the-proof-failed', passed: false, detail: 'the migrations could not be applied: failed to connect to postgres://proof:s3cr3t%20with%20space@127.0.0.1:55467/kamkmchess_online_test' },
+  ];
+  // A tool prints the password decoded, the url of the target carries it
+  // percent encoded: both forms have to be gone.
+  const logs = ['the tool said: password s3cr3t with space is wrong', 'the tool said: password s3cr3t%20with%20space is wrong'];
+  const report = redactReport(steps, logs, url);
+  const text = JSON.stringify(report);
+  assert.equal(text.includes('s3cr3t'), false);
+  assert.equal(text.includes('s3cr3t%20with%20space'), false);
+  assert.equal(text.includes('s3cr3t with space'), false);
+  assert.match(report.steps[0].detail, /\*\*\*/);
+  assert.match(report.logs[0], /\*\*\*/);
+  assert.match(report.logs[1], /\*\*\*/);
+  const cleanup = planRestoreCleanup({
+    keep: true, containers: [], databases: [], volumes: ['owned-volume'],
+    directory: 'owned-directory', logs: ['password s3cr3t with space', 'password s3cr3t%20with%20space'], url,
+  });
+  assert.equal(JSON.stringify(cleanup.manifest).includes('s3cr3t'), false);
 });

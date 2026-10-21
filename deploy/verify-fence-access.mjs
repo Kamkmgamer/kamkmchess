@@ -128,9 +128,18 @@ export function redact(text, url) {
   if (!text) return text;
   let output = String(text);
   if (!url || !url.password) return output;
+  // The url of the target carries the password percent encoded, but a tool
+  // prints the decoded form in its message, so both forms are removed.
   output = output.split(url.password).join('***');
   const encoded = encodeURIComponent(url.password);
   if (encoded !== url.password) output = output.split(encoded).join('***');
+  let decoded = '';
+  try {
+    decoded = decodeURIComponent(url.password);
+  } catch {
+    // A password that is not a valid escape sequence keeps its encoded form.
+  }
+  if (decoded && decoded !== url.password && decoded !== encoded) output = output.split(decoded).join('***');
   return output;
 }
 
@@ -188,19 +197,73 @@ export function readmeFencePath(readme) {
 export function composeFencePaths(rendered) {
   /** @type {{postgres: string, api: string}} */
   const paths = { postgres: '', api: '' };
+  /** @type {{postgres: {source: string, target: string, readOnly: boolean}|null, api: {source: string, target: string, readOnly: boolean}|null}} */
+  const volumes = { postgres: null, api: null };
   let configuration;
   try {
     configuration = JSON.parse(String(rendered ?? ''));
   } catch {
-    return paths;
+    return { ...paths, volumes };
   }
   const services = configuration?.services ?? {};
   for (const name of ['postgres', 'api']) {
     const environment = services[name]?.environment ?? {};
     const value = environment.ONLINE_RESTORE_FENCE_PATH;
     paths[name] = typeof value === 'string' ? value.trim() : '';
+    const mounts = Array.isArray(services[name]?.volumes) ? services[name].volumes : [];
+    // A named volume is the only mount that two services can share: an
+    // anonymous volume, a tmpfs and a bind mount have no source, and two of
+    // them with an empty source would look like the same volume.
+    const mount = mounts.find((entry) => entry
+      && entry.type === 'volume'
+      && typeof entry.target === 'string'
+      && entry.target === paths[name]
+      && typeof entry.source === 'string'
+      && entry.source.length > 0);
+    volumes[name] = mount
+      ? {
+        type: 'volume',
+        source: String(mount.source ?? '').trim(),
+        target: String(mount.target ?? ''),
+        readOnly: mount.read_only === true || mount.readOnly === true,
+      }
+      : null;
   }
-  return paths;
+  return { ...paths, volumes };
+}
+
+/**
+ * Whether the two services mount the same fence volume.
+ *
+ * The path alone is not enough: the service that observes the fence and the
+ * restore that writes it have to share one volume, the service has to mount
+ * it read-only and the database service has to mount it writable. A
+ * divergence would leave the service serving during an import.
+ * @param {{postgres?: {source: string, target: string, readOnly: boolean}|null, api?: {source: string, target: string, readOnly: boolean}|null}} volumes
+ * @returns {{ok: boolean, detail: string}}
+ */
+export function fenceVolumeAgreement(volumes) {
+  const database = volumes?.postgres ?? null;
+  const api = volumes?.api ?? null;
+  if (!database || !api) {
+    return { ok: false, detail: 'a service does not mount a named volume at the configured path' };
+  }
+  if (!database.source || !api.source) {
+    return { ok: false, detail: 'a service mounts a volume without a name' };
+  }
+  if (database.source !== api.source) {
+    return { ok: false, detail: `the services mount different volumes: the database service mounts ${database.source} and the api service mounts ${api.source}` };
+  }
+  if (!api.readOnly) {
+    return { ok: false, detail: 'the api service mounts the fence volume writable' };
+  }
+  if (database.readOnly) {
+    return { ok: false, detail: 'the database service mounts the fence volume read-only' };
+  }
+  return {
+    ok: true,
+    detail: `both services mount the volume ${database.source} at ${database.target}; the api service reads it and the database service writes it`,
+  };
 }
 
 /**
@@ -322,27 +385,38 @@ async function deploymentFencePaths(io) {
     await cp(join(ROOT, 'deploy', 'pg_hba.conf'), join(directory, 'pg_hba.conf'));
     await writeFile(join(directory, 'postgres.env'), 'POSTGRES_USER=postgres\nPOSTGRES_PASSWORD=fixture-only\nPOSTGRES_DB=kamkmchess\n', 'utf8');
     await writeFile(join(directory, 'api.env'), 'ONLINE_FIXTURE=1\n', 'utf8');
-    const rendered = await io('docker', [
-      'compose',
-      '-f', join(directory, 'postgres.compose.yml'),
-      '-f', join(directory, 'api.compose.yml'),
-      'config', '--format', 'json',
-    ], { cwd: directory });
+    const compose = ['compose', '-f', join(directory, 'postgres.compose.yml'), '-f', join(directory, 'api.compose.yml'), 'config', '--format', 'json'];
+    const rendered = await io('docker', compose, { cwd: directory });
     if (rendered.code !== 0) {
       return {
         documented: documentedFencePath(runbook),
         readme: readmeFencePath(note),
         postgres: '',
         api: '',
+        volumes: { postgres: null, api: null },
+        brokenVolumes: { postgres: null, api: null },
+        brokenRendered: false,
         detail: `the configuration could not be rendered: ${(rendered.stdout + rendered.stderr).trim().split('\n').slice(-1)[0] ?? ''}`,
       };
     }
     const paths = composeFencePaths(rendered.stdout);
+    // The negative control: the api service mounts another volume at the
+    // same path. The agreement has to fail for it.
+    const api = await readFile(join(directory, 'api.compose.yml'), 'utf8');
+    await writeFile(join(directory, 'api.broken.compose.yml'), api.replace(/restorefence/g, 'otherfence'), 'utf8');
+    const postgres = await readFile(join(directory, 'postgres.compose.yml'), 'utf8');
+    await writeFile(join(directory, 'postgres.broken.compose.yml'), postgres.replace(/^volumes:/m, 'volumes:\n  otherfence:'), 'utf8');
+    const broken = await io('docker', ['compose', '-f', join(directory, 'postgres.broken.compose.yml'), '-f', join(directory, 'api.broken.compose.yml'), 'config', '--format', 'json'], { cwd: directory });
+    const brokenPaths = broken.code === 0 ? composeFencePaths(broken.stdout) : { volumes: { postgres: null, api: null } };
+    const brokenRendered = broken.code === 0;
     return {
       documented: documentedFencePath(runbook),
       readme: readmeFencePath(note),
       postgres: paths.postgres,
       api: paths.api,
+      volumes: paths.volumes,
+      brokenVolumes: brokenPaths.volumes,
+      brokenRendered,
       detail: '',
     };
   } finally {
@@ -428,6 +502,34 @@ async function measureFence(io, endpoint, paths) {
 }
 
 /**
+ * Whether the negative control of the volume comparison qualifies.
+ *
+ * A control only shows something when the configuration really renders, both
+ * services really mount a named volume and the two names really differ. A
+ * control that does not qualify is a failure of the proof: it must never be
+ * read as a detection.
+ * @param {{rendered?: boolean, volumes?: {postgres?: {source: string}|null, api?: {source: string}|null}}} control
+ * @returns {{qualified: boolean, detail: string}}
+ */
+export function fenceVolumeControl(control) {
+  const database = control?.volumes?.postgres ?? null;
+  const api = control?.volumes?.api ?? null;
+  if (control?.rendered !== true) {
+    return { qualified: false, detail: 'the configuration with another volume could not be rendered, so the comparison is not proved' };
+  }
+  if (!database || !api) {
+    return { qualified: false, detail: 'the configuration with another volume mounts no named volume, so the comparison is not proved' };
+  }
+  if (!database.source || !api.source) {
+    return { qualified: false, detail: 'the configuration with another volume mounts a volume without a name, so the comparison is not proved' };
+  }
+  if (database.source === api.source) {
+    return { qualified: false, detail: 'the configuration with another volume mounts the same volume, so it is no control at all' };
+  }
+  return { qualified: true, detail: `the configuration with another volume mounts ${database.source} and ${api.source}` };
+}
+
+/**
  * Proves the access.
  * @param {{keep?: boolean, databaseUrl?: string, container?: string, io?: typeof run}} [options]
  */
@@ -488,12 +590,33 @@ export async function verifyFenceAccess(options = {}) {
       readme: paths.readme,
     });
     const servicesAgree = paths.api.length > 0 && paths.api === paths.postgres;
+    const volumeAgreement = fenceVolumeAgreement(paths.volumes);
+    const brokenAgreement = fenceVolumeAgreement(paths.brokenVolumes);
     steps.push({
       id: 'the-runbook-and-the-configuration-name-the-same-fence',
       passed: agreement.ok && servicesAgree,
       detail: agreement.ok && servicesAgree
         ? agreement.detail
         : `${agreement.detail}${paths.detail ? ` (${paths.detail})` : ''}${paths.api && paths.postgres && !servicesAgree ? `; the api service names ${paths.api} and the database service names ${paths.postgres}` : ''}`,
+    });
+    steps.push({
+      id: 'the-services-mount-the-same-fence-volume',
+      passed: volumeAgreement.ok,
+      detail: volumeAgreement.ok ? volumeAgreement.detail : volumeAgreement.detail,
+    });
+    // The negative control has to qualify before it may show anything: the
+    // configuration has to render, both services have to mount a named
+    // volume, and the two names have to differ. A control that does not
+    // qualify is a failure of the proof, not a detection.
+    const control = fenceVolumeControl({ rendered: paths.brokenRendered, volumes: paths.brokenVolumes });
+    steps.push({
+      id: 'the-proof-detects-a-diverging-fence-volume',
+      passed: control.qualified && brokenAgreement.ok === false,
+      detail: control.qualified
+        ? brokenAgreement.ok
+          ? 'a configuration with another volume was not refused, so the comparison would prove nothing'
+          : `a configuration with another volume is refused: ${brokenAgreement.detail}`
+        : control.detail,
     });
 
     await mkdir(DIRECTORY, { recursive: true });
@@ -717,9 +840,10 @@ export async function verifyFenceAccess(options = {}) {
         steps.push({ id: 'the-probe-volume-is-removed', passed: false, detail: `the volume ${volume} could not be removed: ${removed.stderr.trim()}` });
       }
     }
-    if (plan.keep && volumes.length > 0) {
+    if (plan.keep && (plan.manifest.volumes.length > 0 || plan.manifest.databases.length > 0 || plan.manifest.containers.length > 0)) {
       // The resources of the run stay, and the manifest names exactly what
       // they are, so an operator can remove them.
+      plan.manifest.logs = plan.manifest.logs.map(entry => redact(entry, target?.url));
       await mkdir(DIRECTORY, { recursive: true });
       await writeFile(join(DIRECTORY, 'manifest.json'), `${JSON.stringify(plan.manifest, null, 2)}\n`, 'utf8');
     }

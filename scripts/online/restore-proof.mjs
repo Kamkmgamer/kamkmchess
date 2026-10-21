@@ -31,7 +31,10 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
 
-const CONTAINER = 'kamkmchess-kha67-local';
+import { holderDatabaseUrl, redact, resolveTarget } from '../../deploy/verify-fence-access.mjs';
+
+const DEFAULT_CONTAINER = 'kamkmchess-kha67-local';
+const DEFAULT_DATABASE_URL = 'postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable';
 const ROOT = process.cwd();
 const RUN = randomUUID().replace(/-/g, '').slice(0, 12);
 const PASSPHRASE = 'fixture-only-passphrase';
@@ -65,13 +68,14 @@ function run(command, args, options = {}) {
 /**
  * The image, the network and the address of the fixture database. The default
  * bridge resolves no container name, so the address is used.
+ * @param {string} container
  * @returns {Promise<{image: string, network: string, host: string}>}
  */
-async function fixtureEndpoint() {
-  const inspected = await run('docker', ['inspect', '--format', '{{.Config.Image}}', CONTAINER]);
+async function fixtureEndpoint(container) {
+  const inspected = await run('docker', ['inspect', '--format', '{{.Config.Image}}', container]);
   const image = inspected.stdout.trim();
   if (!image) throw new Error('the image of the fixture database could not be read');
-  const networks = await run('docker', ['inspect', '--format', '{{json .NetworkSettings.Networks}}', CONTAINER]);
+  const networks = await run('docker', ['inspect', '--format', '{{json .NetworkSettings.Networks}}', container]);
   /** @type {Record<string, {IPAddress?: string}>} */
   let parsed;
   try {
@@ -143,11 +147,13 @@ async function startHolder(endpoint, databaseUrl, restoreId, mode = 'serve') {
 }
 
 /**
+ * Runs a statement in the database container of the target.
+ * @param {{container: string}} context
  * @param {string} database
  * @param {string} statement
  */
-function sql(database, statement) {
-  return run('docker', ['exec', '-i', CONTAINER, 'psql', '-U', 'postgres', '-d', database, '-At', '-c', statement]);
+function sql(context, database, statement) {
+  return run('docker', ['exec', '-i', context.container, 'psql', '-U', 'postgres', '-d', database, '-At', '-c', statement]);
 }
 
 /**
@@ -157,38 +163,55 @@ function sql(database, statement) {
  * migration that fails afterwards still leaves a database the cleanup owns.
  * @param {string} database
  */
-async function createDatabase(database) {
-  const created = await sql('postgres', `CREATE DATABASE ${database}`);
+async function createDatabase(context, database) {
+  const created = await sql(context, 'postgres', `CREATE DATABASE ${database}`);
   if (created.code !== 0) throw new Error(`the database ${database} could not be created: ${created.stderr.trim()}`);
 }
 
 /**
- * Applies the migrations to a database of the run.
+ * The url of a database of the run, as a container of the deployment sees it.
+ *
+ * The url of the target is copied and only the host changes, so the
+ * credentials and the options of the target are kept and a target that is
+ * spelled localhost works as well.
+ * @param {URL|string} targetUrl
  * @param {string} database
- * @param {string} host
+ * @returns {string}
  */
-async function migrateDatabase(database, host) {
-  const onHost = new URL(process.env.ONLINE_FIXTURE_DATABASE_URL ?? 'postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable');
+export function insideDatabaseUrl(targetUrl, database) {
+  const url = new URL(String(targetUrl));
+  url.pathname = `/${database}`;
+  return holderDatabaseUrl(url);
+}
+
+/**
+ * Applies the migrations to a database of the run.
+ *
+ * The url of the host keeps the credentials and the options of the target,
+ * and the url of the container is the same url with only the host changed,
+ * so a target that is spelled localhost or that carries a password works.
+ * @param {{target: {url: URL}}} context
+ * @param {string} database
+ */
+export async function migrateDatabase(context, database) {
+  const onHost = new URL(context.target.url);
   onHost.pathname = `/${database}`;
   const migrated = await run('go', ['run', './cmd/migrate'], { env: { DATABASE_URL: onHost.toString() } });
   if (migrated.code !== 0) throw new Error(`the migrations could not be applied to ${database}: ${migrated.stderr.trim()}`);
-  const inside = new URL(`postgres://postgres@${host}:5432/kamkmchess_online_test?sslmode=disable`);
-  inside.pathname = `/${database}`;
-  return { host: onHost.toString(), inside: inside.toString() };
+  return { host: onHost.toString(), inside: insideDatabaseUrl(context.target.url, database) };
 }
-
 /**
  * @param {string} database
  * @param {string} owner
  * @param {string} matchId
  */
-async function seedMatch(database, owner, matchId) {
+async function seedMatch(context, database, owner, matchId) {
   const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
-  const match = await sql(database, `INSERT INTO online_matches (match_id, schema_version, variant, starting_fen, position_fen, starting_time_ms, increment_ms, version, control_epoch, input_hash, rules_policy_version, status) VALUES ('${matchId}', 1, 'orthodox', '${fen}', '${fen}', 60000, 0, 1, 1, decode(repeat('00',32),'hex'), 'online-rules/1', 'active')`);
+  const match = await sql(context, database, `INSERT INTO online_matches (match_id, schema_version, variant, starting_fen, position_fen, starting_time_ms, increment_ms, version, control_epoch, input_hash, rules_policy_version, status) VALUES ('${matchId}', 1, 'orthodox', '${fen}', '${fen}', 60000, 0, 1, 1, decode(repeat('00',32),'hex'), 'online-rules/1', 'active')`);
   if (match.code !== 0) throw new Error(`the match could not be seeded: ${match.stderr.trim()}`);
-  const seat = await sql(database, `INSERT INTO online_seats (match_id, seat, owner_kind, owner_id, public_label, control_kind, model_label, control_epoch) VALUES ('${matchId}', 'white', 'account', '${owner}', 'Proof', 'human', NULL, 1)`);
+  const seat = await sql(context, database, `INSERT INTO online_seats (match_id, seat, owner_kind, owner_id, public_label, control_kind, model_label, control_epoch) VALUES ('${matchId}', 'white', 'account', '${owner}', 'Proof', 'human', NULL, 1)`);
   if (seat.code !== 0) throw new Error(`the seat could not be seeded: ${seat.stderr.trim()}`);
-  const replay = await sql(database, `INSERT INTO online_public_replays (match_id, schema_version, replay_json, result_hash, game_kind, scored) VALUES ('${matchId}', 2, '{"moves":[]}'::jsonb, decode(repeat('00',32),'hex'), 'friend', true)`);
+  const replay = await sql(context, database, `INSERT INTO online_public_replays (match_id, schema_version, replay_json, result_hash, game_kind, scored) VALUES ('${matchId}', 2, '{"moves":[]}'::jsonb, decode(repeat('00',32),'hex'), 'friend', true)`);
   if (replay.code !== 0) throw new Error(`the replay could not be seeded: ${replay.stderr.trim()}`);
 }
 
@@ -197,14 +220,14 @@ async function seedMatch(database, owner, matchId) {
  * @param {string} owner
  * @param {string} matchId
  */
-async function seedRemoval(database, owner, matchId) {
-  const digest = await sql(database, `SELECT encode(sha256(convert_to('kamkm.online.removal.v1:${owner}', 'UTF8')), 'hex')`);
+async function seedRemoval(context, database, owner, matchId) {
+  const digest = await sql(context, database, `SELECT encode(sha256(convert_to('kamkm.online.removal.v1:${owner}', 'UTF8')), 'hex')`);
   const subject = digest.stdout.trim();
-  const inserted = await sql(database, `INSERT INTO online_removal_requests (removal_id, subject_kind, subject_id, scope, status, requested_at, verified_at, live_delete_due_at, recovery_sanitize_due_at) VALUES ('rm_proof_${RUN}', 'account', '${subject}', 'explicit_removal', 'verified', clock_timestamp(), clock_timestamp(), clock_timestamp() + interval '1 day', clock_timestamp() + interval '30 days')`);
+  const inserted = await sql(context, database, `INSERT INTO online_removal_requests (removal_id, subject_kind, subject_id, scope, status, requested_at, verified_at, live_delete_due_at, recovery_sanitize_due_at) VALUES ('rm_proof_${RUN}', 'account', '${subject}', 'explicit_removal', 'verified', clock_timestamp(), clock_timestamp(), clock_timestamp() + interval '1 day', clock_timestamp() + interval '30 days')`);
   if (inserted.code !== 0) throw new Error(`the removal request could not be seeded: ${inserted.stderr.trim()}`);
-  const subjectRecord = await sql(database, `INSERT INTO online_removal_subjects (subject_id, removal_id, subject_kind, subject_ref, scope, removed_at) VALUES ('rs_proof_${RUN}', 'rm_proof_${RUN}', 'account', '${subject}', 'explicit_removal', clock_timestamp())`);
+  const subjectRecord = await sql(context, database, `INSERT INTO online_removal_subjects (subject_id, removal_id, subject_kind, subject_ref, scope, removed_at) VALUES ('rs_proof_${RUN}', 'rm_proof_${RUN}', 'account', '${subject}', 'explicit_removal', clock_timestamp())`);
   if (subjectRecord.code !== 0) throw new Error(`the removal subject could not be seeded: ${subjectRecord.stderr.trim()}`);
-  const ledger = await sql(database, `INSERT INTO online_removal_ledger (ledger_id, removal_id, subject_kind, subject_id, match_id, scope, removed_at) VALUES ('rl_proof_${RUN}', 'rm_proof_${RUN}', 'account', '${subject}', '${matchId}', 'explicit_removal', clock_timestamp())`);
+  const ledger = await sql(context, database, `INSERT INTO online_removal_ledger (ledger_id, removal_id, subject_kind, subject_id, match_id, scope, removed_at) VALUES ('rl_proof_${RUN}', 'rm_proof_${RUN}', 'account', '${subject}', '${matchId}', 'explicit_removal', clock_timestamp())`);
   if (ledger.code !== 0) throw new Error(`the removal ledger could not be seeded: ${ledger.stderr.trim()}`);
   return subject;
 }
@@ -214,8 +237,8 @@ async function seedRemoval(database, owner, matchId) {
  * @param {string} database
  * @param {string} matchId
  */
-async function replayState(database, matchId) {
-  const rows = await sql(database, `SELECT coalesce((revoked_at IS NOT NULL)::text, 'false') || '|' || (replay_json = '{}'::jsonb)::text || '|' || coalesce(revocation_marker_id, '') FROM online_public_replays WHERE match_id = '${matchId}'`);
+async function replayState(context, database, matchId) {
+  const rows = await sql(context, database, `SELECT coalesce((revoked_at IS NOT NULL)::text, 'false') || '|' || (replay_json = '{}'::jsonb)::text || '|' || coalesce(revocation_marker_id, '') FROM online_public_replays WHERE match_id = '${matchId}'`);
   const line = rows.stdout.trim();
   if (!line) return { present: false, revoked: false, emptied: false, marker: '' };
   const [revoked, emptied, marker] = line.split('|');
@@ -250,7 +273,7 @@ export const REQUIRED_STEPS = [
   'the-service-takes-the-fence',
   'the-service-refuses-while-the-fence-is-held',
   'a-restore-while-the-fence-is-held-is-refused',
-  'the-fence-is-not-closed-with-a-wrong-digest',
+  'the-fence-is-not-closed-with-a-wrong-ledger',
   'the-fence-stays-open-after-the-death-of-the-holder',
   'the-take-over-of-the-crashed-restore-finishes',
   'the-fence-is-closed-after-the-take-over',
@@ -274,6 +297,24 @@ export async function createAndMigrate(name, dependencies) {
   await dependencies.create(name);
   dependencies.register(name);
   return dependencies.migrate(name);
+}
+
+/**
+ * Hides the secret of the target in the report of the proof.
+ *
+ * The url of the target may carry a password, and the report names the
+ * failures of the tools, so every step and every log line is cleaned before
+ * it leaves the proof.
+ * @param {{id: string, passed: boolean, detail: string}[]} steps
+ * @param {string[]} logs
+ * @param {URL} [url]
+ * @returns {{steps: {id: string, passed: boolean, detail: string}[], logs: string[]}}
+ */
+export function redactReport(steps, logs, url) {
+  if (!url || !url.password) return { steps, logs };
+  for (const step of steps) step.detail = redact(step.detail, url);
+  for (let index = 0; index < logs.length; index += 1) logs[index] = redact(logs[index], url);
+  return { steps, logs };
 }
 
 /**
@@ -305,19 +346,6 @@ export function reportFailure(steps, logs, error) {
 export const RUN_SCHEMA = `fence_probe_${RUN}`;
 
 /**
- * The database of the fixture the helper connects to.
- * @returns {string}
- */
-export function fixtureDatabase() {
-  try {
-    const url = new URL(process.env.ONLINE_FIXTURE_DATABASE_URL ?? 'postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable');
-    return url.pathname.replace(/^\//, '') || 'kamkmchess_online_test';
-  } catch {
-    return 'kamkmchess_online_test';
-  }
-}
-
-/**
  * What the proof removes and what it keeps.
  *
  * With the keep option the resources of the run stay, and the manifest names
@@ -340,8 +368,9 @@ export function planCleanup(options) {
       volumes: [...options.volumes],
       directory: options.directory,
       schema: options.schema ?? null,
+      schemaDatabase: options.schemaDatabase ?? null,
       schemaKept: options.schemaKept === true,
-      logs: [...options.logs],
+      logs: options.logs.map(entry => redact(entry, options.url)),
     },
   };
 }
@@ -384,10 +413,48 @@ export async function runRestoreProof(options = {}) {
   /** @type {{image: string, network: string, host: string}|null} */
   let endpoint;
   const holders = [];
+  /** @type {{container: string, target: {url: URL}}|null} */
+  let context = null;
+  // The database that holds the schema of the helper. It is known only when
+  // the run created it, so a refusal never looks for a database that is not
+  // there.
+  let acquiredSchemaDatabase = null;
 
   try {
+    // The target of the proof is explicit: the container and the database
+    // come from the environment or from the options, and a target that does
+    // not address the fixture is refused before anything is created.
+    const resolved = resolveTarget({
+      container: options.container ?? process.env.ONLINE_FIXTURE_CONTAINER ?? DEFAULT_CONTAINER,
+      databaseUrl: options.databaseUrl ?? process.env.ONLINE_FIXTURE_DATABASE_URL ?? DEFAULT_DATABASE_URL,
+    });
+    if (!resolved.ok) {
+      steps.push({ id: 'the-target-of-the-proof-is-accepted', passed: false, detail: resolved.detail });
+      return completeReport(steps, logs, ['the target of the proof was refused']);
+    }
+    context = { container: String(resolved.container), target: resolved };
+    steps.push({
+      id: 'the-target-of-the-proof-is-accepted',
+      passed: true,
+      detail: `the proof runs against the ${resolved.database} database of ${context.container}`,
+    });
     await mkdir(DIRECTORY, { recursive: true });
-    endpoint = await fixtureEndpoint();
+    endpoint = await fixtureEndpoint(context.container);
+    const published = await run('docker', ['port', context.container, '5432/tcp']);
+    const publishedPort = (published.stdout || '').trim().split('\n')[0]?.split(':').pop() ?? '';
+    if (!publishedPort || publishedPort !== resolved.url.port) {
+      steps.push({
+        id: 'the-target-addresses-the-published-port',
+        passed: false,
+        detail: 'the target of the proof does not address the published port of the container',
+      });
+      return completeReport(steps, logs, ['the target of the proof does not address the fixture']);
+    }
+    steps.push({
+      id: 'the-target-addresses-the-published-port',
+      passed: true,
+      detail: `the target and the container agree on the port ${publishedPort}`,
+    });
     const created = await run('docker', ['volume', 'create', `--label=kamkmchess.ops.proof=${RUN}`, VOLUME]);
     if (created.code !== 0) throw new Error(`the volume of the run could not be created: ${created.stderr.trim()}`);
     volumes.push(VOLUME);
@@ -400,27 +467,28 @@ export async function runRestoreProof(options = {}) {
     // The databases of the run are registered as soon as they exist, so a
     // migration that fails still leaves a database the cleanup drops.
     const source = await createAndMigrate(sourceDatabase, {
-      create: createDatabase,
+      create: (name) => createDatabase(context, name),
       register: (name) => databases.push(name),
-      migrate: (name) => migrateDatabase(name, endpoint.host),
+      migrate: (name) => migrateDatabase(context, name),
     });
     const target = await createAndMigrate(targetDatabase, {
-      create: createDatabase,
+      create: (name) => createDatabase(context, name),
       register: (name) => databases.push(name),
-      migrate: (name) => migrateDatabase(name, endpoint.host),
+      migrate: (name) => migrateDatabase(context, name),
     });
+    acquiredSchemaDatabase = targetDatabase;
 
     const owner = 'proof_owner';
     const matchId = 'proof_match_1';
-    await seedMatch(sourceDatabase, owner, matchId);
+    await seedMatch(context, sourceDatabase, owner, matchId);
     // A second subject owns a match that no removal names.
-    await seedMatch(sourceDatabase, 'proof_owner_other', 'proof_match_2');
+    await seedMatch(context, sourceDatabase, 'proof_owner_other', 'proof_match_2');
 
     const made = await tool(['create', '--class', 'daily', '--out', `/backups/old-${RUN}.kha`], { DATABASE_URL: source.inside, KHA_BACKUP_PASSPHRASE: PASSPHRASE }, command, endpoint);
     steps.push({ id: 'the-old-bundle-is-encrypted-and-created', passed: made.code === 0, detail: made.code === 0 ? 'the old bundle was created with the real tool' : `the bundle could not be created: ${made.stderr.trim()}` });
     if (made.code !== 0) return completeReport(steps, logs, ['the old bundle could not be created']);
 
-    await seedRemoval(sourceDatabase, owner, matchId);
+    await seedRemoval(context, sourceDatabase, owner, matchId);
     const madeNewer = await tool(['create', '--class', 'daily', '--out', `/backups/newer-${RUN}.kha`], { DATABASE_URL: source.inside, KHA_BACKUP_PASSPHRASE: PASSPHRASE }, command, endpoint);
     steps.push({ id: 'the-newer-ledger-is-created', passed: madeNewer.code === 0, detail: madeNewer.code === 0 ? 'the newer bundle carries the removal ledger' : `the newer bundle could not be created: ${madeNewer.stderr.trim()}` });
     if (madeNewer.code !== 0) return completeReport(steps, logs, ['the newer bundle could not be created']);
@@ -448,7 +516,7 @@ export async function runRestoreProof(options = {}) {
 
     // The service that holds the fence and watches it. It reaches the fixture
     // database over the published port of the host.
-    const gateDatabase = target.host.replace('127.0.0.1', 'host.docker.internal');
+    const gateDatabase = insideDatabaseUrl(context.target.url, targetDatabase);
     const holder = await startHolder(endpoint, gateDatabase, `restore-holder-${RUN}`);
     logs.push(`holder: ${holder.logs}`);
     if (holder.id) holders.push(holder.id);
@@ -488,11 +556,11 @@ export async function runRestoreProof(options = {}) {
       const body = wrong === null ? '' : await wrong.text();
       const afterWrong = await markerState(endpoint);
       steps.push({
-        id: 'the-fence-is-not-closed-with-a-wrong-digest',
+        id: 'the-fence-is-not-closed-with-a-wrong-ledger',
         passed: wrong !== null && wrong.status === 409 && /ledger|owner|digest|restore/i.test(body) && afterWrong === 'open',
         detail: wrong !== null
-          ? `the close with a wrong digest was refused with ${wrong.status} (${body.trim().slice(0, 120)}) and the marker is ${afterWrong}`
-          : 'the close with a wrong digest was not answered',
+          ? `the close with a wrong removal ledger was refused with ${wrong.status} (${body.trim().slice(0, 120)}) and the marker is ${afterWrong}`
+          : 'the close with a wrong removal ledger was not answered',
       });
     }
 
@@ -501,9 +569,9 @@ export async function runRestoreProof(options = {}) {
       const killed = await run('docker', ['kill', id]);
       // A holder that is already gone is the death case, not a failure of
       // the harness: the marker is the evidence.
-      if (killed.code !== 0 && !/no such container/i.test(killed.stderr)) steps.push({ id: 'the-holder-is-stopped', passed: false, detail: `the holder could not be stopped: ${killed.stderr.trim()}` });
+      if (killed.code !== 0 && !/no such container|is not running/i.test(killed.stderr)) steps.push({ id: 'the-holder-is-stopped', passed: false, detail: `the holder could not be stopped: ${killed.stderr.trim()}` });
       const removed = await run('docker', ['rm', '--force', id]);
-      if (removed.code !== 0 && !/no such container/i.test(removed.stderr)) {
+      if (removed.code !== 0 && !/no such container|is not running/i.test(removed.stderr)) {
         steps.push({ id: 'the-holder-is-removed', passed: false, detail: `the holder could not be removed: ${removed.stderr.trim()}` });
       }
     }
@@ -546,7 +614,7 @@ export async function runRestoreProof(options = {}) {
       }
     }
 
-    const revoked = await replayState(targetDatabase, matchId);
+    const revoked = await replayState(context, targetDatabase, matchId);
     steps.push({
       id: 'the-published-record-of-the-removed-subject-is-revoked',
       passed: revoked.present && revoked.revoked && revoked.emptied && revoked.marker.length > 0,
@@ -555,14 +623,14 @@ export async function runRestoreProof(options = {}) {
         : 'the record is not in the restored copy',
     });
 
-    const kept = await replayState(targetDatabase, 'proof_match_2');
+    const kept = await replayState(context, targetDatabase, 'proof_match_2');
     steps.push({
       id: 'a-subject-with-no-record-in-the-ledger-keeps-its-data',
       passed: kept.present && !kept.revoked,
       detail: kept.present ? `the record of the other subject is still published (revoked=${kept.revoked})` : 'the record of the other subject is missing',
     });
 
-    const seat = await sql(targetDatabase, `SELECT owner_id FROM online_seats WHERE match_id = '${matchId}'`);
+    const seat = await sql(context, targetDatabase, `SELECT owner_id FROM online_seats WHERE match_id = '${matchId}'`);
     steps.push({
       id: 'the-seat-of-the-removed-subject-is-anonymized',
       passed: seat.stdout.trim() === 'anonymized',
@@ -589,9 +657,14 @@ export async function runRestoreProof(options = {}) {
       directory: DIRECTORY,
       logs,
       schema: RUN_SCHEMA,
+      schemaDatabase: targetDatabase,
       schemaKept: options.keep === true,
+      url: context?.target?.url,
     });
-    if (plan.keep) {
+    // The secret of the target is never written to the report, and the
+    // manifest carries the logs of the run, so the report is cleaned first.
+    redactReport(steps, logs, context?.target?.url);
+    if (plan.keep && (plan.manifest.volumes.length > 0 || plan.manifest.databases.length > 0 || plan.manifest.containers.length > 0)) {
       // The resources of the run stay, and the manifest names exactly what
       // they are, so an operator can remove them.
       try {
@@ -603,37 +676,40 @@ export async function runRestoreProof(options = {}) {
     }
     for (const id of plan.removeContainers) {
       const removed = await run('docker', ['rm', '--force', id]);
-      if (removed.code !== 0 && !/no such container/i.test(removed.stderr)) {
+      if (removed.code !== 0 && !/no such container|is not running/i.test(removed.stderr)) {
         steps.push({ id: 'the-holders-are-removed', passed: false, detail: 'a container of the run could not be removed: ' + removed.stderr.trim() });
       }
     }
     // The schema of the helper belongs to this run, and the helper is killed
     // before it can drop it, so the proof drops exactly its own schema. With
     // the keep option the schema stays, so it can be inspected.
-    if (!plan.keep) {
-      const database = fixtureDatabase();
-      const present = await sql(database, `SELECT count(*) FROM pg_namespace WHERE nspname = '${RUN_SCHEMA}'`);
+    if (!plan.keep && context && acquiredSchemaDatabase) {
+      // The schema is looked up and dropped in the database the helper
+      // connected to, and the lookup happens before the databases of the run
+      // are dropped, so the step reports the schema it really checked.
+      const database = acquiredSchemaDatabase;
+      const present = await sql(context, database, `SELECT count(*) FROM pg_namespace WHERE nspname = '${RUN_SCHEMA}'`);
       const remaining = (present.stdout || '').trim();
       if (present.code === 0 && remaining === '0') {
-        steps.push({ id: 'the-schema-of-the-run-is-dropped', passed: true, detail: `the schema ${RUN_SCHEMA} of the run is not in the fixture` });
+        steps.push({ id: 'the-schema-of-the-run-is-dropped', passed: true, detail: `the schema ${RUN_SCHEMA} of the run is not in ${database}` });
       } else if (present.code !== 0) {
-        steps.push({ id: 'the-schema-of-the-run-is-dropped', passed: false, detail: `the schema ${RUN_SCHEMA} could not be looked up: ${present.stderr.trim()}` });
+        steps.push({ id: 'the-schema-of-the-run-is-dropped', passed: false, detail: `the schema ${RUN_SCHEMA} could not be looked up in ${database}: ${present.stderr.trim()}` });
       } else {
-        const dropped = await sql(database, `DROP SCHEMA IF EXISTS ${RUN_SCHEMA} CASCADE`);
-        const gone = await sql(database, `SELECT count(*) FROM pg_namespace WHERE nspname = '${RUN_SCHEMA}'`);
+        const dropped = await sql(context, database, `DROP SCHEMA IF EXISTS ${RUN_SCHEMA} CASCADE`);
+        const gone = await sql(context, database, `SELECT count(*) FROM pg_namespace WHERE nspname = '${RUN_SCHEMA}'`);
         steps.push({
           id: 'the-schema-of-the-run-is-dropped',
           passed: dropped.code === 0 && (gone.stdout || '').trim() === '0',
           detail: dropped.code === 0
-            ? `the schema ${RUN_SCHEMA} of the run is gone from the fixture`
-            : `the schema ${RUN_SCHEMA} could not be dropped: ${dropped.stderr.trim()}`,
+            ? `the schema ${RUN_SCHEMA} of the run is gone from ${database}`
+            : `the schema ${RUN_SCHEMA} could not be dropped from ${database}: ${dropped.stderr.trim()}`,
         });
       }
-    } else {
-      steps.push({ id: 'the-schema-of-the-run-is-kept', passed: true, detail: `the schema ${RUN_SCHEMA} of the run is kept for inspection, and the manifest names it` });
+    } else if (acquiredSchemaDatabase) {
+      steps.push({ id: 'the-schema-of-the-run-is-kept', passed: true, detail: `the schema ${RUN_SCHEMA} of the run is kept for inspection in ${acquiredSchemaDatabase}, and the manifest names it` });
     }
     for (const database of plan.removeDatabases) {
-      const dropped = await sql('postgres', `DROP DATABASE IF EXISTS ${database}`);
+      const dropped = await sql(context, 'postgres', `DROP DATABASE IF EXISTS ${database}`);
       if (dropped.code !== 0) {
         steps.push({ id: 'the-fixture-databases-are-removed', passed: false, detail: `the database ${database} could not be dropped: ${dropped.stderr.trim()}` });
       }
@@ -651,6 +727,8 @@ export async function runRestoreProof(options = {}) {
         steps.push({ id: 'the-directory-of-the-run-is-removed', passed: false, detail: `the directory could not be removed: ${error instanceof Error ? error.message : String(error)}` });
       }
     }
+    // Cleanup can add tool errors after the manifest was written.
+    redactReport(steps, logs, context?.target?.url);
   }
 }
 

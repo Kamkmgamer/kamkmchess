@@ -1,6 +1,19 @@
 # KHA-83 evidence — host verification for the online service
 
-Tested commit: `0b24151`.
+Tested commit: `d88eafc` (the operations candidate). This file is committed on
+top of it and changes no measured artefact: every number and every step id
+below is the output of the tools at that commit. The measurements are
+**local**, against the fixture container of this machine; the host is not
+verified, and the local rehearsal of 2026-10-18 that
+[`MVP-operations.md`](MVP-operations.md) records is a separate, older
+rehearsal that is not part of this candidate.
+
+The proofs were run against the **parent root `cefc854` with the privacy
+candidate `fbbd687` and `9906850` merged in**, because the fence helper of
+this candidate binds and closes with the removal ledger of the new
+interface and does not compile against the older one. The tree without the
+privacy candidate cannot build the helper, so the numbers above are the
+numbers of the integrated tree, not of the operations branch alone.
 
 ## What is prepared
 
@@ -24,11 +37,12 @@ Tested commit: `0b24151`.
 ## Measured locally (not a host measurement)
 
 The grant probe ran against the local PostgreSQL 17 fixture
-(`127.0.0.1:55467`, database `kamkmchess_online_test`) on the assembled
-schema (`0bb8f63`, migrations up to `0018_online_queue_removal_redaction`):
+(`127.0.0.1:55467`, database `kamkmchess_online_test`) on the schema of
+the tree at `d88eafc` (migrations up to
+`0019_privacy_auxiliary_redaction`):
 
 ```
-212 probes, 0 failures
+221 probes, 0 failures
 ```
 
 The probe applies the reviewed policy to a throwaway role and schema, then
@@ -47,7 +61,8 @@ is covered by the policy. The trigger functions need no grant: PostgreSQL
 checks their EXECUTE privilege when the trigger is created and refuses a
 direct call.
 
-The privileges the assembled schema needs are covered:
+The policy lists 45 tables. Some of the privileges the assembled schema
+needs:
 
 | Table | Verbs the runtime role holds | Why |
 | --- | --- | --- |
@@ -73,7 +88,7 @@ The static audits are clean against the assembled tree:
 
 | Audit | Result |
 | --- | --- |
-| `node deploy/runtime-grants.mjs` | clear, 45 tables, no blocker; the 43 grants the migrations issue to the unused role are reported once, and the policy role is compared table by table |
+| `node deploy/runtime-grants.mjs` | clear (7 findings), 45 tables in the policy, no blocker; the 40 tables the migrations grant to the unused role are reported once, and the policy role is compared table by table |
 | `node scripts/online/service-wiring.mjs` | the feature route is served, both switches are read with a closed default, the restore fence is loaded and shared |
 | `node scripts/online/backup-coverage.mjs` | the dump covers the database, the game and the online removal ledgers are reapplied, the restore gate is consulted before serving |
 
@@ -128,6 +143,12 @@ It is **not** a capacity claim.
   measures that inside the real service container, with a negative control:
   the restore user is refused the file, the documented reading side hands the
   values over, and the file is still `0600` and owned by root afterwards.
+   The compose proof reports 11 steps, all of them passed at `d88eafc`.
+- The superseded `scripts/online/prepare-restore-fixture.mjs` is **removed**.
+   It wrote the restore command that cannot run (it sourced the private file
+   as the restore user) and left a bundle and a stages file on the host; the
+   native proof supersedes it. A test fails if any file of the repository
+   ships that command again.
 
 ## Open blockers
 
@@ -135,29 +156,40 @@ It is **not** a capacity claim.
    `node deploy/verify-fence-access.mjs` runs the real fence code of the
    privacy service in throwaway containers against a volume this run created:
 
-   | Step | Result |
+   The tool reports 13 steps, and every one of them passed at `d88eafc`:
+
+   | Step id | Result |
    | --- | --- |
-   | the shared directory is prepared for the API user | passed |
-   | the database user cannot write the fence into the shared directory | passed |
-   | the API user observes the **open** fence the restore wrote | passed |
-   | the API user observes the **closed** fence after the restore finished | passed |
-   | the runbook, the configuration and the note name the same fence | passed |
-   | the service observes the fence the runbook opens | passed |
-   | the schema of the run is dropped in the selected target | passed |
+   | `the-target-of-the-proof-is-accepted` | passed |
+   | `the-target-addresses-the-published-port` | passed |
+   | `the-runbook-and-the-configuration-name-the-same-fence` | passed |
+   | `the-services-mount-the-same-fence-volume` | passed |
+   | `the-proof-detects-a-diverging-fence-volume` | passed |
+   | `the-service-observes-the-fence-the-runbook-opens` | passed |
+   | `the-shared-fence-directory-is-prepared` | passed |
+   | `the-database-user-cannot-write-the-fence` | passed |
+   | `the-schema-of-the-run-is-owned` | passed |
+   | `the-service-takes-the-fence` | passed |
+   | `the-service-refuses-while-the-fence-is-held` | passed (503) |
+   | `the-service-serves-again-after-the-fence-is-closed` | passed (200) |
+   | `the-schema-of-the-run-is-dropped` | passed |
 
    The remedy is a deployment choice, not a mode decision: the database
-   service prepares the shared directory for the user the API reads it as, and
-   the restore runs as that user. The marker keeps its private mode. The
+   service prepares the shared directory for the user the API observes it as,
+   and the restore runs as that user. The marker keeps its private mode. The
    API therefore observes the open fence and refuses traffic during the
    restore, and observes the closed fence and resumes afterwards.
 
    **What this proof is not.** It proves the shared ownership, the permission
-   boundary, the serving gate and the agreement between the runbook and the
-   configuration. The encrypted restore itself is proved by
+   boundary, the serving gate, the agreement between the runbook, the note and
+   the rendered configuration, and the agreement of the two services on the
+   **volume** (a configuration that mounts another volume is rendered and has
+   to be refused). The encrypted restore itself is proved by
    `node scripts/online/restore-proof.mjs`, which runs the real
-   `khabackup` against the fence lifecycle of the privacy service. The one
-   case neither proof runs is a **crash of the restore during its import**:
-   that belongs to the privacy work, and both proofs say so in their limits.
+   `khabackup` against the fence lifecycle of the privacy service and reports
+   18 steps, all of them passed at `d88eafc`. The one case neither proof runs
+   is a **crash of the restore during its import**: that belongs to the privacy
+   work, and both proofs say so in their limits.
 2. **The host has not been verified.** Apache flushing, finite stream
    delivery, the delivered CSP and CORS, the TLS chain, the private worker
    reachability and the capacity need the real host and an authorized staging
@@ -166,7 +198,7 @@ It is **not** a capacity claim.
 3. **The migrations grant privileges of their own.** The online migrations
    create `kamkm_online_api` and `kamkm_online_rules` and grant the first one
    `SELECT, INSERT, UPDATE, DELETE` on the online tables, including the
-   append-only ones. The audit now sees all 43 of those grants. The
+   append-only ones. The audit now sees all 40 of those tables. The
    deployment connects as `kamkmchess_runtime`, the role the reviewed policy
    describes, and provisioning revokes the privileges of the unused roles, so
    no unused role keeps a grant. The grants themselves still exist in the
