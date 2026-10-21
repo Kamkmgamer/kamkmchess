@@ -310,23 +310,18 @@ func (s *Service) RenewRunnerLease(ctx context.Context, actor ParticipantRef, re
 	if lease.RunnerID != req.RunnerID {
 		return RunnerLease{}, ErrNotAuthorized
 	}
+	// A finished match takes no lease. The answer says the match is over,
+	// which is the reason the runner lost the seat.
+	if match.Status != MatchActive {
+		if lease.Status == LeaseActive {
+			if _, err = tx.Exec(ctx, `UPDATE online_runner_leases SET status='revoked',revoked_at=$1,revoked_reason=$2 WHERE lease_id=$3 AND status='active'`, decision, LeaseRevokeMatchEnded, req.LeaseID); err != nil {
+				return RunnerLease{}, err
+			}
+		}
+		return RunnerLease{}, ErrMatchEnded
+	}
 	if lease.Status != LeaseActive {
 		return RunnerLease{}, ErrConflict
-	}
-	// A lease of a finished match is not renewed. The match is over, so the
-	// lease ends with it instead of living on until it expires.
-	if match.Status != MatchActive {
-		if _, err = tx.Exec(ctx, `UPDATE online_runner_leases SET status='revoked',revoked_at=$1,revoked_reason=$2 WHERE lease_id=$3 AND status='active'`, decision, LeaseRevokeMatchEnded, req.LeaseID); err != nil {
-			return RunnerLease{}, err
-		}
-		lease.Status = LeaseRevoked
-		lease.RevokedAt = &decision
-		reason := LeaseRevokeMatchEnded
-		lease.RevokedReason = &reason
-		if err = tx.Commit(ctx); err != nil {
-			return RunnerLease{}, err
-		}
-		return lease, ErrMatchEnded
 	}
 	// An expired lease is never revived. It is closed here, so the lease
 	// history shows that the runner lost the seat, and the runner has to
@@ -534,6 +529,11 @@ func (s *Service) writeRunnerRequest(ctx context.Context, actor ParticipantRef, 
 	if lease.RunnerID != req.RunnerID {
 		return RunnerLease{}, ErrNotAuthorized
 	}
+	// A finished match records no provider request. The work of the match is
+	// over, so a billable request must not start or settle against it.
+	if match.Status != MatchActive {
+		return RunnerLease{}, ErrMatchEnded
+	}
 	if lease.Status != LeaseActive {
 		return RunnerLease{}, ErrConflict
 	}
@@ -541,11 +541,6 @@ func (s *Service) writeRunnerRequest(ctx context.Context, actor ParticipantRef, 
 	// seat, so its request record is no longer authoritative.
 	if !lease.ExpiresAt.After(decision) {
 		return RunnerLease{}, ErrConflict
-	}
-	// A finished match records no provider request. The work of the match is
-	// over, so a billable request must not start or settle against it.
-	if match.Status != MatchActive {
-		return RunnerLease{}, ErrMatchEnded
 	}
 	if lease.ControlEpoch != match.ControlEpoch || req.ControlEpoch != match.ControlEpoch {
 		return RunnerLease{}, ErrConflict
@@ -599,6 +594,17 @@ func (s *Service) writeRunnerRequest(ctx context.Context, actor ParticipantRef, 
 // expire.
 func revokeSeatRunnerLease(ctx context.Context, tx pgx.Tx, matchID string, seat Seat, at time.Time, reason string) error {
 	_, err := tx.Exec(ctx, `UPDATE online_runner_leases SET status='revoked',revoked_at=$1,revoked_reason=$2 WHERE match_id=$3 AND seat=$4 AND status='active'`, at.UTC(), reason, matchID, string(seat))
+	return err
+}
+
+// revokeMatchRunnerLeases closes the live leases of every seat of a match.
+//
+// The revocation happens in the transaction of the terminal transition, so a
+// finished match never carries a live lease. The pending request of a lease
+// is kept: it is the record of a provider request that may still be running,
+// and the owner needs it to decide between a retry, a switch and a takeover.
+func revokeMatchRunnerLeases(ctx context.Context, tx pgx.Tx, matchID string, at time.Time, reason string) error {
+	_, err := tx.Exec(ctx, `UPDATE online_runner_leases SET status='revoked',revoked_at=$1,revoked_reason=$2 WHERE match_id=$3 AND status='active'`, at.UTC(), reason, matchID)
 	return err
 }
 

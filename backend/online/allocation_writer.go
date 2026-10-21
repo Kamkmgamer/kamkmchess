@@ -263,6 +263,10 @@ func (s *Service) CreateAllocatedMatch(ctx context.Context, actor ParticipantRef
 	return result, nil
 }
 
+// The anonymization sentinel is the owner reference of a seat whose
+// participant was removed. It is never a participant of a new match.
+const anonymizedParticipantID = subject.AnonymizedID
+
 // requireParticipants refuses an allocation of a participant that was
 // removed.
 //
@@ -282,6 +286,14 @@ func (s *Service) CreateAllocatedMatch(ctx context.Context, actor ParticipantRef
 // removed may still play.
 func (s *Service) requireParticipants(ctx context.Context, tx pgx.Tx, setup *CreateMatchSetup) error {
 	participants := []ParticipantRef{setup.Seats.White.Participant, setup.Seats.Black.Participant}
+	for _, participant := range participants {
+		// A redacted identity is not a participant. The anonymization
+		// sentinel is never seated again, so an allocation of it is refused
+		// before it writes anything.
+		if participant.ID == "" || participant.ID == anonymizedParticipantID {
+			return ErrNotAuthorized
+		}
+	}
 	if err := LockAccountScopes(ctx, tx, participants); err != nil {
 		return err
 	}

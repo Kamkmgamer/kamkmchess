@@ -317,6 +317,15 @@ func WithHealthReporter(reporter *HealthReporter) Option {
 	return func(s *Service) { s.health = reporter }
 }
 
+// WithProbeEvaluator installs the evaluator of the rules health probe.
+//
+// The probe has its own evaluator, so it never queues behind a request of
+// the shared client. A failed probe is then a failed dependency and not an
+// overload of a healthy one.
+func WithProbeEvaluator(evaluator Evaluator) Option {
+	return func(s *Service) { s.probeEvaluator = evaluator }
+}
+
 // Health returns the current health of the online service.
 func (s *Service) Health(ctx context.Context) (HealthReport, error) {
 	if s.health == nil {
@@ -356,13 +365,28 @@ func (s *Service) healthState(ctx context.Context) HealthState {
 // The probe is the active health signal of the rules dependency. A probe
 // fails while the process is down, even when no move is submitted, so a
 // rules outage never masquerades as an absent opponent.
+//
+// The probe uses its own evaluator when the composition provides one. The
+// shared client admits one request at a time, so a probe on the shared
+// client would queue behind a healthy request and could report an overload
+// as an outage. A dedicated probe never queues, so a failed probe is a
+// failed dependency.
 func (s *Service) ProbeRules(ctx context.Context) error {
-	if s.evaluator == nil {
+	evaluator := s.probeEvaluator
+	if evaluator == nil {
+		evaluator = s.evaluator
+	}
+	if evaluator == nil {
 		s.noteEvaluatorFailure()
 		return ErrUnavailable
 	}
 	input := probeRulesInput()
-	if err := s.evaluator.ValidateSetup(ctx, input); err != nil {
+	if err := evaluator.ValidateSetup(ctx, input); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			// A cancelled probe says nothing about the dependency. The
+			// caller went away, not the rules process.
+			return err
+		}
 		s.noteEvaluatorFailure()
 		return err
 	}

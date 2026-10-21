@@ -197,6 +197,7 @@ func TestOnlineRunnerLeaseEndsWithItsMatch(t *testing.T) {
 		ExpectedVersion: version,
 		Seat:            online.SeatBlack,
 		ControlEpoch:    1,
+		LeaseID:         lease.LeaseID,
 		Action:          online.Action{Kind: online.ActionResign},
 	}
 	if _, err = fixture.service.Execute(ctx, presenceBob().ref, resign); err != nil {
@@ -260,6 +261,7 @@ func TestOnlineRunnerRecordsNoProviderRequestForAFinishedMatch(t *testing.T) {
 		ExpectedVersion: version,
 		Seat:            online.SeatBlack,
 		ControlEpoch:    1,
+		LeaseID:         lease.LeaseID,
 		Action:          online.Action{Kind: online.ActionResign},
 	}
 	if _, err = fixture.service.Execute(ctx, presenceBob().ref, resign); err != nil {

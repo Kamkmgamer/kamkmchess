@@ -25,6 +25,10 @@ type Service struct {
 	// clock reads the authoritative time of the writer. It is the database
 	// clock in production and a movable source in the deterministic fixtures.
 	clock ClockSource
+	// probeEvaluator is the evaluator of the rules health probe. It is
+	// separate from the shared one, so a probe never queues behind a
+	// request.
+	probeEvaluator Evaluator
 	// recoveryRequired closes the mutation path until the canonical
 	// recovery has published the adjusted state.
 	recoveryRequired atomic.Bool
@@ -724,6 +728,16 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeAccepted, Version: nextVersion, ControlEpoch: match.ControlEpoch, DecidedAt: decision}
 	switch cmd.Action.Kind {
 	case ActionResign:
+		// A resignation of an agent seat is the agent's own action, so it
+		// needs the lease of its runner. The owner takes the seat over
+		// first when the owner wants to end the game as a human.
+		seat, ok := match.Seat(cmd.Seat)
+		if !ok {
+			return CommandResult{}, ErrNotAuthorized
+		}
+		if seat.Control.Kind != ControlHuman && cmd.LeaseID == "" {
+			return CommandResult{}, ErrNotAuthorized
+		}
 		other, _ := cmd.Seat.Other()
 		result := &Result{Kind: ResultWin, Winner: &other, Reason: ReasonResignation}
 		match.Status = MatchCompleted
@@ -1253,6 +1267,16 @@ func (s *Service) updateMatch(ctx context.Context, tx pgx.Tx, match Match, decis
 		match.Clock.WhiteMs, match.Clock.BlackMs, seatValue(match.Clock.ActiveSeat), match.Clock.ActiveSince, match.Clock.DeadlineAt, match.Clock.WhiteMoved, match.Clock.BlackMoved, match.Clock.TurnNumber, seatValue(match.Clock.ReplySeat), match.Clock.ReplyDeadlineAt, decision, match.MatchID)
 	if err != nil {
 		return err
+	}
+	// A finished match carries no live lease. The revocation is part of the
+	// terminal transition, so a runner of the finished match is fenced at
+	// once instead of at its next renewal. The pending request of a lease
+	// stays on the lease, because it is the record of a provider request that
+	// may still be running.
+	if match.Result != nil {
+		if err = revokeMatchRunnerLeases(ctx, tx, match.MatchID, decision, LeaseRevokeMatchEnded); err != nil {
+			return err
+		}
 	}
 	// A version transition makes every offer that is bound to an earlier
 	// version inapplicable, so the pending offers of a match are exactly the

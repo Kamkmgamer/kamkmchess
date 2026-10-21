@@ -160,7 +160,7 @@ func (s *Service) ReconcileDeadline(ctx context.Context, matchID string) (Deadli
 	}
 	// One consistent snapshot decides which deadline applies. No lock and no
 	// transaction is held while the rules process runs.
-	snapshot, now, err := loadDeadlineSnapshot(ctx, s.db, matchID)
+	snapshot, now, err := s.loadDeadlineSnapshot(ctx, s.db, matchID)
 	if err != nil {
 		return "", err
 	}
@@ -340,7 +340,7 @@ func (s *Service) settleClockExpiry(ctx context.Context, snapshot Match) (Deadli
 //
 // The snapshot is read-only and repeatable-read, so the match state and the
 // clock reading describe the same committed version.
-func loadDeadlineSnapshot(ctx context.Context, db *pgxpool.Pool, matchID string) (Match, time.Time, error) {
+func (s *Service) loadDeadlineSnapshot(ctx context.Context, db *pgxpool.Pool, matchID string) (Match, time.Time, error) {
 	tx, err := db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return Match{}, time.Time{}, err
@@ -350,8 +350,10 @@ func loadDeadlineSnapshot(ctx context.Context, db *pgxpool.Pool, matchID string)
 	if err != nil {
 		return Match{}, time.Time{}, err
 	}
-	var now time.Time
-	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+	// The snapshot reads the authoritative clock of the writer, so the sweep
+	// and the settlement judge the same deadline on the same timeline.
+	now, err := s.now(ctx, tx)
+	if err != nil {
 		return Match{}, time.Time{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {

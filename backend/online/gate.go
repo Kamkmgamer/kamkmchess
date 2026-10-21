@@ -218,9 +218,12 @@ func (s *Service) beginTrustedMutation(ctx context.Context) (pgx.Tx, error) {
 
 // lockActorScope takes the account scope lock of the actor.
 //
-// A guest has no account scope, so only an account actor takes one.
+// The scope is the shared scope of the participant, whatever its kind, so the
+// command path and the removal path take exactly the same lock for the same
+// participant. A guest has a scope as well: the removal of a guest takes it
+// too, so the command path takes it as well.
 func (s *Service) lockActorScope(ctx context.Context, tx pgx.Tx, actor ParticipantRef) error {
-	if actor.Kind != ParticipantAccount {
+	if actor.ID == "" {
 		return nil
 	}
 	return locks.LockAccountScope(ctx, tx, locks.AccountScope(string(actor.Kind), actor.ID))

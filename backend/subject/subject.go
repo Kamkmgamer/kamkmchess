@@ -22,6 +22,13 @@ import (
 // of that subject.
 const Domain = "kamkm.online.removal.v1:"
 
+// AnonymizedID is the owner reference of a seat whose participant was
+// removed.
+//
+// It is not a participant. A match, an allocation or a rematch never seats
+// it, and a flow that receives it refuses the participant.
+const AnonymizedID = "anonymized"
+
 // Reference returns the one-way reference of a subject identifier.
 func Reference(identifier string) string {
 	sum := sha256.Sum256([]byte(Domain + identifier))

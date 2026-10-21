@@ -232,16 +232,31 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		pool.Close()
 		return nil, nil, errors.New("storage initialization failed")
 	}
+	// The rules health probe has its own evaluator. The shared client admits
+	// one request at a time, so a probe on the shared client would queue
+	// behind a healthy request and could report an overload as an outage.
+	probeEvaluator, closeProbe, err := openEvaluator(cfg.Online.RulesWorkerEntry)
+	if err != nil {
+		if closeWorker != nil {
+			closeWorker()
+		}
+		pool.Close()
+		return nil, nil, err
+	}
 	// The authorization service is the participant authorizer. The writer
 	// re-checks it inside every acceptance transaction.
 	onlineService, err := online.Open(ctx, pool, evaluator,
 		online.WithSeatAuthorizer(authorizer),
 		online.WithHealthReporter(health),
+		online.WithProbeEvaluator(probeEvaluator),
 		online.WithRecoveryGate(),
 	)
 	if err != nil {
 		if closeWorker != nil {
 			closeWorker()
+		}
+		if closeProbe != nil {
+			closeProbe()
 		}
 		pool.Close()
 		return nil, nil, errors.New("online service initialization failed")
