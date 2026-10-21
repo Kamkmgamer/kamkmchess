@@ -234,16 +234,7 @@ func recoverCommand(ctx context.Context, arguments []string) error {
 	if options.file == "" && options.evidence == "" {
 		return errors.New("a recovery needs the durable evidence of the restore (--evidence) or the bundle of the restore (--file)")
 	}
-	// The passphrase is only needed for the bundle: the evidence of a restore
-	// is read from the file the operator hands to the recovery.
-	var secret []byte
-	if options.file != "" {
-		secret, err = passphrase(options.passphraseEnv)
-		if err != nil {
-			return err
-		}
-		defer clear(secret)
-	}
+
 	url, connections, err := databaseURL(options.databaseURLEnv)
 	if err != nil {
 		return err
@@ -289,6 +280,15 @@ func recoverCommand(ctx context.Context, arguments []string) error {
 		// newer rotation copies is the only description of what it owed. The
 		// recovery refuses them when the fence of the restore names another
 		// ledger.
+		//
+		// The bundle is only read here, so the passphrase is only needed here:
+		// a recovery that is given the evidence of a restore needs neither
+		// the bundle nor the passphrase.
+		secret, err := passphrase(options.passphraseEnv)
+		if err != nil {
+			return err
+		}
+		defer clear(secret)
 		verified, err := backup.Verify(options.file, secret)
 		if err != nil {
 			return err

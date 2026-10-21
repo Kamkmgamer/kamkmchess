@@ -151,6 +151,15 @@ func (s *Service) ensureSubjectRequest(ctx context.Context, tx pgx.Tx, record ba
 			record.RemovedAt.Add(s.options.LiveRemovalDelay), record.RemovedAt.Add(s.options.RecoverySanitizeDelay)); err != nil {
 			return "", err
 		}
+		// The request that is really there is the authoritative one. A
+		// concurrent writer may have won the tuple between the lookup and the
+		// insert, and the identifier of its request is the one the subject row
+		// has to name: the identifier that was generated here may not exist at
+		// all, and the subject row may never name a request that is not there.
+		if err = tx.QueryRow(ctx, `SELECT removal_id FROM online_removal_requests WHERE subject_kind=$1 AND subject_id=$2 AND scope=$3`,
+			record.SubjectKind, record.SubjectRef, record.Scope).Scan(&removalID); err != nil {
+			return "", err
+		}
 		return removalID, nil
 	}
 	return "", errors.New("privacy: the identifier of the removal request could not be allocated")
@@ -375,13 +384,34 @@ func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required
 	if err = tx.Commit(ctx); err != nil {
 		return err
 	}
-	// The fence of the crashed restore is closed, so a new restore can take
-	// the lock.
-	if err = s.removeFenceDirectory(); err != nil {
+	// The evidence of the recovered restore is preserved before the marker of
+	// the lifecycle disappears, and it is recreated when the evidence
+	// directory was lost and the operator supplied the ledger.
+	//
+	// The evidence is an obligation for the NEXT import: the import of a
+	// restore replaces the schema of the database, so the removals the record
+	// names are gone afterwards and the restore that comes next has to replay
+	// them. The recovery therefore keeps the record of the restore it
+	// recovered, exactly like the close of a restore keeps its own evidence.
+	record := RemovalRequirement{
+		RestoreID:  restoreID,
+		Digest:     requirementDigest(required),
+		Matches:    required.Matches,
+		Subjects:   required.Subjects,
+		RecordedAt: s.now(),
+	}
+	if err = s.writeRequirement(record); err != nil {
 		return err
 	}
-	// The evidence of the restore is applied, so it is discharged.
-	return s.dischargeRequirements(applied, "")
+	// The older records are discharged: the database holds the removals they
+	// name. The record of the recovered restore is kept, and the discharge
+	// happens under the ownership of the lifecycle.
+	if err = s.dischargeRequirements(applied, restoreID); err != nil {
+		return err
+	}
+	// The fence of the crashed restore is closed, so a new restore can take
+	// the lock.
+	return s.removeFenceDirectory()
 }
 
 // appliedRemovalLedger reads the removal ledger of the database inside a

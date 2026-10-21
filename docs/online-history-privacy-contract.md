@@ -255,12 +255,18 @@ Rules the browser must honour:
 * The **removals of a crashed restore are not forgotten**. The next restore merges the durable
   evidence of the restores that did not finish into the removal ledger it has to apply, so the
   removals they owed are replayed. A removal that is still owed keeps its evidence, and the
-  evidence is discharged when the database holds the ledger it names. The **close of a restore is
-  the one exception**: it keeps the evidence of the restore that holds the fence, although the
-  database holds that ledger, because the close is the moment the database and the evidence are
-  in step. The next restore discharges that record with the removals it applies, so the evidence
-  directory is never empty right after a successful restore and never has to be cleaned by hand.
-* A **gate is released only when the database holds the removal ledger the gate waits for**. The
+  evidence is discharged when the database holds the ledger it names. The **close of a restore and
+  the recovery of a crashed restore are the exceptions**: they keep the evidence of the restore
+  they finish, although the database holds that ledger, because the close is the moment the
+  database and the evidence are in step. The next restore discharges that record with the
+  removals it applies, so the evidence directory is never empty right after a successful restore
+  and never has to be cleaned by hand.
+* The **recovery preserves the evidence of the restore it recovers**, and it recreates it when the
+  evidence directory was lost and the operator supplied the ledger. The record is written before
+  the marker of the lifecycle disappears, so the obligation of the next import survives the
+  recovery. A recovery that discharged that record would let a later restore without the removal
+  ledger sink import an older bundle and destroy the removals without a replay, which is the hole
+  the refusal of such a restore closes.* A **gate is released only when the database holds the removal ledger the gate waits for**. The
   gate names the digest of that ledger, and the digest names the durable evidence of it, so the
   release of a gate is a containment check and not a blanket update. A gate whose removal ledger
   is not applied is **retained**: the service stays closed and the removals it waits for stay
@@ -288,7 +294,8 @@ Rules the browser must honour:
 * The operator supplies that ledger with `khabackup recover --evidence <file>`, where the file is
   the durable evidence of the restore, restored from the **protected backup of the evidence
   directory**. A recovery that is given the evidence of a restore does not need the bundle of the
-  restore; the bundle is only read when there is no evidence at all. When no supplied ledger proves
+  restore and never asks for the passphrase: the bundle and its passphrase are only read when
+  there is no evidence at all. When no supplied ledger proves
   a gate, the gate is **retained**: the service stays closed, the removals stay owed, and the
   operator has to restore the evidence of the restore from that protected backup. The gate table is
   never edited by hand, and the immutable guards of the table are never weakened.
