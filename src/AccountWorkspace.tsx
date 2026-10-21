@@ -417,7 +417,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
         {message && <p role="status">{busy ? 'Syncing…' : message.startsWith('Complete game') ? 'Synced.' : message.startsWith('Cloud history') ? 'Sync conflict. Choose continuation.' : message.startsWith('Account game opened') || message.startsWith('Guest workspace opened') || message.startsWith('The accepted cloud game') ? 'Opened.' : 'Sync failed. Retry.'}</p>}
       </>}
     </section>}
-    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} onOpenAccount={() => setAccountPage('account')} online={accountOnline ?? guestOnline} onOpenProfile={() => setAccountPage('profile')} onlineNamespace={guestView.composition.namespace} /></div>
+    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} onOpenAccount={() => setAccountPage('account')} online={accountOnline ?? guestOnline} onOpenProfile={() => setAccountPage('profile')} onlineNamespace={guestView.composition.namespace} onlineConnectionStore={guestView.composition.connectionStore} accountIdentity={identity?.accountId ?? null} /></div>
   </>;
 }
 

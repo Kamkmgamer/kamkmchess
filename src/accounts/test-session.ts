@@ -100,30 +100,56 @@ export function createTestAccountSession(options: TestAccountSessionOptions): Ac
 
   current = readIdentity(target);
 
+  /**
+   * The order of the identity changes.
+   *
+   * The changes are serialized and every change carries its own number. A
+   * change that is overtaken while it waits for the fence settles without
+   * publishing, so a slow change can never publish a stale identity after a
+   * newer one.
+   */
+  let generation = 0;
+  let queue: Promise<void> = Promise.resolve();
+
   function publish(identity: AccountIdentity | null): void {
     for (const listener of [...listeners]) {
       try { listener(identity); } catch { /* one listener must not block the rest */ }
     }
   }
 
-  async function change(next: AccountIdentity | null): Promise<void> {
+  async function applyChange(next: AccountIdentity | null, mine: number): Promise<void> {
     if (disposed) return;
     const departing = current;
     current = null;
     // The change fences the pending work of the departing identity before the
     // new identity is published, exactly like the hosted session does.
     await options.fence.fencePendingRequests();
-    options.fence.clearInMemoryIdentity();
-    options.fence.hidePrivateViews();
-    publish(null);
+    // The credentials of the account that leaves are cleared even when the
+    // change was overtaken while it waited: the next change sees no departing
+    // identity any more, so the cleanup has to happen here.
     if (departing && departing.accountId !== next?.accountId) {
       try {
         await options.credentials.clearCredentialsForNamespace({ kind: 'account', accountId: departing.accountId });
       } catch { /* the identity change itself is not blocked by the cleanup */ }
     }
-    if (disposed) return;
+    // An overtaken change publishes nothing, so the browser never sees an
+    // identity that is already gone.
+    if (disposed || mine !== generation) return;
+    options.fence.clearInMemoryIdentity();
+    options.fence.hidePrivateViews();
+    publish(null);
+    if (disposed || mine !== generation) return;
     current = next;
     publish(next);
+  }
+
+  function change(next: AccountIdentity | null): Promise<void> {
+    generation += 1;
+    const mine = generation;
+    queue = queue
+      .then(() => applyChange(next, mine))
+      .catch(() => undefined);
+    return queue;
   }
 
   const onSwitch = (event: Event) => {

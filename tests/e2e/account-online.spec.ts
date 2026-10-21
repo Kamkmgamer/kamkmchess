@@ -140,6 +140,36 @@ async function waitForAssignment(page: Page, timeoutMs = 150_000): Promise<void>
   throw new Error('the queue entry was not assigned in time');
 }
 
+/**
+ * Holds the commands of the service until the barrier is released.
+ *
+ * The barrier is the deferred answer of the service: an owner decision that
+ * is on its way while the account changes or leaves.
+ */
+async function holdCommands(page: Page): Promise<{ readonly arrived: Promise<void>; release: () => Promise<void> }> {
+  let release: () => void = () => undefined;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let seen: () => void = () => undefined;
+  const arrived = new Promise<void>(resolve => { seen = resolve; });
+  const pattern = '**/v1/online/matches/*/runner/lease';
+  const commands = '**/v1/online/matches/*/commands';
+  const hold = async (route: import('@playwright/test').Route) => {
+    seen();
+    await held;
+    await route.continue().catch(() => undefined);
+  };
+  await page.route(pattern, hold);
+  await page.route(commands, hold);
+  return {
+    arrived,
+    release: async () => {
+      release();
+      await page.unroute(pattern);
+      await page.unroute(commands);
+    },
+  };
+}
+
 /** The committed moves of the online board. */
 function committedMoves(page: Page) {
   return page.getByRole('table', { name: 'Committed moves' }).getByRole('button');
@@ -283,12 +313,11 @@ test('the account change hides the games of the first account and restores the r
 });
 
 test('the first account gets its game back when it signs in again', async ({ page }) => {
-  // The workspace empties the durable list of the account that leaves
-  // (`forgetIdentity` in src/online/workspace.ts writes an empty list for it),
-  // so the game of the first account does not come back when it signs in
-  // again. The case states the required behaviour and runs once the durable
-  // claims of the workspace are fixed (workspace r9).
-  test.fixme(true, 'the durable registry of the account that leaves is emptied by the identity change');
+  // The durable list of an account that leaves has to survive the identity
+  // change, and the browser engine seat of the game has to keep its
+  // credential, so the game is playable again when the account returns.
+  // (The workspace owns the durable list and the deferred claims; the case
+  // is the proof of the behaviour from the browser.)
   test.setTimeout(300_000);
   const loaded = await loadDescriptor();
   expect(loaded).not.toBeNull();
@@ -298,24 +327,85 @@ test('the first account gets its game back when it signs in again', async ({ pag
   if (!first || !second) throw new Error('the fixture has fewer than two accounts');
   await signInWithFixtureAccounts(page, loaded!, [first, second]);
 
-  // The first account plays a game.
+  // The first account plays a game and opens it.
   await page.goto(`/play?online=1&fixture-account=${encodeURIComponent(first)}`);
   await openOnline(page);
   await page.getByRole('button', { name: 'Play yourself' }).click();
   await waitForAssignment(page);
   await showGames(page);
   await expect(page.getByRole('region', { name: 'Online match board' })).toBeVisible({ timeout: 60_000 });
+  // The owner plays the first move when the seat is its turn. Otherwise the
+  // browser engine opens the game.
+  const flipped = await page.getByRole('region', { name: 'Online match board' })
+    .locator('.board-host').evaluate(element => element.classList.contains('orientation-black'));
+  if (!flipped) {
+    const from = await point(page, 'e2');
+    const to = await point(page, 'e4');
+    await page.mouse.click(from.x, from.y);
+    await page.mouse.click(to.x, to.y);
+  }
+  await expect.poll(async () => committedMoves(page).count(), { timeout: 60_000 }).toBeGreaterThan(0);
+  const played = await committedMoves(page).count();
 
   // The second account signs in and the game of the first account is hidden.
   await switchFixtureAccount(page, loaded!, second);
   await expect(page.getByRole('region', { name: 'Concurrent games' }).getByRole('listitem')).toHaveCount(0, { timeout: 30_000 });
 
-  // The first account signs in again. Its game comes back and the engine seat
-  // of the fallback still plays, so the engine credential is still usable.
+  // The first account signs in again. Its game comes back with its moves,
+  // and the browser engine seat of the game still plays, so the credential
+  // of the engine seat is still usable.
   await switchFixtureAccount(page, loaded!, first);
   await expect(page.getByRole('region', { name: 'Concurrent games' }).getByRole('listitem')).toHaveCount(1, { timeout: 30_000 });
   await showGames(page);
-  await expect.poll(async () => committedMoves(page).count(), { timeout: 60_000 }).toBeGreaterThan(0);
+  await expect.poll(async () => committedMoves(page).count(), { timeout: 60_000 }).toBeGreaterThanOrEqual(played);
+  if (!flipped) {
+    const from = await point(page, 'd2');
+    const to = await point(page, 'd4');
+    await page.mouse.click(from.x, from.y);
+    await page.mouse.click(to.x, to.y);
+  }
+  await expect.poll(async () => committedMoves(page).count(), { timeout: 60_000 }).toBeGreaterThan(played);
+});
+
+test('a late seat change never writes into the next account', async ({ page }) => {
+  test.setTimeout(300_000);
+  const loaded = await loadDescriptor();
+  expect(loaded).not.toBeNull();
+  const second = loaded!.accounts[1]?.id;
+  if (!second) throw new Error('the fixture has fewer than two accounts');
+  const provider = await startSyntheticProvider({ models: ['synthetic-a', 'synthetic-b'] });
+  try {
+    await signInWithFixtureAccount(page, loaded!, await firstAccount());
+    await page.goto('/play?online=1');
+    await connectLocalModel(page, provider.baseUrl, 'synthetic-a');
+    await openOnline(page);
+    await page.getByRole('button', { name: 'Watch agent' }).click();
+    await waitForAssignment(page);
+    await showGames(page);
+    await expect(page.getByRole('region', { name: 'Online match board' })).toBeVisible({ timeout: 60_000 });
+    await expect.poll(async () => committedMoves(page).count(), { timeout: 90_000 }).toBeGreaterThan(0);
+
+    // The owner asks for the other model. The answer of the service is held.
+    await page.getByRole('button', { name: 'Your agents' }).click();
+    const panel = page.getByRole('region', { name: 'Your agents' });
+    const barrier = await holdCommands(page);
+    await panel.getByRole('button', { name: 'Use for this game' }).nth(1).click();
+    await expect(panel.getByRole('status').filter({ hasText: 'Changing' })).toBeVisible();
+    await Promise.race([
+      barrier.arrived,
+      page.waitForTimeout(45_000).then(() => { throw new Error('the change never reached the service'); }),
+    ]);
+
+    // The next account signs in while the answer is on its way.
+    await switchFixtureAccount(page, loaded!, second);
+    await barrier.release();
+
+    // The late answer belongs to the identity that left: the pending state of
+    // the change is gone.
+    await expect(panel.getByRole('status').filter({ hasText: 'Changing' })).toHaveCount(0);
+  } finally {
+    await provider.close();
+  }
 });
 
 test('the owner switches the own agent between two private models and the provider answers', async ({ page }) => {
@@ -364,12 +454,26 @@ test('the owner switches the own agent between two private models and the provid
       await page.getByRole('button', { name: 'Your agents' }).click();
       const panel = page.getByRole('region', { name: 'Your agents' });
       await panel.getByRole('button', { name: 'Use for this game' }).nth(1).click();
-      await expect(panel.getByRole('status')).toContainText('plays this game now');
+      await expect(panel.getByRole('status').filter({ hasText: 'plays this game now' })).toBeVisible();
       await panel.getByRole('button', { name: 'Close' }).click();
 
       // The next turn of the seat is played by the other private model.
-      await expect.poll(() => provider.generationRequests.some(request => request.body.includes('synthetic-b')), { timeout: 120_000 }).toBe(true);
+      await expect.poll(() => provider.generationRequests.some(request => request.body.includes('synthetic-b')), { timeout: 180_000 }).toBe(true);
       console.log('the models the local provider answered:', modelsOf().join(', '));
+
+      // The owner puts the model of the new games back on the seat. The
+      // control follows the seat and not the model of the new games, so the
+      // model that plays the new games stays available for the running game.
+      await page.getByRole('button', { name: 'Your agents' }).click();
+      const back = page.getByRole('region', { name: 'Your agents' });
+      const firstModel = back.getByRole('button', { name: 'Use for this game' }).first();
+      await expect(firstModel).toBeEnabled();
+      await firstModel.click();
+      await expect(back.getByRole('status').filter({ hasText: 'plays this game now' })).toBeVisible();
+      // The seat plays the model of the new games again, so the control of
+      // that model is not offered any more.
+      await expect(firstModel).toBeDisabled();
+      await back.getByRole('button', { name: 'Close' }).click();
     }
     expect(played, 'the agent seat of the owner did not play in three attempts').toBe(true);
     expect(modelsOf()).toContain('synthetic-b');

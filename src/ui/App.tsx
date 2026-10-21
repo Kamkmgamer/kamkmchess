@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { ChessBoard } from './ChessBoard.js';
@@ -6,9 +6,36 @@ import { EvaluationBar } from './EvaluationBar.js';
 import { MoveList } from './MoveList.js';
 import { OnlineWorkspace } from './online-workspace.js';
 import type { OnlineComposition } from '../online/composition.js';
-import { privateAgentEntryFor, readPrivateAgentCatalog } from '../accounts/agent-catalog.js';
-import type { PrivateAgentEntry } from '../accounts/agent-catalog.js';
-import type { ConnectionNamespace } from '../providers/connections/index.js';
+import { privateAgentEntryFor, privateAgentEntryForBinding, privateAgentId, readPrivateAgentCatalog, seatChoiceAvailable } from '../accounts/agent-catalog.js';
+import type { AgentDecisionOutcome, PrivateAgentEntry } from '../accounts/agent-catalog.js';
+import type { ConnectionNamespace, ConnectionStore } from '../providers/connections/index.js';
+
+/**
+ * The invitation of a published link, when the composition publishes it.
+ *
+ * The composition reads the link out of the address of the page. The shell
+ * of the application opens the online screen with it, so the invitation is
+ * previewed and accepted with the identity of the owner.
+ */
+interface PendingInvitationPort {
+  readonly pendingInvitation: string | null;
+}
+
+/**
+ * The invitation of a published link, when the address carries one.
+ *
+ * The link is published as `/invite/<id>` and as `?invite=<id>`. The shell
+ * opens the online screen with it, so a guest and a signed-in owner reach
+ * the same invitation.
+ */
+function readInvitationFromAddress(): string | null {
+  if (typeof window === 'undefined') return null;
+  const query = new URLSearchParams(window.location.search).get('invite');
+  if (query) return query;
+  const segments = window.location.pathname.split('/').filter(Boolean);
+  const index = segments.indexOf('invite');
+  return index >= 0 ? segments[index + 1] ?? null : null;
+}
 
 /** The public name the owner's own agent carries in an online match. */
 const ONLINE_AGENT_PUBLIC_LABEL = 'My agent';
@@ -57,6 +84,21 @@ interface AppProps {
    * same namespace the agent seat resolves its provider from.
    */
   readonly onlineNamespace?: ConnectionNamespace;
+  /**
+   * The connection store the online agent plays with.
+   *
+   * The local composition of the application can be an account game while
+   * the online composition still uses the store of the workspace. The catalog
+   * has to come from the store the online composition uses.
+   */
+  readonly onlineConnectionStore?: Promise<ConnectionStore>;
+  /**
+   * The signed-in account of the browser.
+   *
+   * A change of the account fences the work of the owner, so an answer that
+   * arrives after the change belongs to an identity that is gone.
+   */
+  readonly accountIdentity?: string | null;
 }
 const PROMOTIONS: readonly { value: Promotion; label: string }[] = [
   { value: 'q', label: 'Queen' }, { value: 'r', label: 'Rook' },
@@ -80,7 +122,7 @@ function statusLabel(snapshot: ControllerSnapshotV1): string {
   return (snapshot.position.sideToMove === 'w' ? 'White' : 'Black') + ' to move';
 }
 
-export function App({ composition, initialSession, initialSnapshot, onOpenAccount, online, onOpenProfile, onlineNamespace }: AppProps) {
+export function App({ composition, initialSession, initialSnapshot, onOpenAccount, online, onOpenProfile, onlineNamespace, onlineConnectionStore, accountIdentity }: AppProps) {
   const [session, setSession] = useState(initialSession);
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [orientation, setOrientation] = useState<'white' | 'black'>(() =>
@@ -111,6 +153,25 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [journalRefresh, setJournalRefresh] = useState(0);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [onlineOpen, setOnlineOpen] = useState(false);
+  /** The online game the owner is looking at. */
+  const focusedMatchId = online?.workspace.focusedMatchId ?? null;
+  /** The invitation of a published link, when there is one. */
+  const pendingInvitation = (online as unknown as Partial<PendingInvitationPort> | null)?.pendingInvitation
+    ?? readInvitationFromAddress();
+  /** The invitation the owner closed. It opens again with another link. */
+  const [dismissedInvitation, setDismissedInvitation] = useState<string | null>(null);
+  /**
+   * The online screen is open.
+   *
+   * A published invitation link opens it, so the invitation is previewed and
+   * accepted with the identity of the owner. The account is already booted
+   * and the catalog of the owner is already there.
+   */
+  const onlineVisible = onlineOpen || (pendingInvitation !== null && dismissedInvitation !== pendingInvitation);
+  function closeOnline(): void {
+    setOnlineOpen(false);
+    if (pendingInvitation) setDismissedInvitation(pendingInvitation);
+  }
   // The private model catalog of the owner. Every entry is a connected model
   // of the browser owned connection store. The identity of an entry is its own
   // private id, never a public label, so two models that the service
@@ -119,6 +180,60 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [agentChoice, setAgentChoice] = useState<string | null>(null);
   const [catalogRefresh, setCatalogRefresh] = useState(0);
   const [agentNotice, setAgentNotice] = useState('');
+  /** The seat change the interface shows. */
+  const [pendingAgent, setPendingAgent] = useState<{
+    readonly id: string;
+    readonly request: number;
+    readonly identity: string | null;
+    readonly online: OnlineComposition | null;
+    readonly matchId: string | null;
+  } | null>(null);
+  /**
+   * The number of the last seat change.
+   *
+   * It fences the answers: a new change, a new identity, a new composition,
+   * a new focus and the end of the page all move it, so a late answer
+   * belongs to a state that is gone and writes nothing.
+   */
+  const agentRequest = useRef(0);
+  /** The seat change that runs at this moment. It gates a second one. */
+  const agentAction = useRef<{ readonly id: string; readonly request: number } | null>(null);
+  /** True while the page of the application exists. */
+  const mounted = useRef(true);
+  /**
+   * The context of the browser.
+   *
+   * A late answer compares itself with this context and not with the values
+   * of the render that started it: those are the values of an identity that
+   * may be gone.
+   */
+  const agentContext = useRef<{
+    readonly identity: string | null;
+    readonly online: OnlineComposition | null;
+    readonly matchId: string | null;
+  }>({ identity: accountIdentity ?? null, online: online ?? null, matchId: null });
+  // The context is written while the page renders, so it is current at the
+  // moment a late answer arrives.
+  // eslint-disable-next-line react-hooks/refs
+  agentContext.current = { identity: accountIdentity ?? null, online: online ?? null, matchId: focusedMatchId ?? null };
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      // The page is gone. A late answer must not write into it.
+      mounted.current = false;
+      agentRequest.current += 1;
+      agentAction.current = null;
+    };
+  }, []);
+  useEffect(() => {
+    // A new identity, a new composition or a new focus ends the running
+    // change: its answer belongs to a state that is gone. The pending state
+    // of the interface follows the context of the change, so it disappears
+    // with it.
+    agentRequest.current += 1;
+    agentAction.current = null;
+    return () => { agentRequest.current += 1; };
+  }, [accountIdentity, online, focusedMatchId]);
   // The own agent of the owner is one of the connected models. The public
   // label is the name the other participants see; the private selection stays
   // in the browser and never reaches the service.
@@ -126,7 +241,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     if (!online) return;
     let current = true;
     void readPrivateAgentCatalog({
-      connectionStore: composition.connectionStore,
+      connectionStore: onlineConnectionStore ?? composition.connectionStore,
       namespace: onlineNamespace ?? composition.namespace,
     }).then(entries => {
       if (current) setAgentCatalog(entries);
@@ -134,7 +249,10 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       if (current) setAgentCatalog([]);
     });
     return () => { current = false; };
-  }, [composition, online, onlineNamespace, catalogRefresh]);
+    // The catalog is read again when the online screen opens and when the
+    // account changes, so a model that was connected after the page loaded
+    // is known without opening the panel first.
+  }, [composition, online, onlineNamespace, onlineConnectionStore, catalogRefresh, onlineOpen, accountIdentity]);
   // The chosen agent follows the catalog: the model of the current game when
   // it is connected, and otherwise the first connected model. The choice of
   // the owner wins over both.
@@ -154,12 +272,34 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       : modelSelection ? { label: ONLINE_AGENT_PUBLIC_LABEL, selection: modelSelection } : null;
     online.setAgent(agent);
   }, [online, agentCatalog, agentChoiceId, modelSelection]);
+  /**
+   * The notice of the choice for the new games.
+   *
+   * It is derived from the published agent, so it reports what the product
+   * applied and never a promise.
+   */
+  const choiceNotice = useMemo(() => {
+    const chosen = agentCatalog.find(entry => entry.id === agentChoiceId) ?? null;
+    if (!chosen) return '';
+    const published = online?.agent ?? null;
+    if (!published || privateAgentId(published.selection) !== chosen.id) return 'Applying the choice…';
+    return `${chosen.displayName} plays your new games.`;
+  }, [agentCatalog, agentChoiceId, online]);
   // The focused online game and the seat of the owner in it. The rebinding of
   // a seat needs both.
-  const focusedGame = online?.workspace.focusedMatchId
-    ? online.workspace.state(online.workspace.focusedMatchId)
-    : null;
+  const focusedGame = focusedMatchId ? online?.workspace.state(focusedMatchId) ?? null : null;
   const focusedSeat = focusedGame?.seat ?? null;
+  /**
+   * The model the focused seat plays now.
+   *
+   * The seat owns its own model. The model the owner chose for the new games
+   * is a different thing: the seat may play another model, and the owner may
+   * put any model of the catalog on it.
+   */
+  const focusedBinding = focusedGame && focusedSeat
+    ? online?.agentBindingFor(focusedGame.matchId, focusedSeat) ?? null
+    : null;
+  const focusedEntry = privateAgentEntryForBinding(agentCatalog, focusedBinding);
   /**
    * The key the composition resolves a choice of the owner with.
    *
@@ -175,9 +315,10 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   /**
    * The seats of the owner that play an agent and have no binding yet.
    *
-   * The private catalog fills after the page loaded, so a seat that was
-   * attached before it arrived would otherwise wait for the owner forever.
-   * The seat is bound to the chosen agent as soon as the catalog knows it.
+   * The composition owns the binding of a seat: it binds the selection that
+   * was captured for the entry or the invitation of the seat, and a catalog
+   * that arrives later never replaces it. The interface only asks for a
+   * binding when the seat has none at all, and it never replaces one.
    */
   useEffect(() => {
     if (!online) return;
@@ -190,6 +331,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         const seat = view.yourSeat;
         if (seat === null) continue;
         if (view.seats.find(candidate => candidate.seat === seat)?.control.kind !== 'agent') continue;
+        // A seat that already carries a binding keeps it.
         if (online.agentBindingFor(game.matchId, seat) !== null) continue;
         online.bindAgentSeat(game.matchId, seat, choiceKey(chosen));
       }
@@ -197,14 +339,70 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     recover();
     return online.subscribe(recover);
   }, [online, agentCatalog, agentChoiceId, choiceKey]);
+  /**
+   * The seat change the interface shows.
+   *
+   * A change that belongs to another identity, another composition or
+   * another game is not shown any more, so a change that was overtaken
+   * leaves no pending state behind.
+   */
+  const pendingVisible = pendingAgent !== null &&
+    pendingAgent.identity === (accountIdentity ?? null) &&
+    pendingAgent.online === online &&
+    pendingAgent.matchId === focusedMatchId
+    ? pendingAgent.id
+    : null;
+  /**
+   * Puts one model on the agent seat of the focused game.
+   *
+   * The answer of the composition is not trusted on its own: the seat is
+   * read again afterwards, and the change is only reported as done when the
+   * seat really plays the chosen model. Every answer is fenced against the
+   * state that started it: a change of the account, of the composition or of
+   * the focus, a newer change and the end of the page all end the answer
+   * without a notice and without a pending state.
+   */
   async function switchAgentForGame(entry: PrivateAgentEntry): Promise<void> {
     if (!online || !focusedGame || !focusedSeat) return;
+    // A second change in the same tick is refused.
+    if (agentAction.current !== null) return;
+    const composition = online;
+    const matchId = focusedGame.matchId;
+    const seat = focusedSeat;
+    const identity = accountIdentity ?? null;
+    const request = (agentRequest.current += 1);
+    agentAction.current = { id: entry.id, request };
+    setPendingAgent({ id: entry.id, request, identity, online: composition, matchId });
     setAgentNotice('');
     try {
-      await online.agentDecision(focusedGame.matchId, focusedSeat, 'switch-model', choiceKey(entry));
+      const outcome = await composition.agentDecision(matchId, seat, 'switch-model', choiceKey(entry)) as unknown as AgentDecisionOutcome | undefined;
+      if (!mounted.current || request !== agentRequest.current) return;
+      const context = agentContext.current;
+      if (context.identity !== identity || context.online !== composition || context.matchId !== matchId) {
+        setAgentNotice('The game changed. Choose the agent again.');
+        return;
+      }
+      // The composition answers with the outcome of the decision when it can
+      // prove it. A composition that answers void is checked against the seat
+      // itself.
+      if (outcome && outcome.kind !== 'accepted') {
+        setAgentNotice(outcome.detail);
+        return;
+      }
+      const bound = privateAgentEntryForBinding(agentCatalog, composition.agentBindingFor(matchId, seat));
+      if (!bound || bound.id !== entry.id) {
+        setAgentNotice('The seat kept its model. The change was not accepted.');
+        return;
+      }
       setAgentNotice(`${entry.label} plays this game now.`);
     } catch (error) {
+      if (!mounted.current || request !== agentRequest.current) return;
       setAgentNotice(error instanceof Error ? error.message : 'The agent could not be changed.');
+    } finally {
+      if (mounted.current && request === agentRequest.current) {
+        agentAction.current = null;
+        setPendingAgent(null);
+      }
     }
   }
   const history = useBoardHistory(snapshot, !setupOpen && !promotion && !recoveryOpen && !tool && resultPrompt === null);
@@ -786,7 +984,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         {!setupOpen && <IconButton icon="settings" label="Settings" onClick={() => openTool('settings')} />}
         <button className="button primary" type="button" onClick={() => openSetup()} aria-label="New game">New</button></div>
     </header>}
-    {onlineOpen && online && <OnlineWorkspace composition={online} onClose={() => setOnlineOpen(false)}
+    {onlineVisible && online && <OnlineWorkspace composition={online} onClose={closeOnline}
       agentLabel={online.agent?.label ?? null}
       {...(onOpenProfile ? { onOpenProfile } : {})} />}
     {tool && <section className="focus-page" aria-label={tool === 'agents' ? 'Your agents' : 'Match tools'}>
@@ -805,13 +1003,16 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       {tool === 'agents' && <div className="connection-form">
         <p>{agentCatalog.length} connected model{agentCatalog.length === 1 ? '' : 's'}.</p>
         {agentCatalog.map(entry => <div key={entry.id} className="button-row">
-          <span>{entry.label}</span>
-          <button className="button" type="button" disabled={entry.id === agentChoiceId}
-            onClick={() => { setAgentChoice(entry.id); setAgentNotice(`${entry.label} plays your new games.`); }}>Use for new games</button>
-          {focusedGame && focusedSeat && <button className="button" type="button" disabled={entry.id === agentChoiceId}
+          <span>{entry.displayName}</span>
+          <button className="button" type="button" disabled={entry.id === agentChoiceId || pendingVisible !== null}
+            onClick={() => { setAgentChoice(entry.id); setAgentNotice(''); }}>Use for new games</button>
+          {focusedGame && focusedSeat && <button className="button" type="button"
+            disabled={!seatChoiceAvailable({ entry, bound: focusedEntry }) || pendingVisible !== null}
             onClick={() => void switchAgentForGame(entry)}>Use for this game</button>}
         </div>)}
         {agentCatalog.length === 0 && <p>No connected model yet. Connect one in a new game.</p>}
+        {pendingVisible !== null && <p role="status">Changing the model of this game…</p>}
+        {choiceNotice && <p role="status">{choiceNotice}</p>}
         {agentNotice && <p role="status">{agentNotice}</p>}
       </div>}
     </section>}

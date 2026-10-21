@@ -1,8 +1,36 @@
 import { describe, expect, it } from 'vitest';
-import { NEUTRAL_AGENT_LABEL, privateAgentId, publicSafeAgentLabel, readPrivateAgentCatalog, uniqueAgentLabels } from './agent-catalog';
+import {
+  NEUTRAL_AGENT_LABEL,
+  privateAgentId,
+  publicAgentLabel,
+  publicSafeAgentLabel,
+  readPrivateAgentCatalog,
+  seatChoiceAvailable,
+  uniqueAgentLabels,
+} from './agent-catalog';
+import type { PrivateAgentEntry } from './agent-catalog';
+import type { ModelSelection } from '../controller/index.js';
 import type { ConnectionNamespace, ConnectionProfile, ConnectionStore } from '../providers/connections/index.js';
 
 const GUEST: ConnectionNamespace = { kind: 'guest' };
+
+/** A private selection of one connection. */
+function selection(connectionId: string, modelRoutingId: string): ModelSelection {
+  return {
+    kind: 'model',
+    providerId: 'custom',
+    connectionId,
+    configurationRevision: 7,
+    modelRoutingId,
+    protocol: 'chat-completions',
+    diagnostic: 'not-run',
+  };
+}
+
+/** A catalog entry of one private selection. */
+function entry(connectionId: string, label: string, modelSelection: ModelSelection): PrivateAgentEntry {
+  return { id: privateAgentId(modelSelection), label, displayName: label, selection: modelSelection, connectionId };
+}
 
 function profile(overrides: Partial<ConnectionProfile> & { id: string }): ConnectionProfile {
   return {
@@ -132,6 +160,26 @@ describe('the private model catalog of the owner', () => {
   });
 });
 
+describe('the public label of a model', () => {
+  it('never carries a route, a path, an address or a credential', () => {
+    expect(publicAgentLabel('internal/team-model')).toBe(NEUTRAL_AGENT_LABEL);
+    expect(publicAgentLabel('my-org/private-route-v2')).toBe(NEUTRAL_AGENT_LABEL);
+    expect(publicAgentLabel('sk-live-abcdef0123456789')).toBe(NEUTRAL_AGENT_LABEL);
+    expect(publicAgentLabel('https://api.internal.example/v1')).toBe(NEUTRAL_AGENT_LABEL);
+    expect(publicAgentLabel('my api key: secret')).toBe(NEUTRAL_AGENT_LABEL);
+    expect(publicAgentLabel(undefined)).toBe(NEUTRAL_AGENT_LABEL);
+    expect(publicAgentLabel('')).toBe(NEUTRAL_AGENT_LABEL);
+    expect(publicAgentLabel('x'.repeat(41))).toBe(NEUTRAL_AGENT_LABEL);
+  });
+
+  it('keeps a public model name', () => {
+    expect(publicAgentLabel('GPT-4o mini')).toBe('GPT-4o mini');
+    // A name with a character the shared label of a seat may not carry
+    // becomes the neutral one, so the seat can still declare it.
+    expect(publicAgentLabel('Stockfish 19 Lite (browser)')).toBe(NEUTRAL_AGENT_LABEL);
+  });
+});
+
 describe('the labels of the private catalog', () => {
   it('keeps a label inside the shape a shared model label may have', () => {
     expect(publicSafeAgentLabel('GPT-4o mini')).toBe('GPT-4o mini');
@@ -143,5 +191,18 @@ describe('the labels of the private catalog', () => {
   it('numbers the labels that would collide', () => {
     expect(uniqueAgentLabels(['A', 'A', 'A'])).toEqual(['A', 'A 2', 'A 3']);
     expect(uniqueAgentLabels(['', ''])).toEqual([NEUTRAL_AGENT_LABEL, `${NEUTRAL_AGENT_LABEL} 2`]);
+  });
+});
+
+describe('the choice of a model for a seat', () => {
+  const first = entry('first', 'Custom model', selection('first', 'model-a'));
+  const second = entry('second', 'Custom model 2', selection('second', 'model-b'));
+
+  it('offers every model of the owner, also the one that plays the new games', () => {
+    // The seat plays the second model, so the first model stays available:
+    // the model of the new games is not the model of this seat.
+    expect(seatChoiceAvailable({ entry: first, bound: second })).toBe(true);
+    expect(seatChoiceAvailable({ entry: second, bound: second })).toBe(false);
+    expect(seatChoiceAvailable({ entry: first, bound: null })).toBe(true);
   });
 });
