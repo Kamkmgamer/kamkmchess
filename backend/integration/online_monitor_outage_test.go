@@ -159,6 +159,80 @@ func TestOnlineAStalePlanOfAFailedRequestFindsTheBoundaryOfTheOutage(t *testing.
 	}
 }
 
+// TestOnlineALegalMoveDoesNotWaitForTheDurableHealth covers the request
+// path of the health boundary.
+//
+// The durable report of the dependency is written by the monitor, not by the
+// request: a legal move of a healthy worker is accepted even when the health
+// database cannot answer, and the local state of the dependency is updated at
+// once so the claim path of the instance closes at once.
+func TestOnlineALegalMoveDoesNotWaitForTheDurableHealth(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	const matchID = "match-request-health"
+	createAgentMatch(t, fixture.service, matchID, 20*60*1000)
+	acceptMoves(t, fixture.service, matchID)
+	before, err := fixture.service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The reporter writes on a pool with one connection, and the connection
+	// is held by the test, so a durable report cannot happen.
+	var schema string
+	if err = fixture.pool.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	config, err := pgxpool.ParseConfig(os.Getenv(databaseEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ConnConfig.RuntimeParams == nil {
+		config.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	config.MaxConns = 1
+	config.MinConns = 1
+	blocked, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("open the blocked pool: %v", err)
+	}
+	defer blocked.Close()
+	held, err := blocked.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("hold the only connection: %v", err)
+	}
+	defer held.Release()
+
+	reporter := online.NewHealthReporter(blocked)
+	service, err := online.Open(ctx, fixture.pool, moveEvaluator{}, online.WithHealthReporter(reporter))
+	if err != nil {
+		t.Fatalf("open the service: %v", err)
+	}
+	version, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := moveOnlineCommand(matchID, "op-move-request-health", online.SeatWhite, version.Version, "g1f3")
+	moveCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if _, err = service.Execute(moveCtx, presenceAlice().ref, command); err != nil {
+		t.Fatalf("the legal move of a healthy worker was rejected: %v", err)
+	}
+	// The local state of the dependency is the observation of the request,
+	// and it is durable only with the monitor.
+	if state := reporter.Current().Rules.State; state != online.HealthHealthy {
+		t.Fatalf("the local state of the dependency = %q after the move, want %q", state, online.HealthHealthy)
+	}
+	after, err := service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Version != before.Version+1 {
+		t.Fatalf("the version of the match = %d after the move, want %d", after.Version, before.Version+1)
+	}
+}
+
 // TestOnlineTheSharedHealthRecoversWhenAHealthyPeerAnswers covers the shared
 // health of the rules dependency.
 //

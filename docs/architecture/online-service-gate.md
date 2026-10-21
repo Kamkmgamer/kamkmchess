@@ -257,11 +257,20 @@ instance whose worker is broken keeps its own state and its own claim path
 closed until its own worker answers again, and the recovery of a planned
 boundary is not gated on the shared state.
 
-The durable report of a dependency is a database write, and it happens while
-the episode of the instance is guarded, so it is bounded by a short internal
-budget and by the context of the caller. A report that failed leaves the
-durable state of the dependency unchanged, so the next observation writes the
-checkpoint again.
+The shared state is a **last-writer-wins record**: the broken instance keeps
+writing its own failure only when its own durable state changes, so a
+continuing failure does not overwrite a healthy checkpoint of a peer again.
+The shared state therefore says that the dependency was healthy at the last
+observation of an instance, and the local state of the broken instance is the
+evidence that its own worker is broken.
+
+The durable report of a dependency is a database write, and it is **not** on
+the request path. The observations of the request paths (the participant
+commands, the trusted allocation and the timeout settlement) update the local
+state of the instance and are remembered by the reporter; the monitor's tick
+writes them, with the context of the monitor and a short internal budget. A
+request never waits for a checkpoint or for the liveness, and a write that
+failed leaves the observation pending, so the next tick writes it again.
 
 ## The runner fence
 

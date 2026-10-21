@@ -38,8 +38,12 @@ type MatchAllocator interface {
 	// CreateMatchInTx writes the canonical match of a trusted allocation
 	// inside the caller's transaction.
 	CreateMatchInTx(ctx context.Context, tx pgx.Tx, cmd Command) (CommandResult, error)
-	// ValidateSetup checks a match setup against the pinned rules policy
-	// without writing anything.
+	// ValidateSetup checks a match setup against the pinned rules policy.
+	//
+	// The check writes no row of the match: the acceptance is written by
+	// the transaction of the caller. The check observes the rules process,
+	// so it reports the failure of the dependency to the health boundary
+	// and it reads the epoch of the service before the exchange.
 	ValidateSetup(ctx context.Context, setup CreateMatchSetup) error
 }
 
@@ -337,9 +341,12 @@ func participantRemoved(ctx context.Context, q Querier, participant ParticipantR
 
 // ValidateSetup checks a match setup against the pinned rules policy.
 //
-// It never writes a row and never takes a lock, so a trusted allocator can
-// validate a setup before it opens the transaction that consumes an
-// invitation or a queue entry. An invalid starting position is refused
+// It writes no row of the match and it takes no lock, so a trusted allocator
+// can validate a setup before it opens the transaction that consumes an
+// invitation or a queue entry. The check observes the rules process, so it
+// reads the epoch of the service before the exchange and it reports the
+// failure of the dependency to the health boundary; the observation itself
+// is written by the monitor, not by the request. An invalid starting position is refused
 // before anything is consumed.
 func (s *Service) ValidateSetup(ctx context.Context, setup CreateMatchSetup) error {
 	if err := setup.Validate(); err != nil {
@@ -378,10 +385,10 @@ func (s *Service) ValidateSetup(ctx context.Context, setup CreateMatchSetup) err
 		}
 		// A broken rules process is an outage, not an invalid setup, and
 		// the health boundary has to learn about it.
-		s.observeFailure(ctx, causal, seq, err)
+		s.observeFailure(ctx, causal, seq, err, false)
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	s.observeSuccess(ctx, seq)
+	s.observeSuccess(ctx, seq, false)
 	return nil
 }
 

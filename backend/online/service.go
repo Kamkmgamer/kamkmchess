@@ -231,10 +231,10 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 		}
 		// Keep the epoch observed before evaluation. A peer may have recovered
 		// the outage while this evaluation was still waiting for the worker.
-		s.observeFailure(ctx, causal, seq, err)
+		s.observeFailure(ctx, causal, seq, err, false)
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	s.observeSuccess(ctx, seq)
+	s.observeSuccess(ctx, seq, false)
 	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
@@ -392,13 +392,13 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 		}
 		// Keep the epoch observed before evaluation, including when a peer
 		// recovered the outage before this failure reached the caller.
-		s.observeFailure(ctx, causal, seq, err)
+		s.observeFailure(ctx, causal, seq, err, false)
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	if err = candidate.Validate(); err != nil {
 		return CommandResult{}, err
 	}
-	s.observeSuccess(ctx, seq)
+	s.observeSuccess(ctx, seq, false)
 	return s.applyWorkerCandidate(ctx, actor, cmd, fingerprint, candidate)
 }
 

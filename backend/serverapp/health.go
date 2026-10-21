@@ -143,6 +143,11 @@ func checkHealth(ctx context.Context, pool *pgxpool.Pool, reporter *online.Healt
 		return
 	}
 	checkRulesHealth(ctx, prober, onError)
+	// The monitor is the writer of the durable state. The observations of
+	// the request paths are remembered by the reporter and written here,
+	// with the context of the monitor and a short budget, so a request never
+	// waits for a checkpoint.
+	reporter.Flush(ctx)
 	// A healthy service refreshes its durable liveness.
 	//
 	// The liveness record is the evidence that the service was alive, so a

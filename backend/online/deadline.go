@@ -281,11 +281,11 @@ func (s *Service) settleClockExpiry(ctx context.Context, snapshot Match) (Deadli
 	facts, err := evaluator.EvaluateTimeout(ctx, input, expired)
 	if err != nil {
 		if !s.busy(err) && !s.cancelled(err) {
-			s.observeFailure(ctx, causal, seq, err)
+			s.observeFailure(ctx, causal, seq, err, false)
 		}
 		return "", fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	s.observeSuccess(ctx, seq)
+	s.observeSuccess(ctx, seq, false)
 	if err = facts.Validate(); err != nil {
 		return "", err
 	}
