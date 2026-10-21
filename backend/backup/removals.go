@@ -2,6 +2,7 @@ package backup
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"time"
@@ -54,9 +55,11 @@ func (r RemovalRecord) validate() error {
 //
 // The key is the match, the kind and the subject: two participants of the same
 // match can both be removed, and their removals are two different removals.
-// The reason of a removal is kept: a match that was anonymized and later erased
-// keeps the later, stronger removal, so the replay of the ledger never weakens
-// a removal.
+//
+// The stronger removal of a subject wins: an explicit removal erases the
+// shared replay, and an ordinary deletion only anonymizes it. The later
+// removal of the same strength wins as well, so the merge is deterministic
+// whatever order the ledgers arrive in.
 func MergeRemovalLedgers(older, newer []RemovalRecord) ([]RemovalRecord, error) {
 	bySubject := map[string]RemovalRecord{}
 	for _, set := range [][]RemovalRecord{older, newer} {
@@ -64,13 +67,13 @@ func MergeRemovalLedgers(older, newer []RemovalRecord) ([]RemovalRecord, error) 
 			if err := entry.validate(); err != nil {
 				return nil, err
 			}
-			key := entry.MatchID + "\x00" + entry.SubjectKind + "\x00" + entry.SubjectID
+			key := removalKey(entry.MatchID, entry.SubjectKind, entry.SubjectID)
 			current, exists := bySubject[key]
 			if !exists {
 				bySubject[key] = entry
 				continue
 			}
-			if entry.RemovedAt.After(current.RemovedAt) {
+			if strongerRemoval(entry, current) {
 				bySubject[key] = entry
 			}
 		}
@@ -80,12 +83,86 @@ func MergeRemovalLedgers(older, newer []RemovalRecord) ([]RemovalRecord, error) 
 		merged = append(merged, entry)
 	}
 	sort.Slice(merged, func(i, j int) bool {
-		if merged[i].MatchID != merged[j].MatchID {
-			return merged[i].MatchID < merged[j].MatchID
-		}
-		return merged[i].SubjectID < merged[j].SubjectID
+		return removalKey(merged[i].MatchID, merged[i].SubjectKind, merged[i].SubjectID) <
+			removalKey(merged[j].MatchID, merged[j].SubjectKind, merged[j].SubjectID)
 	})
 	return merged, nil
+}
+
+// removalKey is the complete key of a removal record.
+func removalKey(matchID, subjectKind, subjectID string) string {
+	return matchID + "\x00" + subjectKind + "\x00" + subjectID
+}
+
+// strongerRemoval reports whether the first removal is the stronger one.
+//
+// An explicit removal erases the shared replay and an ordinary deletion only
+// anonymizes it, so the explicit removal always wins. Two removals of the same
+// strength are ordered by their time, and the later one wins.
+func strongerRemoval(candidate, current RemovalRecord) bool {
+	if candidate.Scope != current.Scope {
+		return candidate.Scope == "explicit_removal"
+	}
+	return candidate.RemovedAt.After(current.RemovedAt)
+}
+
+// RemovalLedgerContains reports whether the applied ledger holds every record
+// of the required ledger.
+//
+// The applied ledger of a restored database can hold more than the required
+// one: the restored database brings its own older records back. The check is
+// therefore a containment, not an equality, so a restore that lost a removal
+// is still visible.
+func RemovalLedgerContains(applied, required AppliedRemovalLedger) bool {
+	haveMatches := map[string]bool{}
+	for _, record := range applied.Matches {
+		haveMatches[removalKey(record.MatchID, record.SubjectKind, record.SubjectID)+"\x00"+record.Scope] = true
+	}
+	for _, record := range required.Matches {
+		if !haveMatches[removalKey(record.MatchID, record.SubjectKind, record.SubjectID)+"\x00"+record.Scope] {
+			return false
+		}
+	}
+	haveSubjects := map[string]bool{}
+	for _, record := range applied.Subjects {
+		haveSubjects[record.SubjectKind+"\x00"+record.SubjectRef+"\x00"+record.Scope] = true
+	}
+	for _, record := range required.Subjects {
+		if !haveSubjects[record.SubjectKind+"\x00"+record.SubjectRef+"\x00"+record.Scope] {
+			return false
+		}
+	}
+	return true
+}
+
+// RemovalLedgerDigest is the digest of a removal ledger.
+//
+// The digest covers the complete key of every record, so two ledgers that hold
+// the same removals in a different order have the same digest, and two ledgers
+// that hold different removals have different digests.
+func RemovalLedgerDigest(matches []RemovalRecord, subjects []SubjectRemovalRecord) []byte {
+	digest := sha256.New()
+	for _, record := range matches {
+		digest.Write([]byte("match:"))
+		digest.Write([]byte(removalKey(record.MatchID, record.SubjectKind, record.SubjectID)))
+		digest.Write([]byte{0})
+		digest.Write([]byte(record.Scope))
+		digest.Write([]byte{0})
+		digest.Write([]byte(record.RemovalID))
+		digest.Write([]byte{0})
+	}
+	for _, record := range subjects {
+		digest.Write([]byte("subject:"))
+		digest.Write([]byte(record.SubjectKind))
+		digest.Write([]byte{0})
+		digest.Write([]byte(record.SubjectRef))
+		digest.Write([]byte{0})
+		digest.Write([]byte(record.Scope))
+		digest.Write([]byte{0})
+		digest.Write([]byte(record.RecordID))
+		digest.Write([]byte{0})
+	}
+	return digest.Sum(nil)
 }
 
 // SubjectRemovalRecord is the removal of one subject, whatever it played.
@@ -170,6 +247,16 @@ type RemovalLedgerSink interface {
 	ApplyRemovalRecords(ctx context.Context, records []RemovalRecord) error
 	// ApplySubjectRemovalRecords must be idempotent as well.
 	ApplySubjectRemovalRecords(ctx context.Context, records []SubjectRemovalRecord) error
+	// AppliedRemovalLedger returns the removal ledger that is applied in the
+	// database. The restore compares it with the ledger it had to apply, so a
+	// restore that applied a different ledger keeps the fence open.
+	AppliedRemovalLedger(ctx context.Context) (AppliedRemovalLedger, error)
+}
+
+// AppliedRemovalLedger is the removal ledger of a database.
+type AppliedRemovalLedger struct {
+	Matches  []RemovalRecord
+	Subjects []SubjectRemovalRecord
 }
 
 // AdmissionFence is the durable admission control of a restore.

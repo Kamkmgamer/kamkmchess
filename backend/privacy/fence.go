@@ -42,8 +42,12 @@ type Fence struct {
 
 // OpenFence opens the durable restore fence of one restore.
 //
-// The fence is bound to the restore: a restore that is already in progress
-// keeps its fence, and a second restore is refused instead of overwriting it.
+// The fence is owned exclusively by the restore that opened it. The file is
+// created exclusively, so two restores that start at the same time cannot take
+// the same fence: the second one is refused instead of overwriting the fence
+// of the first. The same restore with the same ledger is idempotent, and the
+// same restore with a different ledger is refused.
+//
 // The digest is the digest of the removal ledger the restore has to apply, so
 // the fence states what the restore owes.
 func (s *Service) OpenFence(restoreID string, expectedDigest []byte) error {
@@ -51,39 +55,90 @@ func (s *Service) OpenFence(restoreID string, expectedDigest []byte) error {
 	if restoreID == "" {
 		return errors.New("privacy: the restore needs an identifier")
 	}
-	existing, open, err := s.ReadFence()
+	path := s.options.FencePath
+	if path == "" {
+		return errors.New("privacy: no restore fence path is configured")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	fence := Fence{
+		RestoreID:            restoreID,
+		ExpectedLedgerDigest: fmt.Sprintf("%x", expectedDigest),
+		RecordedAt:           s.now(),
+	}
+	raw, err := json.Marshal(fence)
 	if err != nil {
 		return err
 	}
-	if open && existing.RestoreID != restoreID {
-		return fmt.Errorf("privacy: the restore %q is already in progress", existing.RestoreID)
+	// The exclusive create is the ownership: only one restore can hold the
+	// fence, and the holder is the one that created the file.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		if !errors.Is(err, os.ErrExist) {
+			return err
+		}
+		existing, open, readErr := s.ReadFence()
+		if readErr != nil {
+			return readErr
+		}
+		if !open {
+			return errors.New("privacy: the restore fence is unreadable")
+		}
+		if existing.RestoreID != restoreID {
+			return fmt.Errorf("privacy: the restore %q is already in progress", existing.RestoreID)
+		}
+		if existing.ExpectedLedgerDigest != fence.ExpectedLedgerDigest {
+			return errors.New("privacy: the open fence names another removal ledger")
+		}
+		return nil
 	}
-	return s.WriteFence(restoreID, expectedDigest)
+	defer file.Close()
+	if _, err = file.Write(raw); err != nil {
+		return err
+	}
+	if err = file.Sync(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // CloseFence closes the durable restore fence of one restore.
 //
 // The fence is closed only when the restore that opened it applied the ledger
-// the fence names. A different restore, or a different ledger, is refused.
+// the fence names. A different restore, or a different ledger, is refused. The
+// fence is moved aside before it is read, so a fence that another restore
+// replaced in the meantime is put back instead of being removed.
 func (s *Service) CloseFence(restoreID string, appliedDigest []byte) error {
 	restoreID = strings.TrimSpace(restoreID)
 	if restoreID == "" {
 		return errors.New("privacy: the restore needs an identifier")
 	}
-	existing, open, err := s.ReadFence()
+	path := s.options.FencePath
+	if path == "" {
+		return errors.New("privacy: no restore fence path is configured")
+	}
+	raw, err := os.ReadFile(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return errors.New("privacy: no restore fence is open")
+		}
 		return err
 	}
-	if !open {
-		return errors.New("privacy: no restore fence is open")
+	var fence Fence
+	if err = json.Unmarshal(raw, &fence); err != nil {
+		return errors.New("privacy: the restore fence is unreadable")
 	}
-	if existing.RestoreID != restoreID {
-		return fmt.Errorf("privacy: the open fence belongs to the restore %q", existing.RestoreID)
+	if fence.RestoreID != restoreID {
+		return fmt.Errorf("privacy: the open fence belongs to the restore %q", fence.RestoreID)
 	}
-	if existing.ExpectedLedgerDigest != fmt.Sprintf("%x", appliedDigest) {
+	if fence.ExpectedLedgerDigest != fmt.Sprintf("%x", appliedDigest) {
 		return errors.New("privacy: the applied removal ledger is not the ledger of the restore")
 	}
-	return s.ClearFence()
+	if err = os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // WriteFence opens the durable restore fence.

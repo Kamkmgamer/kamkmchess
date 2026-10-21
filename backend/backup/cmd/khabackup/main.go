@@ -430,15 +430,8 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 		}
 	}
 	restoreID := "restore-" + time.Now().UTC().Format("20060102T150405Z") + "-" + randomSuffix()
-	digest, err := privacy.RemovalLedgerDigestOf(merged, mergedSubjects)
-	if err != nil {
-		return err
-	}
-	// The fence is bound to this restore and to the ledger it has to apply. A
-	// restore that is already in progress keeps its fence.
-	if err = removals.OpenFence(restoreID, digest); err != nil {
-		return err
-	}
+	// The restore owns the fence: it opens it before the import and closes it
+	// after the removal ledger was replayed and verified.
 	request.RestoreID = restoreID
 	result, err := backup.Restore(ctx, request)
 	if err != nil {
@@ -455,15 +448,18 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 	// The restore is recorded and the gate is released only after the removal
 	// ledger was replayed and the replay was verified.
 	//
-	// The verification is the digest of the ledger that was actually applied:
-	// a restore that applied a different ledger keeps the fence open and the
-	// gate closed.
-	applied, err := removals.AppliedLedgerDigest(ctx)
+	// The verification is the required union of the bundle and the newer
+	// rotation copies: the applied ledger has to hold every one of them. The
+	// restore itself performs the check before it closes the fence, so a
+	// ledger that was not applied keeps the fence open and the service
+	// closed.
+	applied, err := removals.AppliedRemovalLedger(ctx)
 	if err != nil {
 		return err
 	}
-	if applied != "" && applied != fmt.Sprintf("%x", digest) {
-		return fmt.Errorf("the applied removal ledger is not the ledger of the restore; the fence stays open")
+	required := backup.AppliedRemovalLedger{Matches: merged, Subjects: mergedSubjects}
+	if !backup.RemovalLedgerContains(applied, required) {
+		return fmt.Errorf("the applied removal ledger is not the ledger of the restore")
 	}
 	if _, err = removals.RecordRestore(ctx, restoreID); err != nil {
 		return err
@@ -471,11 +467,7 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 	if err = removals.ReleaseRestoreGate(ctx, restoreID); err != nil {
 		return fmt.Errorf("the restore gate stays closed: %w", err)
 	}
-	// The durable fence is closed last, and only for this restore and this
-	// ledger.
-	if err = removals.CloseFence(restoreID, digest); err != nil {
-		return err
-	}
+
 	report := map[string]any{
 		"command":           "restore",
 		"applied":           true,

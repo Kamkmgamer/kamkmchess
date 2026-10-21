@@ -1,4 +1,4 @@
--- KHA-79 the privacy redaction of the auxiliary records. Additive only.
+-- KHA-79 the narrow redaction path of the queue tables. Additive only.
 --
 -- The auxiliary records of a removed subject keep three things that the
 -- previous redaction left in place:
@@ -31,9 +31,10 @@ LANGUAGE plpgsql AS $$
 BEGIN
   -- The redaction of a removed account is the one change the identity guard
   -- accepts. It replaces the owner identifier with the reserved anonymized
-  -- value, drops the declared model label and clears the client supplied
-  -- idempotency key, which a browser could reuse for another account. The
-  -- seat, the clock and the assignment stay exactly as they were.
+  -- value, replaces the declared model label with the neutral label of a
+  -- model opponent and clears the client supplied idempotency key, which a
+  -- browser could reuse for another account. The seat, the clock and the
+  -- assignment stay exactly as they were.
   IF NEW.owner_id = 'anonymized' AND OLD.owner_id <> 'anonymized' THEN
     IF NOT online_removed_account_request(OLD.owner_id) THEN
       RAISE EXCEPTION 'online queue entry redaction needs a removal request' USING ERRCODE = '55000';
@@ -48,6 +49,12 @@ BEGIN
     END IF;
     IF NEW.client_request_id IS NOT NULL AND NEW.client_request_id IS DISTINCT FROM OLD.client_request_id THEN
       RAISE EXCEPTION 'online queue entry redaction keeps the client request identifier' USING ERRCODE = '55000';
+    END IF;
+    -- The declared model label of a model seat is replaced by the neutral
+    -- label. A human seat has no model label, so it stays empty.
+    IF NEW.seat_control_model_label IS DISTINCT FROM (
+         CASE WHEN NEW.seat_control_kind = 'human' THEN NULL ELSE 'Custom model' END) THEN
+      RAISE EXCEPTION 'online queue entry redaction keeps the canonical model label' USING ERRCODE = '55000';
     END IF;
     IF NEW.version <= OLD.version THEN
       RAISE EXCEPTION 'online queue entry version must advance' USING ERRCODE = '55000';
@@ -100,17 +107,21 @@ $$;
 
 -- The allocation guard accepts the redaction of the public label and of the
 -- declared model label of a removed participant.
+--
+-- The redaction is exact: the label of a side becomes the canonical sanitized
+-- label, the declared model label of that side becomes the neutral label of a
+-- model opponent, and nothing else of the allocation changes. The other
+-- participant keeps its own label, its own control kind and its own model
+-- label, and the identity of the allocation never changes.
 CREATE OR REPLACE FUNCTION online_guard_queue_allocation_update() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
-  -- The redaction of a removed participant only changes the public label and
-  -- the declared model label of the allocation. Everything else, the identity
-  -- and the committed result, stays exactly as it was.
-  IF (NEW.initiator_label = 'Deleted player' AND OLD.initiator_label <> 'Deleted player')
-     OR (NEW.opponent_label = 'Deleted player' AND OLD.opponent_label <> 'Deleted player') THEN
-    -- The redaction changes the labels of the allocation and nothing else.
-    -- The identity of the allocation, the operation key and the entries it
-    -- refers to stay exactly as they were.
+  IF (NEW.initiator_label IS DISTINCT FROM OLD.initiator_label)
+     OR (NEW.opponent_label IS DISTINCT FROM OLD.opponent_label)
+     OR (NEW.initiator_control_model_label IS DISTINCT FROM OLD.initiator_control_model_label)
+     OR (NEW.opponent_control_model_label IS DISTINCT FROM OLD.opponent_control_model_label) THEN
+    -- The identity of the allocation never changes: not the operation key,
+    -- not the entries it refers to, not the seats, not the control kinds.
     IF NEW.allocation_id <> OLD.allocation_id
        OR NEW.kind <> OLD.kind
        OR NEW.initiator_entry_id <> OLD.initiator_entry_id
@@ -121,45 +132,73 @@ BEGIN
        OR NEW.match_id IS DISTINCT FROM OLD.match_id
        OR NEW.created_at <> OLD.created_at
        OR NEW.status <> OLD.status
-       OR NEW.committed_at IS DISTINCT FROM OLD.committed_at THEN
+       OR NEW.committed_at IS DISTINCT FROM OLD.committed_at
+       OR NEW.initiator_control_kind <> OLD.initiator_control_kind
+       OR NEW.opponent_control_kind <> OLD.opponent_control_kind THEN
       RAISE EXCEPTION 'online queue allocation identity is immutable' USING ERRCODE = '55000';
     END IF;
-    IF NEW.initiator_label = 'Deleted player' AND OLD.initiator_label <> 'Deleted player' THEN
+    -- The initiator side is redacted only when the initiator is a removed
+    -- participant, and only to the canonical sanitized values.
+    IF NEW.initiator_label IS DISTINCT FROM OLD.initiator_label THEN
+      IF NEW.initiator_label <> 'Deleted player' THEN
+        RAISE EXCEPTION 'online queue allocation label may only be sanitized' USING ERRCODE = '55000';
+      END IF;
+      IF NEW.initiator_control_model_label IS DISTINCT FROM (
+           CASE WHEN NEW.initiator_control_kind = 'human' THEN NULL ELSE 'Custom model' END) THEN
+        RAISE EXCEPTION 'online queue allocation redaction keeps the canonical model label' USING ERRCODE = '55000';
+      END IF;
       IF NOT online_removed_account_request(
         (SELECT q.owner_id FROM online_queue_allocation_entries e JOIN online_queue_entries q ON q.entry_id = e.entry_id
          WHERE e.allocation_id = OLD.allocation_id AND e.role = 'initiator')) THEN
         RAISE EXCEPTION 'online queue allocation redaction needs a removal request' USING ERRCODE = '55000';
       END IF;
-    ELSE
+    ELSIF NEW.initiator_control_model_label IS DISTINCT FROM OLD.initiator_control_model_label THEN
+      RAISE EXCEPTION 'online queue allocation redaction changes one side only' USING ERRCODE = '55000';
+    END IF;
+    -- The opponent side is redacted only when the opponent is a removed
+    -- participant, and only to the canonical sanitized values.
+    IF NEW.opponent_label IS DISTINCT FROM OLD.opponent_label THEN
+      IF NEW.opponent_label <> 'Deleted player' THEN
+        RAISE EXCEPTION 'online queue allocation label may only be sanitized' USING ERRCODE = '55000';
+      END IF;
+      IF NEW.opponent_control_model_label IS DISTINCT FROM (
+           CASE WHEN NEW.opponent_control_kind = 'human' THEN NULL ELSE 'Custom model' END) THEN
+        RAISE EXCEPTION 'online queue allocation redaction keeps the canonical model label' USING ERRCODE = '55000';
+      END IF;
       IF NOT online_removed_account_request(
         (SELECT q.owner_id FROM online_queue_allocation_entries e JOIN online_queue_entries q ON q.entry_id = e.entry_id
          WHERE e.allocation_id = OLD.allocation_id AND e.role = 'opponent')) THEN
         RAISE EXCEPTION 'online queue allocation redaction needs a removal request' USING ERRCODE = '55000';
       END IF;
+    ELSIF NEW.opponent_control_model_label IS DISTINCT FROM OLD.opponent_control_model_label THEN
+      RAISE EXCEPTION 'online queue allocation redaction changes one side only' USING ERRCODE = '55000';
     END IF;
-  ELSE
-    IF NEW.allocation_id <> OLD.allocation_id
-       OR NEW.kind <> OLD.kind
-       OR NEW.initiator_entry_id <> OLD.initiator_entry_id
-       OR NEW.initiator_seat <> OLD.initiator_seat
-       OR NEW.opponent_entry_id IS DISTINCT FROM OLD.opponent_entry_id
-       OR NEW.opponent_seat <> OLD.opponent_seat
-       OR NEW.operation_id <> OLD.operation_id
-       OR NEW.initiator_label <> OLD.initiator_label
-       OR NEW.initiator_control_kind <> OLD.initiator_control_kind
-       OR NEW.initiator_control_model_label IS DISTINCT FROM OLD.initiator_control_model_label
-       OR NEW.opponent_label <> OLD.opponent_label
-       OR NEW.opponent_control_kind <> OLD.opponent_control_kind
-       OR NEW.opponent_control_model_label IS DISTINCT FROM OLD.opponent_control_model_label
-       OR NEW.created_at <> OLD.created_at THEN
-      RAISE EXCEPTION 'online queue allocation identity is immutable' USING ERRCODE = '55000';
-    END IF;
-    IF OLD.status = 'committed' THEN
-      RAISE EXCEPTION 'online queue allocation is final' USING ERRCODE = '55000';
-    END IF;
-    IF NEW.status <> 'committed' OR NEW.match_id IS NULL OR NEW.committed_at IS NULL THEN
-      RAISE EXCEPTION 'online queue allocation can only be completed' USING ERRCODE = '55000';
-    END IF;
+    RETURN NEW;
+  END IF;
+  -- The identity of an allocation never changes. The public label of both
+  -- participants and the declared control of both stay fixed, because a
+  -- recovered reservation has to rebuild exactly the same match.
+  IF NEW.allocation_id <> OLD.allocation_id
+     OR NEW.kind <> OLD.kind
+     OR NEW.initiator_entry_id <> OLD.initiator_entry_id
+     OR NEW.initiator_seat <> OLD.initiator_seat
+     OR NEW.opponent_entry_id IS DISTINCT FROM OLD.opponent_entry_id
+     OR NEW.opponent_seat <> OLD.opponent_seat
+     OR NEW.operation_id <> OLD.operation_id
+     OR NEW.initiator_label <> OLD.initiator_label
+     OR NEW.initiator_control_kind <> OLD.initiator_control_kind
+     OR NEW.initiator_control_model_label IS DISTINCT FROM OLD.initiator_control_model_label
+     OR NEW.opponent_label <> OLD.opponent_label
+     OR NEW.opponent_control_kind <> OLD.opponent_control_kind
+     OR NEW.opponent_control_model_label IS DISTINCT FROM OLD.opponent_control_model_label
+     OR NEW.created_at <> OLD.created_at THEN
+    RAISE EXCEPTION 'online queue allocation identity is immutable' USING ERRCODE = '55000';
+  END IF;
+  IF OLD.status = 'committed' THEN
+    RAISE EXCEPTION 'online queue allocation is final' USING ERRCODE = '55000';
+  END IF;
+  IF NEW.status <> 'committed' OR NEW.match_id IS NULL OR NEW.committed_at IS NULL THEN
+    RAISE EXCEPTION 'online queue allocation can only be completed' USING ERRCODE = '55000';
   END IF;
   RETURN NEW;
 END

@@ -462,6 +462,28 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err != nil {
 		return RestoreResult{}, err
 	}
+	carriesRemovals := len(removals) > 0 || len(subjectRemovals) > 0
+	if carriesRemovals {
+		// A restore that carries removals needs the removal sink and the
+		// durable admission control. Both are checked before the import, so a
+		// restore that cannot replay the removals never touches the database.
+		if request.Removals == nil {
+			return RestoreResult{}, fmt.Errorf("%w: a restore with removals needs a removal sink", ErrLedgerConflict)
+		}
+		if request.AdmissionFence == nil {
+			return RestoreResult{}, fmt.Errorf("%w: a restore with removals needs an admission fence", ErrLedgerConflict)
+		}
+		if request.RestoreID == "" {
+			return RestoreResult{}, fmt.Errorf("%w: a restore with removals needs a restore identifier", ErrLedgerConflict)
+		}
+		// The fence is opened before the import. The fence lives outside the
+		// restored database, so it survives the schema replacement and a crash
+		// of this process, and a restored database that lost a removal never
+		// serves traffic.
+		if err = request.AdmissionFence.OpenFence(request.RestoreID, RemovalLedgerDigest(removals, subjectRemovals)); err != nil {
+			return RestoreResult{}, err
+		}
+	}
 	if err = request.Restorer.Restore(ctx, bytes.NewReader(verified.Payload.SQL)); err != nil {
 		return RestoreResult{}, err
 	}
@@ -480,21 +502,8 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 		TombstonesApplied: len(ledger),
 		TombstonesKept:    SummarizeRecovery(actions)[RecoveryKeep],
 	}
-	if len(removals) == 0 && len(subjectRemovals) == 0 {
+	if !carriesRemovals {
 		return result, nil
-	}
-	if request.Removals == nil {
-		// The removals are reported, not applied. The restored database must
-		// not serve traffic before they are applied.
-		result.RemovalsPending = removals
-		result.SubjectRemovalsPending = subjectRemovals
-		return result, nil
-	}
-	if request.AdmissionFence == nil {
-		// A restore that carries removals needs the durable admission
-		// control. Without it, a crash between the import and the replay would
-		// leave a restored database that serves a removal it lost.
-		return RestoreResult{}, fmt.Errorf("%w: a restore with removals needs an admission fence", ErrLedgerConflict)
 	}
 	if len(removals) > 0 {
 		if err = request.Removals.ApplyRemovalRecords(ctx, removals); err != nil {
@@ -507,6 +516,20 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 			return RestoreResult{}, err
 		}
 		result.SubjectRemovalsApplied = len(subjectRemovals)
+	}
+	// The fence is closed only when the applied ledger holds every removal the
+	// restore had to apply. A restore that lost one keeps the fence open and
+	// the service closed.
+	applied, err := request.Removals.AppliedRemovalLedger(ctx)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	required := AppliedRemovalLedger{Matches: removals, Subjects: subjectRemovals}
+	if !RemovalLedgerContains(applied, required) {
+		return RestoreResult{}, fmt.Errorf("%w: the applied removal ledger is not the ledger of the restore", ErrLedgerConflict)
+	}
+	if err = request.AdmissionFence.CloseFence(request.RestoreID, RemovalLedgerDigest(removals, subjectRemovals)); err != nil {
+		return RestoreResult{}, err
 	}
 	return result, nil
 }
@@ -583,8 +606,8 @@ func CollectLedgers(paths []string, passphrase []byte) ([]Tombstone, error) {
 // restore has to replay both, so the operator flow needs both of them.
 func CollectRemovalLedgers(paths []string, passphrase []byte) ([]RemovalRecord, []SubjectRemovalRecord, error) {
 	var (
-		removals  []RemovalRecord
-		subjects  []SubjectRemovalRecord
+		removals []RemovalRecord
+		subjects []SubjectRemovalRecord
 	)
 	for _, path := range paths {
 		verified, err := Verify(path, passphrase)

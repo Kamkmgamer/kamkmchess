@@ -170,10 +170,15 @@ Rules the browser must honour:
   the replay leaves the service closed instead of a restored database that lost the newest
   removals.
 * The fence is **bound to its restore**: it names the restore and the digest of the removal ledger
-  the restore has to apply. A second restore is refused instead of overwriting the fence of the
-  first, a fence is closed only by its own restore, and a restore that applied a different ledger
-  keeps the fence open and the gate closed. The library refuses a restore that carries removals
-  without an admission fence at all.
+  the restore has to apply. The fence file is created exclusively, so two restores that start at the
+  same time cannot both own it: the second one is refused instead of overwriting the fence of the
+  first. The same restore with the same ledger is idempotent, the same restore with another ledger
+  is refused, and the fence is closed only by its owner and only for the ledger it names. The fence
+  is on disk, so it survives the restart of the service: a service that starts after a crashed
+  restore sees the fence and refuses to serve.
+* The restore **opens the fence before the import** and closes it only after the removal ledger was
+  replayed and the applied ledger was verified to hold every record the restore had to apply. A
+  restore that cannot replay its removals is refused before it touches the database.
 * The **subject level removal record** (`online_removal_subjects`, `subjectRef`) records that a
   subject was removed, whatever it played and whatever private data it held. It names no match
   and it stores the one-way reference of the subject, never the identifier. It travels in the

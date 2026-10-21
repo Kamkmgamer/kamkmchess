@@ -279,6 +279,19 @@ func (l postgresRemovalLedger) ApplySubjectRemovalRecords(ctx context.Context, r
 	return l.removals.ApplySubjectRemovalRecords(ctx, records)
 }
 
+// AppliedRemovalLedger returns the removal ledger that is applied in the
+// database.
+func (l postgresRemovalLedger) AppliedRemovalLedger(ctx context.Context) (backup.AppliedRemovalLedger, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return backup.AppliedRemovalLedger{}, err
+	}
+	if !available {
+		return backup.AppliedRemovalLedger{}, nil
+	}
+	return l.removals.AppliedRemovalLedger(ctx)
+}
+
 // ApplyRemovalRecords replays the online removal ledger after a restore.
 //
 // The replay is the privacy service, so the restored rows are removed exactly

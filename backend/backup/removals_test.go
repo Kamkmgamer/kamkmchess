@@ -49,6 +49,10 @@ func (l *fakeRemovalLedger) ApplySubjectRemovalRecords(_ context.Context, record
 	return nil
 }
 
+func (l *fakeRemovalLedger) AppliedRemovalLedger(context.Context) (AppliedRemovalLedger, error) {
+	return AppliedRemovalLedger{Matches: l.applied, Subjects: l.subjectApplied}, nil
+}
+
 // TestMergeRemovalLedgersKeepsTwoSubjectsOfOneMatch covers the key of the
 // removal ledger.
 //
@@ -340,20 +344,17 @@ func TestRestoreReportsTheRemovalsItCannotApply(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := Restore(context.Background(), RestoreRequest{
+	restorer := &fakeRestorer{}
+	if _, err := Restore(context.Background(), RestoreRequest{
 		Path:       path,
 		Passphrase: []byte(testPassphrase),
-		Restorer:   &fakeRestorer{},
+		Restorer:   restorer,
 		Tombstones: &fakeLedger{},
-	})
-	if err != nil {
-		t.Fatal(err)
+	}); err == nil {
+		t.Fatal("a restore with removals and no removal sink was accepted")
 	}
-	if result.RemovalsApplied != 0 {
-		t.Fatalf("the applied removals = %d", result.RemovalsApplied)
-	}
-	if len(result.RemovalsPending) != 1 {
-		t.Fatalf("the pending removals = %+v", result.RemovalsPending)
+	if restorer.calls != 0 {
+		t.Fatalf("the refused restore imported %d times", restorer.calls)
 	}
 }
 
