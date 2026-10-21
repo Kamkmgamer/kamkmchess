@@ -18,6 +18,7 @@ import {
   assertSharedActionSafe,
   buildRunnerLeaseBody,
   buildRunnerRequestBody,
+  composeOnlineProviderHistory,
   parseRunnerLeaseAnswer,
   providerRunnerSnapshotFromView,
   ProviderRunnerServiceError,
@@ -34,6 +35,7 @@ import {
   createFakeProvider,
   createFakeTimers,
   createMemoryPendingStore,
+  fakeMatchView,
   fakeSnapshot,
 } from '../support/online-runner';
 import type { FakeOnlineService, FakeProvider } from '../support/online-runner';
@@ -598,6 +600,104 @@ describe('the published model binding of the runner', () => {
     expect(snapshot.controlEpoch).toBe(3);
     expect(snapshot.clock.incrementMs).toBe(1000);
     expect(() => providerRunnerSnapshotFromView(view, 'black')).not.toThrow();
+  });
+
+  it('plays the first move of a fresh match whose initial clock arms no seat', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    // The initial clock of a fresh match arms no seat at all, so the side to
+    // move comes from the canonical position.
+    const view = fakeMatchView(service.match);
+    expect(view.clock.activeSeat).toBeNull();
+    expect(view.clock.replySeat).toBeNull();
+    const snapshot = providerRunnerSnapshotFromView(view, 'white');
+    expect(snapshot.sideToMove).toBe('white');
+
+    runner.applySnapshot(snapshot);
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(
+      () => service.recordedCommands.some((command) => command.action.kind === 'submit_move'),
+      'the first move is submitted',
+    );
+    expect(service.recordedCommands.find((command) => command.action.kind === 'submit_move')?.action)
+      .toEqual({ kind: 'submit_move', move: 'e2e4' });
+  });
+
+  it('plays the first move of a custom position that starts with black', async () => {
+    const service = createFakeOnlineService({
+      seat: 'black',
+      sideToMove: 'black',
+      positionFen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1',
+    });
+    const provider = createFakeProvider();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    const view = fakeMatchView(service.match);
+    expect(view.clock.activeSeat).toBeNull();
+    const snapshot = providerRunnerSnapshotFromView(view, 'black');
+    expect(snapshot.sideToMove).toBe('black');
+
+    runner.applySnapshot(snapshot);
+    await provider.waitForRequest();
+    provider.answer('{"move":"c7c5"}');
+    await until(
+      () => service.recordedCommands.some((command) => command.action.kind === 'submit_move'),
+      'the first move of the custom position is submitted',
+    );
+    expect(service.recordedCommands.find((command) => command.action.kind === 'submit_move')?.action)
+      .toEqual({ kind: 'submit_move', move: 'c7c5' });
+  });
+
+  it('gives the provider the moves of the match in the notation of the game record', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(providerRunnerSnapshotFromView(fakeMatchView(service.match), 'white'));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(
+      () => service.recordedCommands.some((command) => command.action.kind === 'submit_move'),
+      'the first move is accepted',
+    );
+    service.opponentMove('e7e5');
+
+    const snapshot = providerRunnerSnapshotFromView(fakeMatchView(service.match), 'white');
+    // The provider reads the moves of the match in the notation of the game
+    // record, exactly like the request building of the offline game.
+    expect(snapshot.moves).toEqual(['e4', 'e5']);
+    const prompt = {
+      requestId: 'request-1',
+      positionFen: snapshot.positionFen,
+      startingFen: snapshot.startingFen,
+      sideToMove: 'white' as const,
+      moves: snapshot.moves,
+      clock: snapshot.clock,
+      budgets: { illegalAttemptsSpent: 0, formatCorrectionsSpent: 0 },
+      rejectedMoves: [],
+      corrections: [],
+      instructions: '',
+      signal: new AbortController().signal,
+    };
+    const history = composeOnlineProviderHistory(prompt);
+    const payload = JSON.parse(history.records[0]?.text ?? '{}') as { moves?: string };
+    expect(payload.moves).toBe('e4 e5');
   });
 
   it('keeps playing after a switch to a label the service does not publish', async () => {

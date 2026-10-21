@@ -195,8 +195,8 @@ The runner acts on the canonical match state. The interface is
 | `version` | The match version of the snapshot |
 | `controlEpoch` | The control epoch of the snapshot |
 | `status` | The match status |
-| `sideToMove` | `clock.replySeat ?? clock.activeSeat` |
-| `positionFen`, `startingFen`, `moves` | The snapshot |
+| `sideToMove` | `onlineSideToMove(view)` of `src/online/turn.ts` |
+| `positionFen`, `startingFen`, `moves` | The snapshot. The moves are the notation of the game record |
 | `clock` | `clock.whiteMs`, `clock.blackMs`, `timeControl.incrementMs` |
 | `seatControl` | The seat view of the snapshot. The label it carries is the published one |
 | `seatControlEpoch` | `seatView.controlEpoch`. The canonical answer to the question which controller plays the seat |
@@ -210,6 +210,18 @@ published label of the agent and the canonical counters of the turn all come
 from the same seat of the same view. A hand-built state that names the wrong
 epoch makes the runner stand down for a controller it still owns, and a state
 without the epoch never fences the runner at all.
+
+The side to move is the shared rule of the service, the interface, the engine
+seat and the runner: the seat of the opening reply window while it is open,
+the seat whose main clock runs otherwise, and the seat the canonical position
+names while no clock runs at all. The main clock is never the authority for
+the turn, because the service arms no main clock for the seat that has to move
+first. A fresh match therefore starts with the side of the canonical
+position, and a custom position that starts with Black starts with Black.
+
+The moves of the match are the notation of the game record, exactly like the
+request building of the offline game, so the provider reads the same history
+in an online game and in a local one.
 
 The runner is fed with `applySnapshot`. A snapshot that changes the position,
 the side to move, the control epoch, the service epoch, the seat epoch or the
@@ -314,9 +326,12 @@ owner decides whether the work is paid twice.
    snapshot yet does not know the turn.
 2. **The snapshot mapping.** The workspace delivers an `OnlineMatchView`. The
    UI converts it with `providerRunnerSnapshotFromView` and hands the result to
-   the runner. The conversion reads the seat view of the same view, so the
-   control epoch of the seat, the published label of the agent and the
-   canonical counters of the turn always belong together.
+   the runner, and it drops its own duplicate mapper of the agent seat. The
+   conversion reads the seat view of the same view, so the control epoch of
+   the seat, the published label of the agent and the canonical counters of
+   the turn always belong together, and it reads the side to move with the
+   shared rule of `src/online/turn.ts`, so a fresh match and a custom
+   position that starts with Black both start with the right seat.
 3. **The provider client.** The UI resolves the connection profile and the
    credential of the agent, and it builds a `ProviderRunnerProviderPort`. The
    credential never leaves the browser. After a model switch the UI resolves
@@ -357,6 +372,8 @@ seat with an accepted move, exactly like the service does.
 | MAT-10 | A provider failure never resigns and never repeats the request |
 | — | The shared commands carry no credential, no route and no conversation |
 | — | The published label of the seat is the identity of the agent |
+| — | The first move of a fresh match and of a custom position that starts with Black |
+| — | The provider reads the moves of the match in the notation of the game record |
 | — | The budget of the browser follows the canonical counts of the turn |
 | — | The heartbeat of the lease survives a transient failure and fails closed near the lease expiry |
 | — | No renewal is ever armed behind the life of the lease |

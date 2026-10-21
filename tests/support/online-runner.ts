@@ -37,7 +37,8 @@ import type {
   RunnerLeaseRequestBody,
   RunnerRequestRequestBody,
 } from '../../src/online/provider-runner';
-import type { Event, OnlineAction, Receipt, Result, Seat } from '../../src/online/contracts';
+import type { OnlineMatchView } from '../../src/online/updates';
+import type { ClockState, Event, Move, OnlineAction, Receipt, Result, Seat } from '../../src/online/contracts';
 
 /** The standard position every fixture starts from. */
 export const FAKE_START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
@@ -84,6 +85,8 @@ export interface FakeMatch {
   control: FakeSeatControl;
   illegalAttemptsSpent: number;
   formatCorrectionsSpent: number;
+  /** The accepted moves of the match. */
+  moves: Move[];
   result: Result | null;
 }
 
@@ -206,6 +209,7 @@ export function createFakeOnlineService(options: {
     control: options.control ?? { kind: 'agent', modelLabel: 'Test Agent' },
     illegalAttemptsSpent: 0,
     formatCorrectionsSpent: 0,
+    moves: [],
     result: null,
   };
   const recordedCommands: RecordedCommand[] = [];
@@ -371,13 +375,21 @@ export function createFakeOnlineService(options: {
         match.positionFen = applied.position.fen;
         match.sideToMove = otherSeat(match.seat);
         match.version += 1;
+        match.moves = [...match.moves, {
+          version: match.version,
+          seat: match.seat,
+          uci: action.move,
+          san: applied.san,
+          resultingFen: applied.position.fen,
+        }];
         // The spent budgets of a turn reset with the accepted move.
         match.illegalAttemptsSpent = 0;
         match.formatCorrectionsSpent = 0;
       } else if (action.kind === 'resign') {
         match.result = { kind: 'win', winner: otherSeat(match.seat), reason: 'resignation' };
         match.version += 1;
-      } else if (action.kind === 'record_recovery_attempt') {        if (match.sideToMove !== match.seat) throw conflict('The seat does not owe the move.');
+      } else if (action.kind === 'record_recovery_attempt') {
+        if (match.sideToMove !== match.seat) throw conflict('The seat does not owe the move.');
         if (action.attempt === 'illegal_move') {
           match.illegalAttemptsSpent += 1;
           if (match.illegalAttemptsSpent >= 4) {
@@ -529,6 +541,13 @@ export function createFakeOnlineService(options: {
       match.positionFen = applied.position.fen;
       match.sideToMove = otherSeat(match.sideToMove);
       match.version += 1;
+      match.moves = [...match.moves, {
+        version: match.version,
+        seat: match.sideToMove === 'white' ? 'black' : 'white',
+        uci,
+        san: applied.san,
+        resultingFen: applied.position.fen,
+      }];
     },
     revokeLease(reason = 'control_change') {
       if (lease === null || lease.status !== 'active') return;
@@ -603,6 +622,90 @@ export function createMemoryPendingStore(): ProviderRunnerPendingStore {
     clear(matchId, seat) {
       records.delete(keyOf(matchId, seat));
     },
+  };
+}
+
+/**
+ * The clock of the fake match.
+ *
+ * The service arms no main clock for the seat that has to move first, and it
+ * arms none during the opening reply window. The main clock is therefore
+ * never the authority for the turn.
+ */
+export function fakeMatchClock(match: FakeMatch): ClockState {
+  const base = {
+    whiteMs: 600000,
+    blackMs: 600000,
+    activeSince: null,
+    deadlineAt: null,
+    whiteMoved: match.moves.some((move) => move.seat === 'white'),
+    blackMoved: match.moves.some((move) => move.seat === 'black'),
+    turnNumber: match.moves.length,
+    replyDeadlineAt: null,
+  };
+  if (match.moves.length === 0) {
+    // The initial clock of a fresh match arms no seat at all.
+    return { ...base, activeSeat: null, replySeat: null };
+  }
+  if (match.moves.length === 1) {
+    // The opening reply window: the responding seat owes the reply and no
+    // main clock runs while the window is open.
+    const first = match.moves[0];
+    return { ...base, activeSeat: null, replySeat: first === undefined ? null : otherSeat(first.seat) };
+  }
+  return { ...base, activeSeat: match.sideToMove, replySeat: null };
+}
+
+/**
+ * Builds the canonical match view of the service.
+ *
+ * The view is the participant view of the match, so it carries the seat views,
+ * the clock of the match and the accepted moves. A test that feeds the runner
+ * through the view exercises the same conversion the interface uses.
+ */
+export function fakeMatchView(
+  match: FakeMatch,
+  overrides: Partial<OnlineMatchView> = {},
+): OnlineMatchView {
+  const other = otherSeat(match.seat);
+  return {
+    schemaVersion: 1,
+    matchId: match.matchId,
+    variant: 'orthodox',
+    startingFen: FAKE_START_FEN,
+    positionFen: match.positionFen,
+    timeControl: { startingTimeMs: 600000, incrementMs: 1000 },
+    version: match.version,
+    controlEpoch: match.controlEpoch,
+    rulesPolicyVersion: 'online-rules/1',
+    status: match.result === null ? 'active' : 'completed',
+    result: match.result,
+    seats: [
+      {
+        seat: match.seat,
+        publicLabel: 'Owner',
+        control: match.control,
+        controlEpoch: match.seatControlEpoch,
+        illegalAttemptsSpent: match.illegalAttemptsSpent,
+        formatCorrectionsSpent: match.formatCorrectionsSpent,
+      },
+      {
+        seat: other,
+        publicLabel: 'Guest',
+        control: { kind: 'human' },
+        controlEpoch: 1,
+        illegalAttemptsSpent: 0,
+        formatCorrectionsSpent: 0,
+      },
+    ],
+    clock: fakeMatchClock(match),
+    moves: [...match.moves],
+    pendingOffers: [],
+    createdAt: '2026-10-21T00:00:00Z',
+    updatedAt: '2026-10-21T00:00:00Z',
+    completedAt: null,
+    yourSeat: match.seat,
+    ...overrides,
   };
 }
 

@@ -70,6 +70,7 @@ import type {
 } from '../providers/protocols/index.js';
 import { fetchProvider } from '../providers/transport.js';
 import type { OnlineAction, Receipt, Seat } from './contracts';
+import { onlineSideToMove } from './turn';
 import type { OnlineMatchView } from './updates';
 
 /** The contract version the runner speaks. */
@@ -667,10 +668,14 @@ export function providerRunnerSnapshotFromView(
     controlEpoch: view.controlEpoch,
     status: view.status,
     // The side that owes the move is the seat of the opening reply window
-    // while it is open, and the seat whose clock runs otherwise.
-    sideToMove: view.status === 'active' ? (view.clock.replySeat ?? view.clock.activeSeat) : null,
+    // while it is open, the seat whose clock runs otherwise, and the seat the
+    // canonical position names while no clock runs at all. The shared rule of
+    // the service, the interface, the engine seat and the runner is one rule.
+    sideToMove: onlineSideToMove(view),
     positionFen: view.positionFen,
     startingFen: view.startingFen,
+    // The provider reads the moves of the match in the notation of the
+    // offline request building, which is the notation of the game record.
     moves: view.moves.map((move) => move.san),
     clock: {
       whiteMs: view.clock.whiteMs,
