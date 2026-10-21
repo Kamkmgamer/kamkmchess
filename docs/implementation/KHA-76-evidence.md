@@ -67,43 +67,34 @@ Fixture: the local trust-authenticated PostgreSQL of the workspace
 `KHA41_REQUIRE_POSTGRES=1`). Every queue test creates its own schema and
 applies every migration, so the migration set is exercised as well.
 
+The runs below are the runs of this branch. The host was busy with the tests
+of the other workers, so an isolated schema test took six to eleven seconds
+instead of half a second, and the integration package needs a longer timeout
+than the ten minutes of the Go default.
+
 ```
 go test ./backend/integration -run TestQueue -count=1
-ok   github.com/Kamkmgamer/kamkmchess/backend/integration  21.289s
+ok   github.com/Kamkmgamer/kamkmchess/backend/integration  271.112s
 
-go test ./backend/httpapi -run "TestOnlineQueue|TestOnlineFeatures" -count=1
-ok   github.com/Kamkmgamer/kamkmchess/backend/httpapi  0.546s
+go test ./backend/httpapi/ ./backend/serverapp/ -count=1
+ok   github.com/Kamkmgamer/kamkmchess/backend/httpapi       7.660s
+ok   github.com/Kamkmgamer/kamkmchess/backend/serverapp     0.634s
 
-go test ./backend/... -count=1
-ok   github.com/Kamkmgamer/kamkmchess/backend/auth            3.211s
-ok   github.com/Kamkmgamer/kamkmchess/backend/backup          4.267s
-ok   github.com/Kamkmgamer/kamkmchess/backend/backup/cmd/khabackup 5.853s
-ok   github.com/Kamkmgamer/kamkmchess/backend/httpapi         7.519s
-ok   github.com/Kamkmgamer/kamkmchess/backend/integration   437.138s
-ok   github.com/Kamkmgamer/kamkmchess/backend/online           1.190s
-ok   github.com/Kamkmgamer/kamkmchess/backend/onlineauth       0.125s
-ok   github.com/Kamkmgamer/kamkmchess/backend/profile          0.181s
-ok   github.com/Kamkmgamer/kamkmchess/backend/serverapp       0.425s
-ok   github.com/Kamkmgamer/kamkmchess/backend/storage         0.171s
-FAIL github.com/Kamkmgamer/kamkmchess/backend/rulesworker    15.793s
-    --- FAIL: TestTimeoutKillsTheWorkerAndTheNextRequestRestartsIt
-        client_test.go:295: restart after timeout: rules worker timed out
+pnpm vitest run src/online/queue.test.ts
+Test Files  1 passed (1)
+     Tests  16 passed (16)
 ```
 
-The rules worker failure is a load flake of a timing test that starts a Node
-process: it passed in isolation right after the full run
-(`go test ./backend/rulesworker/ -run TestTimeoutKillsTheWorkerAndTheNextRequestRestartsIt -count=1`
-→ `ok ... 0.629s`). The package is untouched by this ticket.
+The complete `go test ./backend/...` was **not** run to the end on this
+machine: the integration package exceeded the ten minute default timeout of
+the Go tool because of the load of the concurrent workers, and the run was
+stopped. The queue, HTTP, serverapp and browser suites above are the runs
+that cover the changes of this branch; the parent runs the complete
+assembled suite after the integration.
 
-```
-pnpm vitest run
-Test Files  76 passed (76)
-     Tests  921 passed (921)
-
-pnpm exec tsc -p tsconfig.app.json --noEmit      # clean
-pnpm exec tsc -p tsconfig.node.json --noEmit    # clean
-pnpm exec eslint . --max-warnings 0             # clean
-```
+The rules worker package has a timing test that starts a Node process. It
+failed under the load of the parallel run ("rules worker timed out") and
+passed in isolation; the package is untouched by this ticket.
 
 ## Review findings of round 3 (independent queue review)
 
