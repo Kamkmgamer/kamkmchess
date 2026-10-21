@@ -75,6 +75,15 @@ export interface FriendSecretStore {
    * credential.
    */
   beginAcceptance(invitationId: string): boolean;
+  /**
+   * Stores the seat credential of an accepted invitation.
+   *
+   * The record is durable: after a reload the browser still owns the seat of
+   * the match it accepted.
+   */
+  rememberAcceptedSeat(invitationId: string, credential: AcceptedSeatCredential): void;
+  /** The stored seat credential of an accepted invitation, or null. */
+  readAcceptedSeat(invitationId: string): AcceptedSeatCredential | null;
   /** Forgets the acceptance intent of an invitation. */
   forgetAcceptance(invitationId: string): void;
   /**
@@ -98,6 +107,19 @@ export interface FriendSecretStoreOptions {
 }
 
 const DEFAULT_PREFIX = 'kamkmchess.online.friend-secrets.v1';
+
+/**
+ * The seat credential of an accepted invitation.
+ *
+ * It is the authority of the seat of the match the invitation produced. The
+ * browser keeps it on the device, and it never leaves the browser.
+ */
+export interface AcceptedSeatCredential {
+  readonly guestId: string;
+  readonly matchId: string;
+  readonly seat: string;
+  readonly token: string;
+}
 
 /**
  * Creates the local store of the friend secrets.
@@ -230,6 +252,35 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
     },
     forgetAcceptance(invitationId) {
       remove('accepting', invitationId);
+    },
+    rememberAcceptedSeat(invitationId, credential) {
+      try {
+        write('accepted-seat', invitationId, JSON.stringify({
+          guestId: credential.guestId,
+          matchId: credential.matchId,
+          seat: credential.seat,
+          token: credential.token,
+        }));
+      } catch {
+        // The credential is kept in memory only.
+      }
+    },
+    readAcceptedSeat(invitationId) {
+      const raw = read('accepted-seat', invitationId);
+      if (!raw) return null;
+      try {
+        const parsed = JSON.parse(raw) as Partial<AcceptedSeatCredential>;
+        if (typeof parsed.guestId !== 'string' || typeof parsed.matchId !== 'string') return null;
+        if (typeof parsed.seat !== 'string' || typeof parsed.token !== 'string') return null;
+        return {
+          guestId: parsed.guestId,
+          matchId: parsed.matchId,
+          seat: parsed.seat,
+          token: parsed.token,
+        };
+      } catch {
+        return null;
+      }
     },
     listOwnedInvitations() {
       const owned: string[] = [];

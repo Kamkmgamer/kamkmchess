@@ -20,7 +20,7 @@
  * - The credential travels in a request header. It never travels in a URL, a
  *   query string or a body.
  */
-import { createFetchFriendTransport, createFriendClient, isLocallyOwnedInvitation } from './friends';
+import { createFetchFriendTransport, createFriendClient, isLocallyOwnedInvitation, FriendError } from './friends';
 import type {
   FriendClient,
   FriendSeatCredential,
@@ -143,7 +143,35 @@ export function createFriendSurface(options: FriendSurfaceOptions): FriendSurfac
       // invitation was already consumed by this browser. The record is
       // durable, so a reload still recovers.
       const rotateCredential = options.secrets.beginAcceptance(invitationId);
-      return (await clientFor()).acceptInvitation(invitationId, { control, acceptanceKey, rotateCredential });
+      try {
+        const accepted = await (await clientFor()).acceptInvitation(invitationId, { control, acceptanceKey, rotateCredential });
+        // The credential of the seat is remembered before the acceptance is
+        // forgotten, so a reload still owns the seat of the match. A lost
+        // answer keeps the marker, so the next attempt asks for the explicit
+        // recovery once.
+        if (accepted.guestCredential) {
+          options.secrets.rememberAcceptedSeat(invitationId, {
+            guestId: accepted.guestCredential.guestId,
+            matchId: accepted.guestCredential.matchId,
+            seat: accepted.guestCredential.seat,
+            token: accepted.guestCredential.token,
+          });
+        }
+        options.secrets.forgetAcceptance(invitationId);
+        return accepted;
+      } catch (error) {
+        // A refusal proves that the invitation was not consumed by this
+        // attempt, so the acceptance intent is forgotten and the next attempt
+        // is a first acceptance. A conflict and an unknown failure keep the
+        // marker: the invitation may have been consumed, so the next attempt
+        // asks for the explicit recovery once.
+        const refused = error instanceof FriendError
+          && error.status >= 400
+          && error.status < 500
+          && error.status !== 409;
+        if (refused) options.secrets.forgetAcceptance(invitationId);
+        throw error;
+      }
     },
     async cancel(invitationId) {
       const ownerToken = options.secrets.readOwnerToken(invitationId);
