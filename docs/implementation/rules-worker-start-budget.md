@@ -198,10 +198,24 @@ the client to `online.ErrRulesBusy`.
 
 A probe of a free worker performs a **real bounded exchange** with it. The
 readiness flag alone is not evidence: a worker that hung or exited after it
-became ready would look healthy forever. The exchange is bounded by the
-internal budgets of the client, so a caller deadline can never mask an
-outage of the worker. A worker that does not answer is killed, reaped and
-reset, and the next probe starts and proves a fresh one.
+became ready would look healthy forever. The probe never gives the client a
+deadline of its own, so the internal bound of the client decides an outage.
+A worker that does not answer is killed, reaped and reset, and the next
+probe starts and proves a fresh one.
+
+A probe keeps the class of the failure that produced it, exactly like a
+participant request:
+
+- an explicit cancellation of the caller stays a cancellation,
+- the deadline of the caller, when it is earlier than the internal bound,
+  stays that deadline, so a caller that went away does not mark a healthy
+  worker as an outage,
+- only the internal bound of the client is a bare timeout, and that is the
+  class of an outage.
+
+The service therefore never invents a deadline in front of the bound of the
+client: the internal bound of the client is the one that ends an exchange
+of a worker that does not answer.
 
 The setup validation of a match creation keeps its waiting behaviour: a
 creation waits for the worker instead of refusing the match. Only a probe
@@ -280,6 +294,10 @@ Three further regressions cover the causes and the starts:
   `TestTheProbeDetectsAWorkerThatExitedAfterItsReadiness`: a probe of a ready
   worker that hung or exited fails, the process is killed and reaped, and the
   next probe proves a fresh worker.
+- `TestTheProbeKeepsTheClassOfAnEarlierCallerDeadline` and
+  `TestTheProbeReportsTheInternalBoundAsABareTimeout`: the probe keeps the
+  class of the failure that produced it, and the process is reaped either
+  way.
 
 `TestTheRealBundleAnswersAColdRequest` is the smoke test of the pinned worker
 bundle: the real process accepts the readiness probe and answers a cold

@@ -110,17 +110,21 @@ function responseFor(req) {
 
 for await (const line of rl) {
   const req = JSON.parse(line);
-  // A fixture can ask the worker to stop answering after its first answer:
-  // the worker is healthy at the readiness probe and broken afterwards. The
-  // marker is used once, so the replacement of a broken worker behaves.
+  // A fixture can ask the worker to stop answering after a number of
+  // answers: the worker is healthy at first and broken afterwards. The
+  // marker holds that number, and it is used once, so the replacement of a
+  // broken worker behaves.
   const hangAfterReady = join(dirname(process.argv[1]), 'hang-after-ready');
   const exitAfterReady = join(dirname(process.argv[1]), 'exit-after-ready');
-  if ((existsSync(hangAfterReady) || existsSync(exitAfterReady)) && !existsSync(join(dirname(process.argv[1]), 'broken-used'))) {
+  const breakMarker = existsSync(hangAfterReady) ? hangAfterReady : (existsSync(exitAfterReady) ? exitAfterReady : '');
+  if (breakMarker && !existsSync(join(dirname(process.argv[1]), 'broken-used'))) {
     const counter = join(dirname(process.argv[1]), 'request-counter');
     let seen = 0;
     try { seen = Number.parseInt(readFileSync(counter, 'utf8').trim(), 10) || 0; } catch { seen = 0; }
     writeFileSync(counter, String(seen + 1));
-    if (seen > 1) {
+    let allowed = 1;
+    try { allowed = Number.parseInt(readFileSync(breakMarker, 'utf8').trim(), 10) || 1; } catch { allowed = 1; }
+    if (seen >= allowed) {
       writeFileSync(join(dirname(process.argv[1]), 'broken-used'), '1');
       if (existsSync(exitAfterReady)) {
         process.exit(9);
@@ -286,14 +290,14 @@ func testEntryWithHangingProbe(t *testing.T, marker string) string {
 // first request and then hangs or exits.
 //
 // The marker is used once, so the replacement of a broken worker behaves.
-func testEntryThatBreaksAfterReadiness(t *testing.T, marker string) string {
+func testEntryThatBreaksAfterReadiness(t *testing.T, marker string, answers int) string {
 	t.Helper()
 	directory := t.TempDir()
 	path := filepath.Join(directory, "worker.mjs")
 	if err := os.WriteFile(path, []byte(fakeWorkerSource()), 0o600); err != nil {
 		t.Fatalf("write fake worker: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, marker), []byte("1"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, marker), []byte(strconv.Itoa(answers)), 0o600); err != nil {
 		t.Fatalf("write the probe marker: %v", err)
 	}
 	return path
@@ -706,7 +710,7 @@ func TestTheCancellationWinsOverAnEarlierCrash(t *testing.T) {
 // worker has to fail, the hung process has to be killed and reaped, and the
 // next probe has to prove a fresh worker.
 func TestTheProbeDetectsAWorkerThatHungAfterItsReadiness(t *testing.T) {
-	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "hang-after-ready"), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
+	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "hang-after-ready", 2), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
@@ -734,7 +738,7 @@ func TestTheProbeDetectsAWorkerThatHungAfterItsReadiness(t *testing.T) {
 // TestTheProbeDetectsAWorkerThatExitedAfterItsReadiness proves the same for a
 // worker that exits.
 func TestTheProbeDetectsAWorkerThatExitedAfterItsReadiness(t *testing.T) {
-	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "exit-after-ready"), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
+	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "exit-after-ready", 2), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
@@ -750,6 +754,56 @@ func TestTheProbeDetectsAWorkerThatExitedAfterItsReadiness(t *testing.T) {
 	}
 	if err = client.Probe(context.Background()); err != nil {
 		t.Fatalf("the probe of the replacement worker: %v", err)
+	}
+}
+
+// TestTheProbeKeepsTheClassOfAnEarlierCallerDeadline proves that a probe
+// keeps the class of a caller whose own deadline ended the call.
+//
+// The client must not give the probe a deadline of its own, so the caller
+// that goes away keeps its own class: the service leaves a healthy worker
+// untouched for a caller that went away, exactly as it does for a
+// participant request.
+func TestTheProbeKeepsTheClassOfAnEarlierCallerDeadline(t *testing.T) {
+	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "hang-after-ready", 1), RequestTimeout: 5 * time.Second, StartTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	caller, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	probeErr := client.Probe(caller)
+	if !errors.Is(probeErr, context.DeadlineExceeded) {
+		t.Fatalf("the probe of a caller that went away = %v, want the deadline of the caller", probeErr)
+	}
+	if client.proc != nil {
+		t.Fatal("the worker was not reaped after the probe failed")
+	}
+}
+
+// TestTheProbeReportsTheInternalBoundAsABareTimeout proves that the internal
+// bound of the client is the class of an outage.
+//
+// The caller has a later deadline, so the internal bound of the client ends
+// the exchange, and the failure carries no cause: the worker did not answer
+// inside its own budget.
+func TestTheProbeReportsTheInternalBoundAsABareTimeout(t *testing.T) {
+	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "hang-after-ready", 1), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	caller, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	probeErr := client.Probe(caller)
+	if !errors.Is(probeErr, ErrTimeout) {
+		t.Fatalf("the probe of a hung worker = %v, want a timeout of the worker", probeErr)
+	}
+	if errors.Is(probeErr, context.DeadlineExceeded) {
+		t.Fatalf("the internal bound was reported as the deadline of the caller: %v", probeErr)
+	}
+	if client.proc != nil {
+		t.Fatal("the worker was not reaped after the probe failed")
 	}
 }
 

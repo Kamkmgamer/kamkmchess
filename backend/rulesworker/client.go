@@ -465,10 +465,12 @@ func (c *Client) Probe(ctx context.Context) error {
 	cancelStart()
 	if readyErr != nil {
 		c.stop()
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return ErrCanceled
-		}
-		return probeFailure(readyErr)
+		// The class of the failure is the class of the exchange that
+		// produced it: an explicit cancellation of the caller stays a
+		// cancellation, a deadline of the caller that ended first stays
+		// that deadline, and only the internal bound of the client is a
+		// bare timeout.
+		return readyErr
 	}
 	// The worker is ready. It still has to answer.
 	exchangeDeadline := time.Now().Add(c.config.RequestTimeout)
@@ -484,26 +486,12 @@ func (c *Client) Probe(ctx context.Context) error {
 	cancelExchange()
 	if err != nil {
 		// The worker did not answer. It is killed, reaped and reset, so the
-		// next probe starts and proves a fresh one.
+		// next probe starts and proves a fresh one. The class of the failure
+		// is the class of the exchange that produced it.
 		c.stop()
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return ErrCanceled
-		}
-		return probeFailure(err)
-	}
-	return nil
-}
-
-// probeFailure maps a failed probe onto the class of an outage.
-//
-// The internal bound of the client decides the class, so a caller deadline can
-// never hide an outage of the worker. A caller that goes away is a
-// cancellation, and that is decided before the bound.
-func probeFailure(err error) error {
-	if errors.Is(err, ErrMalformed) || errors.Is(err, ErrCrashed) {
 		return err
 	}
-	return ErrTimeout
+	return nil
 }
 
 // Warm starts the worker and waits until it answers the readiness probe.
