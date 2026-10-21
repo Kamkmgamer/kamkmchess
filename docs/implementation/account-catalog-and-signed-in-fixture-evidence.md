@@ -190,7 +190,7 @@ npx playwright test tests/e2e/account-online.spec.ts
 | the account change hides the games of the first account and restores the registry of the next | **passed** |
 | the first account gets its game back when it signs in again | **failed** — the engine seat of the restored game answers `404`; the durable list itself works (the game returns with its moves). Owner: workspace `13` (`da3cb1a`), not yet in the root |
 | a late seat change never writes into the next account | **passed** (the answer of the service is held while the account changes) |
-| the owner switches the own agent between two private models and the provider answers | **failed** — the service refuses the switch of the seat with `409 Conflict`, so the seat keeps its model and the interface reports the refusal. The refusal is the settlement of the captured request of the runner (the exact envelope is in the section below). Owner: the provider (the candidate `3133c3b` and the thread of the envelope fix) |
+| the owner switches the own agent between two private models and the provider answers | **failed** — the service **accepts** the change of the control of the seat (the receipt proves it) and revokes the old lease with the reason `control_change`, but the new runner of the seat never plays the chosen model: the pending request of the old epoch is carried over and never settled, and the provider is never asked for the second model. The exact command, receipt and state are in the section below. Owner: the provider (the runner of the seat) |
 
 The account connect, the catalog and the readiness are proven in the browser
 against the combined content:
@@ -208,6 +208,29 @@ unauthorized attempt is part of the set and fails the case). The case asserts
 the guest namespace is empty, the account namespace holds the profile, its
 credential and the two advertised models, and the seat of the owner declares
 the neutral public label.
+
+#### The count with the engine candidate of the workspace (not the committed tree)
+
+The count above is the count of the **committed** tree. A second run was made
+on a scratch branch that carries the engine candidate of the workspace
+(`8dd28e3` and `da3cb1a`, the engine seat of a restored game), merged onto the
+account slice. That branch is local only; nothing of it is integrated and it
+is **not** the state of the root.
+
+```
+ok 1 the built account app reaches the fixture of the run
+ok 2 a signed-in browser enters the queue and the cutoff commits the browser engine
+ok 3 two explicit entries of one signed-in browser are visible at the same time
+ok 4 the account change hides the games of the first account and restores the registry of the next
+ok 5 the first account gets its game back when it signs in again        (18.6s)
+ok 6 a late seat change never writes into the next account
+x  7 the owner switches the own agent between two private models and the provider answers
+```
+
+Six of seven with the engine candidate of the workspace, and the one red is
+the switch of the own agent, whose cause is now known (the section below). The
+case of the restored game passes with the colours counted apart, so the reply
+of the engine seat is proven and not only the durable list of the games.
 
 ## 5. The corrections of the second, third and fourth rounds
 
@@ -307,6 +330,63 @@ checked to identify the cause of the rendered failure. The owner of the
 settlement is the provider (the thread of the envelope fix); the account slice
 does not own those files and does not work around the refusal.
 
+#### The command, its receipt and the state after it
+
+The next trace of the same case answers the open question above: **the switch
+command was accepted**, and the conflicts are the expected consequence of that
+acceptance. Only the envelope, the receipt, the state and the identifiers the
+service itself issued are reproduced; no credential of the account is part of
+it.
+
+The command of the seat carries the neutral public label, and the receipt
+proves that the service applied it:
+
+```
+POST /v1/online/matches/<matchId>/commands
+  answer  200 {"operationId":"op-switch-1-…","outcome":"accepted","version":3,
+          "controlEpoch":2,
+          "event":{"kind":"control_change","seat":"black","controlEpoch":2,
+                   "control":{"kind":"agent","modelLabel":"Custom model"}}}
+```
+
+The epoch of the seat moved from 1 to 2, and the public label of the seat is
+the neutral one: the private identity of the model never left the browser.
+
+The conflicts that follow are the ones the acceptance causes, not a refusal of
+the switch:
+
+```
+POST …/runner/request   action clear,   controlEpoch 1, turnVersion 2 -> 409 {"error":"conflict"}
+POST …/runner/request   action clear,   controlEpoch 2, turnVersion 3 -> 409 {"error":"conflict"}
+POST …/runner/lease     action acquire, controlEpoch 1, turnVersion 2 -> 409 {"error":"conflict"}
+POST …/runner/lease     action acquire, controlEpoch 1, turnVersion 2 -> 409 {"error":"conflict"}
+```
+
+The canonical state after the acceptance, as the service answers it:
+
+- the lease of the old runner (generation 1, `controlEpoch: 1`) is `revoked`
+  with `revokedReason: "control_change"` — the service invalidated it because
+  of the accepted change;
+- a new lease is acquired (`generation: 2`, `controlEpoch: 2`,
+  `turnVersion: 3`), and it **carries the pending request of the old epoch
+  over** (the same `pendingRequestId` and `pendingRequestStartedAt`);
+- the presence of the seat keeps its heartbeat.
+
+The new runner of the seat does not play the new model: after the new lease no
+request of the seat settles the pending request, and the local provider is
+never asked for the second model (it answered the first model, twice). The
+interface therefore never sees a seat that plays the chosen model, and it does
+not show the notice of the change.
+
+So the service accepts the change of the control of the seat and invalidates
+the old lease on purpose. What is missing is on the side of the runner: after
+the accepted change the seat has to be taken over with the **new private
+selection** of the owner, the pending request of the old epoch must not keep
+the seat busy, and the new runner has to play the chosen model with the
+credential of the account. The owner of the runner is the provider; the account
+slice owns the notice of the interface and the binding of the private
+selection, and it reports the gap instead of working around it.
+
 ## 6. The open items and the coordination
 
 1. **The engine seat of a restored game cannot play yet.** The durable list of
@@ -327,11 +407,13 @@ does not own those files and does not work around the refusal.
    with `accepted` / `refused` / `unknown` and the interface consumes it
    directly. The provider's runner owns the detail of a handoff that could
    not take the lease (provider r8). The rendered case of the own-agent switch
-   is red on exactly that refusal: the trace of the run shows the runner
-   settling its pending request with `action: "clear"` and being answered
-   `409 {"error":"conflict"}` twice, once with the captured epoch and once
-   with the moved epoch (the exact envelope is in the section above). The
-   account slice reports it and does not work around it.
+   is red on the **runner**, not on the command: the trace of the run shows the
+   change of the control of the seat **accepted** by the service, the old
+   lease revoked with the reason `control_change`, a new lease of the seat
+   (generation 2, epoch 2) that carries the pending request of the old epoch
+   over, and then a runner that never plays the chosen model (the exact
+   command, receipt and state are in the section above). The account slice
+   reports it and does not work around it.
 
 4. **The unmount of the shell is fenced in the code but not yet proven in
    the browser.** The lifecycle invalidation (the cleanup of the mount effect
