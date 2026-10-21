@@ -11,6 +11,12 @@ machine; the host is not verified, and the local rehearsal of 2026-10-18 that
 [`MVP-operations.md`](MVP-operations.md) records is a separate, older
 rehearsal that is not part of this candidate.
 
+The exact content that was measured: the privacy commits `3a4aed6`,
+`daa2a5f`, `4e86892` and `1616aa8` (applied on this branch as `c5994c7`,
+`d2ddb4d`, `3d6b2bf` and `7c1fdd7`), the operations commits `f19d265`,
+`800bbfd`, `a5f3632`, `33fce9e`, `f76f73e`, `19662fe` and `d84750a`, and the
+proof `97a9d03` with the helper `tools/restoreevidence`.
+
 The fence helper of this tree binds and closes with the removal ledger of
 the privacy candidate, and it builds and runs on it. The container proofs
 are reproduced by the workflow `container-proofs` of
@@ -169,7 +175,7 @@ measurement of a serving path is still **not run** and not claimed.
 `node scripts/online/restore-interruption-proof.mjs` kills the **real**
 restore of the real binary at a real barrier in front of the real psql, and
 it measures the interruptions that decide whether a removed subject can come
-back. The report of the run on the tree named above has **48 steps, all of
+back. The report of the run on the tree named above has **47 steps, all of
 them passed**.
 
 Every case of the proof has a fence of its own, a marker of its own, a
@@ -302,7 +308,7 @@ removals it owed are still missing from the database.
    during its import** is run by
    `node scripts/online/restore-interruption-proof.mjs`, which kills the real
    restore of the real binary at a real barrier in front of the real psql and
-   reports 48 steps, all of them passed on the tree named above.
+   reports 47 steps, all of them passed on the tree named above.
 2. **The host has not been verified.** Apache flushing, finite stream
    delivery, the delivered CSP and CORS, the TLS chain, the private worker
    reachability and the capacity need the real host and an authorized staging
