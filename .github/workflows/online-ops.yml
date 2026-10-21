@@ -98,6 +98,8 @@ jobs:
         run: node deploy/verify-fence-access.mjs
       - name: Prove the native restore lifecycle
         run: node scripts/online/restore-proof.mjs
+      - name: Prove the interruption of a native restore
+        run: node scripts/online/restore-interruption-proof.mjs
       - name: Remove the fixture database of the proofs
         if: always()
         run: docker rm --force "$ONLINE_FIXTURE_CONTAINER" || true

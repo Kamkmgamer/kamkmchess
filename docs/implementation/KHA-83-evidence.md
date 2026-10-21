@@ -174,19 +174,36 @@ while the transaction is active, the transaction is rolled back, the live
 removals are still in the database, the record of the removed match is not
 revoked, and the recovery of the crashed restore closes the fence again.
 
-The kill after the commit and before the replay is **measured red**, and
-the reason is in the database, not in the proof: the import commits and
-replaces the tables the bundle carries, but the row of the removal request
-survives it, and the replay of the owed ledger then fails with a unique
-violation on `online_removal_requests_pkey`. The recovery refuses, the
-service stays closed, and the take-over fails with the same violation. The
-contract of the removal sink says that applying the same records twice
-leaves the database in the same state, and it is not met. This is reported
-to the privacy work; the proof does not work around it.
+The kill after the commit and before the replay is **measured green**:
+the real psql committed the import, the restore was killed before the
+removal ledger was replayed, the import replaced the table of the live only
+row of the target, and the removals that only the live database carried are
+gone from the database. The recovery refuses that database and keeps the
+service closed, the take-over replays the exact ledger the restore owed
+from the durable evidence, and the service admits again only after the
+replay.
+
+The earlier report of this evidence named a unique violation on
+`online_removal_requests_pkey` as a defect of the product. It was not: the
+seed of the proof named the request of the match bound removal like the
+identifier the subject replay derives, and the two collided on the primary
+key of the request. The seed uses independent identifiers now, and the
+collision is kept as a separate case for the correction the privacy work is
+making.
+
+The barrier of the proof is a program of its own for every case, with the
+mode written into it, because the environment of the loader is an explicit
+allowlist of the production code and never carries a switch of the proof.
+The proof does not change that allowlist. The kill during the transaction is
+proven at the injected barrier: the backend of the barrier waits inside the
+import transaction on the marker statement, and the owner of the lifecycle is
+read while the restore is alive and is the same after the crash.
 
 The durable evidence of the owed ledger is written next to the marker of the
 lifecycle, and the access proof measures it: the directory is `0700` and
-the record is `0600`, both owned by the user of the service.
+the record is `0600`, both owned by the user of the service. The
+interruption proof measures it as well, while the restore is dead and the
+removals it owed are still missing from the database.
 
 ## Open blockers
 

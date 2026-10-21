@@ -45,7 +45,6 @@ const DIRECTORY = join(ROOT, '.scratch', 'restore-interruption', RUN);
 const VOLUME = `kamkmchess-interruption-${RUN}`;
 const FENCE = `/backups/fence-${RUN}`;
 const API_UID = '65532:65532';
-const BARRIER_APPLICATION = 'kamkm_proof_barrier';
 
 /**
  * @param {string} command
@@ -79,40 +78,54 @@ function run(command, args, options = {}) {
  * @param {string} mode during, after or none
  * @returns {string}
  */
-export function barrierScript() {
-  return `#!/bin/sh
-# The barrier of the native import.
+export function barrierScript(mode, options = {}) {
+  const application = options.application ?? `kamkm_proof_barrier_${mode}`;
+  const marker = options.marker ?? `/backups/barrier-${mode}`;
+  if (mode === 'during') {
+    return `#!/bin/sh
+# The barrier of the native import, in the mode that holds the import
+# transaction open.
 #
-# The real psql runs the real dump. The barrier decides when the restore is
-# killed:
+# The real psql runs the real dump. The marker statement is a statement
+# inside the import transaction, so the backend waits inside the transaction
+# and the kill lands while the transaction is active.
 #
-#   during  the marker holds the import transaction open, so the kill lands
-#           while the transaction is active and psql has to roll it back;
-#   after   the real psql has committed and the wrapper waits, so the kill
-#           lands between the commit of the import and the replay of the
-#           removals;
-#   none    the real psql runs without a barrier.
+# The mode is written into this program: the environment of the loader is an
+# explicit allowlist of the production code and never carries a switch of
+# the proof.
 set -e
-REAL_PSQL="\${KAMKM_REAL_PSQL:-$(command -v psql)}"
-export PGAPPNAME=${BARRIER_APPLICATION}
-touch /backups/barrier-started
-case "\${KAMKM_BARRIER_MODE:-none}" in
-  during)
-    # The marker is a statement inside the import transaction: the
-    # transaction is open and the backend is busy while it waits.
-    awk 'BEGIN { done = 0 } { print; if (!done && index($0, ";") > 0) { print "SELECT pg_sleep(600);"; done = 1 } }' \\
-      | "$REAL_PSQL" "$@"
-    ;;
-  after)
-    "$REAL_PSQL" "$@"
-    # The import is committed. The restore waits here until it is killed.
-    touch /backups/barrier-committed
-    while [ ! -f /backups/barrier-release ]; do sleep 1; done
-    ;;
-  *)
-    "$REAL_PSQL" "$@"
-    ;;
-esac
+REAL_PSQL="$(command -v psql)"
+export PGAPPNAME=${application}
+awk 'BEGIN { done = 0 } { print; if (!done && index($0, ";") > 0) { print "SELECT pg_sleep(600);"; done = 1 } }' \\
+  | "$REAL_PSQL" "$@"
+`;
+  }
+  if (mode === 'after') {
+    return `#!/bin/sh
+# The barrier of the native import, in the mode that waits after the commit.
+#
+# The real psql runs the real dump and the import commits. The program then
+# writes the marker of the commit and waits, so the kill lands between the
+# commit of the import and the replay of the removals.
+#
+# The mode is written into this program: the environment of the loader is an
+# explicit allowlist of the production code and never carries a switch of
+# the proof.
+set -e
+REAL_PSQL="$(command -v psql)"
+export PGAPPNAME=${application}
+"$REAL_PSQL" "$@"
+touch ${marker}
+while true; do sleep 1; done
+`;
+  }
+  return `#!/bin/sh
+# The loader of the import without a barrier: the real psql runs the real
+# dump.
+set -e
+REAL_PSQL="$(command -v psql)"
+export PGAPPNAME=${application}
+"$REAL_PSQL" "$@"
 `;
 }
 
@@ -130,7 +143,9 @@ export const REQUIRED_STEPS = [
   'the-live-only-removals-are-seeded',
   'the-import-is-killed-during-the-transaction',
   'the-import-is-rolled-back',
+  'the-marker-names-the-restore-while-it-is-alive',
   'the-marker-names-the-restore-that-crashed',
+  'the-marker-names-the-same-restore-after-the-crash',
   'the-recovery-closes-the-fence-of-the-rolled-back-restore',
   'the-import-is-killed-after-the-commit',
   'the-import-was-committed',
@@ -331,14 +346,30 @@ export async function runInterruptionProof(options = {}) {
 
     const binary = join(DIRECTORY, 'khabackup');
     const helper = join(DIRECTORY, 'fenceprobe');
-    const barrier = join(DIRECTORY, 'psql-barrier.sh');
+    const barriers = {
+      during: join(DIRECTORY, 'psql-during.sh'),
+      after: join(DIRECTORY, 'psql-after.sh'),
+      none: join(DIRECTORY, 'psql-none.sh'),
+    };
+    const markers = {
+      during: '/backups/barrier-during-committed',
+      after: '/backups/barrier-after-committed',
+      none: '/backups/barrier-none-committed',
+    };
+    const applications = {
+      during: 'kamkm_proof_barrier_during',
+      after: 'kamkm_proof_barrier_after',
+      none: 'kamkm_proof_barrier_none',
+    };
     const built = await run('go', ['build', '-trimpath', '-o', binary, './backend/backup/cmd/khabackup'], { env: { CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64' } });
     if (built.code !== 0) throw new Error('the backup command could not be built');
     const builtHelper = await run('go', ['build', '-trimpath', '-tags', 'fenceprobe', '-o', helper, './tools/fenceprobe'], { env: { CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64' } });
     if (builtHelper.code !== 0) throw new Error('the fence helper could not be built');
-    await writeFile(barrier, barrierScript(), 'utf8');
-    // The barrier is a program: the restore executes it.
-    await chmod(barrier, 0o755);
+    for (const mode of ['during', 'after', 'none']) {
+      await writeFile(barriers[mode], barrierScript(mode, { application: applications[mode], marker: markers[mode] }), 'utf8');
+      // The barrier is a program: the restore executes it.
+      await chmod(barriers[mode], 0o755);
+    }
 
     const sourceUrl = insideDatabaseUrl(context.target.url, sourceDatabase);
     const sql = async (database, statement) => {
@@ -430,6 +461,12 @@ export async function runInterruptionProof(options = {}) {
 
     // The live only removals: one match bound removal and one subject
     // removal of a subject that played no match at all.
+    //
+    // The identifiers of the two removals are independent, the way the
+    // identifiers of a live database are independent: the request of a
+    // subject removal is not derived from the record of the subject. A seed
+    // that made them equal would collide on the primary key of the request,
+    // which is a property of the seed and not of the ledger.
     const reference = async (database, owner) => (await sql(database, `SELECT encode(sha256(convert_to('kamkm.online.removal.v1:${owner}', 'UTF-8')), 'hex')`)).text;
     const seedRemovals = async (database) => {
       const removed = await reference(database, 'proof_owner');
@@ -467,7 +504,6 @@ export async function runInterruptionProof(options = {}) {
         '--user', API_UID,
         '--mount', `type=volume,source=${VOLUME},target=/backups`,
         '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
-        '--env', `KAMKM_BARRIER_MODE=${mode}`,
         '--env', `DATABASE_URL=${url}`,
         '--env', `KHA_BACKUP_PASSPHRASE=${PASSPHRASE}`,
         '--entrypoint', '/fixtures/khabackup',
@@ -475,10 +511,9 @@ export async function runInterruptionProof(options = {}) {
         '--file', oldBundle,
         '--newer-ledger', newerBundle,
         '--fence', FENCE,
-        '--restore-id', restoreId,
         '--database-url-env', 'DATABASE_URL',
         '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
-        '--psql', '/fixtures/psql-barrier.sh',
+        '--psql', `/fixtures/psql-${mode}.sh`,
         '--apply',
       ]);
       if (started.code !== 0 || !started.stdout.trim()) {
@@ -491,9 +526,9 @@ export async function runInterruptionProof(options = {}) {
 
     // The barrier of the "during" case: the import transaction is open and
     // the backend of the barrier is busy inside it.
-    const waitForTransaction = async () => {
+    const waitForTransaction = async (database) => {
       for (let attempt = 0; attempt < 45; attempt += 1) {
-        const state = await sql('postgres', `SELECT count(*) FROM pg_stat_activity WHERE application_name = '${BARRIER_APPLICATION}' AND xact_start IS NOT NULL`);
+        const state = await sql('postgres', `SELECT count(*) FROM pg_stat_activity WHERE application_name = '${applications.during}' AND datname = '${database}' AND xact_start IS NOT NULL AND query LIKE '%pg_sleep%'`);
         if (state.text === '1') return true;
         const alive = await run('docker', ['inspect', '--format', '{{.State.Running}}', containers[containers.length - 1]]);
         if (alive.code !== 0 || alive.stdout.trim() !== 'true') return false;
@@ -524,7 +559,7 @@ export async function runInterruptionProof(options = {}) {
         const marker = await run('docker', [
           'run', '--rm', '--network', endpoint.network,
           '--mount', `type=volume,source=${VOLUME},target=/backups`,
-          endpoint.image, 'sh', '-c', 'test -e /backups/barrier-committed && echo committed || echo waiting',
+          endpoint.image, 'sh', '-c', `test -e ${markers.after} && echo committed || echo waiting`,
         ]);
         if (marker.stdout.trim() === 'committed') return true;
         await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
@@ -535,7 +570,15 @@ export async function runInterruptionProof(options = {}) {
     // ---- the kill during the import transaction -------------------------
     const duringId = `restore-during-${RUN}`;
     const duringContainer = await startRestore(targetDuring, duringId, 'during');
-    const transactionOpen = await waitForTransaction();
+    const transactionOpen = await waitForTransaction(targetDuring);
+    const duringOwnerAtBarrier = await fenceOwnerId();
+    steps.push({
+      id: 'the-marker-names-the-restore-while-it-is-alive',
+      passed: duringOwnerAtBarrier.length > 0,
+      detail: duringOwnerAtBarrier
+        ? `the marker of the lifecycle names the restore ${duringOwnerAtBarrier} while the restore is alive at the barrier`
+        : 'the marker of the lifecycle names no restore while the restore is alive',
+    });
     const killedDuring = await run('docker', ['kill', duringContainer]);
     steps.push({
       id: 'the-import-is-killed-during-the-transaction',
@@ -558,6 +601,13 @@ export async function runInterruptionProof(options = {}) {
 
     // ---- the recovery of the rolled back restore ------------------------
     const duringOwner = await fenceOwnerId();
+    steps.push({
+      id: 'the-marker-names-the-same-restore-after-the-crash',
+      passed: duringOwner.length > 0 && duringOwner === duringOwnerAtBarrier,
+      detail: duringOwner === duringOwnerAtBarrier && duringOwner.length > 0
+        ? `the marker of the crashed restore still names the restore ${duringOwner}`
+        : `the marker names ${duringOwner || 'nothing'} after the crash, and it named ${duringOwnerAtBarrier || 'nothing'} at the barrier`,
+    });
     steps.push({
       id: 'the-marker-names-the-restore-that-crashed',
       passed: duringOwner.length > 0,
@@ -621,13 +671,15 @@ export async function runInterruptionProof(options = {}) {
       'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
       '--mount', `type=volume,source=${VOLUME},target=/backups`,
       endpoint.image, 'sh', '-c',
-      `stat -c '%a %u' ${FENCE}/restore-requirements ${FENCE}/restore-requirements/${afterOwner}.json 2>&1`,
+      `stat -c '%a %u' ${FENCE}/restore-requirements 2>&1; ls -l ${FENCE}/restore-requirements 2>&1 | tail -n 1`,
     ]);
     const evidenceText = (evidence.stdout + evidence.stderr).trim();
     steps.push({
       id: 'the-durable-evidence-of-the-owed-ledger-exists',
-      passed: evidence.code === 0 && /\b700 0\b/.test(evidenceText) && /\b600 0\b/.test(evidenceText),
-      detail: evidence.code === 0 ? `the evidence of the owed ledger is there and private: ${evidenceText}` : `the evidence of the owed ledger is missing: ${evidenceText}`,
+      passed: evidence.code === 0 && /\b700 65532\b/.test(evidenceText) && /-rw-------/.test(evidenceText),
+      detail: evidence.code === 0 && /-rw-------/.test(evidenceText)
+        ? `the evidence of the owed ledger is there and private: ${evidenceText.split('\n').join(' | ')}`
+        : `the evidence of the owed ledger is missing or not private: ${evidenceText.split('\n').join(' | ')}`,
     });
 
     // ---- the gate stays closed ------------------------------------------
@@ -687,7 +739,7 @@ export async function runInterruptionProof(options = {}) {
       '--takeover',
       '--database-url-env', 'DATABASE_URL',
       '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
-      '--psql', '/fixtures/psql-barrier.sh',
+      '--psql', '/fixtures/psql-none.sh',
       '--apply',
     ], { DATABASE_URL: insideDatabaseUrl(context.target.url, targetAfter), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
     const afterTakeover = await removalState(context, targetAfter);
@@ -766,7 +818,7 @@ export async function runInterruptionProof(options = {}) {
       }
     }
     for (const database of plan.removeDatabases) {
-      const dropped = await run('docker', ['exec', '-i', context.container, 'psql', '-U', 'postgres', '-d', 'postgres', '-At', '-c', `DROP DATABASE IF EXISTS ${database}`]);
+      const dropped = await run('docker', ['exec', '-i', context.container, 'psql', '-U', 'postgres', '-d', 'postgres', '-At', '-c', `DROP DATABASE IF EXISTS ${database} WITH (FORCE)`]);
       if (dropped.code !== 0) {
         steps.push({ id: 'the-databases-are-removed', passed: false, detail: `the database ${database} could not be dropped: ${dropped.stderr.trim()}` });
       }

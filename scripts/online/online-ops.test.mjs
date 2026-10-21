@@ -1127,18 +1127,32 @@ test('the manifest of the run carries neither form of the secret of the target',
 
 
 test('the barrier of the native import runs the real psql and pauses where it is told', () => {
-  const script = barrierScript();
+  // Every case has its own program, with the mode written into it: the
+  // environment of the loader is an explicit allowlist of the production
+  // code and never carries a switch of the proof.
+  const during = barrierScript('during', { application: 'kamkm_proof_barrier_during', marker: '/backups/barrier-during-committed' });
+  const after = barrierScript('after', { application: 'kamkm_proof_barrier_after', marker: '/backups/barrier-after-committed' });
+  const none = barrierScript('none', { application: 'kamkm_proof_barrier_none' });
+
   // The real loader is called with the arguments the tool passes.
-  assert.match(script, /"\$REAL_PSQL" "\$@"/);
+  assert.match(during, /"\$REAL_PSQL" "\$@"/);
+  assert.match(after, /"\$REAL_PSQL" "\$@"/);
   // The path of the loader is found in the image, not guessed.
-  assert.match(script, /command -v psql/);
-  // The marker holds the import transaction open.
-  assert.match(script, /pg_sleep/);
-  // The barrier tells the two cases apart.
-  assert.match(script, /during/);
-  assert.match(script, /after/);
+  assert.match(during, /command -v psql/);
+  // The marker of the "during" case holds the import transaction open.
+  assert.match(during, /pg_sleep/);
+  // The marker of the "after" case is written after the psql committed, and
+  // the program waits for the kill.
+  assert.match(after, /touch \/backups\/barrier-after-committed/);
+  assert.match(after, /while true/);
+  // No program reads a switch of the proof from the environment.
+  for (const program of [during, after, none]) {
+    assert.equal(program.includes('KAMKM_BARRIER_MODE'), false);
+    assert.equal(program.includes('KAMKM_REAL_PSQL'), false);
+  }
   // The name of the application identifies the backend of the barrier.
-  assert.match(script, /PGAPPNAME=kamkm_proof_barrier/);
+  assert.match(during, /PGAPPNAME=kamkm_proof_barrier_during/);
+  assert.match(after, /PGAPPNAME=kamkm_proof_barrier_after/);
 });
 
 test('the interruption proof names every case it has to show', () => {
