@@ -22,6 +22,7 @@
  *   are used in the one request they belong to.
  */
 import { createAcceptanceKey } from './friends';
+import type { ModelSelection } from '../controller/index.js';
 
 /** The local store of the accept intents and of the owner tokens. */
 export interface FriendSecretStore {
@@ -46,11 +47,36 @@ export interface FriendSecretStore {
   /** Forgets the key of a consumed invitation. */
   forgetAcceptanceKey(invitationId: string): void;
   /** Stores the owner token of an invitation this browser created. */
-  rememberOwnerToken(invitationId: string, ownerToken: string): void;
+  rememberOwnerToken(invitationId: string, ownerToken: string, selection?: ModelSelection | null): void;
   /** The owner token of an invitation, or null. */
   readOwnerToken(invitationId: string): string | null;
+  /** Forgets an invitation that was settled. */
+  forgetOwnerToken(invitationId: string): void;
+  /** The private selection captured for an invitation, or null. */
+  readOwnerSelection(invitationId: string): ModelSelection | null;
   /** True when this browser created the invitation. */
   ownsInvitation(invitationId: string): boolean;
+  /**
+   * Stores a rematch this browser proposed.
+   *
+   * The record is durable: after a reload the proposer still claims the seat
+   * of the new match.
+   */
+  rememberRematch(rematchId: string, matchId: string, selection?: ModelSelection | null): void;
+  /** The rematches this browser proposed. */
+  listRematches(): readonly { rematchId: string; matchId: string; selection: ModelSelection | null }[];
+  /** Forgets a rematch that was settled. */
+  forgetRematch(rematchId: string): void;
+  /**
+   * Records that this browser started an acceptance of the invitation.
+   *
+   * The answer is true when the acceptance is a retry. Only a retry asks for
+   * the explicit credential recovery, so a routine acceptance never rotates a
+   * credential.
+   */
+  beginAcceptance(invitationId: string): boolean;
+  /** Forgets the acceptance intent of an invitation. */
+  forgetAcceptance(invitationId: string): void;
   /**
    * The invitations this browser created.
    *
@@ -92,6 +118,10 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
   /** The key of the list of the invitations of one identity. */
   const listKey = (owner: string): string =>
     `${prefix}:${encodeURIComponent(owner)}:owned`;
+
+  /** The key of the list of the rematches of one identity. */
+  const rematchKey = (owner: string): string =>
+    `${prefix}:${encodeURIComponent(owner)}:rematches`;
 
   function read(kind: string, id: string): string | null {
     const key = keyOf(kind, id);
@@ -145,14 +175,61 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
     forgetAcceptanceKey(invitationId) {
       remove('acceptance', invitationId);
     },
-    rememberOwnerToken(invitationId, ownerToken) {
+    rememberOwnerToken(invitationId, ownerToken, selection?: ModelSelection | null) {
       write('owner', invitationId, ownerToken);
+      // The list of the invitations of this identity is durable, so a reload
+      // can still claim the seat of a consumed invitation.
+      const owned = this.listOwnedInvitations().filter(id => id !== invitationId);
+      owned.push(invitationId);
+      try {
+        storage?.setItem(listKey(identity), JSON.stringify(owned));
+      } catch {
+        // The list is kept in memory only.
+      }
+      if (selection) {
+        // The private selection of the agent of the invitation is kept with
+        // it, so the claimed seat keeps the model the owner chose.
+        write('selection', invitationId, JSON.stringify(selection));
+      }
     },
     readOwnerToken(invitationId) {
       return read('owner', invitationId);
     },
+    forgetOwnerToken(invitationId) {
+      remove('owner', invitationId);
+      remove('selection', invitationId);
+      const owned = this.listOwnedInvitations().filter(id => id !== invitationId);
+      try {
+        storage?.setItem(listKey(identity), JSON.stringify(owned));
+      } catch {
+        // The list is kept in memory only.
+      }
+    },
+    readOwnerSelection(invitationId) {
+      const raw = read('selection', invitationId);
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw) as ModelSelection;
+      } catch {
+        return null;
+      }
+    },
     ownsInvitation(invitationId) {
       return read('owner', invitationId) !== null;
+    },
+    /**
+     * Records that this browser started an acceptance of the invitation.
+     *
+     * The record is durable. The answer is true when the acceptance is a
+     * retry, and only a retry asks for the explicit credential recovery.
+     */
+    beginAcceptance(invitationId) {
+      const retry = read('accepting', invitationId) !== null;
+      write('accepting', invitationId, '1');
+      return retry;
+    },
+    forgetAcceptance(invitationId) {
+      remove('accepting', invitationId);
     },
     listOwnedInvitations() {
       const owned: string[] = [];
@@ -168,6 +245,47 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
         return owned;
       }
       return owned;
+    },
+    rememberRematch(rematchId, matchId, selection) {
+      const rematches = this.listRematches().filter(record => record.rematchId !== rematchId);
+      rematches.push({ rematchId, matchId, selection: selection ?? null });
+      try {
+        storage?.setItem(rematchKey(identity), JSON.stringify(rematches));
+      } catch {
+        // The records are kept in memory only.
+      }
+    },
+    listRematches() {
+      try {
+        const raw = storage?.getItem(rematchKey(identity));
+        if (!raw) return [];
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        const records: { rematchId: string; matchId: string; selection: ModelSelection | null }[] = [];
+        for (const item of parsed) {
+          if (typeof item !== 'object' || item === null) continue;
+          const record = item as Record<string, unknown>;
+          if (typeof record.rematchId !== 'string' || record.rematchId.length === 0) continue;
+          if (typeof record.matchId !== 'string' || record.matchId.length === 0) continue;
+          const selection = record.selection;
+          records.push({
+            rematchId: record.rematchId,
+            matchId: record.matchId,
+            selection: typeof selection === 'object' && selection !== null ? selection as ModelSelection : null,
+          });
+        }
+        return records;
+      } catch {
+        return [];
+      }
+    },
+    forgetRematch(rematchId) {
+      const rematches = this.listRematches().filter(record => record.rematchId !== rematchId);
+      try {
+        storage?.setItem(rematchKey(identity), JSON.stringify(rematches));
+      } catch {
+        // The records are kept in memory only.
+      }
     },
   };
 }

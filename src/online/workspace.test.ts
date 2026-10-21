@@ -190,7 +190,34 @@ describe('the identity owns the games (UX-04)', () => {
     expect(workspace.games).toHaveLength(1);
     accountSession.signIn('account-2');
     expect(workspace.games).toHaveLength(0);
-    expect(registry.read('account:account-1')).toHaveLength(0);
+    // The games of the identity that left are hidden, and its durable list
+    // stays on the device, so the identity finds them again when it returns.
+    expect(registry.read('account:account-1')).toHaveLength(1);
+    expect(registry.read('account:account-2')).toHaveLength(0);
+  });
+
+  it('gives the games of an identity back when it returns (A -> B -> A)', () => {
+    const { factory } = createSubscriberFactory();
+    const accountSession = accountSessionPort({ accountId: 'account-1' });
+    const registry = memoryRegistry();
+    const workspace = createOnlineWorkspace({
+      baseUrl: 'https://example.test',
+      createSubscriber: factory,
+      accountSession,
+      registry,
+    });
+    workspace.attach({ matchId: 'match-00000001', seat: 'white', credential: accountCredential('account-1') });
+    accountSession.signIn('account-2');
+    expect(workspace.games).toHaveLength(0);
+    accountSession.signIn('account-1');
+    // The durable list of the first account is restored by the composition, so
+    // the workspace can attach the match again.
+    const restored = registry.read('account:account-1');
+    expect(restored).toHaveLength(1);
+    for (const entry of restored) {
+      workspace.attach({ matchId: entry.matchId, seat: entry.seat, credential: accountCredential('account-1') });
+    }
+    expect(workspace.games.map(game => game.matchId)).toEqual(['match-00000001']);
   });
 
   it('keeps a guest seat when an account signs in', () => {

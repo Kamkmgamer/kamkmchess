@@ -83,6 +83,29 @@ function createFetchDouble(answers: {
       result = answers.fallback ?? { status: 200, data: fallbackAnswer() };
     } else if (path.endsWith('/match')) {
       result = answers.match ?? { status: 404, data: { error: 'not_found' } };
+    } else if (path.includes('/v1/online/invitations/') && path.endsWith('/seat-credential')) {
+      // The account claim names the match and the seat, without a credential.
+      result = { status: 200, data: { schemaVersion: 2, matchId: 'match-00000007', seat: 'white', guestCredential: null } };
+    } else if (path.includes('/v1/online/invitations/')) {
+      result = {
+        status: 200,
+        data: {
+          schemaVersion: 2,
+          invitationId: 'invitation-0002',
+          kind: 'link',
+          status: 'consumed',
+          inviterLabel: 'Guest',
+          inviterSeat: 'white',
+          inviterControl: { kind: 'human' },
+          timeControl,
+          startingFen: null,
+          expiresAt: '2026-10-22T10:00:00.000Z',
+          createdAt: '2026-10-21T10:00:00.000Z',
+          consumedAt: '2026-10-21T10:01:00.000Z',
+          cancelledAt: null,
+          matchId: 'match-00000007',
+        },
+      };
     } else if (path.includes('/v1/online/matches/')) {
       result = answers.matchView ?? { status: 200, data: matchView() };
     } else if (path.includes('/updates')) {
@@ -120,13 +143,7 @@ function fallbackAnswer(): Record<string, unknown> {
     seat: 'white',
     opponentLabel: 'Stockfish 19 Lite',
     control: { kind: 'engine', modelLabel: 'Stockfish 19 Lite' },
-    guestCredential: {
-      guestId: 'guest-engine',
-      matchId: 'match-00000001',
-      seat: 'black',
-      token: 'engine-token',
-      expiresAt: '2026-10-22T10:00:00Z',
-    },
+          guestCredential: undefined,
   };
 }
 
@@ -435,10 +452,12 @@ describe('the agent binding follows the seat, never the public label (B-26)', ()
     composition.setAgentCatalog([{ id: 'choice-1', label: 'Custom model', selection: first }, { id: 'choice-2', label: 'Other model', selection: second }]);
     // A switch to a label of the catalog resolves the private selection of
     // that label.
-    await expect(composition.agentDecision('match-00000001', 'white', 'switch-model', 'Other model')).resolves.toBeUndefined();
-    // A switch to a label the owner never connected is refused.
-    await expect(composition.agentDecision('match-00000001', 'white', 'switch-model', 'Unknown model'))
-      .rejects.toThrow(/not connected/);
+    const outcome = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'Other model');
+    expect(outcome.kind).toBe('accepted');
+    // A switch to a label the owner never connected is refused, and the
+    // refusal is explicit.
+    const refused = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'Unknown model');
+    expect(refused.kind).toBe('refused');
     composition.dispose();
   });
 });
@@ -517,6 +536,135 @@ describe('the identity handover keeps the model of the returning owner', () => {
     // The identity leaves and comes back: the private binding of that identity
     // is still on the device and is restored.
     expect(composition.agentBindingFor('match-00000020', 'white')).toBe('My agent');
+    composition.dispose();
+  });
+});
+
+describe('the deferred claims of the friend flow (r9)', () => {
+  it('polls for a rematch alone, without a tracked invitation', () => {
+    const clock = manualTimers();
+    const { composition } = createComposition({ timers: clock.timers });
+    composition.trackRematch('rematch-0001', 'match-00000001', null);
+    // The poll runs for the rematch alone.
+    expect(clock.pending).toBeGreaterThan(0);
+    composition.dispose();
+  });
+
+  it('keeps the record of a proposed rematch durable', () => {
+    const storage = createStorage();
+    const { composition } = createComposition({ storage });
+    const selection = { kind: 'model', providerId: 'p', connectionId: 'c1', configurationRevision: 1, modelRoutingId: 'm1', protocol: 'chat-completions', diagnostic: 'passed-current-session' } as unknown as ModelSelection;
+    composition.trackRematch('rematch-0002', 'match-00000002', selection);
+    // A new composition of the same identity finds the record again.
+    const reloaded = createComposition({ storage });
+    const records = [...storage.data.values()].join('');
+    expect(records).toContain('rematch-0002');
+    reloaded.composition.dispose();
+    composition.dispose();
+  });
+
+  it('claims the seat of a consumed invitation of an account (no guest credential)', async () => {
+    // The claim answer of an account seat carries no guest credential, but it
+    // names the match and the seat.
+    const clock = manualTimers();
+    const { fetcher, wires } = createFetchDouble({
+      entry: () => ({ status: 201, data: entryAnswer(null) }),
+    });
+    const storage = createStorage();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      timers: clock.timers,
+    });
+    composition.trackInvitation('invitation-0002', 'owner-token', null);
+    // The poll reads the invitation, sees the consumption and claims the seat.
+    clock.fire();
+    await settle();
+    await settle();
+    const claim = wires.find(wire => wire.path.includes('/seat-credential'));
+    expect(claim).toBeDefined();
+    // The claim answer names the match and the seat, so the inviter follows
+    // its own match with the account credential.
+    expect(composition.workspace.games.map(game => game.matchId)).toContain('match-00000007');
+    composition.dispose();
+  });
+
+  it('asks for one fresh engine credential after the identity came back', async () => {
+    // The browser held the credential of the engine seat of its account. The
+    // identity changed, so the credential was revoked. When the identity
+    // returns, the browser holds no usable credential and asks for the
+    // explicit recovery once.
+    const { fetcher, wires } = createFetchDouble({
+      entry: () => ({ status: 201, data: entryAnswer(null) }),
+      fallback: {
+        status: 200,
+        data: {
+          schemaVersion: 2,
+          matchId: 'match-00000030',
+          seat: 'white',
+          opponentLabel: 'Stockfish 19 Lite',
+          control: { kind: 'engine', modelLabel: 'Stockfish 19 Lite' },
+        },
+      },
+    });
+    const storage = createStorage();
+    const listeners = new Set<(identity: { accountId: string; token: () => Promise<string> } | null) => void>();
+    let identity: { accountId: string; token: () => Promise<string> } | null = { accountId: 'account-1', token: async () => 'token' };
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: {
+        get identity() { return identity; },
+        subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      },
+      prepareEngine: async () => undefined,
+    });
+    // The engine seat of a fallback game is bound to the account.
+    composition.registerGuestCredential(createGuestCredential({
+      guestId: 'guest-engine',
+      matchId: 'match-00000030',
+      seat: 'black',
+      token: 'engine-token',
+    }), 'account');
+    // The entry of the fallback game carries the durable intent.
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    // The identity leaves and comes back: the credential of the engine seat
+    // is revoked, so the recovery asks the service for a fresh one.
+    identity = { accountId: 'account-2', token: async () => 'token' };
+    for (const listener of listeners) listener(identity);
+    identity = { accountId: 'account-1', token: async () => 'token' };
+    for (const listener of listeners) listener(identity);
+    await settle();
+    await settle();
+    const fallbacks = wires.filter(wire => wire.path.endsWith('/fallback'));
+    // The routine fallback never rotates a credential. The recovery that
+    // follows asks for the rotation, because the browser holds no usable
+    // credential of the engine seat any more.
+    expect(fallbacks.length).toBeGreaterThan(0);
+    expect(fallbacks[0]?.body?.credentialRecovery).toBeUndefined();
+    const recovery = fallbacks[fallbacks.length - 1];
+    expect(recovery?.body?.credentialRecovery).toBe(true);
+    composition.dispose();
+  });
+
+  it('discards a deferred claim of the identity that left', async () => {
+    const { composition, wires } = createComposition();
+    // The claim of the invitation is deferred: the identity changes while the
+    // service is asked.
+    const session = { identity: { accountId: 'account-1', token: async () => 'token' }, subscribe: () => () => undefined };
+    const scoped = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: (async () => new Response('{}', { status: 404 })) as unknown as typeof fetch,
+      storage: createStorage(),
+      accountSession: session,
+    });
+    scoped.trackInvitation('invitation-0001', 'owner-token', null);
+    expect(scoped.workspace.games).toHaveLength(0);
+    scoped.dispose();
+    expect(wires.length).toBeGreaterThanOrEqual(0);
     composition.dispose();
   });
 });

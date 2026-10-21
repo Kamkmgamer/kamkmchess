@@ -21,7 +21,8 @@
  * - The separate declared-models block does not exist. A seat shows one
  *   compact control label.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { createRequestOwner } from './request-owner.js';
 import { createGuestCredential } from '../online/auth.js';
 import { IconButton } from './Icon.js';
 import { ChessBoard } from './ChessBoard.js';
@@ -46,12 +47,6 @@ import {
 } from './online-view.js';
 import './online.css';
 
-/** The removal action the privacy owner implements. */
-export interface OnlinePrivacyPort {
-  /** Removes the public replay of one match. */
-  removePublicReplay(matchId: string, reason: 'owner_request' | 'erasure_request'): Promise<void>;
-}
-
 /** The tabs of the online screen. */
 export type OnlineTab = 'games' | 'new' | 'profile';
 
@@ -62,8 +57,6 @@ export interface OnlineWorkspaceProps {
   readonly onOpenProfile?: () => void;
   /** The public label of the owner's own agent, when one is selected. */
   readonly agentLabel?: string | null;
-  /** The privacy actions of the owner. */
-  readonly privacy?: OnlinePrivacyPort | null;
   /** The section the screen opens on. */
   readonly initialTab?: OnlineTab;
 }
@@ -83,17 +76,26 @@ function timeControl(minutes: number, increment: number): TimeControl {
   return { startingTimeMs: minutes * 60_000, incrementMs: increment * 1_000 };
 }
 
+function screenRequestContext(composition: OnlineComposition, addressInvitation: string | null): string {
+  const focus = composition.workspace.focusedMatchId ?? composition.workspace.games[0]?.matchId ?? null;
+  return JSON.stringify([composition.identityKey, composition.identityGeneration,
+    composition.pendingInvitation ?? addressInvitation, focus]);
+}
+
 /**
  * The online workspace screen.
  *
  * The screen owns no service state. It renders the composition and asks it to
  * act.
  */
-export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabel, privacy, initialTab }: OnlineWorkspaceProps) {
+export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabel, initialTab }: OnlineWorkspaceProps) {
   const [tab, setTab] = useState<OnlineTab>(initialTab ?? 'games');
   const [clockIndex, setClockIndex] = useState(1);
   const [now, setNow] = useState(() => Date.now());
-  const [ply, setPly] = useState(0);
+  // The review cursor follows the live position. It only holds an earlier
+  // position while the owner looks at one: a new accepted move does not throw
+  // the owner back to the live end.
+  const [review, setReview] = useState<{ count: number; ply: number } | null>(null);
   const [promotion, setPromotion] = useState<{ from: string; to: string } | null>(null);
   const [confirm, setConfirm] = useState<'draw' | 'resign' | null>(null);
   const [message, setMessage] = useState('');
@@ -106,8 +108,9 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
   const [history, setHistory] = useState<OnlineProfileHistory | null>(null);
   const [historyProfile, setHistoryProfile] = useState('');
   // A published invitation link opens the online screen with the exact
-  // invitation of the link.
-  const [linkedInvitation] = useState(() => {
+  // invitation of the link. The composition publishes it, and the address
+  // carries it too.
+  const [addressInvitation] = useState(() => {
     if (typeof window === 'undefined') return null;
     const linked = new URLSearchParams(window.location.search).get('invite');
     if (linked) return linked;
@@ -115,37 +118,66 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     const index = segments.indexOf('invite');
     return index >= 0 ? segments[index + 1] ?? null : null;
   });
+  const linkedInvitation = composition.pendingInvitation ?? addressInvitation;
   const [invitationPreviewed, setInvitationPreviewed] = useState(false);
-  const [rematchOffer, setRematchOffer] = useState<FriendRematch | null>(null);
+  const [rematchOffer, setRematchOffer] = useState<{ matchId: string; offer: FriendRematch } | null>(null);
 
   useEffect(() => composition.subscribe(() => setRevision(value => value + 1)), [composition]);
+  const games = composition.workspace.games;
+  const focusedId = composition.workspace.focusedMatchId ?? games[0]?.matchId ?? null;
+  const requestContext = screenRequestContext(composition, addressInvitation);
+  // Each committed screen context has its own owner. Old handlers retain the
+  // old owner, so they cannot finish or publish into a newer operation.
+  const requestOwner = useMemo(() => createRequestOwner({
+    context: requestContext,
+    onPendingChange: setBusy,
+    isContextCurrent: () => screenRequestContext(composition, addressInvitation) === requestContext,
+  }), [composition, addressInvitation, requestContext]);
+  const [shownRequestOwner, setShownRequestOwner] = useState(requestOwner);
+  if (shownRequestOwner !== requestOwner) {
+    setShownRequestOwner(requestOwner);
+    setBusy(false);
+    setInvitationPreviewed(false);
+    setInvitation(null);
+    setInvitationLink('');
+    setRematchOffer(null);
+    setMessage('');
+  }
+  useLayoutEffect(() => {
+    requestOwner.revive();
+    return () => { requestOwner.invalidate(); };
+  }, [requestOwner]);
   useEffect(() => {
-    // The invitation of a published link is read once, so the owner sees the
-    // exact invitation before it accepts it.
     if (!linkedInvitation || invitationPreviewed) return;
+    const key = requestOwner.begin();
+    if (!key) return;
     void (async () => {
-      setInvitationCode(linkedInvitation);
-      setInvitationPreviewed(true);
       try {
-        setInvitation(await composition.friends.preview(linkedInvitation));
+        const preview = await composition.friends.preview(linkedInvitation);
+        if (!requestOwner.isCurrent(key)) return;
+        setInvitationCode(linkedInvitation);
+        setInvitationPreviewed(true);
+        setInvitation(preview);
         setTab('new');
       } catch (error) {
+        if (!requestOwner.isCurrent(key)) return;
+        setInvitationCode(linkedInvitation);
+        setInvitationPreviewed(true);
         setMessage(error instanceof Error ? error.message : 'The invitation could not be read.');
+      } finally {
+        requestOwner.finish(key);
       }
     })();
-  }, [composition, invitationPreviewed, linkedInvitation]);
+  }, [composition, invitationPreviewed, linkedInvitation, requestOwner, busy]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 500);
     return () => window.clearInterval(timer);
   }, []);
-
-  const games = composition.workspace.games;
-  const focusedId = composition.workspace.focusedMatchId ?? games[0]?.matchId ?? null;
   // A new match resets the review cursor. The state is adjusted while
   // rendering, so no effect ever sets state after a paint.
   if (focusedId !== shownMatchId) {
     setShownMatchId(focusedId);
-    setPly(0);
+    setReview(null);
     setPromotion(null);
     setConfirm(null);
   }
@@ -158,13 +190,21 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     ? onlineClockReading(view.clock, now)
     : { whiteMs: 0, blackMs: 0, activeSeat: null, expired: false, replyDeadlineAt: null, replySeat: null };
   const appliedMoves = view ? onlineAppliedMoves(view) : [];
+  const moveCount = appliedMoves.length;
+  // A cursor that held an earlier position keeps it while new moves arrive.
+  // A cursor that was at the live end follows the live end.
+  // The cursor is clamped to the moves the canonical state carries, so a
+  // takeback never leaves the cursor behind the live position.
+  const ply = review !== null && review.ply < review.count
+    ? Math.min(review.ply, moveCount)
+    : moveCount;
   const position = view ? parsePosition(onlinePositionFen(view, Math.min(ply, appliedMoves.length))) : null;
   // The turn belongs to the seat the canonical position and the opening
   // reply name. The main clock is never the authority for the turn.
   const sideToMove = view ? onlineSideToMove(view) : null;
   // A reviewed position is not the live game. The board refuses a move while
   // the owner looks at an earlier position.
-  const reviewing = view !== null && ply !== appliedMoves.length;
+  const reviewing = view !== null && ply !== moveCount;
   const rows = view ? onlineSeatRows(view, seat) : [];
   const agentRunner = view && seat ? composition.agentRunnerState(view.matchId, seat) : null;
   // The browser only plays the agent of the owner when the owner chose the
@@ -197,18 +237,21 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       setMessage('The seat is not authorized.');
       return false;
     }
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return false;
     try {
       client.setVersion(view.version);
       client.setControlEpoch(view.controlEpoch);
       await client.move(`${move.from}${move.to}`);
+      if (!requestOwner.isCurrent(key)) return false;
       setMessage('Move sent.');
       return true;
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return false;
       setMessage(error instanceof Error ? error.message : 'The move was refused.');
       return false;
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
@@ -217,16 +260,19 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     const client = composition.commandClient(focusedId, seat ?? 'white');
     setPromotion(null);
     if (!client) return;
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
       client.setVersion(view.version);
       client.setControlEpoch(view.controlEpoch);
       await client.move(`${promotion.from}${promotion.to}${piece}`);
+      if (!requestOwner.isCurrent(key)) return;
       setMessage('Move sent.');
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The move was refused.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
@@ -237,7 +283,8 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       setMessage('The seat is not authorized.');
       return;
     }
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
       client.setVersion(view.version);
       client.setControlEpoch(view.controlEpoch);
@@ -245,12 +292,14 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       else if (action === 'resign') await client.resign();
       else if (action === 'takeover') await client.setControl({ kind: 'human' });
       else await client.setControl({ kind: 'agent', modelLabel: agentLabel ?? 'Agent' });
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(action === 'draw' ? 'Draw offered.' : action === 'resign' ? 'Resigned.' : 'Control changed.');
       setConfirm(null);
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The action was refused.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
@@ -263,44 +312,93 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       setMessage('The seat is not authorized.');
       return;
     }
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
       client.setVersion(view.version);
       client.setControlEpoch(view.controlEpoch);
       await client.submit({ kind: 'remove_public_replay', reason: 'owner_request' });
+      if (!requestOwner.isCurrent(key)) return;
       setMessage('Replay removed.');
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The replay was not removed.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
   async function enterQueue(control: SeatControl, intent: 'reuse' | 'new' = 'reuse'): Promise<void> {
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
       const choice = CLOCK_CHOICES[clockIndex] ?? CLOCK_CHOICES[1]!;
       await composition.enterQueue({ control, timeControl: timeControl(choice.minutes, choice.increment) }, { intent });
+      if (!requestOwner.isCurrent(key)) return;
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The entry could not be created.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
+    }
+  }
+
+  /**
+   * Applies an owner decision to the agent seat and reports its outcome.
+   *
+   * The outcome is explicit: the interface never claims a success it cannot
+   * prove.
+   */
+  async function applyDecision(
+    matchId: string,
+    seat: Seat,
+    decision: 'retry' | 'switch-model' | 'takeover',
+    choice?: string,
+  ): Promise<void> {
+    if (busy) return;
+    const key = requestOwner.begin();
+    if (!key) return;
+    try {
+      const outcome = await composition.agentDecision(matchId, seat, decision, choice);
+      if (!requestOwner.isCurrent(key)) return;
+      if (outcome.kind === 'accepted') {
+        setMessage(decision === 'takeover' ? 'The seat is yours.' : `The seat plays ${outcome.publicModelLabel}.`);
+      } else if (outcome.kind === 'refused') {
+        setMessage(outcome.detail);
+      } else {
+        setMessage(outcome.detail);
+      }
+    } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
+      setMessage(error instanceof Error ? error.message : 'The decision was not applied.');
+    } finally {
+      requestOwner.finish(key);
     }
   }
 
   function queueOption(option: 'retry' | 'play-yourself' | 'keep-searching' | 'cancel' | 'rejoin'): void {
+    const key = requestOwner.begin();
+    if (!key) return;
     void (async () => {
-      if (option === 'retry') await composition.queue.retry();
-      else if (option === 'play-yourself') await composition.queue.playYourself();
-      else if (option === 'keep-searching') await composition.queue.keepSearching();
-      else if (option === 'cancel') await composition.queue.cancel();
-      else await composition.queue.rejoin();
+      try {
+        if (option === 'retry') await composition.queue.retry();
+        else if (option === 'play-yourself') await composition.queue.playYourself();
+        else if (option === 'keep-searching') await composition.queue.keepSearching();
+        else if (option === 'cancel') await composition.queue.cancel();
+        else await composition.queue.rejoin();
+      } catch (error) {
+        if (!requestOwner.isCurrent(key)) return;
+        setMessage(error instanceof Error ? error.message : 'The queue action was refused.');
+      } finally {
+        requestOwner.finish(key);
+      }
     })();
   }
 
   /** Creates one shareable friend link. */
   async function createInvitation(): Promise<void> {
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
       const choice = CLOCK_CHOICES[clockIndex] ?? CLOCK_CHOICES[1]!;
       // The private selection of the agent is captured before the service is
@@ -312,6 +410,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
         timeControl: timeControl(choice.minutes, choice.increment),
         control: { kind: 'human' },
       });
+      if (!requestOwner.isCurrent(key)) return;
       setInvitation(created.invitation);
       setInvitationLink(`${window.location.origin}/invite/${created.invitation.invitationId}`);
       // The inviter tracks its own invitation. When the invitee accepts, the
@@ -320,9 +419,10 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       composition.trackInvitation(created.invitation.invitationId, created.ownerToken, selection);
       setMessage('Invitation created.');
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The invitation could not be created.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
@@ -333,23 +433,29 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       setMessage('Enter the invitation code.');
       return;
     }
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
-      setInvitation(await composition.friends.preview(code));
+      const preview = await composition.friends.preview(code);
+      if (!requestOwner.isCurrent(key)) return;
+      setInvitation(preview);
       setMessage('Invitation ready.');
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The invitation could not be read.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
   /** Accepts an invitation and shows the created match. */
   async function acceptInvitation(): Promise<void> {
     if (!invitation) return;
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
       const accepted = await composition.friends.accept(invitation.invitationId, { kind: 'human' });
+      if (!requestOwner.isCurrent(key)) return;
       if (accepted.guestCredential) {
         composition.registerGuestCredential(createGuestCredential({
           guestId: accepted.guestCredential.guestId,
@@ -362,24 +468,35 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       setTab('games');
       setMessage('Match started.');
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The invitation could not be accepted.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
   /** Proposes a rematch of the focused match. */
   async function proposeRematch(): Promise<void> {
     if (!focusedId) return;
-    setBusy(true);
+    const matchId = focusedId;
+    const key = requestOwner.begin();
+    if (!key) return;
+    // The private selection of the agent is captured before the service is
+    // asked, so the seat of the new match keeps the model of the owner.
+    const selection = composition.agent?.selection ?? null;
     try {
-      const rematch = await composition.friends.proposeRematch(focusedId);
-      setRematchOffer(rematch);
+      const rematch = await composition.friends.proposeRematch(matchId);
+      if (!requestOwner.isCurrent(key)) return;
+      // The proposer tracks the rematch: it claims the seat of the new match
+      // after the opponent accepted it.
+      composition.trackRematch(rematch.rematchId, matchId, selection);
+      setRematchOffer({ matchId, offer: rematch });
       setMessage(`Rematch proposed: ${rematch.status}.`);
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The rematch could not be proposed.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
@@ -387,9 +504,14 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
   async function acceptRematch(): Promise<void> {
     const offer = rematchOffer;
     if (!offer) return;
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
-      const accepted = await composition.friends.acceptRematch(offer.rematchId, { rotateCredential: true });
+      // The private selection of the agent is captured before the service is
+      // asked, so the new seat keeps the model of the owner.
+      const selection = composition.agent?.selection ?? null;
+      const accepted = await composition.friends.acceptRematch(offer.offer.rematchId, { rotateCredential: true, matchId: offer.matchId });
+      if (!requestOwner.isCurrent(key)) return;
       if (accepted.guestCredential) {
         composition.registerGuestCredential(createGuestCredential({
           guestId: accepted.guestCredential.guestId,
@@ -398,24 +520,32 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
           token: accepted.guestCredential.token,
         }), 'guest');
       }
-      composition.attachAndFocus(accepted.match.matchId, accepted.seat);
+      composition.attachAndFocus(accepted.match.matchId, accepted.seat, undefined, selection);
       setRematchOffer(null);
       setMessage('Rematch accepted.');
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The rematch could not be accepted.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
   /** Reads the pending rematch offer of the focused match. */
   async function readRematchOffer(): Promise<void> {
     if (!focusedId) return;
+    const matchId = focusedId;
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
-      const offer = await composition.friends.pendingRematch(focusedId);
-      setRematchOffer(offer);
-    } catch {
-      // A match without a pending offer shows nothing.
+      const offer = await composition.friends.pendingRematch(matchId);
+      if (!requestOwner.isCurrent(key)) return;
+      setRematchOffer(offer ? { matchId, offer } : null);
+    } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
+      setMessage(error instanceof Error ? error.message : 'The rematch could not be read.');
+    } finally {
+      requestOwner.finish(key);
     }
   }
 
@@ -426,14 +556,17 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
    * match is the participant command of that match.
    */
   async function eraseEverySharedReplay(): Promise<void> {
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
       await composition.privacy.removeAccount();
+      if (!requestOwner.isCurrent(key)) return;
       setMessage('Every shared replay of this account was erased.');
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The replays were not erased.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
@@ -444,20 +577,19 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
    */
   async function eraseGuestReplays(): Promise<void> {
     if (!focusedId || !seat) return;
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
-      if (privacy) {
-        // The privacy owner of the workspace removes the shared replays of the
-        // guest seat.
-        await privacy.removePublicReplay(focusedId, 'erasure_request');
-      } else {
-        await composition.privacy.removeGuest(focusedId, seat);
-      }
+      // The scope is the guest seat of this browser, never one match and
+      // never the account of a signed-in browser.
+      await composition.privacy.removeGuest(focusedId, seat);
+      if (!requestOwner.isCurrent(key)) return;
       setMessage('The shared replays of this guest seat were erased.');
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The replays were not erased.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
@@ -468,14 +600,18 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       setMessage('Enter a profile id.');
       return;
     }
-    setBusy(true);
+    const key = requestOwner.begin();
+    if (!key) return;
     try {
-      setHistory(await composition.publicHistory.history(profileId));
+      const answer = await composition.publicHistory.history(profileId);
+      if (!requestOwner.isCurrent(key)) return;
+      setHistory(answer);
       setMessage('History loaded.');
     } catch (error) {
+      if (!requestOwner.isCurrent(key)) return;
       setMessage(error instanceof Error ? error.message : 'The history could not be read.');
     } finally {
-      setBusy(false);
+      requestOwner.finish(key);
     }
   }
 
@@ -620,25 +756,25 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
           <div className="online-decisions" role="group" aria-label="Agent decisions">
             <p>{agentRunner.phase === 'uncertain' ? 'The agent turn is uncertain.' : agentRunner.phase === 'paused' ? 'The agent turn waits for you.' : 'The agent turn failed.'}</p>
             <div className="button-row">
-              <button className="button" type="button" disabled={busy} onClick={() => void composition.agentDecision(view.matchId, seat ?? 'white', 'retry')}>Retry</button>
-              <button className="button" type="button" disabled={busy} onClick={() => void composition.agentDecision(view.matchId, seat ?? 'white', 'takeover')}>Take over</button>
+              <button className="button" type="button" disabled={busy} onClick={() => void applyDecision(view.matchId, seat ?? 'white', 'retry')}>Retry</button>
+              <button className="button" type="button" disabled={busy} onClick={() => void applyDecision(view.matchId, seat ?? 'white', 'takeover')}>Take over</button>
             </div>
             <div className="button-row" aria-label="Switch model">
               {composition.agentCatalog.map(entry => <button className="button" type="button" key={entry.id} disabled={busy}
-                onClick={() => void composition.agentDecision(view.matchId, seat ?? 'white', 'switch-model', entry.id)}>{entry.label}</button>)}
+                onClick={() => void applyDecision(view.matchId, seat ?? 'white', 'switch-model', entry.id)}>{entry.label}</button>)}
             </div>
           </div>}
         {seat && ownSeatIsAgent && !boundAgentLabel && <div className="online-decisions" role="group" aria-label="Choose your agent">
           <p>Choose the agent of this seat.</p>
           <div className="button-row">
             {composition.agentCatalog.map(entry => <button className="button" type="button" key={entry.id} disabled={busy}
-              onClick={() => composition.bindAgentSeat(view.matchId, seat, entry.id)}>{entry.label}</button>)}
+              onClick={() => composition.rebindAgentSeat(view.matchId, seat, entry.id)}>{entry.label}</button>)}
           </div>
         </div>}
         {view.result !== null && <div className="button-row">
           <button className="button quiet" type="button" disabled={busy} onClick={() => void proposeRematch()}>Propose rematch</button>
           <button className="button quiet" type="button" disabled={busy} onClick={() => void readRematchOffer()}>Check for a rematch</button>
-          {rematchOffer && <button className="button" type="button" disabled={busy} onClick={() => void acceptRematch()}>Accept rematch</button>}
+          {rematchOffer && rematchOffer.matchId === focusedId && <button className="button" type="button" disabled={busy} onClick={() => void acceptRematch()}>Accept rematch</button>}
         </div>}
         <div className="match-status" role="status">
           <h2 className="status-heading">{status}</h2>
@@ -646,12 +782,12 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       </section>
       <aside className="moves-sidebar" aria-label="Online moves">
         <div className="moves-heading"><h2>Moves</h2><span className="count" aria-label={`Move ${ply} of ${appliedMoves.length}`}>{ply}/{appliedMoves.length}</span></div>
-        <MoveList moves={appliedMoves} selectedPly={ply} visible onSelect={setPly} />
+        <MoveList moves={appliedMoves} selectedPly={ply} visible onSelect={next => setReview({ count: moveCount, ply: next })} />
         <nav className="history-controls" aria-label="Move history"><div className="button-row">
-          <IconButton icon="first" label="First" onClick={() => setPly(0)} disabled={ply === 0} aria-keyshortcuts="Home" />
-          <IconButton icon="back" label="Previous" onClick={() => setPly(value => Math.max(0, value - 1))} disabled={ply === 0} aria-keyshortcuts="ArrowLeft" />
-          <IconButton icon="next" label="Next" onClick={() => setPly(value => Math.min(appliedMoves.length, value + 1))} disabled={ply >= appliedMoves.length} aria-keyshortcuts="ArrowRight" />
-          <IconButton icon="last" label="Live" onClick={() => setPly(appliedMoves.length)} disabled={ply >= appliedMoves.length} aria-keyshortcuts="End" />
+          <IconButton icon="first" label="First" onClick={() => setReview({ count: moveCount, ply: 0 })} disabled={ply === 0} aria-keyshortcuts="Home" />
+          <IconButton icon="back" label="Previous" onClick={() => setReview({ count: moveCount, ply: Math.max(0, ply - 1) })} disabled={ply === 0} aria-keyshortcuts="ArrowLeft" />
+          <IconButton icon="next" label="Next" onClick={() => setReview({ count: moveCount, ply: Math.min(moveCount, ply + 1) })} disabled={ply >= appliedMoves.length} aria-keyshortcuts="ArrowRight" />
+          <IconButton icon="last" label="Live" onClick={() => setReview({ count: moveCount, ply: moveCount })} disabled={ply >= appliedMoves.length} aria-keyshortcuts="End" />
         </div></nav>
       </aside>
     </div>}

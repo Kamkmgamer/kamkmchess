@@ -58,8 +58,16 @@ export function providerRunnerSnapshot(view: OnlineMatchView, seat: Seat): Provi
 export interface OnlineAgentProviderOptions {
   /** The connection store that owns the browser credentials. */
   readonly connectionStore: Promise<ConnectionStore>;
-  /** The namespace of the connection store. */
-  readonly namespace: ConnectionNamespace;
+  /**
+   * The namespace of the connections of the active identity.
+   *
+   * The namespace is resolved when the request is built, so the provider
+   * uses the connections of the signed-in account and never the guest
+   * connections of another identity.
+   */
+  readonly resolveNamespace?: () => ConnectionNamespace;
+  /** The namespace of the connections, when it never changes. */
+  readonly namespace?: ConnectionNamespace;
   /** The private selection of the agent. It never leaves the browser. */
   readonly selection: ModelSelection;
 }
@@ -74,10 +82,11 @@ export interface OnlineAgentProviderOptions {
 export function createAgentProviderPort(options: OnlineAgentProviderOptions): ProviderRunnerProviderPort {
   return createProtocolProviderPort({
     async resolveTarget(): Promise<ProviderRunnerTarget> {
+      const namespace = options.resolveNamespace?.() ?? options.namespace ?? { kind: 'guest' };
       const connections = await options.connectionStore;
-      const profile = await connections.getProfile(options.namespace, options.selection.connectionId);
+      const profile = await connections.getProfile(namespace, options.selection.connectionId);
       if (!profile) throw new Error('The model connection was removed.');
-      const credentials = await connections.resolveCredentials(options.namespace, profile);
+      const credentials = await connections.resolveCredentials(namespace, profile);
       if (credentials.status !== 'bound') {
         throw new Error('The model connection is not authorized.');
       }

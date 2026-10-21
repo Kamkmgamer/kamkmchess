@@ -25,8 +25,15 @@ export interface OnlineAgentReadinessOptions {
   readonly opponentService: OpponentService | Promise<OpponentService>;
   /** The connection store that owns the browser credentials. */
   readonly connectionStore: Promise<ConnectionStore>;
-  /** The namespace of the connection store. */
-  readonly namespace: ConnectionNamespace;
+  /**
+   * The namespace of the connections of the active identity.
+   *
+   * The namespace is resolved when the check runs, so the check of an account
+   * uses the connections of that account and never the guest connections.
+   */
+  readonly resolveNamespace?: () => ConnectionNamespace;
+  /** The namespace of the connections, when it never changes. */
+  readonly namespace?: ConnectionNamespace;
 }
 
 /**
@@ -38,12 +45,13 @@ export interface OnlineAgentReadinessOptions {
 export function createAgentReadinessCheck(options: OnlineAgentReadinessOptions): (selection: ModelSelection) => Promise<OnlineAgentCheck> {
   return async (selection: ModelSelection): Promise<OnlineAgentCheck> => {
     try {
+      const namespace = options.resolveNamespace?.() ?? options.namespace ?? { kind: 'guest' };
       const connections = await options.connectionStore;
-      const profile = await connections.getProfile(options.namespace, selection.connectionId);
+      const profile = await connections.getProfile(namespace, selection.connectionId);
       if (!profile) {
         return { ready: false, detail: 'The model connection was removed.' };
       }
-      const credentials = await connections.resolveCredentials(options.namespace, profile);
+      const credentials = await connections.resolveCredentials(namespace, profile);
       if (credentials.status !== 'bound') {
         return { ready: false, detail: 'The model connection is not authorized.' };
       }

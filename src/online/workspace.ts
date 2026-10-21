@@ -298,10 +298,12 @@ export function createOnlineWorkspace(options: OnlineWorkspaceOptions): OnlineWo
   /** Removes the matches of one identity from the screen and from the disk. */
   function forgetIdentity(identityKey: string): void {
     const owned = order.filter(matchId => games.get(matchId)?.identityKey === identityKey);
+    // The durable list of the identity is kept, so the identity finds its
+    // own games again when it returns.
+    const durable = registry.read(identityKey);
     for (const matchId of owned) detach(matchId);
     if (owned.length === 0) return;
-    // The durable list of the old identity is emptied as well.
-    registry.write(identityKey, []);
+    registry.write(identityKey, durable);
     if (focused !== null && owned.includes(focused)) focused = order[0] ?? null;
     publish();
   }

@@ -58,14 +58,26 @@ const linkedInvitation = linkedInvitationId();
 void composition.openActiveGame().then(async (session) => {
   const snapshot = await session.controller.initialize();
   if (publicConfig.accountsEnabled) {
+    // The account shell boots the account session, the account composition and
+    // the catalog of the owner. The invitation of a published link is opened
+    // inside that shell, so the invitation is previewed and accepted with the
+    // identity of the owner.
     const { AccountWorkspace } = await import('./AccountWorkspace.js');
     rootView.render(<StrictMode><AccountWorkspace composition={composition} initialSession={session} initialSnapshot={snapshot} online={online} /></StrictMode>);
+    return;
+  }
+  // A guest opens the published invitation link in the one online workspace.
+  if (online && linkedInvitation) {
+    rootView.render(
+      <StrictMode>
+        <OnlineWorkspace composition={online} onClose={() => { window.location.href = '/play'; }} initialTab="new" />
+      </StrictMode>,
+    );
     return;
   }
   rootView.render(
     <StrictMode>
       <App composition={composition} initialSession={session} initialSnapshot={snapshot} online={online} />
-      {online && linkedInvitation && <OnlineWorkspace composition={online} onClose={() => { window.location.href = '/play'; }} initialTab="new" />}
     </StrictMode>,
   );
 }).catch((error: unknown) => {

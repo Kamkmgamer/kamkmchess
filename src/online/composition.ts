@@ -154,7 +154,21 @@ export interface OnlineCompositionOptions {
    * it. The credential never leaves the browser.
    */
   readonly connectionStore?: Promise<ConnectionStore>;
-  /** The namespace of the connection store. */
+  /**
+   * The namespace of the connections of the active identity.
+   *
+   * The namespace is resolved when a request needs it, so the connections of
+   * the signed-in account are used and the guest connections of another
+   * identity never are.
+   */
+  readonly resolveNamespace?: () => ConnectionNamespace;
+  /**
+   * The namespace of the connections, when it never changes.
+   *
+   * The seam 
+esolveNamespace wins: the namespace of the connections
+   * follows the active identity.
+   */
   readonly namespace?: ConnectionNamespace;
 }
 
@@ -173,6 +187,17 @@ export interface OnlineQueueEntryView {
   /** Feeds a service answer into this entry. */
   observe(entry: QueueEntry): void;
 }
+
+/**
+ * The outcome of an owner decision on an agent seat.
+ *
+ * The outcome never carries a routing identifier, a credential or a private
+ * selection. It carries the public label the seat declares.
+ */
+export type AgentDecisionOutcome =
+  | { readonly kind: 'accepted'; readonly publicModelLabel: string; readonly detail?: string }
+  | { readonly kind: 'refused'; readonly detail: string }
+  | { readonly kind: 'unknown'; readonly detail: string };
 
 export interface OnlineComposition {
   /** The open online surfaces. */
@@ -205,8 +230,25 @@ export interface OnlineComposition {
     /** Registers the public label of the owner's own agent. */
     registerPublicModelLabel(publicLabel: string): Promise<OnlinePublicModelLabel>;
   };
+  /**
+   * The invitation of a published link, when the page was opened with one.
+   *
+   * The shell of the page opens the online screen with it, so the
+   * invitation is previewed and accepted with the identity of the owner.
+   */
+  readonly pendingInvitation: string | null;
   /** The own agent of the owner, when one is selected. */
   readonly agent: OnlineAgent | null;
+  /**
+   * The live identity key of the composition.
+   *
+   * It moves with every identity change, and the generation moves with it,
+   * so a screen can tell an identity that came back from one that never
+   * left.
+   */
+  readonly identityKey: string | null;
+  /** The generation of the identity. It moves on every identity change. */
+  readonly identityGeneration: number;
   /** True when a signed-in account owns this composition. */
   readonly accountSignedIn: boolean;
   /** Sets the own agent of the owner. */
@@ -225,6 +267,12 @@ export interface OnlineComposition {
   agentBindingFor(matchId: string, seat: Seat): string | null;
   /** Binds the chosen private selection to one seat of one match. */
   bindAgentSeat(matchId: string, seat: Seat, choice: string): void;
+  /**
+   * Binds the private selection that the owner chose for a seat.
+   *
+   * It replaces an existing binding, because the owner asked for it.
+   */
+  rebindAgentSeat(matchId: string, seat: Seat, choice: string): void;
   /**
    * Registers the public label of the owner's own agent.
    *
@@ -252,6 +300,13 @@ export interface OnlineComposition {
    * of the created match and follows it.
    */
   trackInvitation(invitationId: string, ownerToken: string, selection?: ModelSelection | null): void;
+  /**
+   * Tracks a rematch this browser proposed.
+   *
+   * The proposer claims the seat of the new match after the opponent accepted
+   * it, and the seat keeps the model the owner chose for the proposal.
+   */
+  trackRematch(rematchId: string, matchId: string, selection?: ModelSelection | null): void;
   /** The presence client of one seat. */
   presenceClient(matchId: string, seat: Seat, credential?: OnlineCredential): OnlinePresenceClient | null;
   /**
@@ -266,7 +321,7 @@ export interface OnlineComposition {
    * The decision is never automatic: the runner never leaves an uncertain,
    * paused or failed phase by itself.
    */
-  agentDecision(matchId: string, seat: Seat, decision: 'retry' | 'switch-model' | 'takeover', choice?: string): Promise<void>;
+  agentDecision(matchId: string, seat: Seat, decision: 'retry' | 'switch-model' | 'takeover', choice?: string): Promise<AgentDecisionOutcome>;
   /**
    * Attaches a match and shows it.
    *
@@ -400,6 +455,21 @@ function createIntentId(): string {
 }
 
 /**
+ * Reads the invitation of a published link.
+ *
+ * The link carries the exact invitation, in the query or in the path.
+ */
+function readPendingInvitation(search: string | undefined): string | null {
+  const query = search ?? (typeof window === 'undefined' ? '' : window.location.search);
+  const linked = new URLSearchParams(query).get('invite');
+  if (linked) return linked;
+  if (typeof window === 'undefined') return null;
+  const segments = window.location.pathname.split('/').filter(Boolean);
+  const index = segments.indexOf('invite');
+  return index >= 0 ? segments[index + 1] ?? null : null;
+}
+
+/**
  * Reads a persisted model selection.
  *
  * The record has to be a real selection: the kind, the provider, the
@@ -505,8 +575,23 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * public label: two private models can carry the same display name.
    */
   const agentCatalog = new Map<string, { readonly label: string; readonly selection: ModelSelection }>();
-  /** The private selection captured for a seat, before the service was asked. */
-  const capturedSelections = new Map<string, ModelSelection>();
+  /**
+   * The private selection captured for a seat, before the service was asked.
+   *
+   * The records are namespaced by the identity that captured them, so the
+   * records of one identity never reach another one, and an identity that
+   * returns finds its own records again.
+   */
+  const capturedSelections = new Map<string, Map<string, ModelSelection>>();
+
+  /** The captured selections of one identity. */
+  function capturedFor(identity: string): Map<string, ModelSelection> {
+    const existing = capturedSelections.get(identity);
+    if (existing) return existing;
+    const created = new Map<string, ModelSelection>();
+    capturedSelections.set(identity, created);
+    return created;
+  }
 
   /** The local key of the persisted seat bindings of one identity. */
   function agentBindingKey(identity: string): string {
@@ -558,6 +643,10 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   const engineTurns = new Map<string, number>();
   let features: OnlineFeatureFlags = options.features ?? ONLINE_FEATURES_DISABLED;
   let agent: OnlineAgent | null = null;
+  /** The generation of the identity. It moves on every identity change. */
+  let identityGeneration = 0;
+  /** The invitation of the published link, when the page carries one. */
+  const pendingInvitation = readPendingInvitation(options.search);
   let queueState: OnlineQueueState = {
     phase: 'idle',
     entry: null,
@@ -587,7 +676,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   let disposed = false;
 
   /** The browser owned secrets of the friend surface. */
-  const friendSecrets = createFriendSecretStore({ identity: 'guest' });
+  const friendSecrets = createFriendSecretStore({ identity: 'guest', ...(storage ? { storage } : {}) });
   /** True when the composition finished its construction. */
   let ready = false;
 
@@ -632,6 +721,10 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       }
       const previousKey = accountKey;
       accountKey = nextKey;
+      // The generation moves on every identity change, so an answer of an
+      // older identity never reaches the current one, even when the identity
+      // comes back.
+      identityGeneration += 1;
       if (previousKey !== null) revokedIdentities.add(previousKey);
       // An identity that becomes active again is usable again. Its seat
       // credentials are issued again, and its private model bindings are
@@ -647,7 +740,19 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       queue.reset();
       fenceAccountSeats();
       agentBindings.clear();
+      // The deferred claims of the previous identity are dropped. They are
+      // restored from the device when the identity comes back.
+      for (const [invitationId, tracked] of [...createdInvitations]) {
+        if (tracked.identityKey === previousKey) createdInvitations.delete(invitationId);
+      }
+      for (const [rematchId, tracked] of [...proposedRematches]) {
+        if (tracked.identityKey === previousKey) proposedRematches.delete(rematchId);
+      }
+      restoreTrackedInvitations();
       restorePersistedMatches();
+      // The engine seats of the games of this identity need a usable
+      // credential again.
+      recoverEngineCredentials();
       notify();
     });
   }
@@ -675,20 +780,32 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * routes accept an account session, a guest seat credential or no
    * credential at all, and the browser never sends one it does not hold.
    */
-  async function credentialHeader(): Promise<Record<string, string> | null> {
-    const credential = accountParticipant?.credential ?? null;
-    if (!credential) return null;
-    const token = await credential.issue();
-    return credential.kind === 'account'
-      ? { Authorization: `Bearer ${token}` }
-      : { 'X-Guest-Seat-Token': token };
+  async function credentialHeader(matchId: string | null = null): Promise<Record<string, string> | null> {
+    const account = accountParticipant?.credential ?? null;
+    if (account) {
+      const token = await account.issue();
+      return account.kind === 'account'
+        ? { Authorization: `Bearer ${token}` }
+        : { 'X-Guest-Seat-Token': token };
+    }
+    // A guest acts with the seat credential of the match it acts on. The
+    // credential is seat scoped, so it never authorizes another match, and it
+    // never follows the focus of the interface.
+    const target = matchId ?? workspace.focusedMatchId;
+    if (!target) return null;
+    for (const [key, registered] of seats) {
+      if (!key.startsWith(`${target}:`)) continue;
+      const token = await registered.credential.issue();
+      return { 'X-Guest-Seat-Token': token };
+    }
+    return null;
   }
 
   friendSecrets.setIdentity(queueIdentity());
   const friends: FriendSurface = createFriendSurface({
     baseUrl,
     ...(fetcher ? { fetch: fetcher } : {}),
-    credential: () => credentialHeader(),
+    credentialFor: (matchId) => credentialHeader(matchId),
     secrets: friendSecrets,
   });
 
@@ -1053,7 +1170,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * accepts, the inviter claims the seat credential of the created match and
    * follows it, so the inviter can play its own seat.
    */
-  const createdInvitations = new Map<string, { ownerToken: string; selection: ModelSelection | null }>();
+  const createdInvitations = new Map<string, { ownerToken: string; selection: ModelSelection | null; identityKey: string }>();
+  /** The rematches this browser proposed, with the selection of the proposer. */
+  const proposedRematches = new Map<string, { matchId: string; selection: ModelSelection | null; identityKey: string }>();
   let invitationTimer: unknown = null;
 
   /**
@@ -1061,10 +1180,75 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    *
    * The private selection of the agent is captured with the invitation, so
    * the seat of the created match keeps the model the owner chose when the
-   * invitation was made.
+   * invitation was made. The owner token and the selection are durable, so a
+   * reload can still claim the seat.
    */
   function trackInvitation(invitationId: string, ownerToken: string, selection: ModelSelection | null = null): void {
-    createdInvitations.set(invitationId, { ownerToken, selection });
+    const identityKey = queueIdentity();
+    createdInvitations.set(invitationId, { ownerToken, selection, identityKey });
+    friendSecrets.rememberOwnerToken(invitationId, ownerToken, selection);
+    scheduleInvitationWork();
+  }
+
+  /**
+   * Recovers the engine credentials of the entries of this identity.
+   *
+   * An identity change revokes the seat authority of the browser. When the
+   * identity returns, the browser holds no usable credential of the engine
+   * seat of its games, and the queue client asks for the explicit recovery
+   * once. A routine retry never rotates a credential the browser still has.
+   */
+  function recoverEngineCredentials(): void {
+    if (disposed) return;
+    // The recovery belongs to the identity and the generation that asked for
+    // it. A later identity, even the same one again, never receives the
+    // answer of an older request.
+    const identityKey = queueIdentity();
+    const generation = identityGeneration;
+    for (const intent of readIntents(storage, identityKey)) {
+      if (!intent.entryId) continue;
+      void queueClient.fallback(intent.entryId).then(assignment => {
+        if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
+        if (!assignment.guestCredential) return;
+        registerGuestCredential(createGuestCredential({
+          guestId: assignment.guestCredential.guestId,
+          matchId: assignment.guestCredential.matchId,
+          seat: assignment.guestCredential.seat,
+          token: assignment.guestCredential.token,
+        }), 'account');
+      }).catch(() => {
+        // The service has no engine seat for the entry, or the entry is gone.
+      });
+    }
+  }
+
+  /**
+   * Restores the invitations and the rematches of this identity.
+   *
+   * The inviter claims the seat of a consumed invitation even after a
+   * reload, and the proposer claims the seat of an accepted rematch. The
+   * restoration also runs when the identity comes back.
+   */
+  function restoreTrackedInvitations(): void {
+    const identityKey = queueIdentity();
+    for (const invitationId of friendSecrets.listOwnedInvitations()) {
+      if (createdInvitations.has(invitationId)) continue;
+      const ownerToken = friendSecrets.readOwnerToken(invitationId);
+      if (!ownerToken) continue;
+      createdInvitations.set(invitationId, {
+        ownerToken,
+        selection: friendSecrets.readOwnerSelection(invitationId),
+        identityKey,
+      });
+    }
+    for (const record of friendSecrets.listRematches()) {
+      if (proposedRematches.has(record.rematchId)) continue;
+      proposedRematches.set(record.rematchId, {
+        matchId: record.matchId,
+        selection: record.selection,
+        identityKey,
+      });
+    }
     scheduleInvitationWork();
   }
 
@@ -1075,15 +1259,21 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       invitationTimer = null;
     }
     if (disposed || suspended) return;
-    if (createdInvitations.size === 0) return;
+    if (createdInvitations.size === 0 && proposedRematches.size === 0) return;
     invitationTimer = timers.setTimer(() => {
       invitationTimer = null;
       for (const [invitationId, tracked] of [...createdInvitations]) {
+        // The claim belongs to the identity that created the invitation. A
+        // deferred answer of another identity is discarded.
+        const identityKey = tracked.identityKey;
+        const generation = identityGeneration;
         void (async () => {
           try {
             const invitation = await friends.preview(invitationId);
+            if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
             if (invitation.status !== 'consumed' || !invitation.matchId) return;
-            const claimed = await friends.claimSeatCredential(invitationId, tracked.ownerToken);
+            const claimed = await friends.claimSeatCredential(invitationId, tracked.ownerToken, invitation.matchId);
+            if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
             if (claimed.guestCredential) {
               registerGuestCredential(createGuestCredential({
                 guestId: claimed.guestCredential.guestId,
@@ -1091,17 +1281,43 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
                 seat: claimed.guestCredential.seat,
                 token: claimed.guestCredential.token,
               }), 'guest');
-              attachAndFocus(
-                claimed.guestCredential.matchId,
-                claimed.guestCredential.seat,
-                undefined,
-                tracked.selection,
-              );
             }
+            // The answer names the match and the seat even for an account
+            // inviter, so the inviter follows its own match.
+            attachAndFocus(claimed.matchId, claimed.seat, undefined, tracked.selection);
             createdInvitations.delete(invitationId);
+            friendSecrets.forgetOwnerToken(invitationId);
             notify();
           } catch {
             // The invitation is not consumed yet, or the claim is refused. The
+            // next interval tries again, so a lost claim answer is recovered.
+          }
+        })();
+      }
+      for (const [rematchId, tracked] of [...proposedRematches]) {
+        const identityKey = tracked.identityKey;
+        const generation = identityGeneration;
+        void (async () => {
+          try {
+            const rematch = await friends.pendingRematch(tracked.matchId);
+            if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
+            if (!rematch || rematch.status !== 'accepted' || !rematch.newMatchId) return;
+            const claimed = await friends.claimRematchSeatCredential(rematchId, tracked.matchId);
+            if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
+            if (claimed.guestCredential) {
+              registerGuestCredential(createGuestCredential({
+                guestId: claimed.guestCredential.guestId,
+                matchId: claimed.guestCredential.matchId,
+                seat: claimed.guestCredential.seat,
+                token: claimed.guestCredential.token,
+              }), 'guest');
+            }
+            attachAndFocus(claimed.matchId, claimed.seat, undefined, tracked.selection);
+            proposedRematches.delete(rematchId);
+            friendSecrets.forgetRematch(rematchId);
+            notify();
+          } catch {
+            // The rematch is not accepted yet, or the claim is refused. The
             // next interval tries again.
           }
         })();
@@ -1322,19 +1538,36 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * The selection is the one the owner chose for this seat. It is never
    * inferred from a public label, because two private models can carry the
    * same canonical label.
+   *
+   * The binding of a seat that already has one is never replaced here: the
+   * selection that was captured for the entry or the invitation of the seat
+   * stays authoritative. The explicit choice of the owner uses
+   * {@link rebindAgentSeat}.
    */
   function bindAgentSeat(matchId: string, seat: Seat, choice: string): void {
+    const key = `${matchId}:${seat}`;
+    if (agentBindings.has(key)) return;
     const resolved = resolveChoice(choice);
     // A choice the owner never connected binds nothing, and a seat without a
     // selection stays unbound: the browser then asks the owner to choose.
     if (!resolved) return;
-    const key = `${matchId}:${seat}`;
     agentBindings.set(key, { label: resolved.label, selection: resolved.selection });
     const identity = queueIdentity();
     const bindings = readAgentBindings(identity)
       .filter(binding => !(binding.matchId === matchId && binding.seat === seat));
     bindings.push({ matchId, seat, label: resolved.label, selection: resolved.selection });
     writeAgentBindings(identity, bindings);
+  }
+
+  /**
+   * Binds the private selection that the owner chose for a seat.
+   *
+   * It replaces an existing binding, because the owner asked for it.
+   */
+  function rebindAgentSeat(matchId: string, seat: Seat, choice: string): void {
+    const key = `${matchId}:${seat}`;
+    agentBindings.delete(key);
+    bindAgentSeat(matchId, seat, choice);
   }
 
   /**
@@ -1366,7 +1599,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   ): void {
     if (!selection) return;
     const key = `${matchId}:${seat}`;
-    capturedSelections.set(key, selection);
+    capturedFor(queueIdentity()).set(key, selection);
     // The local display label of the captured selection wins over the label of
     // the agent the owner happens to have selected now.
     const display = catalogLabelOf(selection) ?? label;
@@ -1436,7 +1669,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         const provider = options.connectionStore
           ? createAgentProviderPort({
             connectionStore: options.connectionStore,
-            namespace: options.namespace ?? { kind: 'guest' },
+            namespace: options.resolveNamespace?.() ?? { kind: 'guest' },
             selection: binding.selection,
           })
           : null;
@@ -1522,6 +1755,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   }
 
   ready = true;
+  // The invitations of this identity are restored, so a reload still claims
+  // the seat of a consumed invitation.
+  restoreTrackedInvitations();
 
   return {
     get features() {
@@ -1551,6 +1787,15 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     get queueState() {
       return queueState;
     },
+    get pendingInvitation() {
+      return pendingInvitation;
+    },
+    get identityKey() {
+      return accountKey;
+    },
+    get identityGeneration() {
+      return identityGeneration;
+    },
     get agent() {
       return agent;
     },
@@ -1571,7 +1816,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       }
       // A seat that was attached before the catalog knew its selection gets
       // its captured selection now, so the runner of the seat starts.
-      for (const [key, captured] of capturedSelections) {
+      for (const [key, captured] of capturedFor(queueIdentity())) {
         const separator = key.lastIndexOf(':');
         const matchId = key.slice(0, separator);
         const seat = key.slice(separator + 1) as Seat;
@@ -1589,6 +1834,11 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     },
     bindAgentSeat(matchId: string, seat: Seat, choice: string) {
       bindAgentSeat(matchId, seat, choice);
+      driveAgentSeats();
+      notify();
+    },
+    rebindAgentSeat(matchId: string, seat: Seat, choice: string) {
+      rebindAgentSeat(matchId, seat, choice);
       driveAgentSeats();
       notify();
     },
@@ -1610,11 +1860,16 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     commandClient,
     registerGuestCredential,
     trackInvitation,
+    trackRematch(rematchId: string, matchId: string, selection?: ModelSelection | null) {
+      proposedRematches.set(rematchId, { matchId, selection: selection ?? null, identityKey: queueIdentity() });
+      friendSecrets.rememberRematch(rematchId, matchId, selection ?? null);
+      scheduleInvitationWork();
+    },
     presenceClient,
     agentRunnerState(matchId, seat) {
       return agentRunners.get(`${matchId}:${seat}`)?.state ?? null;
     },
-    async agentDecision(matchId, seat, decision, choice) {
+    async agentDecision(matchId, seat, decision, choice): Promise<AgentDecisionOutcome> {
       const key = `${matchId}:${seat}`;
       if (decision === 'switch-model') {
         // A switch changes the private selection of the seat. The old
@@ -1622,35 +1877,47 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         // rebuilt with the destination of the new selection.
         const resolved = choice ? resolveChoice(choice) : null;
         if (!resolved) {
-          throw new Error('That agent is not connected.');
+          return { kind: 'refused', detail: 'That agent is not connected.' };
         }
         const runner = agentRunners.get(key);
         if (!runner) {
-          bindAgentSeat(matchId, seat, choice ?? resolved.label);
+          rebindAgentSeat(matchId, seat, choice ?? resolved.label);
           driveAgentSeats();
-          return;
+          return { kind: 'accepted', publicModelLabel: resolved.label };
         }
-        await runner.switchModel(resolved.label);
-        bindAgentSeat(matchId, seat, choice ?? resolved.label);
+        // The runner reports the outcome of the decision. A refused or an
+        // unknown outcome keeps the runner and the binding of the seat.
+        const outcome = await runner.switchModel(resolved.label);
+        if (outcome.kind !== 'accepted') return outcome;
+        // The switch is the explicit choice of the owner, so it replaces the
+        // private binding of the seat.
+        rebindAgentSeat(matchId, seat, choice ?? resolved.label);
         await runner.stop().catch(() => undefined);
         agentRunners.delete(key);
         // The canonical snapshot is fed again, so the new runner plays the seat.
         driveAgentSeats();
-        return;
+        // The detail of the runner names what it had to leave out, for
+        // example a handoff that could not take the lease of the seat.
+        return outcome.detail === undefined
+          ? { kind: 'accepted', publicModelLabel: outcome.publicModelLabel }
+          : { kind: 'accepted', publicModelLabel: outcome.publicModelLabel, detail: outcome.detail };
       }
       const runner = agentRunners.get(key);
-      if (!runner) return;
+      if (!runner) {
+        return { kind: 'refused', detail: 'The seat has no runner.' };
+      }
       if (decision === 'retry') {
-        await runner.retry();
-        return;
+        return runner.retry();
       }
       // A takeover hands the seat to the owner, so the browser stops playing
-      // it.
-      await runner.takeover();
+      // it. A refused or an unknown takeover keeps the runner and the binding
+      // of the seat.
+      const outcome = await runner.takeover();
+      if (outcome.kind !== 'accepted') return outcome;
       agentBindings.delete(key);
       agentRunners.delete(key);
-    },
-    attachAndFocus,
+      return outcome;
+    },    attachAndFocus,
     engineSeat(matchId, seat, credential) {
       return createOnlineEngineSeat({
         matchId,

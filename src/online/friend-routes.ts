@@ -60,7 +60,7 @@ export interface FriendSurface {
   /** Cancels an invitation this browser created. */
   cancel(invitationId: string): Promise<FriendInvitation>;
   /** Claims the seat credential of the inviter of a consumed invitation. */
-  claimSeatCredential(invitationId: string, ownerToken: string): Promise<FriendSeatCredential>;
+  claimSeatCredential(invitationId: string, ownerToken: string, matchId?: string | null): Promise<FriendSeatCredential>;
   /** Proposes a rematch of a finished match. */
   proposeRematch(matchId: string, request?: { timeControl?: TimeControl; startingFen?: string }): Promise<FriendRematch>;
   /**
@@ -69,7 +69,9 @@ export interface FriendSurface {
    * A guest that lost the answer of its acceptance rotates its credential, so
    * the recovery never depends on the lost answer.
    */
-  acceptRematch(rematchId: string, request?: { rotateCredential?: boolean }): Promise<FriendRematchAccepted>;
+  acceptRematch(rematchId: string, request?: { rotateCredential?: boolean; matchId?: string }): Promise<FriendRematchAccepted>;
+  /** Claims the seat credential of the proposer of an accepted rematch. */
+  claimRematchSeatCredential(rematchId: string, matchId?: string | null): Promise<FriendSeatCredential>;
   /** Reads the pending rematch offer of a match. */
   pendingRematch(matchId: string): Promise<FriendRematch | null>;
 }
@@ -79,11 +81,13 @@ export interface FriendSurfaceOptions {
   readonly baseUrl: string;
   readonly fetch?: typeof fetch;
   /**
-   * The credential header of the active participant, or null.
+   * The credential of the participant that acts on a match.
    *
-   * The header is minted per call, so the credential is never cached.
+   * The credential is bound to the match of the call, so a guest acts with
+   * the seat credential of its own match and never with the credential of
+   * another match.
    */
-  readonly credential?: () => Promise<Record<string, string> | null>;
+  readonly credentialFor?: (matchId: string | null) => Promise<Record<string, string> | null>;
   /** The browser owned secrets of the surface. */
   readonly secrets: FriendSecretStore;
 }
@@ -97,16 +101,14 @@ export interface FriendSurfaceOptions {
 export function createFriendSurface(options: FriendSurfaceOptions): FriendSurface {
   /** The invitations this browser created. */
   const ownedInvitations = new Set<string>();
-  /** The invitations this browser already accepted. */
-  const acceptedInvitations = new Set<string>();
   /**
    * The canonical client of one call.
    *
    * The credential is minted before the call and the canonical transport
    * carries it in the header.
    */
-  async function clientFor(): Promise<FriendClient> {
-    const header = options.credential ? await options.credential() : null;
+  async function clientFor(matchId: string | null = null): Promise<FriendClient> {
+    const header = options.credentialFor ? await options.credentialFor(matchId) : null;
     return createFriendClient(createFetchFriendTransport({
       baseUrl: options.baseUrl,
       ...(options.fetch ? { fetch: options.fetch } : {}),
@@ -138,9 +140,9 @@ export function createFriendSurface(options: FriendSurfaceOptions): FriendSurfac
       const acceptanceKey = options.secrets.acceptanceKey(invitationId);
       // A first acceptance never rotates a credential. A retry of the same
       // accept intent asks for the explicit recovery once, because the
-      // invitation was already consumed by this browser.
-      const rotateCredential = acceptedInvitations.has(invitationId);
-      acceptedInvitations.add(invitationId);
+      // invitation was already consumed by this browser. The record is
+      // durable, so a reload still recovers.
+      const rotateCredential = options.secrets.beginAcceptance(invitationId);
       return (await clientFor()).acceptInvitation(invitationId, { control, acceptanceKey, rotateCredential });
     },
     async cancel(invitationId) {
@@ -148,23 +150,26 @@ export function createFriendSurface(options: FriendSurfaceOptions): FriendSurfac
       if (!ownerToken) throw new Error('This browser does not own the invitation.');
       return (await clientFor()).cancelInvitation(invitationId, ownerToken);
     },
-    async claimSeatCredential(invitationId, ownerToken) {
-      return (await clientFor()).claimSeatCredential(invitationId, ownerToken);
+    async claimSeatCredential(invitationId, ownerToken, matchId) {
+      return (await clientFor(matchId ?? null)).claimSeatCredential(invitationId, ownerToken);
     },
     async proposeRematch(matchId, request) {
-      return (await clientFor()).proposeRematch({
+      return (await clientFor(matchId)).proposeRematch({
         matchId,
         ...(request?.timeControl ? { timeControl: request.timeControl } : {}),
         ...(request?.startingFen ? { startingFen: request.startingFen } : {}),
       });
     },
     async acceptRematch(rematchId, request) {
-      return (await clientFor()).acceptRematch(rematchId, {
+      return (await clientFor(request?.matchId ?? null)).acceptRematch(rematchId, {
         ...(request?.rotateCredential === undefined ? {} : { rotateCredential: request.rotateCredential }),
       });
     },
+    async claimRematchSeatCredential(rematchId, matchId) {
+      return (await clientFor(matchId ?? null)).claimRematchSeatCredential(rematchId);
+    },
     async pendingRematch(matchId) {
-      return (await clientFor()).readPendingRematch(matchId);
+      return (await clientFor(matchId)).readPendingRematch(matchId);
     },
   };
 }
