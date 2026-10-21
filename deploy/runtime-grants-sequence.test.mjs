@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { auditGrants, auditLiveGrants, parsePolicy, renderGrantSql } from './runtime-grants.mjs';
+import { auditGrants, auditLiveGrants, parseMigrationGrants, parsePolicy, renderGrantSql } from './runtime-grants.mjs';
 
 // The grant of the sequence of the health checkpoints.
 //
@@ -11,6 +11,29 @@ import { auditGrants, auditLiveGrants, parsePolicy, renderGrantSql } from './run
 // never receives the usage.
 
 const policy = parsePolicy(JSON.parse(readFileSync(new URL('./runtime-grants.policy.json', import.meta.url), 'utf8')));
+
+test('migration sequence grants to unused and unreviewed roles are audited', () => {
+  for (const [role, code, severity] of [
+    ['kamkm_online_rules', 'migration-grant-stripped-role', 'warning'],
+    ['unreviewed_rules', 'migration-grants-unreviewed-role', 'blocker'],
+  ]) {
+    const migrationGrants = parseMigrationGrants(`GRANT USAGE ON SEQUENCE public.online_service_health_order TO ${role};`);
+    assert.equal(migrationGrants.length, 1);
+    const findings = auditGrants({ policy, tables: [], usage: new Map(), migrationGrants });
+    assert.ok(findings.some((finding) => finding.code === code && finding.severity === severity));
+  }
+});
+
+test('migration sequence grants are compared with their own policy', () => {
+  for (const [privilege, blocked] of [['USAGE', false], ['SELECT', true]]) {
+    const migrationGrants = parseMigrationGrants(`GRANT ${privilege} ON SEQUENCE %I.online_service_health_order TO kamkmchess_runtime;`);
+    assert.equal(migrationGrants.length, 1);
+    const findings = auditGrants({ policy, tables: [], usage: new Map(), migrationGrants });
+    assert.equal(findings.some((finding) => finding.code === 'migration-grant-exceeds-policy'), blocked);
+  }
+  assert.deepEqual(parseMigrationGrants('GRANT EXECUTE ON FUNCTION public.worker() TO rules;'), []);
+  assert.deepEqual(parseMigrationGrants('GRANT USAGE ON SCHEMA public TO rules;'), []);
+});
 
 test('the deployment grants the sequence of the checkpoints explicitly', () => {
   const sql = renderGrantSql(policy);

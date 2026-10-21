@@ -213,25 +213,27 @@ export function parseMigrationTables(sql) {
  * A migration that grants privileges can widen a role without any review, so
  * the audit reports it next to the reviewed policy.
  * @param {string} sql
- * @returns {{role: string, table: string, privileges: string[]}[]}
+ * @returns {{role: string, table?: string, sequence?: string, privileges: string[]}[]}
  */
 export function parseMigrationGrants(sql) {
-  /** @type {{role: string, table: string, privileges: string[]}[]} */
+  /** @type {{role: string, table?: string, sequence?: string, privileges: string[]}[]} */
   const grants = [];
   // The online migrations write their grants inside a format() call with a
   // schema placeholder, for example:
   //   EXECUTE format('GRANT SELECT, INSERT ON TABLE %I.online_matches TO kamkm_online_api', schema_name);
   // The placeholder and the schema prefix are both normalised away.
-  const pattern = /GRANT\s+([A-Za-z,\s]+?)\s+ON\s+(?:TABLE\s+)?(?:(?:%I|"%I"|[A-Za-z_][A-Za-z0-9_]*)\.)?([A-Za-z_][A-Za-z0-9_]*)\s+TO\s+([A-Za-z_][A-Za-z0-9_]*)/gi;
+  const pattern = /GRANT\s+([A-Za-z,\s]+?)\s+ON\s+(?:(TABLE|SEQUENCE)\s+)?(?:(?:%I|"%I"|[A-Za-z_][A-Za-z0-9_]*)\.)?([A-Za-z_][A-Za-z0-9_]*)\s+TO\s+([A-Za-z_][A-Za-z0-9_]*)/gi;
   for (const match of sql.matchAll(pattern)) {
     const privileges = (match[1] ?? '')
       .split(',')
       .map((part) => part.trim().toUpperCase())
       .filter((part) => part.length > 0);
-    const table = (match[2] ?? '').split('.').pop()?.toLowerCase() ?? '';
-    const role = match[3] ?? '';
-    if (!table || !role) continue;
-    grants.push({ role, table, privileges });
+    const name = (match[3] ?? '').toLowerCase();
+    const role = match[4] ?? '';
+    if (!name || !role) continue;
+    grants.push(match[2]?.toUpperCase() === 'SEQUENCE'
+      ? { role, sequence: name, privileges }
+      : { role, table: name, privileges });
   }
   return grants;
 }
@@ -407,15 +409,18 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
       migrationGrantsByRole.set(grant.role, new Map());
     }
     const tables = migrationGrantsByRole.get(grant.role);
-    if (!tables.has(grant.table)) tables.set(grant.table, new Set());
-    for (const privilege of grant.privileges) tables.get(grant.table).add(privilege);
+    const object = grant.sequence ? `SEQUENCE ${grant.sequence}` : grant.table;
+    if (!tables.has(object)) tables.set(object, new Set());
+    for (const privilege of grant.privileges) tables.get(object).add(privilege);
   }
   for (const [role, tables] of [...migrationGrantsByRole.entries()].sort()) {
     if (role === policy.role) {
       // The policy role is compared table by table. The privileges of one
       // table never carry over to another one.
       for (const [table, verbs] of [...tables.entries()].sort()) {
-        const granted = policy.privileges.get(table);
+        const granted = table.startsWith('SEQUENCE ')
+          ? new Set(policy.sequences?.[table.slice('SEQUENCE '.length)] ?? [])
+          : policy.privileges.get(table);
         const extra = [...verbs].filter((verb) => !granted || !granted.has(verb));
         if (extra.length > 0) {
           findings.push(finding(
@@ -438,7 +443,7 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
     findings.push(finding(
       stripped ? 'warning' : 'blocker',
       stripped ? 'migration-grant-stripped-role' : 'migration-grants-unreviewed-role',
-      `The migrations grant ${[...reached].sort().join(', ')} on ${tables.size} table(s) to ${role}, a role the deployment does not connect as.`,
+      `The migrations grant ${[...reached].sort().join(', ')} on ${tables.size} object(s) to ${role}, a role the deployment does not connect as.`,
       stripped
         ? `The deployment connects as ${policy.role}. Provisioning revokes the privileges of ${role} and the grant probe proves it holds nothing on a real database.`
         : `The deployment connects as ${policy.role}. List ${role} in the unused roles of the policy so the deployment strips it, or remove the grant from the migration.`,
