@@ -16,9 +16,21 @@
 // declared control, the allocated guest identity and the created match, so a
 // retry after a lost answer resumes the same acceptance, returns the same
 // match and re-mints the guest seat credential instead of consuming a second
-// invitation. The resume capability is the high entropy acceptance key, which
-// is stored only as a hash; the public acceptance identifier is never enough
-// to resume an acceptance.
+// invitation.
+//
+// The resume capability is the high entropy acceptance key. It is a bearer
+// secret of one accept intent, it is stored only as a hash, and the public
+// acceptance identifier is never enough to resume an acceptance. An account
+// acceptor is bound to its own acceptance as well, because an account has an
+// identity the service can check. A guest acceptor has no other identity to
+// bind to, so the key is the whole capability: whoever holds the key can
+// resume that acceptance. The key therefore stays secret, it is never
+// logged, and the service never returns it.
+//
+// The consumption of the invitation, the acceptance row, the canonical match
+// and the guest seat credential commit in one transaction. A crash can never
+// leave a spent invitation without a game, and no sweeper has to look for an
+// orphaned acceptance.
 package invite
 
 import (
@@ -283,6 +295,10 @@ type Rematch struct {
 	// never published; the acceptance rules need them.
 	proposerKind string
 	proposerID   string
+	// acceptedByKind and acceptedByID name the accepter of a reserved or an
+	// accepted offer. They are never published.
+	acceptedByKind string
+	acceptedByID   string
 }
 
 // AcceptRematchRequest describes one acceptance of a rematch offer.
@@ -293,6 +309,14 @@ type AcceptRematchRequest struct {
 	Origin string
 	// RotateCredential replaces a live guest seat credential of the seat.
 	RotateCredential bool
+	// CredentialMatchID is the match the presented credential of the caller
+	// is bound to. It is empty when the caller presented no credential.
+	//
+	// The service uses it to tell a caller that already holds a working
+	// credential of the new match from one that lost its answer. A rematch
+	// is a new match, so the credential of the finished match cannot
+	// authorize the new seat.
+	CredentialMatchID string
 }
 
 // RematchResult is the answer of one accepted rematch.
@@ -545,6 +569,11 @@ func (s *Service) Get(ctx context.Context, invitationID string, viewerAccountID 
 // is minted again only when the caller asks for the rotation, so a routine
 // retry never supersedes a credential that another request already
 // delivered.
+//
+// The consumption of the invitation, the acceptance record, the canonical
+// match and the guest seat credential commit together. An invitation is
+// therefore never spent without a game, and a crash between two writes
+// cannot orphan an acceptance.
 func (s *Service) Accept(ctx context.Context, request AcceptRequest) (Accepted, error) {
 	if err := validateAcceptanceKey(request.AcceptanceKey); err != nil {
 		return Accepted{}, err
@@ -569,9 +598,11 @@ func (s *Service) Accept(ctx context.Context, request AcceptRequest) (Accepted, 
 	}
 	if recipient != "" {
 		// A named challenge is isolated: only the named account may accept
-		// it, and a guest never may.
+		// it, and a guest never may. An invitation that is not visible to
+		// the caller is reported exactly like an unknown invitation, so a
+		// caller cannot learn that a named challenge exists.
 		if request.Acceptor == nil || request.Acceptor.Participant.Kind != online.ParticipantAccount || request.Acceptor.Participant.ID != recipient {
-			return Accepted{}, ErrNotAuthorized
+			return Accepted{}, ErrNotFound
 		}
 	}
 	// The position is checked before the consumption, so an invalid
@@ -581,37 +612,33 @@ func (s *Service) Accept(ctx context.Context, request AcceptRequest) (Accepted, 
 		invitation.InviterLabel, invitation.InviterControl); err != nil {
 		return Accepted{}, err
 	}
-	acceptance, err := s.claim(ctx, request, invitation)
-	if err != nil {
-		return Accepted{}, err
-	}
-	return s.complete(ctx, acceptance, invitation, request)
+	return s.accept(ctx, request, invitation)
 }
 
-// claim consumes the invitation and records the acceptance in one
-// transaction.
+// accept consumes the invitation, records the acceptance, creates the
+// canonical match and mints the guest seat credential in one transaction.
 //
 // The invitation row is locked before its state is read, so two concurrent
 // acceptances serialize and only one of them sees the open status. The loser
 // of the race observes the consumed state after the winner committed and
 // releases the lock with its rollback.
 //
-// Every read of the claim runs inside the claim transaction. A loser never
+// Every read of the transaction runs on the transaction itself. A loser never
 // holds a row lock while it waits for a connection of the pool, so a
 // contended acceptance can never exhaust the pool and block the winner of
 // the race.
 //
-// The acceptance row is written in the same transaction, so an invitation is
-// never consumed without a recoverable acceptance.
+// The consumption, the acceptance row, the match and the credential commit
+// together. A crash can never leave a spent invitation without a game, so no
+// reconciler has to look for an orphaned acceptance.
 //
-// The identity of an anonymous guest acceptor is allocated inside that
-// transaction and stored as the seat owner of the created match, so the
-// identity and the minted credential always agree.
-func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation Invitation) (acceptance, error) {
+// Every step is idempotent: the match identifier is derived from the
+// acceptance, so a retry creates no second match.
+func (s *Service) accept(ctx context.Context, request AcceptRequest, invitation Invitation) (Accepted, error) {
 	keyHash := hashAcceptanceKey(request.AcceptanceKey)
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return acceptance{}, err
+		return Accepted{}, err
 	}
 	closed := false
 	defer func() {
@@ -619,9 +646,9 @@ func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation I
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	// The invitation row is locked for the claim. The lock is taken before
-	// the state is read, so a concurrent acceptance is observed after it
-	// committed.
+	// The invitation row is locked for the acceptance. The lock is taken
+	// before the state is read, so a concurrent acceptance is observed
+	// after it committed.
 	var (
 		status    string
 		expiresAt time.Time
@@ -631,15 +658,45 @@ func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation I
 		if errors.Is(err, pgx.ErrNoRows) {
 			closed = true
 			_ = tx.Rollback(ctx)
-			return acceptance{}, ErrNotFound
+			return Accepted{}, ErrNotFound
 		}
-		return acceptance{}, err
+		return Accepted{}, err
 	}
+	acceptance, err := s.claim(ctx, tx, request, invitation, keyHash, status, expiresAt)
+	if err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return Accepted{}, err
+	}
+	accepted, err := s.complete(ctx, tx, acceptance, invitation, request)
+	if err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return Accepted{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Accepted{}, err
+	}
+	closed = true
+	return accepted, nil
+}
+
+// claim consumes the invitation and records the acceptance inside the
+// acceptance transaction.
+//
+// The acceptance row is written in the same transaction as the match, so an
+// invitation is never consumed without a recoverable acceptance.
+//
+// The identity of an anonymous guest acceptor is allocated inside that
+// transaction and stored as the seat owner of the created match, so the
+// identity and the minted credential always agree.
+func (s *Service) claim(ctx context.Context, tx pgx.Tx, request AcceptRequest, invitation Invitation, keyHash []byte, status string, expiresAt time.Time) (acceptance, error) {
 	// An acceptance with the same key resumes the same acceptance.
 	existing, lookupErr := s.acceptanceByKey(ctx, tx, request.InvitationID, keyHash)
 	if lookupErr == nil {
-		closed = true
-		_ = tx.Rollback(ctx)
+		// An account acceptor is bound to its own acceptance. A guest has
+		// no other identity, so the acceptance key is the whole resume
+		// capability of a guest acceptance.
 		if request.Acceptor != nil && existing.AcceptorID != request.Acceptor.Participant.ID {
 			return acceptance{}, ErrConflict
 		}
@@ -651,21 +708,13 @@ func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation I
 	now := s.now()
 	switch Status(status) {
 	case StatusConsumed:
-		closed = true
-		_ = tx.Rollback(ctx)
 		return acceptance{}, ErrAlreadyConsumed
 	case StatusCancelled:
-		closed = true
-		_ = tx.Rollback(ctx)
 		return acceptance{}, ErrConflict
 	case StatusExpired:
-		closed = true
-		_ = tx.Rollback(ctx)
 		return acceptance{}, ErrExpired
 	}
 	if !now.Before(expiresAt) {
-		closed = true
-		_ = tx.Rollback(ctx)
 		return acceptance{}, ErrExpired
 	}
 	acceptanceID, err := s.options.Identifier("acc_", 24)
@@ -698,8 +747,6 @@ func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation I
 		return acceptance{}, err
 	}
 	if tag.RowsAffected() == 0 {
-		closed = true
-		_ = tx.Rollback(ctx)
 		return acceptance{}, ErrAlreadyConsumed
 	}
 	seat := invitation.InviterSeat
@@ -719,10 +766,6 @@ func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation I
 	if err != nil {
 		return acceptance{}, err
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return acceptance{}, err
-	}
-	closed = true
 	return acceptance{
 		AcceptanceID:  acceptanceID,
 		InvitationID:  request.InvitationID,
@@ -738,12 +781,11 @@ func (s *Service) claim(ctx context.Context, request AcceptRequest, invitation I
 }
 
 // complete creates the canonical match of an acceptance and mints the guest
-// seat credential of a guest acceptor.
+// seat credential of a guest acceptor, inside the acceptance transaction.
 //
-// The match, the acceptance state and the credential commit together. Every
-// step is idempotent: the match identifier is derived from the acceptance,
-// so a retry creates no second match.
-func (s *Service) complete(ctx context.Context, acceptance acceptance, invitation Invitation, request AcceptRequest) (Accepted, error) {
+// The match, the acceptance state and the credential commit together with the
+// consumption of the invitation.
+func (s *Service) complete(ctx context.Context, tx pgx.Tx, acceptance acceptance, invitation Invitation, request AcceptRequest) (Accepted, error) {
 	inviterParticipant := online.ParticipantRef{Kind: online.ParticipantKind(invitation.inviterKind), ID: invitation.inviterID}
 	acceptorParticipant := online.ParticipantRef{Kind: online.ParticipantKind(acceptance.AcceptorKind), ID: acceptance.AcceptorID}
 	if inviterParticipant == acceptorParticipant {
@@ -770,11 +812,6 @@ func (s *Service) complete(ctx context.Context, acceptance acceptance, invitatio
 	if err != nil {
 		return Accepted{}, err
 	}
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return Accepted{}, err
-	}
-	defer tx.Rollback(ctx)
 	result, err := s.matches.CreateMatchInTx(ctx, tx, cmd)
 	if err != nil {
 		return Accepted{}, err
@@ -797,9 +834,6 @@ func (s *Service) complete(ctx context.Context, acceptance acceptance, invitatio
 			return Accepted{}, mintErr
 		}
 		accepted.GuestCredential = credential
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return Accepted{}, err
 	}
 	return accepted, nil
 }
@@ -863,6 +897,9 @@ func (s *Service) Cancel(ctx context.Context, request CancelRequest) (Invitation
 	}
 	if invitation.Status == StatusCancelled {
 		return invitation, nil
+	}
+	if invitation.Status == StatusExpired {
+		return Invitation{}, ErrExpired
 	}
 	if invitation.Status != StatusOpen {
 		return Invitation{}, ErrConflict
@@ -1056,9 +1093,14 @@ func (s *Service) ProposeRematch(ctx context.Context, request RematchRequest) (R
 
 // AcceptRematch accepts a rematch offer and creates the new match.
 //
-// The offer is reserved before the match is created, so a concurrent
-// supersede, expiry or a second acceptance can never produce a second match.
-// A duplicate acceptance returns the same new match.
+// The offer, the new match and the guest seat credential of the accepter
+// commit in one transaction. A crash can never leave a durable reservation
+// without a game, and a concurrent supersede, an expiry or a second
+// acceptance can never produce a second match.
+//
+// A duplicate acceptance returns the same new match. A guest accepter that
+// lost the answer receives a fresh credential of the new match, because the
+// credential of the finished match cannot authorize the new seat.
 //
 // The new match is a new game, so a guest participant needs a fresh seat
 // credential for it: the credential of the finished match cannot authorize
@@ -1078,90 +1120,128 @@ func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchReques
 	if offer.proposerID == request.Acceptor.ID && offer.proposerKind == string(request.Acceptor.Kind) {
 		return RematchResult{}, fmt.Errorf("%w: the proposer is already consenting", ErrConflict)
 	}
-	if offer.Status == RematchAccepted && offer.NewMatchID != nil {
-		seat, seatErr := seatOf(match, request.Acceptor)
-		if seatErr != nil {
-			return RematchResult{}, seatErr
-		}
-		return RematchResult{Rematch: offer, MatchID: *offer.NewMatchID, Seat: reversedSeat(seat)}, nil
-	}
-	if offer.Status != RematchPending && offer.Status != RematchAccepting {
-		return RematchResult{}, ErrConflict
-	}
-	// The offer is reserved before the match is created. The reservation
-	// names the accepter, so a retry by the same accepter resumes it and a
-	// different accepter is refused.
-	now := s.now()
-	var reserved string
-	err = s.db.QueryRow(ctx, `UPDATE online_rematch_offers SET status='accepting',accepted_by_kind=$2,accepted_by_id=$3,version=version+1,updated_at=$4 WHERE rematch_id=$1 AND status IN ('pending','accepting') AND expires_at > $4 AND (accepted_by_id IS NULL OR accepted_by_id=$3) RETURNING rematch_id`,
-		request.RematchID, string(request.Acceptor.Kind), request.Acceptor.ID, now).Scan(&reserved)
-	if err != nil {
-		if !errors.Is(err, pgx.ErrNoRows) {
-			return RematchResult{}, err
-		}
-		current, readErr := s.readRematch(ctx, request.RematchID)
-		if readErr != nil {
-			return RematchResult{}, readErr
-		}
-		if current.Status == RematchAccepted && current.NewMatchID != nil {
-			seat, seatErr := seatOf(match, request.Acceptor)
-			if seatErr != nil {
-				return RematchResult{}, seatErr
-			}
-			return RematchResult{Rematch: current, MatchID: *current.NewMatchID, Seat: reversedSeat(seat)}, nil
-		}
-		if !s.now().Before(current.ExpiresAt) {
-			return RematchResult{}, ErrExpired
-		}
-		return RematchResult{}, ErrConflict
-	}
-	white, black, err := rematchSeats(match, offer)
+	oldSeat, err := seatOf(match, request.Acceptor)
 	if err != nil {
 		return RematchResult{}, err
 	}
-	startingFEN := offer.StartingFEN
+	newSeat := reversedSeat(oldSeat)
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return RematchResult{}, err
+	}
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	// The offer is locked before its state is read, so a concurrent
+	// supersede or a second acceptance is observed after it committed.
+	locked, err := s.lockRematch(ctx, tx, request.RematchID)
+	if err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return RematchResult{}, err
+	}
+	switch locked.Status {
+	case RematchAccepted:
+		// The offer is already accepted. The duplicate acceptance returns
+		// the same new match and creates no second one.
+		if locked.NewMatchID == nil {
+			closed = true
+			_ = tx.Rollback(ctx)
+			return RematchResult{}, ErrConflict
+		}
+		accepted := RematchResult{Rematch: locked, MatchID: *locked.NewMatchID, Seat: newSeat}
+		if request.Acceptor.Kind == online.ParticipantGuest {
+			credential, mintErr := s.mintRematchCredential(ctx, tx, *locked.NewMatchID, newSeat, request.Acceptor.ID, request.Origin, request.RotateCredential, request.CredentialMatchID)
+			if mintErr != nil {
+				closed = true
+				_ = tx.Rollback(ctx)
+				return RematchResult{}, mintErr
+			}
+			accepted.GuestCredential = credential
+		}
+		if err = tx.Commit(ctx); err != nil {
+			return RematchResult{}, err
+		}
+		closed = true
+		return accepted, nil
+	case RematchPending, RematchAccepting:
+		// The offer may still be accepted.
+	default:
+		closed = true
+		_ = tx.Rollback(ctx)
+		return RematchResult{}, ErrConflict
+	}
+	now := s.now()
+	if !now.Before(locked.ExpiresAt) {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return RematchResult{}, ErrExpired
+	}
+	// A reservation of an earlier build names its accepter. Only that
+	// accepter may complete the offer, because the consent of the opponent
+	// was already given.
+	if locked.Status == RematchAccepting && locked.acceptedByID != "" && locked.acceptedByID != request.Acceptor.ID {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return RematchResult{}, ErrConflict
+	}
+	white, black, err := rematchSeats(match, locked)
+	if err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return RematchResult{}, err
+	}
+	startingFEN := locked.StartingFEN
 	if startingFEN == "" {
 		startingFEN = StandardStartingFEN
 	}
 	setup := online.CreateMatchSetup{
 		Variant:     "orthodox",
 		StartingFEN: startingFEN,
-		TimeControl: offer.TimeControl,
+		TimeControl: locked.TimeControl,
 		Seats:       online.CreateMatchSeats{White: white, Black: black},
 	}
 	// The actor of the allocation is fixed by the offer, not by the
 	// accepter. The match identifier is derived from the actor and the
 	// offer, so a retry of the acceptance always names the same match.
 	actor := white.Participant
-	cmd, err := online.NewAllocationCommand(actor, setup, "rmt"+offer.RematchID)
+	cmd, err := online.NewAllocationCommand(actor, setup, "rmt"+locked.RematchID)
 	if err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
 		return RematchResult{}, err
 	}
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return RematchResult{}, err
-	}
-	defer tx.Rollback(ctx)
 	result, err := s.matches.CreateMatchInTx(ctx, tx, cmd)
 	if err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
 		return RematchResult{}, err
 	}
 	matchID := result.Receipt.MatchID
-	tag, err := tx.Exec(ctx, `UPDATE online_rematch_offers SET status='accepted',new_match_id=$2,version=version+1,updated_at=$3 WHERE rematch_id=$1 AND status='accepting'`,
-		offer.RematchID, matchID, s.now())
+	// The offer is consumed by the acceptance in the same transaction as
+	// the new match, so a crash leaves the offer open for the opponent
+	// instead of stranding it.
+	tag, err := tx.Exec(ctx, `UPDATE online_rematch_offers SET status='accepted',accepted_by_kind=$2,accepted_by_id=$3,new_match_id=$4,version=version+1,updated_at=$5 WHERE rematch_id=$1 AND status IN ('pending','accepting')`,
+		request.RematchID, string(request.Acceptor.Kind), request.Acceptor.ID, matchID, s.now())
 	if err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
 		return RematchResult{}, err
 	}
 	if tag.RowsAffected() == 0 {
+		closed = true
+		_ = tx.Rollback(ctx)
 		return RematchResult{}, ErrConflict
 	}
-	accepted := RematchResult{Rematch: offer, MatchID: matchID}
-	if seat, seatErr := seatOf(match, request.Acceptor); seatErr == nil {
-		accepted.Seat = reversedSeat(seat)
-	}
+	accepted := RematchResult{Rematch: locked, MatchID: matchID, Seat: newSeat}
 	if request.Acceptor.Kind == online.ParticipantGuest {
-		credential, mintErr := s.mintSeatCredentialInTx(ctx, tx, matchID, accepted.Seat, request.Acceptor.ID, request.Origin)
+		credential, mintErr := s.mintRematchCredential(ctx, tx, matchID, newSeat, request.Acceptor.ID, request.Origin, request.RotateCredential, request.CredentialMatchID)
 		if mintErr != nil {
+			closed = true
+			_ = tx.Rollback(ctx)
 			return RematchResult{}, mintErr
 		}
 		accepted.GuestCredential = credential
@@ -1169,10 +1249,35 @@ func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchReques
 	if err = tx.Commit(ctx); err != nil {
 		return RematchResult{}, err
 	}
-	offer.Status = RematchAccepted
-	offer.NewMatchID = &matchID
-	accepted.Rematch = offer
+	closed = true
+	accepted.Rematch.Status = RematchAccepted
+	accepted.Rematch.NewMatchID = &matchID
 	return accepted, nil
+}
+
+// mintRematchCredential mints the guest seat credential of a rematch seat
+// inside the caller's transaction.
+//
+// The credential of the finished match cannot authorize the new match, so a
+// guest participant needs a fresh credential for the new seat.
+//
+// A routine retry never supersedes a credential another request already
+// delivered. The credential is minted when the seat has no live credential,
+// when the caller asks for the rotation, or when the credential the caller
+// presented belongs to another match, so the caller cannot use what it holds
+// to play the new game.
+func (s *Service) mintRematchCredential(ctx context.Context, tx pgx.Tx, matchID string, seat online.Seat, guestID, origin string, rotate bool, presentedMatchID string) (*GuestCredential, error) {
+	if guestID == "" {
+		return nil, ErrInvalidArgument
+	}
+	live, err := s.credentials.HasLiveSeatCredential(ctx, tx, matchID, seat)
+	if err != nil {
+		return nil, err
+	}
+	if live && !rotate && presentedMatchID == matchID {
+		return nil, nil
+	}
+	return s.mintSeatCredentialInTx(ctx, tx, matchID, seat, guestID, origin)
 }
 
 // RematchSeatCredential mints the guest seat credential of the proposer of an
@@ -1221,7 +1326,7 @@ func (s *Service) PendingRematch(ctx context.Context, matchID string, participan
 	if !match.HasParticipant(participant) {
 		return Rematch{}, false, ErrNotAuthorized
 	}
-	row := s.db.QueryRow(ctx, `SELECT rematch_id,match_id,status,proposer_public_label,proposer_seat,starting_time_ms,increment_ms,starting_fen,expires_at,new_match_id,created_at FROM online_rematch_offers WHERE match_id=$1 AND status IN ('pending','accepting','accepted') ORDER BY created_at DESC LIMIT 1`, matchID)
+	row := s.db.QueryRow(ctx, `SELECT `+rematchColumns+` FROM online_rematch_offers WHERE match_id=$1 AND status IN ('pending','accepting','accepted') ORDER BY created_at DESC LIMIT 1`, matchID)
 	offer, err := scanRematch(row)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -1278,12 +1383,36 @@ func (s *Service) acceptanceByKey(ctx context.Context, q online.Querier, invitat
 }
 
 // readInvitation loads one invitation and its named recipient.
+//
+// The status of the invitation is the effective status: an open invitation
+// whose deadline passed is expired, even though no sweep ever wrote that
+// state. The expiry is a property of the deadline, not of a stored row, so a
+// link nobody touched still reports that it expired.
 func (s *Service) readInvitation(ctx context.Context, invitationID string) (Invitation, string, error) {
 	if strings.TrimSpace(invitationID) == "" {
 		return Invitation{}, "", ErrInvalidArgument
 	}
 	row := s.db.QueryRow(ctx, `SELECT invitation_id,kind,status,inviter_public_label,inviter_seat,inviter_control_kind,inviter_model_label,starting_time_ms,increment_ms,starting_fen,recipient_account_id,expires_at,created_at,consumed_at,cancelled_at,match_id,inviter_kind,inviter_id,acceptance_id FROM online_friend_invitations WHERE invitation_id=$1`, invitationID)
-	return scanInvitation(row)
+	invitation, recipient, err := scanInvitation(row)
+	if err != nil {
+		return Invitation{}, "", err
+	}
+	invitation.Status = s.effectiveStatus(invitation.Status, invitation.ExpiresAt)
+	return invitation, recipient, nil
+}
+
+// effectiveStatus returns the status an invitation has right now.
+//
+// Only an open invitation can expire. A consumed, a cancelled and an already
+// expired invitation keep the state they have.
+func (s *Service) effectiveStatus(status Status, expiresAt time.Time) Status {
+	if status != StatusOpen {
+		return status
+	}
+	if !s.now().Before(expiresAt) {
+		return StatusExpired
+	}
+	return status
 }
 
 // scanInvitation reads one invitation row.
@@ -1331,12 +1460,14 @@ func scanInvitation(row pgx.Row) (Invitation, string, error) {
 // scanRematch reads one rematch offer row.
 func scanRematch(row pgx.Row) (Rematch, error) {
 	var (
-		offer       Rematch
-		status      string
-		seat        string
-		startingFEN *string
+		offer          Rematch
+		status         string
+		seat           string
+		startingFEN    *string
+		acceptedByKind *string
+		acceptedByID   *string
 	)
-	err := row.Scan(&offer.RematchID, &offer.MatchID, &status, &offer.ProposerLabel, &seat, &offer.TimeControl.StartingTimeMs, &offer.TimeControl.IncrementMs, &startingFEN, &offer.ExpiresAt, &offer.NewMatchID, &offer.CreatedAt)
+	err := row.Scan(&offer.RematchID, &offer.MatchID, &status, &offer.ProposerLabel, &seat, &offer.TimeControl.StartingTimeMs, &offer.TimeControl.IncrementMs, &startingFEN, &offer.ExpiresAt, &offer.NewMatchID, &offer.CreatedAt, &offer.proposerKind, &offer.proposerID, &acceptedByKind, &acceptedByID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Rematch{}, ErrNotFound
@@ -1347,36 +1478,37 @@ func scanRematch(row pgx.Row) (Rematch, error) {
 	offer.ProposerSeat = online.Seat(seat)
 	if startingFEN != nil {
 		offer.StartingFEN = *startingFEN
+	}
+	if acceptedByKind != nil {
+		offer.acceptedByKind = *acceptedByKind
+	}
+	if acceptedByID != nil {
+		offer.acceptedByID = *acceptedByID
 	}
 	return offer, nil
 }
 
+// rematchColumns are the columns of one rematch offer row.
+//
+// Every reader of an offer selects the same columns, so one scanner reads
+// every offer.
+const rematchColumns = `rematch_id,match_id,status,proposer_public_label,proposer_seat,starting_time_ms,increment_ms,starting_fen,expires_at,new_match_id,created_at,proposer_kind,proposer_id,accepted_by_kind,accepted_by_id`
+
 // readRematch loads one rematch offer.
 func (s *Service) readRematch(ctx context.Context, rematchID string) (Rematch, error) {
-	row := s.db.QueryRow(ctx, `SELECT rematch_id,match_id,status,proposer_public_label,proposer_seat,starting_time_ms,increment_ms,starting_fen,expires_at,new_match_id,created_at,proposer_kind,proposer_id FROM online_rematch_offers WHERE rematch_id=$1`, rematchID)
-	var (
-		offer        Rematch
-		status       string
-		seat         string
-		startingFEN  *string
-		proposerKind string
-		proposerID   string
-	)
-	err := row.Scan(&offer.RematchID, &offer.MatchID, &status, &offer.ProposerLabel, &seat, &offer.TimeControl.StartingTimeMs, &offer.TimeControl.IncrementMs, &startingFEN, &offer.ExpiresAt, &offer.NewMatchID, &offer.CreatedAt, &proposerKind, &proposerID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return Rematch{}, ErrNotFound
-		}
-		return Rematch{}, err
-	}
-	offer.Status = RematchStatus(status)
-	offer.ProposerSeat = online.Seat(seat)
-	if startingFEN != nil {
-		offer.StartingFEN = *startingFEN
-	}
-	offer.proposerKind = proposerKind
-	offer.proposerID = proposerID
-	return offer, nil
+	row := s.db.QueryRow(ctx, `SELECT `+rematchColumns+` FROM online_rematch_offers WHERE rematch_id=$1`, rematchID)
+	return scanRematch(row)
+}
+
+// lockRematch locks one rematch offer and reads its durable state.
+//
+// The lock serializes the acceptance of an offer, the supersede of a newer
+// proposal and a second acceptance of the same offer. Every read runs on the
+// caller's transaction, so a contention never reaches for a second
+// connection of the pool while it holds the lock.
+func (s *Service) lockRematch(ctx context.Context, tx pgx.Tx, rematchID string) (Rematch, error) {
+	row := tx.QueryRow(ctx, `SELECT `+rematchColumns+` FROM online_rematch_offers WHERE rematch_id=$1 FOR UPDATE`, rematchID)
+	return scanRematch(row)
 }
 
 // ownsInvitation reports whether the caller owns the invitation.

@@ -306,7 +306,9 @@ func TestPostgresFriendInvitationLinkAndChallengePaths(t *testing.T) {
 	}
 
 	// A named challenge belongs to one account. Another account may neither
-	// preview nor accept it.
+	// preview nor accept it, and the refusal of the acceptance is the same
+	// refusal as the refusal of an unknown invitation, so a caller cannot
+	// learn that a named challenge exists.
 	challenge, err := fixture.friends.Create(ctx, invite.CreateRequest{
 		Kind:               invite.KindChallenge,
 		Inviter:            friendIdentity("user_inviter", "Alice"),
@@ -327,8 +329,8 @@ func TestPostgresFriendInvitationLinkAndChallengePaths(t *testing.T) {
 		Acceptor:      friendIdentity("user_stranger", "Mallory"),
 		Control:       online.SeatControl{Kind: online.ControlHuman},
 		Origin:        friendOrigin,
-	}); !errors.Is(err, invite.ErrNotAuthorized) {
-		t.Fatalf("stranger acceptance error = %v, want ErrNotAuthorized", err)
+	}); !errors.Is(err, invite.ErrNotFound) {
+		t.Fatalf("stranger acceptance error = %v, want ErrNotFound", err)
 	}
 	// The challenge is still open after the refused attempt.
 	preview, err = fixture.friends.Get(ctx, challenge.Invitation.InvitationID, "user_recipient")

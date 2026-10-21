@@ -24,6 +24,9 @@
 CREATE TABLE IF NOT EXISTS online_friend_invitations (
   invitation_id text PRIMARY KEY CHECK (invitation_id ~ '^inv_[A-Za-z0-9_-]{32,64}$'),
   kind text NOT NULL CHECK (kind IN ('link', 'challenge')),
+  -- The stored state of the invitation. An open invitation whose deadline
+  -- passed reads as expired, because the effective status is read from the
+  -- deadline. The stored state therefore never has to be swept.
   status text NOT NULL CHECK (status IN ('open', 'consumed', 'cancelled', 'expired')),
   version bigint NOT NULL DEFAULT 1 CHECK (version >= 1),
   -- The inviter identity. An anonymous guest inviter has a guest identity of
@@ -57,7 +60,8 @@ CREATE TABLE IF NOT EXISTS online_friend_invitations (
   CHECK (match_id IS NULL OR status = 'consumed'),
   CHECK (expires_at > created_at)
 );
--- The expiry sweep reads the open invitations by their deadline.
+-- The effective status of an invitation is read from its deadline, so the
+-- open invitations by their deadline are the ones a caller still sees.
 CREATE INDEX IF NOT EXISTS online_friend_invitations_open ON online_friend_invitations(status, expires_at);
 -- A named challenge is looked up by its recipient.
 CREATE INDEX IF NOT EXISTS online_friend_invitations_recipient ON online_friend_invitations(recipient_account_id) WHERE recipient_account_id IS NOT NULL;
@@ -73,6 +77,11 @@ CREATE INDEX IF NOT EXISTS online_friend_invitations_recipient ON online_friend_
 -- stored, so a leaked database row never resumes an acceptance. The key is
 -- the only capability that resumes an acceptance: the public acceptance
 -- identifier is never sufficient.
+--
+-- An account acceptor is bound to its own acceptance, because an account has
+-- an identity the service can check. A guest acceptor has no other identity,
+-- so the key is the whole capability of that acceptance. The key therefore
+-- stays secret, it is never logged, and the service never returns it.
 CREATE TABLE IF NOT EXISTS online_invitation_acceptances (
   acceptance_id text PRIMARY KEY CHECK (acceptance_id ~ '^acc_[A-Za-z0-9_-]{16,40}$'),
   invitation_id text NOT NULL REFERENCES online_friend_invitations(invitation_id) ON DELETE RESTRICT,
@@ -100,7 +109,10 @@ CREATE TABLE IF NOT EXISTS online_invitation_acceptances (
 );
 -- One acceptance per key. A retry of the same key finds the same acceptance.
 CREATE UNIQUE INDEX IF NOT EXISTS online_invitation_acceptances_key ON online_invitation_acceptances(invitation_id, acceptance_key_hash);
--- A pending acceptance is recovered by the acceptance reconciler.
+-- The acceptance, the canonical match and the guest seat credential commit
+-- in one transaction, so a pending acceptance never survives a crash and no
+-- reconciler has to look for an orphaned one. The index is the access path
+-- of the acceptance state.
 CREATE INDEX IF NOT EXISTS online_invitation_acceptances_pending ON online_invitation_acceptances(status, updated_at);
 
 -- A rematch offer is one participant's proposal for a new game.
@@ -129,9 +141,10 @@ CREATE TABLE IF NOT EXISTS online_rematch_offers (
   updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   expires_at timestamptz NOT NULL,
   CHECK ((status = 'accepted') = (new_match_id IS NOT NULL)),
-  -- The accepter is recorded when the offer is reserved. The reservation
-  -- names the accepter, so a retry by the same accepter resumes it and a
-  -- different accepter is refused.
+  -- The accepter is recorded when the offer is accepted. The offer, the new
+  -- match and the credential of the accepter commit together, so a durable
+  -- reservation never outlives its acceptance and a crash leaves the offer
+  -- open for the opponent.
   CHECK ((status IN ('accepting', 'accepted')) = (accepted_by_id IS NOT NULL)),
   CHECK (expires_at > created_at)
 );
