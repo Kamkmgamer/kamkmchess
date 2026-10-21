@@ -43,6 +43,7 @@ on. The two switches are independent.
 | Surface | Accepted credential |
 | --- | --- |
 | friend invitation create / preview / accept / cancel | account session **or** guest seat credential **or** none (a guest link is public) |
+| rematch propose / pending offer / accept / seat claim | account session **or** the guest seat credential of the original match |
 | public queue | account session only. A guest can never enter the public queue |
 
 A mutation always needs an explicit `Origin` header. A credential never
@@ -364,6 +365,9 @@ while a working credential is held. An account inviter receives `null` for
 `guestCredential`.
 
 ### Rematches
+
+All four routes require an account session or the guest seat credential of
+the original match. A public invitation link alone does not authorize them.
 
 ```
 POST /v1/online/rematches                                   // propose

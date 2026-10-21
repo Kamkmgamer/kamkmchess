@@ -28,6 +28,9 @@ type Service struct {
 	// cancellation tells whether an evaluation was cancelled by its
 	// caller rather than failed by the dependency.
 	cancellation func(error) bool
+	// busyClassifier tells whether an evaluation found the rules process
+	// occupied by a running request.
+	busyClassifier func(error) bool
 	// recoveryRequired closes the mutation path until the canonical
 	// recovery has published the adjusted state.
 	recoveryRequired atomic.Bool

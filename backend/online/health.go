@@ -317,6 +317,14 @@ func WithHealthReporter(reporter *HealthReporter) Option {
 	return func(s *Service) { s.health = reporter }
 }
 
+// WithBusyClassifier installs the classifier of an occupied rules process.
+//
+// A busy process is not a broken dependency, so the probe leaves the
+// durable health alone and records no interruption.
+func WithBusyClassifier(classify func(error) bool) Option {
+	return func(s *Service) { s.busyClassifier = classify }
+}
+
 // WithCancellationClassifier installs the classifier of a cancelled
 // evaluation.
 //
@@ -399,6 +407,20 @@ const ProbeBudget = 0
 //     the worker. That is an outage of the dependency.
 var ErrRulesBusy = errors.New("online: the rules process is busy")
 
+// ReadyEvaluator reports the readiness of the rules process.
+//
+// The seam exists so the client can tell a busy process from a hung one: a
+// busy process answers with ErrRulesBusy, a hung one answers with the failure
+// of the process, and a caller that went away answers with the context error.
+//
+// The probe uses the seam when the evaluator has one, and falls back to a real
+// setup exchange otherwise. The exchange is a real request, so an idle hung
+// process is an outage in both cases.
+type ReadyEvaluator interface {
+	// Probe reports whether the rules process can serve a request.
+	Probe(ctx context.Context) error
+}
+
 // ProbeRules checks that the private rules process answers.
 //
 // The probe evaluates the primary rules process, so its answer is evidence
@@ -413,6 +435,23 @@ func (s *Service) ProbeRules(ctx context.Context) error {
 	if s.evaluator == nil {
 		s.noteEvaluatorFailure(nil)
 		return ErrUnavailable
+	}
+	if ready, ok := s.evaluator.(ReadyEvaluator); ok {
+		if err := ready.Probe(ctx); err != nil {
+			// The caller of the probe left, so the failure says nothing
+			// about the dependency. The client may report its own error
+			// for the cause, so the context of the caller decides.
+			if ctx.Err() != nil {
+				return err
+			}
+			if s.busy(err) || s.cancelled(err) {
+				return err
+			}
+			s.noteEvaluatorFailure(err)
+			return err
+		}
+		s.noteEvaluatorSuccess()
+		return nil
 	}
 	probeCtx := ctx
 	if ProbeBudget > 0 {
@@ -440,8 +479,20 @@ func (s *Service) ProbeRules(ctx context.Context) error {
 }
 
 // busy reports whether an evaluation found the rules process occupied.
+//
+// The busy error of the rules client is its own, so the composition
+// installs the classifier that knows it.
 func (s *Service) busy(err error) bool {
-	return err != nil && errors.Is(err, ErrRulesBusy)
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrRulesBusy) {
+		return true
+	}
+	if s.busyClassifier != nil {
+		return s.busyClassifier(err)
+	}
+	return false
 }
 
 // probeRulesInput is the fixed, versioned input of the rules probe.

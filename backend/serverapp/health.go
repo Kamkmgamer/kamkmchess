@@ -94,7 +94,13 @@ func rulesCancellation(err error) bool {
 // An occupied process is not a broken dependency, so the service keeps
 // serving and no interruption is recorded.
 func rulesBusy(err error) bool {
-	return err != nil && errors.Is(err, online.ErrRulesBusy)
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, online.ErrRulesBusy) {
+		return true
+	}
+	return errors.Is(err, rulesworker.ErrBusy)
 }
 
 // checkHealth runs one health check.

@@ -227,6 +227,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		online.WithSeatAuthorizer(authorizer),
 		online.WithHealthReporter(health),
 		online.WithCancellationClassifier(rulesCancellation),
+		online.WithBusyClassifier(rulesBusy),
 		online.WithRecoveryGate(),
 	)
 	if err != nil {

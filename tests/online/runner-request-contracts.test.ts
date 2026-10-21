@@ -84,4 +84,40 @@ describe('the shared provider request envelope', () => {
     const blankRequest = { ...(fixture.runnerRequest as Record<string, unknown>), requestId: 'bad\nidentity' };
     expect(() => parseRunnerRequestEnvelope(blankRequest)).toThrow(/invalid runner identity/);
   });
+
+  it('counts the identity in UTF-8 bytes, like the service does', () => {
+    const fixture = loadFixture();
+    // The service counts the bytes of the identity, not its characters. Sixty
+    // four two-byte characters are exactly 128 bytes, the last accepted size.
+    const atTheLimit = 'ü'.repeat(64);
+    expect(new TextEncoder().encode(atTheLimit).length).toBe(128);
+    const accepted = { ...(fixture.runnerRequest as Record<string, unknown>), runnerId: atTheLimit };
+    expect(parseRunnerRequestEnvelope(accepted).runnerId).toBe(atTheLimit);
+    // One byte more is refused, even though the character count is the same.
+    const overTheLimit = `${atTheLimit}a`;
+    expect(new TextEncoder().encode(overTheLimit).length).toBe(129);
+    expect(() => parseRunnerRequestEnvelope({ ...(fixture.runnerRequest as Record<string, unknown>), runnerId: overTheLimit })).toThrow(
+      /invalid runner identity/,
+    );
+  });
+
+  it('refuses a control character in an identity, like the service does', () => {
+    const fixture = loadFixture();
+    // The service refuses the C0 controls and the delete character, and it
+    // counts the code points, so a control character inside a multi-byte
+    // character is refused as well.
+    for (const character of ['\u0000', '\u001f', '\u007f']) {
+      const body = { ...(fixture.runnerRequest as Record<string, unknown>), requestId: `request${character}identity` };
+      expect(() => parseRunnerRequestEnvelope(body)).toThrow(/invalid runner identity/);
+    }
+  });
+
+  it('keeps an untrimmed identity, like the service does', () => {
+    const fixture = loadFixture();
+    // The identity is opaque: the service never trims it, so the browser keeps
+    // the spaces it was given instead of sending a different identity.
+    const padded = ' runner-tab-01 ';
+    const body = { ...(fixture.runnerRequest as Record<string, unknown>), runnerId: padded };
+    expect(parseRunnerRequestEnvelope(body).runnerId).toBe(padded);
+  });
 });

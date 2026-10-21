@@ -1669,7 +1669,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         const provider = options.connectionStore
           ? createAgentProviderPort({
             connectionStore: options.connectionStore,
-            namespace: options.resolveNamespace?.() ?? { kind: 'guest' },
+            namespace: options.resolveNamespace?.() ?? options.namespace ?? { kind: 'guest' },
             selection: binding.selection,
           })
           : null;
