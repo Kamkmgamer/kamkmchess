@@ -70,6 +70,42 @@ change.
 | the process start | charged to `RequestTimeout` | `StartTimeout`, and its duration is added back to the exchange deadline |
 | readiness | the first exchange proved it | an explicit facts-only probe, and the exchange runs against a warm worker |
 | the caller's context | bounded the whole call | still bounds the whole call, start included |
+| the failure class | depended on which case the select picked | a specific failure always wins over a generic timeout |
+| a worker that answered late | killed with the exchange | stays alive, so the next request does not pay a cold start |
+
+## The failure class and the late answer
+
+A second defect shared the same symptom. The exchange ended as soon as its
+deadline passed, and the failure it reported depended on which case the
+select happened to pick. A worker that had died was reported as a timeout
+whenever the deadline won the race, and a retry replaced the specific
+failure with the generic one.
+
+The client now decides the failure class deliberately:
+
+- after the deadline, a **short bounded grace** (`classificationGrace`,
+  250 ms) lets the in-flight read report what actually happened. The grace
+  never returns a late answer: a request that ran out of patience still
+  fails, and the caller's deadline stands.
+- a worker that **died** is reported as a crash, an oversized line as a
+  malformed answer, and a malformed line as a malformed answer. A specific
+  failure always wins over a generic timeout, and a failure that the
+  exchange already reported is never replaced by a timeout afterwards.
+- a worker that **answered late** is healthy. The request still fails, but
+  the worker is not killed: the next request does not pay a cold start for a
+  request that only ran out of patience.
+
+The worker is therefore only destroyed when it is actually broken. That is
+what stops the failure from repeating itself under load.
+
+## The fixture budgets
+
+A fixture budget must cover the bounded work the fixture performs. The size
+limit fixture installs a line of twice the response limit, so its budget
+covers that transfer. The other fixtures perform one bounded exchange and use
+the production budget of the client. The cold start of the worker is not
+part of any of these budgets: the client budgets the start separately, and
+the regressions below cover it.
 
 ## Evidence
 
@@ -86,6 +122,17 @@ whose readiness probe answers only after a simulated boot delay:
 Both fail with the old budget accounting and pass with the new one. The
 fixtures warm the worker before they measure a protocol behaviour, so they
 measure the protocol instead of the host's process start latency.
+
+Two further regressions cover the failure class and the late answer:
+
+- `TestTheFailureClassDoesNotDependOnTheDeadline`: a worker that dies after
+  the deadline of the exchange expired. The client reports the crash, not a
+  timeout. Without the classification grace and the failure precedence the
+  same failure is reported as a timeout.
+- `TestALateAnswerKeepsTheWorkerAlive`: a worker that answers after the
+  deadline. The request fails with a timeout, and the worker stays alive, so
+  the next request does not pay a cold start. The regression compares the
+  process identifier of the worker before and after the failure.
 
 The real worker bundle is covered as well: with `KHA66_WORKER_ENTRY` set to
 the built `build/rules-worker/worker.mjs`, the readiness probe is accepted by

@@ -46,6 +46,15 @@ const (
 	// the exchange budget of the request that waits for it.
 	DefaultStartTimeout = 10 * time.Second
 
+	// classificationGrace bounds the wait after the deadline of an exchange
+	// for the failure that actually happened.
+	//
+	// The grace is short and it never returns a late answer: a request
+	// that ran out of patience still fails. It only decides whether the
+	// failure is reported as a broken worker, as a malformed answer, or as
+	// a slow worker that stays alive.
+	classificationGrace = 250 * time.Millisecond
+
 	// ReadinessRequestID is the correlation token of the readiness probe.
 	//
 	// The probe is a facts-only request for the standard position. Its
@@ -68,6 +77,14 @@ var (
 	ErrMalformed      = errors.New("rules worker returned malformed output")
 	ErrCorrelation    = errors.New("rules worker response does not match the request")
 )
+
+// errWorkerAlive marks a failure where the worker answered, but only after
+// the deadline of the exchange had passed.
+//
+// The answer is unusable, so the request still fails with a timeout. The
+// worker itself is healthy, so it stays alive and the next request does not
+// pay a cold start for it.
+var errWorkerAlive = errors.New("rules worker answered after the deadline")
 
 // RejectionError is a valid protocol response that refused the input. It never
 // contains a candidate.
@@ -332,9 +349,16 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 	}
 	waitExpiry, _ := wait.Deadline()
 	expiry := waitExpiry
+	// lastErr is the failure the exchange already reported. A deadline that
+	// runs out afterwards must not replace it: a worker that died is a
+	// crash, not a slow worker, and the caller needs the specific answer.
+	var lastErr error
 
 	for attempt := 0; ; attempt++ {
 		if !time.Now().Before(expiry) {
+			if lastErr != nil {
+				return Response{}, lastErr
+			}
 			return Response{}, ErrTimeout
 		}
 		// The start has its own budget, and the caller's context still
@@ -355,6 +379,13 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 		if exchangeErr == nil {
 			return response, nil
 		}
+		if errors.Is(exchangeErr, errWorkerAlive) {
+			// The worker answered, but the deadline had already passed. The
+			// request fails, and the healthy worker survives: the next
+			// request does not pay a cold start.
+			return Response{}, exchangeErr
+		}
+		lastErr = exchangeErr
 		c.stop()
 		var rejection *RejectionError
 		if errors.As(exchangeErr, &rejection) {
@@ -608,20 +639,65 @@ func (c *Client) exchange(ctx context.Context, line []byte, request Request) (Re
 	}()
 	select {
 	case <-ctx.Done():
+		// The exchange is over, but the failure class must not depend on
+		// which case this select happens to pick. A short bounded grace
+		// lets the in-flight read report what actually happened: a worker
+		// that died is a crash, an oversized line is a malformed answer,
+		// and a worker that answered is healthy.
+		//
+		// The grace never extends the caller's deadline. A late answer is
+		// still a timeout, and the worker that produced it survives, so
+		// the next request does not pay a cold start for a request that
+		// only ran out of patience.
+		select {
+		case result := <-readDone:
+			return c.classify(result, request, true)
+		case <-time.After(classificationGrace):
+		}
 		c.kill()
 		return Response{}, false, contextError(ctx)
 	case result := <-readDone:
-		if result.err != nil {
-			if errors.Is(result.err, errLineTooLong) {
-				return Response{}, false, fmt.Errorf("%w: response exceeds the size limit", ErrMalformed)
-			}
-			if errors.Is(result.err, io.EOF) {
-				return Response{}, true, ErrCrashed
-			}
-			return Response{}, true, fmt.Errorf("%w: %v", ErrCrashed, result.err)
-		}
-		return c.interpret(result.line, request)
+		return c.classify(result, request, false)
 	}
+}
+
+// classify turns the result of the in-flight read into the answer of the
+// exchange.
+//
+// The late flag marks a read that finished after the deadline of the
+// exchange expired. A definitive failure is reported as itself, because a
+// broken worker and a slow worker are different answers. A successful read
+// that arrived late is reported as a timeout with the worker left alive.
+func (c *Client) classify(result readResult, request Request, late bool) (Response, bool, error) {
+	if result.err != nil {
+		if errors.Is(result.err, errLineTooLong) {
+			c.kill()
+			return Response{}, false, fmt.Errorf("%w: response exceeds the size limit", ErrMalformed)
+		}
+		if errors.Is(result.err, io.EOF) {
+			c.kill()
+			return Response{}, true, ErrCrashed
+		}
+		c.kill()
+		return Response{}, true, fmt.Errorf("%w: %v", ErrCrashed, result.err)
+	}
+	response, retry, err := c.interpret(result.line, request)
+	if err != nil {
+		if late {
+			// The answer arrived after the deadline and it is unusable.
+			// The caller's deadline still stands, and the worker is broken.
+			c.kill()
+			return Response{}, retry, err
+		}
+		return response, retry, err
+	}
+	if late {
+		// The worker answered within the grace but after the deadline. The
+		// caller's deadline stands, and the worker is healthy: it stays
+		// alive, so the next request does not pay a cold start.
+		return Response{}, false, fmt.Errorf("%w: %w", ErrTimeout, errWorkerAlive)
+	}
+	return response, retry, nil
 }
 
 func (c *Client) interpret(line []byte, request Request) (Response, bool, error) {

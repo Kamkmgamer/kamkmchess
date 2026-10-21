@@ -123,6 +123,13 @@ for await (const line of rl) {
     case 'slow':
       await new Promise((resolve) => setTimeout(resolve, 5000));
       break;
+    case 'late':
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      break;
+    case 'crash-late':
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      process.exit(9);
+      break;
     case 'delay':
       await new Promise((resolve) => setTimeout(resolve, 700));
       break;
@@ -200,6 +207,21 @@ func testEntryWithBootDelay(t *testing.T, delay time.Duration) string {
 	}
 	return path
 }
+
+// The budgets of the fixtures.
+//
+// The exchange budget must cover the bounded work a fixture performs. The
+// size limit fixture transfers a line of twice the response limit, so its
+// budget covers that transfer. The other fixtures perform one bounded
+// exchange and use the production budget of the client.
+//
+// The cold start of the worker is not part of any of these budgets. The
+// client budgets the start of the worker separately, and the regression
+// below covers it.
+const (
+	exchangeBudget  = 2 * time.Second
+	sizeLimitBudget = 5 * time.Second
+)
 
 func testClient(t *testing.T, timeout time.Duration) *Client {
 	t.Helper()
@@ -292,8 +314,60 @@ func TestTheRestartAfterATimeoutKeepsItsOwnStartBudget(t *testing.T) {
 	}
 }
 
+// TestTheFailureClassDoesNotDependOnTheDeadline proves that a worker that
+// died is reported as a crash even when the deadline of the exchange expired
+// first.
+//
+// The client waits a short bounded grace after the deadline, so the failure
+// it reports is the failure that happened. Without the grace the same
+// failure is reported as a timeout, and the answer depends on which case the
+// select happens to pick.
+func TestTheFailureClassDoesNotDependOnTheDeadline(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 10 * time.Millisecond, StartTimeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	// The worker dies after the deadline of the exchange expired.
+	_, err = client.Evaluate(context.Background(), request("crash-late"))
+	if !errors.Is(err, ErrCrashed) {
+		t.Fatalf("error = %v, want the crash of the worker", err)
+	}
+}
+
+// TestALateAnswerKeepsTheWorkerAlive proves that a worker that answered
+// after the deadline is not destroyed.
+//
+// The answer is unusable, so the request still fails with a timeout. The
+// worker itself is healthy, so it stays alive and the next request does not
+// pay a cold start for a request that only ran out of patience.
+func TestALateAnswerKeepsTheWorkerAlive(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 2 * time.Second, StartTimeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if err = client.Warm(context.Background()); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	pid := client.proc.Process.Pid
+	// The deadline of the exchange expires before the worker answers.
+	tight, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err = client.Evaluate(tight, request("late")); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("error = %v, want timeout", err)
+	}
+	if client.proc == nil || client.proc.Process.Pid != pid {
+		t.Fatal("the worker was restarted although it answered")
+	}
+	// The next request uses the worker that stayed alive.
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the next request: %v", err)
+	}
+}
+
 func TestEvaluateReturnsValidatedMoveCandidate(t *testing.T) {
-	client := testClient(t, time.Second)
+	client := testClient(t, exchangeBudget)
 	response, err := client.Evaluate(context.Background(), moveRequest("ok"))
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
@@ -319,7 +393,7 @@ func TestEvaluateReturnsValidatedMoveCandidate(t *testing.T) {
 }
 
 func TestEvaluateReturnsTimeoutWinnerWithoutCandidate(t *testing.T) {
-	client := testClient(t, time.Second)
+	client := testClient(t, exchangeBudget)
 	req := request("timeout")
 	req.Intent = &Intent{Kind: "timeout", ExpiredColor: "w"}
 	response, err := client.Evaluate(context.Background(), req)
@@ -335,7 +409,7 @@ func TestEvaluateReturnsTimeoutWinnerWithoutCandidate(t *testing.T) {
 }
 
 func TestEvaluateSurfacesRejectionWithoutKillingTheWorker(t *testing.T) {
-	client := testClient(t, time.Second)
+	client := testClient(t, exchangeBudget)
 	_, err := client.Evaluate(context.Background(), moveRequest("reject"))
 	var rejection *RejectionError
 	if !errors.As(err, &rejection) || rejection.Code != "illegal-move" {
@@ -365,7 +439,7 @@ func TestRejectedOrMismatchedOutputCannotReturnACandidate(t *testing.T) {
 	}
 	for id, want := range cases {
 		t.Run(id, func(t *testing.T) {
-			client := testClient(t, time.Second)
+			client := testClient(t, exchangeBudget)
 			req := moveRequest(id)
 			switch id {
 			case "candidate-on-evaluate":
@@ -441,7 +515,9 @@ func TestCanceledRequestDoesNotAttemptToStartWorker(t *testing.T) {
 }
 
 func TestCrashAndMalformedOutputAreBoundedAndRecoverable(t *testing.T) {
-	client := testClient(t, time.Second)
+	// The fixture installs a line of twice the response limit, so its budget
+	// covers that bounded transfer.
+	client := testClient(t, sizeLimitBudget)
 	if _, err := client.Evaluate(context.Background(), request("crash")); !errors.Is(err, ErrCrashed) {
 		t.Fatalf("crash error = %v", err)
 	}
@@ -677,7 +753,7 @@ func TestCancelingAQueuedRequestLeavesTheActiveRequestAlone(t *testing.T) {
 }
 
 func TestCloseRejectsFurtherRequests(t *testing.T) {
-	client := testClient(t, time.Second)
+	client := testClient(t, exchangeBudget)
 	if err := client.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
