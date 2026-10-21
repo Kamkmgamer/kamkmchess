@@ -643,7 +643,11 @@ func recheckParticipants(ctx context.Context, q online.Querier, matchID string, 
 // removed keeps its own seat, its own credential and its own writes: the
 // removal of the opponent does not remove the survivor.
 func removedParticipants(ctx context.Context, q online.Querier, matchID string, participants ...online.ParticipantRef) (bool, error) {
-	references := make([]string, 0, len(participants))
+	type subjectRef struct {
+		kind string
+		ref  string
+	}
+	refs := make([]subjectRef, 0, len(participants))
 	for _, participant := range participants {
 		if participant.ID == "" {
 			continue
@@ -653,8 +657,10 @@ func removedParticipants(ctx context.Context, q online.Querier, matchID string, 
 		}
 		reference := subject.Reference(participant.ID)
 		query := subject.GuestRemovedSQL
+		kind := string(online.ParticipantGuest)
 		if participant.Kind == online.ParticipantAccount {
 			query = subject.AccountRemovedSQL
+			kind = string(online.ParticipantAccount)
 		}
 		var removed bool
 		if err := q.QueryRow(ctx, query, reference).Scan(&removed); err != nil {
@@ -663,13 +669,23 @@ func removedParticipants(ctx context.Context, q online.Querier, matchID string, 
 		if removed {
 			return true, nil
 		}
-		references = append(references, reference)
+		refs = append(refs, subjectRef{kind: kind, ref: reference})
 	}
-	if matchID == "" || len(references) == 0 {
+	if matchID == "" || len(refs) == 0 {
 		return false, nil
 	}
+	// The ledger row names the removed subject **and** its kind. The kind
+	// tells an account and a guest with the same identifier apart, because
+	// their one-way reference is the same value: without the kind the row of
+	// a removed account would refuse the guest of the same identifier.
+	conditions := make([]string, 0, len(refs))
+	args := []any{matchID}
+	for _, reference := range refs {
+		args = append(args, reference.kind, reference.ref)
+		conditions = append(conditions, fmt.Sprintf("(subject_kind=$%d AND subject_id=$%d)", len(args)-1, len(args)))
+	}
 	var removed bool
-	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_removal_ledger WHERE match_id=$1 AND subject_id = ANY($2))`, matchID, references).Scan(&removed); err != nil {
+	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_removal_ledger WHERE match_id=$1 AND (`+strings.Join(conditions, " OR ")+`))`, args...).Scan(&removed); err != nil {
 		return false, err
 	}
 	return removed, nil
@@ -871,12 +887,27 @@ func (s *Service) accept(ctx context.Context, request AcceptRequest, invitation 
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	// The acceptance of the key is read before the locks, so the scope of
+	// the acceptor of a resumed acceptance is known. An anonymous resume
+	// presents no identity of its own, so the stored acceptor is the only
+	// subject the write names, and its scope has to be locked. The read
+	// takes no row lock, so the order of the locks is unchanged, and the
+	// acceptor of an acceptance never changes, so the read is exact.
+	resumed, lookupErr := s.acceptanceByKey(ctx, tx, request.InvitationID, keyHash)
+	if lookupErr != nil && !errors.Is(lookupErr, ErrNotFound) {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return Accepted{}, lookupErr
+	}
 	// The account scope locks come first. The removal of a participant takes
 	// the same lock and then the row locks of the rows it sanitizes, so the
 	// scope locks have to be taken before the row lock of the invitation.
 	participants := []online.ParticipantRef{{Kind: online.ParticipantKind(invitation.inviterKind), ID: invitation.inviterID}}
 	if request.Acceptor != nil {
 		participants = append(participants, request.Acceptor.Participant)
+	}
+	if lookupErr == nil {
+		participants = append(participants, online.ParticipantRef{Kind: online.ParticipantKind(resumed.AcceptorKind), ID: resumed.AcceptorID})
 	}
 	if err = lockParticipants(ctx, tx, participants...); err != nil {
 		closed = true

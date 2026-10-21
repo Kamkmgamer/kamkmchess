@@ -395,10 +395,22 @@ func TestPostgresFriendRemovedInviterDoesNotTakeTheAcceptorSeatAway(t *testing.T
 	if matches != 1 {
 		t.Fatalf("the resume left %d matches", matches)
 	}
-	// The removed inviter is named by no row of the surface.
-	var named int
-	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_friend_invitations WHERE inviter_id='user_inviter' UNION ALL SELECT count(*) FROM online_seats WHERE owner_id='user_inviter'`).Scan(&named); err != nil {
-		t.Fatal(err)
+	// The removed inviter is named by no row of the surface. The two counts
+	// are read separately: a `UNION ALL` in one statement answers with the
+	// first row only, so the sum of two counts in one statement would never
+	// look at the second one.
+	named := 0
+	for _, statement := range []string{
+		`SELECT count(*) FROM online_friend_invitations WHERE inviter_id='user_inviter'`,
+		`SELECT count(*) FROM online_invitation_acceptances WHERE acceptor_id='user_inviter'`,
+		`SELECT count(*) FROM online_seats WHERE owner_id='user_inviter'`,
+		`SELECT count(*) FROM online_rematch_offers WHERE proposer_id='user_inviter' OR accepted_by_id='user_inviter'`,
+	} {
+		var count int
+		if err = fixture.pool.QueryRow(ctx, statement).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		named += count
 	}
 	if named != 0 {
 		t.Fatalf("%d rows still name the removed inviter", named)
@@ -819,6 +831,107 @@ func TestPostgresFriendLegacyAcceptingOfferIsReadWithoutAnError(t *testing.T) {
 	}
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("the wire of the legacy offer status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// TestPostgresFriendAnonymousBearerResumeRecoversTheSurvivorSeat covers the
+// anonymous resume of an acceptance.
+//
+// A guest that lost the answer resumes its acceptance with the acceptance key
+// alone: it presents no identity. The resume still names the stored acceptor,
+// so the account scope of that acceptor is locked before the row of the
+// invitation, and the removal of the acceptor is rechecked after the lock.
+// The surviving guest recovers the credential of its own seat.
+func TestPostgresFriendAnonymousBearerResumeRecoversTheSurvivorSeat(t *testing.T) {
+	fixture := newFriendRemovalFixture(t)
+	ctx := context.Background()
+	created := friendRemovalCreate(t, fixture, "user_inviter")
+	key := acceptanceKey("bearer-resume")
+	accepted, err := fixture.friends.Accept(ctx, invite.AcceptRequest{
+		InvitationID:  created.Invitation.InvitationID,
+		AcceptanceKey: key,
+		Acceptor:      nil,
+		Control:       online.SeatControl{Kind: online.ControlHuman},
+		Origin:        friendOrigin,
+	})
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if accepted.GuestCredential == nil {
+		t.Fatal("the acceptance delivered no credential")
+	}
+	guestID := accepted.GuestCredential.GuestID
+	// The inviter is removed. The guest acceptor is not.
+	if _, err = fixture.removals.DeleteAccount(ctx, accountPrincipal("user_inviter", "session-user_inviter"), authTestOrigin); err != nil {
+		t.Fatalf("delete the inviter: %v", err)
+	}
+	// The resume waits for the account scope lock of the stored acceptor: the
+	// anonymous resume presents no identity, so the stored acceptor is the
+	// only subject the write names.
+	held, err := fixture.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Rollback(ctx)
+	if err = locks.LockAccountScope(ctx, held, locks.AccountScope(string(online.ParticipantGuest), guestID)); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, resumeErr := fixture.friends.Accept(ctx, invite.AcceptRequest{
+			InvitationID:     created.Invitation.InvitationID,
+			AcceptanceKey:    key,
+			Acceptor:         nil,
+			Control:          online.SeatControl{Kind: online.ControlHuman},
+			Origin:           friendOrigin,
+			RotateCredential: true,
+		})
+		done <- resumeErr
+	}()
+	select {
+	case err = <-done:
+		t.Fatalf("the anonymous resume did not wait for the account scope of the acceptor: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err = held.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-done; err != nil {
+		t.Fatalf("the anonymous resume: %v", err)
+	}
+	// The resume answers the match of the guest and the credential of its
+	// seat.
+	resumed, err := fixture.friends.Accept(ctx, invite.AcceptRequest{
+		InvitationID:     created.Invitation.InvitationID,
+		AcceptanceKey:    key,
+		Acceptor:         nil,
+		Control:          online.SeatControl{Kind: online.ControlHuman},
+		Origin:           friendOrigin,
+		RotateCredential: true,
+	})
+	if err != nil {
+		t.Fatalf("the anonymous resume: %v", err)
+	}
+	if resumed.MatchID != accepted.MatchID {
+		t.Fatalf("the resume named %q, want %q", resumed.MatchID, accepted.MatchID)
+	}
+	if resumed.GuestCredential == nil {
+		t.Fatal("the anonymous resume delivered no credential")
+	}
+	principal, err := fixture.authorizer.AuthenticateGuest(ctx, resumed.GuestCredential.Token, friendOrigin)
+	if err != nil {
+		t.Fatalf("authenticate the resumed credential: %v", err)
+	}
+	if principal.MatchID != accepted.MatchID || principal.Participant.ID != guestID {
+		t.Fatalf("the resumed principal = %+v", principal)
+	}
+	// The match was not created again.
+	var matches int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_matches WHERE match_id=$1`, accepted.MatchID).Scan(&matches); err != nil {
+		t.Fatal(err)
+	}
+	if matches != 1 {
+		t.Fatalf("the resume left %d matches", matches)
 	}
 }
 

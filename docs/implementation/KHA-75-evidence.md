@@ -290,6 +290,7 @@ The focused regressions of this round, one by one:
 ```
 --- PASS: TestPostgresFriendSurvivingGuestKeepsItsOwnSeatCredential
 --- PASS: TestPostgresFriendSurvivingGuestRecoversItsAcceptanceCredential
+--- PASS: TestPostgresFriendAnonymousBearerResumeRecoversTheSurvivorSeat
 --- PASS: TestPostgresFriendRestoredSeatIdentityIsRefused
 --- PASS: TestPostgresFriendLegacyAcceptingOfferIsReadWithoutAnError
 --- PASS: TestPostgresFriendRemovedInviterDoesNotTakeTheAcceptorSeatAway
@@ -298,6 +299,23 @@ The focused regressions of this round, one by one:
 --- PASS: TestPostgresFriendDeadRematchOfferIsNotPublished
 --- PASS: TestPostgresFriendRemovedParticipantCannotCancelItsInvitation
 --- PASS: TestPostgresFriendRemovedGuestNeverGetsAFreshCredential
+```
+
+The accept path of the surface was run as well, because the scope of the
+stored acceptor of a resumed acceptance is part of it:
+
+```
+--- PASS: TestPostgresFriendHTTPRoutesAndAnswers
+--- PASS: TestPostgresFriendAcceptanceCommitsTheMatchAndTheCredentialTogether
+--- PASS: TestPostgresFriendGuestRematchLostAnswerRecoversTheCredential
+--- PASS: TestPostgresFriendGuestRematchRetryAnswersTheLiveView
+--- PASS: TestPostgresFriendConcurrentRematchAcceptanceCreatesOneMatch
+--- PASS: TestPostgresFriendAcceptanceWaitsForTheAccountScopeLock
+--- PASS: TestPostgresFriendRematchAcceptanceWaitsForTheAccountScopeLock
+--- PASS: TestPostgresFriendRemovalAndTheInvitationWriteNeverDeadlock
+--- PASS: TestPostgresFriendContendedAcceptanceDoesNotStarveTheWinner
+--- PASS: TestPostgresFriendLostAnswerRetryRecoversTheSameAcceptance
+--- PASS: TestPostgresFriendConcurrentAcceptanceHasOneWinner
 ```
 
 The historical run of the same filter, recorded before the round 6
@@ -492,13 +510,15 @@ The recheck has three parts, and each of them closes a hole of its own:
 * a participant whose account or of whose guest seat a removal was recorded is
   named by the durable removal records, compared through the one-way
   reference of the subject;
-* a participant whose **own** one-way reference is named by a row of the
-  **removal ledger** of that match was removed from that match. The ledger is
-  the match scoped record of a removal, so it answers the question even when
-  the seat row of an older backup still names the removed subject, and it is
-  the record that survives a restore of an older backup. The check is
-  **participant scoped**: the removal of the opponent of a match does not
-  take the seat of the survivor away, and the game stays live.
+* a participant whose **own** one-way reference **and kind** is named by a row
+  of the **removal ledger** of that match was removed from that match. The
+  ledger is the match scoped record of a removal, so it answers the question
+  even when the seat row of an older backup still names the removed subject,
+  and it is the record that survives a restore of an older backup. The check
+  is **participant scoped**: the removal of the opponent of a match does not
+  take the seat of the survivor away, and the game stays live. The kind is
+  part of the check, because an account and a guest that share an identifier
+  share their one-way reference as well.
 
 The new refusal is `invite.ErrRemoved`, and the HTTP surface answers it with
 `403` and the code `not_authorized`, so the error vocabulary of the surface
@@ -510,6 +530,12 @@ creates the match of the inviter and the acceptor, so both are rechecked. A
 only the acceptor is rechecked, and the removal of the inviter does not take
 the seat of the acceptor away. The credential of a seat is recovered for the
 owner of that seat alone.
+
+A resumed acceptance may present **no identity at all**: the acceptance key is
+the whole capability of a guest acceptance. The scope of the stored acceptor is
+locked before the row of the invitation in that case as well, so an anonymous
+resume is ordered against the removal of that acceptor. The read that learns
+the stored acceptor takes no row lock, so the order of the locks is unchanged.
 
 An offer that can never be accepted any more is not published. The pending
 read is a **projection**: it never writes, so a `GET` never changes the
@@ -549,6 +575,10 @@ outcome:
 * `TestPostgresFriendSurvivingGuestRecoversItsAcceptanceCredential` (the
   survivor recovers the credential of its own seat after the removal of the
   inviter, and no second match is created)
+* `TestPostgresFriendAnonymousBearerResumeRecoversTheSurvivorSeat` (the
+  anonymous resume, which presents the acceptance key alone, waits for the
+  account scope of the stored acceptor and recovers the credential of the
+  survivor's own seat)
 * `TestPostgresFriendRestoredSeatIdentityIsRefused` (the seat of an older
   backup that still names the removed subject is refused, because the ledger
   row of the match names that participant)

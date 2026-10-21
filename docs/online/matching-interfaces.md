@@ -265,13 +265,15 @@ carries the **anonymized sentinel** is a removed participant, because the
 privacy sanitation replaces the identifier of a removed subject with that
 constant. A participant whose account or of whose guest seat a removal was
 recorded is named by the durable removal records. A participant whose **own**
-one-way reference is named by a row of the **removal ledger** of that match
-was removed from that match, so a restore of an older backup cannot revive it
-either.
+one-way reference **and kind** is named by a row of the **removal ledger** of
+that match was removed from that match, so a restore of an older backup cannot
+revive it either.
 
 The ledger check is participant scoped: the removal of the opponent of a match
 does not take the seat of the survivor away. A surviving participant keeps its
-own seat, its own credential and its own writes, and the game stays live.
+own seat, its own credential and its own writes, and the game stays live. The
+kind is part of the check, because an account and a guest that share an
+identifier share their one-way reference as well.
 
 The write names the participants it really writes for. A fresh acceptance
 creates the match of the inviter and the acceptor, so both are rechecked. A
@@ -279,6 +281,11 @@ creates the match of the inviter and the acceptor, so both are rechecked. A
 only the acceptor is rechecked, and the removal of the inviter does not take
 the seat of the acceptor away. The credential of a seat is recovered for the
 owner of that seat alone.
+
+A resumed acceptance may present **no identity at all**: the acceptance key is
+the capability of a guest acceptance. The scope of the stored acceptor is
+locked before the row of the invitation in that case as well, so the resume is
+ordered against the removal of that acceptor.
 
 The cancellation of an invitation is a write of the surface as well, so it is
 fenced the same way: the account scope lock of the inviter is taken before
