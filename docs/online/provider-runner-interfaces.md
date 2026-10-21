@@ -59,14 +59,17 @@ the control changes and the spent recovery attempts.
 - The owner actions have an order and a report. Every action takes a token
   before it sends its command, so two decisions that compete reach the service
   in the order of the owner, and the refusal of the newest one is sent again
-  with the version the service has now. An action that is not the newest one
-  is `superseded` and never retries. `retry()`, `switchModel()` and
-  `takeover()` answer with the outcome of the decision
-  (`accepted`, `refused`, `superseded`, `unauthorized`, `ignored`), so the
-  caller keeps the binding of a seat whose decision was refused.
+  with the version the service has now. A decision that is not the newest one
+  is `unknown` and never retries: its command is not sent again, not even when
+  the acknowledgement of the first attempt was lost. The generation of the
+  lifecycle fences the same actions: a decision that waits while the match
+  ends is `unknown` as well, because the outcome could not be established.
 - The decision of the owner is bound to the request it settled. The guard of
   the turn asks whether the record in the store is one of them: that record
-  may be passed once, and every other record fences the runner again.
+  may be passed once, and every other record fences the runner again. The
+  records the owner decided about are captured before the acquisition of a
+  lease waits for the service, so a record of another tab that appears in the
+  meantime is neither authorized nor deleted.
 - The handoff of the seat is the authority of the owner and it needs no
   lease. A seat whose runner is gone can still be taken over, and the service
   fences a stale runner with the control epoch.
@@ -149,11 +152,11 @@ as the turn that is current now, and the shared parser of the contract
 requires the field.
 
 The bodies are built by `buildRunnerLeaseBody` and `buildRunnerRequestBody`,
-and the lease answer is read by `parseRunnerLeaseAnswer`. The lease route has
-its own versioned answer, so the runner reads it with its own reader, which
-requires every field it acts on and tolerates the fields the service may add.
-The shared contract keeps its strict parser for the shared surfaces, and no
-required field of the contract is weakened.
+and the lease answer is read by `parseRunnerLeaseAnswer`. The answer is read
+with the strict parser of the shared contract, so the browser and the service
+agree on one DTO and on one set of identifiers; the runner adds the two checks
+of its own scope, the match and the seat. The shared fixture of the service is
+read by the same parser on both sides.
 
 ### The failures the runner reads
 
@@ -477,6 +480,8 @@ seat with an accepted move, exactly like the service does.
 | — | A stop or a dispose while the pending record is settled keeps the phase of the owner and the honest record |
 | — | Two competing owner actions: the newest decision wins and the older one sends nothing |
 | — | The acquisition of a lease does not clear a newer pending record |
+| — | A superseded decision does not send its command again after a lost acknowledgement |
+| — | A decision that waits while the match ends reports an unknown outcome |
 | — | The decision of the owner authorises one request, so a dropped turn is not billed twice |
 | — | The late rejection of an aborted request does not swallow the decision of the owner |
 | — | A replaced credential stops the runner instead of asking for the lease on every snapshot |

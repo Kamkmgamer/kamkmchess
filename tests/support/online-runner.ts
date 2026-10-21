@@ -788,6 +788,8 @@ export interface HoldableCommandPort {
   arm(): void;
   /** Sends the held command to the service and answers it. */
   release(index: number): Promise<void>;
+  /** Answers the held command with a failure, as a lost transport would. */
+  fail(index: number, error: unknown): void;
 }
 
 /**
@@ -823,6 +825,11 @@ export function createHoldableCommandPort(base: ProviderRunnerCommandPort): Hold
       } catch (error) {
         entry.reject(error);
       }
+    },
+    fail(index, error) {
+      const entry = held[index];
+      if (entry === undefined) throw new Error('The command was not held.');
+      entry.reject(error);
     },
   };
 }

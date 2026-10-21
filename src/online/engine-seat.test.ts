@@ -103,6 +103,12 @@ const leaseAnswer = {
   acquiredAt: '2026-10-21T10:00:00.000Z',
   expiresAt: '2026-10-21T10:00:15.000Z',
   revokedAt: null,
+  turnVersion: 1,
+  runnerEpoch: 1,
+  pendingRequestId: null,
+  pendingRequestStartedAt: null,
+  revokedReason: null,
+  lastRenewedAt: null,
 };
 
 const receiptAnswer = {

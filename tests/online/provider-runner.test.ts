@@ -1712,17 +1712,174 @@ describe('the competing owner actions of the runner', () => {
     expect(pending.read(service.match.matchId, service.match.seat)?.requestId).toBe(second?.requestId);
   });
 
+  it('does not authorize or delete a newer pending record that appears while the lease is taken', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const pending = createMemoryPendingStore();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+
+    // The lease of the seat is not live any more and the match moved on, so
+    // the handoff of the owner takes a new lease.
+    service.revokeLease('control_change');
+    service.match.version += 1;
+    runner.applySnapshot(fakeSnapshot(service.match));
+
+    // The owner takes the seat over. The acquisition of the lease waits for
+    // the service, and a second tab of the same browser records a newer
+    // request of the same seat in the meantime.
+    held.holdAcquire();
+    const taking = runner.takeover();
+    await until(() => held.acquires.length === 1, 'the acquisition is in flight');
+    pending.write({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      requestId: 'request-newer',
+      turnVersion: 2,
+      controlEpoch: 1,
+      startedAt: 99,
+    });
+    held.acquires[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-contract-01',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 2,
+      runnerId: 'runner-tab-01',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 2,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await taking;
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    // The newer record was not decided about, so it is neither authorized nor
+    // deleted by the decision of the owner.
+    expect(pending.read(service.match.matchId, service.match.seat)?.requestId).toBe('request-newer');
+  });
+
+  it('does not send the command of a superseded decision again', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = createHoldableCommandPort(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: commands.port,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+
+    // The owner switches the model. Its command waits for the service.
+    commands.arm();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => commands.held.length === 1, 'the command of the switch is in flight');
+
+    // The owner decides again before the first command answered.
+    commands.arm();
+    const taking = runner.takeover();
+    await until(() => commands.held.length === 2, 'the command of the takeover is in flight');
+
+    // The answer of the first command is a lost transport.
+    commands.fail(0, new Error('The network failed.'));
+    await switching;
+    commands.release(1);
+    await taking;
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    // The superseded decision did not send its command again, and the newer
+    // decision of the owner is the one that counts.
+    expect(commands.held).toHaveLength(2);
+    const switches = service.recordedCommands.filter((command) =>
+      command.action.kind === 'set_control' &&
+      command.action.control.modelLabel === 'Second Agent');
+    expect(switches).toHaveLength(0);
+    expect(service.match.control.kind).toBe('human');
+  });
+
+  it('ends a decision that waits when the match ends', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = createHoldableCommandPort(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: commands.port,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+
+    commands.arm();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => commands.held.length === 1, 'the command of the switch is in flight');
+
+    // The match ends while the decision of the owner waits.
+    service.match.result = { kind: 'win', winner: 'black', reason: 'timeout' };
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // The command of the decision answers now. The decision may not report a
+    // success of a match that is over.
+    await commands.release(0);
+    const outcome = await switching;
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    expect(outcome.kind).toBe('unknown');
+    expect(runner.state.leaseId).toBeNull();
+    expect(service.match.control.kind).toBe('agent');
+  });
+
   it('keeps the decision of the owner when the rejection of the request arrives later', async () => {
     const service = createFakeOnlineService();
     const prompts: unknown[] = [];
+    const rejections: Array<(error: unknown) => void> = [];
     // A provider that ignores the abort of the runner, so the rejection of the
     // request arrives after the decision of the owner.
     const provider = {
       async run(prompt: unknown): Promise<{ answerText: string; terminal: 'complete'; uncertain: boolean }> {
         prompts.push(prompt);
-        return new Promise((resolve) => {
-          setTimeout(() => { resolve({ answerText: '{"move":"e2e4"}', terminal: 'complete', uncertain: false }); }, 60);
-        });
+        if (prompts.length === 1) {
+          // The first request ignores the abort of the runner. Its rejection is
+          // delivered when the test releases it, so the ordering of the
+          // decision and of the failure is observable.
+          return new Promise((_resolve, reject) => { rejections.push(reject); });
+        }
+        return { answerText: '{"move":"e2e4"}', terminal: 'complete', uncertain: false };
       },
     };
     const runner = createOnlineProviderRunner({
@@ -1743,11 +1900,21 @@ describe('the competing owner actions of the runner', () => {
     await runner.stop();
     expect(runner.state.phase).toBe('uncertain');
     await runner.retry();
-    await new Promise((resolve) => { setTimeout(resolve, 120); });
 
-    // The decision of the owner was not swallowed by the late rejection.
+    // The rejection of the first request arrives now.
+    rejections[0]?.(new Error('The network failed.'));
+    await until(() => prompts.length === 2, 'the provider is asked again');
+
+    // The decision of the owner was not swallowed by the late rejection, the
+    // new request is asked exactly once, and its answer reaches the service.
     expect(runner.state.phase).not.toBe('stopped');
-    expect(prompts.length).toBeGreaterThan(1);
+    expect(runner.state.uncertainty).toBeNull();
+    await until(
+      () => service.recordedCommands.some((command) => command.action.kind === 'submit_move'),
+      'the move of the new request is submitted',
+    );
+    expect(service.recordedCommands.find((command) => command.action.kind === 'submit_move')?.action)
+      .toEqual({ kind: 'submit_move', move: 'e2e4' });
   });
 });
 

@@ -18,6 +18,11 @@ const leaseAnswer = {
   expiresAt: '2026-10-21T10:00:15.000Z',
   revokedAt: null,
   turnVersion: 7,
+  runnerEpoch: 1,
+  pendingRequestId: null,
+  pendingRequestStartedAt: null,
+  revokedReason: null,
+  lastRenewedAt: null,
 };
 
 function createClient(respond: () => { status: number; data: unknown }) {
@@ -113,8 +118,10 @@ describe('the runner lease wire', () => {
   });
 
   it('refuses a lease without an identity', () => {
-    expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, leaseId: '' }, 'match-00000001', 'black')).toThrow(/no lease/);
-    expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, status: 'unknown' }, 'match-00000001', 'black')).toThrow(/no state/);
+    // The answer is read with the strict parser of the shared contract, so the
+    // message names the field the contract refused.
+    expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, leaseId: '' }, 'match-00000001', 'black')).toThrow(/invalid id/);
+    expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, status: 'unknown' }, 'match-00000001', 'black')).toThrow(/invalid lease status/);
   });
 
   it('classifies a refused credential, a held lease and a missing lease', async () => {
