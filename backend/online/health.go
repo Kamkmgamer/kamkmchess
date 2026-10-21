@@ -421,6 +421,22 @@ type ReadyEvaluator interface {
 	Probe(ctx context.Context) error
 }
 
+// RepairableEvaluator replaces the rules process and proves that the
+// replacement answers.
+//
+// The seam is the recovery of a closed gate. A check never starts a worker,
+// so a worker that is gone cannot be brought back by a check: the recovery
+// needs a call that starts the replacement and proves that it answers.
+//
+// The service serves no traffic while its gate is closed, so the cold start
+// of the replacement belongs to the recovery and not to a participant
+// request.
+type RepairableEvaluator interface {
+	// Repair starts the rules process when it is not running and proves
+	// that it answers.
+	Repair(ctx context.Context) error
+}
+
 // ProbeRules checks that the private rules process answers.
 //
 // The probe evaluates the primary rules process, so its answer is evidence
@@ -469,6 +485,48 @@ func (s *Service) ProbeRules(ctx context.Context) error {
 		if s.cancelled(err) {
 			// The caller went away. That is not a broken dependency
 			// either.
+			return err
+		}
+		s.noteEvaluatorFailure(err)
+		return err
+	}
+	s.noteEvaluatorSuccess()
+	return nil
+}
+
+// RepairRules replaces the rules process and proves that the replacement
+// answers.
+//
+// It is the recovery of a closed gate. A check never starts a worker, so a
+// worker that is gone cannot be brought back by a check: the recovery needs
+// a call that starts the replacement and proves that it answers. The
+// service serves no traffic while its gate is closed, so the cold start of
+// the replacement belongs here and not to a participant request.
+//
+// A failed repair is a failure: the caller keeps the gate closed, retries
+// the repair, and never recovers the interruption on a failure. A process
+// that is busy is not a broken dependency, so it leaves the durable health
+// alone, exactly like a busy check does.
+func (s *Service) RepairRules(ctx context.Context) error {
+	if s.evaluator == nil {
+		s.noteEvaluatorFailure(nil)
+		return ErrUnavailable
+	}
+	repairer, ok := s.evaluator.(RepairableEvaluator)
+	if !ok {
+		// The evaluator cannot replace the process, so the recovery falls
+		// back to the check. A check never starts a worker, so the gate of
+		// a missing worker stays closed until the traffic brings it back.
+		return s.ProbeRules(ctx)
+	}
+	if err := repairer.Repair(ctx); err != nil {
+		// The caller of the repair left, so the failure says nothing about
+		// the dependency. The client may report its own error for the
+		// cause, so the context of the caller decides.
+		if ctx.Err() != nil {
+			return err
+		}
+		if s.busy(err) || s.cancelled(err) {
 			return err
 		}
 		s.noteEvaluatorFailure(err)

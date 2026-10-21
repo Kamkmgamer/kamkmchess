@@ -103,6 +103,24 @@ func rulesBusy(err error) bool {
 	return errors.Is(err, rulesworker.ErrBusy)
 }
 
+// rulesHealth is the seam of the durable health monitor.
+//
+// The service owns the calls that check and repair the rules dependency, and
+// the monitor owns the decision of which call belongs to the moment. The
+// seam keeps that decision testable without a database and without a worker.
+type rulesHealth interface {
+	// ProbeRules checks that the rules process answers.
+	ProbeRules(ctx context.Context) error
+	// RepairRules replaces the rules process and proves that it answers.
+	RepairRules(ctx context.Context) error
+	// PendingSuspension reports the open interruption of the service.
+	PendingSuspension(ctx context.Context) (*online.RecoveryBoundary, error)
+	// SuspendForDependency records the interruption of a dependency.
+	SuspendForDependency(ctx context.Context, dependency string) error
+	// RecoverFromInterruption publishes the recovered state.
+	RecoverFromInterruption(ctx context.Context) (online.RecoveryPlan, error)
+}
+
 // checkHealth runs one health check.
 //
 // The check reports the database dependency and probes the rules dependency.
@@ -124,6 +142,52 @@ func checkHealth(ctx context.Context, pool *pgxpool.Pool, reporter *online.Healt
 	if prober == nil {
 		return
 	}
+	checkRulesHealth(ctx, prober, onError)
+}
+
+// checkRulesHealth checks or repairs the rules dependency.
+//
+// The gate decides which of the two calls belongs to the moment.
+//
+//   - A closed gate means the worker was found broken. The worker is gone
+//     after such an outage, and a check never starts a worker, so the
+//     recovery of a closed gate is a repair: the replacement is started and
+//     proven. Without it the gate could never open again, because no
+//     participant request can start the replacement while the gate refuses
+//     the traffic.
+//   - An open gate means the dependency is only checked. A check never
+//     starts a worker either, so the cold start stays with the traffic.
+//
+// A failed repair is a failure of the check: the gate stays closed, the
+// failure is reported, and the next tick repairs again. The interruption is
+// never recovered on a failed repair, because the recovery would publish a
+// dependency that was never proven.
+func checkRulesHealth(ctx context.Context, prober rulesHealth, onError func(error)) {
+	pending, err := prober.PendingSuspension(ctx)
+	if err != nil {
+		if onError != nil {
+			onError(err)
+		}
+		return
+	}
+	if pending != nil {
+		// The gate is closed: the worker is replaced and proven.
+		if err := prober.RepairRules(ctx); err != nil {
+			// A failed repair is retried on the next tick, and the
+			// interruption stays open.
+			if onError != nil {
+				onError(err)
+			}
+			return
+		}
+		// The replacement answered, so the canonical state is published
+		// before the gate opens again.
+		if _, err := prober.RecoverFromInterruption(ctx); err != nil && onError != nil {
+			onError(err)
+		}
+		return
+	}
+	// The gate is open: the dependency is only checked.
 	if err := prober.ProbeRules(ctx); err != nil {
 		if rulesBusy(err) || rulesCancellation(err) {
 			// The rules process is occupied by a running request, or the
@@ -149,22 +213,8 @@ func checkHealth(ctx context.Context, pool *pgxpool.Pool, reporter *online.Healt
 		}
 		return
 	}
-	// The rules process answered. A pending interruption is recovered
-	// before the service reports itself healthy again, so the canonical
-	// state is published before resumed actions are accepted.
-	pending, err := prober.PendingSuspension(ctx)
-	if err != nil {
-		if onError != nil {
-			onError(err)
-		}
-		return
-	}
-	if pending == nil {
-		return
-	}
-	if _, err = prober.RecoverFromInterruption(ctx); err != nil && onError != nil {
-		onError(err)
-	}
+	// The rules process answered and the gate is open, so there is no
+	// interruption to recover.
 }
 
 // reportHealth records a health observation of one dependency.
