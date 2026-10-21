@@ -63,23 +63,26 @@ func (s *Service) applySubjectRemoval(ctx context.Context, record backup.Subject
 		return err
 	}
 	defer tx.Rollback(ctx)
-	// The request row of the removal is recreated, so the ledger and the
-	// request agree again. The removal identifier is derived from the subject
-	// record identifier, so the replay is idempotent.
-	removalID := "rm_" + strings.TrimPrefix(record.RecordID, "rs_")
-	if _, err = tx.Exec(ctx, `
-		INSERT INTO online_removal_requests(removal_id,subject_kind,subject_id,scope,status,requested_at,verified_at,applied_at,live_delete_due_at,live_deleted_at,recovery_sanitize_due_at)
-		VALUES($1,$2,$3,$4,'applied',$5,$5,$5,$6,$5,$7)
-		ON CONFLICT (subject_kind, subject_id, scope) DO NOTHING`,
-		removalID, record.SubjectKind, record.SubjectRef, record.Scope, record.RemovedAt,
-		record.RemovedAt.Add(s.options.LiveRemovalDelay), record.RemovedAt.Add(s.options.RecoverySanitizeDelay)); err != nil {
+	// The request row of the removal is the one the database holds for this
+	// subject and this scope, and a new one when the restored database has
+	// none.
+	//
+	// The identifier of the request is never derived from the identifier of
+	// the subject record. The live path gives the subject record an
+	// identifier of its own, so a derived identifier is a guess: it is not the
+	// identifier the request has, and it can be the identifier of the request
+	// of another subject. The conflict on the primary key of the request is
+	// not the conflict the insert absorbs, so a guess would fail the replay
+	// with a unique violation.
+	removalID, err := s.ensureSubjectRequest(ctx, tx, record)
+	if err != nil {
 		return err
 	}
 	if _, err = tx.Exec(ctx, `
 		INSERT INTO online_removal_subjects(subject_id,removal_id,subject_kind,subject_ref,scope,removed_at)
-		VALUES($1,(SELECT removal_id FROM online_removal_requests WHERE subject_kind=$2 AND subject_id=$3 AND scope=$4),$2,$3,$4,$5)
+		VALUES($1,$2,$3,$4,$5,$6)
 		ON CONFLICT (subject_kind, subject_ref, scope) DO NOTHING`,
-		record.RecordID, record.SubjectKind, record.SubjectRef, record.Scope, record.RemovedAt); err != nil {
+		record.RecordID, removalID, record.SubjectKind, record.SubjectRef, record.Scope, record.RemovedAt); err != nil {
 		return err
 	}
 	// The whole sanitation of the subject runs again: the public identity, the
@@ -96,6 +99,55 @@ func (s *Service) applySubjectRemoval(ctx context.Context, record backup.Subject
 		}
 	}
 	return tx.Commit(ctx)
+}
+
+// ensureSubjectRequest returns the identifier of the removal request of a
+// subject and creates the request when the database holds none.
+//
+// The request of a subject is unique per subject and scope, so the request
+// the database holds is the authoritative one: the subject record and the
+// ledger rows of that removal name it. The live path works the same way.
+//
+// A restored database that has no request for the subject gets one with a
+// fresh identifier. The identifier of a request is a key of the table and
+// never the identifier of another request, so an identifier that is already
+// taken is not used: the insert is not weakened to ignore the conflict,
+// because the request of another subject may never be attached to this one.
+func (s *Service) ensureSubjectRequest(ctx context.Context, tx pgx.Tx, record backup.SubjectRemovalRecord) (string, error) {
+	var removalID string
+	err := tx.QueryRow(ctx, `SELECT removal_id FROM online_removal_requests WHERE subject_kind=$1 AND subject_id=$2 AND scope=$3`,
+		record.SubjectKind, record.SubjectRef, record.Scope).Scan(&removalID)
+	if err == nil {
+		return removalID, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return "", err
+	}
+	for attempt := 0; attempt < 4; attempt++ {
+		removalID, err = newIdentifier("rm_")
+		if err != nil {
+			return "", err
+		}
+		var taken bool
+		if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_removal_requests WHERE removal_id=$1)`, removalID).Scan(&taken); err != nil {
+			return "", err
+		}
+		if taken {
+			// The identifier belongs to another request, so a fresh one is
+			// used.
+			continue
+		}
+		if _, err = tx.Exec(ctx, `
+			INSERT INTO online_removal_requests(removal_id,subject_kind,subject_id,scope,status,requested_at,verified_at,applied_at,live_delete_due_at,live_deleted_at,recovery_sanitize_due_at)
+			VALUES($1,$2,$3,$4,'applied',$5,$5,$5,$6,$5,$7)
+			ON CONFLICT (subject_kind, subject_id, scope) DO NOTHING`,
+			removalID, record.SubjectKind, record.SubjectRef, record.Scope, record.RemovedAt,
+			record.RemovedAt.Add(s.options.LiveRemovalDelay), record.RemovedAt.Add(s.options.RecoverySanitizeDelay)); err != nil {
+			return "", err
+		}
+		return removalID, nil
+	}
+	return "", errors.New("privacy: the identifier of the removal request could not be allocated")
 }
 
 // The ledger is the durable record of every match bound removal. A backup
