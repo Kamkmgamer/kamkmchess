@@ -175,6 +175,7 @@ grant on a table the application does not use.
 node runtime-grants.mjs --check      # the policy against the migrations and the writer
 node runtime-grants.mjs --propose     # the entries a new migration still needs
 node runtime-grants.mjs --emit       # the SQL an operator reviews and runs
+node runtime-grants-provision.mjs     # the grants of provision-runtime.py against the policy
 node runtime-grants-probe.mjs        # the same grants executed against a real PostgreSQL
 ```
 
@@ -182,6 +183,14 @@ The check fails when a migration creates a table the policy does not cover,
 when the writer uses a verb the policy does not grant, when the policy grants
 a verb the writer never uses, and when a migration grants privileges of its
 own outside the reviewed policy.
+
+`provision-runtime.py` writes the SQL of the provisioning run by hand, so it is
+a second renderer of the policy. `runtime-grants-provision.mjs` captures the
+statements the real routine emits and compares them with the statements of the
+reviewed renderer: a policy entry the deployment does not render is a blocker,
+and a statement the deployment applies on its own is a blocker until it is
+listed as a deliberate defensive revoke. The capture needs a Python 3
+interpreter and no database.
 
 The probe creates a throwaway role and schema in a local database, applies the
 migrations and the grants, and then executes real statements as that role:

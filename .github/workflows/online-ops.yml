@@ -20,11 +20,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Verify the operations tooling
-        run: node --test deploy/runtime-grants.test.mjs deploy/runtime-grants-sequence.test.mjs scripts/online/online-ops.test.mjs
+        run: node --test deploy/runtime-grants.test.mjs deploy/runtime-grants-sequence.test.mjs deploy/runtime-grants-provision.test.mjs scripts/online/online-ops.test.mjs
       - name: Verify the local fixture
         run: go test -tags onlinefixture -count=1 ./tools/onlinefixture
       - name: Audit the least-privilege runtime grants
         run: node deploy/runtime-grants.mjs --check
+      - name: Audit the grants of the provisioning routine
+        run: node deploy/runtime-grants-provision.mjs
       - name: Audit the production wiring of the feature switches
         run: node scripts/online/service-wiring.mjs
       - name: Audit the backup coverage and the removal ledger

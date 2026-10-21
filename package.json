@@ -29,6 +29,7 @@
     "online:backup": "node scripts/online/backup-coverage.mjs",
     "online:wiring": "node scripts/online/service-wiring.mjs",
     "grants:check": "node deploy/runtime-grants.mjs",
+    "grants:provision": "node deploy/runtime-grants-provision.mjs",
     "grants:probe": "node deploy/runtime-grants-probe.mjs",
     "build": "pnpm run typecheck && node scripts/prepare-engines.mjs && vite build && node scripts/build-rules-worker.mjs && node scripts/write-notices.mjs",
     "preview": "vite preview --host 127.0.0.1",
