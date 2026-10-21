@@ -15,6 +15,7 @@
 //	khabackup plan    --file FILE --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...]
 //	khabackup restore --file FILE --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...] [--takeover] --apply
 //	khabackup recover --file FILE --restore-id ID --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...]
+//	khabackup recover --evidence FILE --restore-id ID --database-url-env NAME
 //	khabackup rotate  --dir DIR [--daily N] [--weekly N] [--protect LABEL ...] [--apply]
 //	khabackup ledger  --file FILE [--file FILE ...] --passphrase-env NAME
 package main
@@ -80,12 +81,19 @@ khabackup seals, verifies, rotates and restores encrypted PostgreSQL exports.
   plan    --file FILE --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...]
   restore --file FILE --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...] [--takeover] --apply
   recover --file FILE --restore-id ID --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...]
+  recover --evidence FILE --restore-id ID --database-url-env NAME
   rotate  --dir DIR [--daily N] [--weekly N] [--protect LABEL ...] [--apply]
   ledger  --file FILE [--file FILE ...] --passphrase-env NAME
 
 The --fence path is the parent directory of the durable restore fence. The
 operator prepares that directory; the restore creates the lock directory
 inside it, and the service reads it.
+
+The --evidence path is the durable evidence of a restore: the file the restore
+wrote next to the fence, restored from the protected backup of the evidence
+directory. A recovery that is given the evidence of a restore does not need the
+bundle of the restore, and the bundle is only read when there is no evidence
+at all.
 
 Secrets are read only from the environment variable named by --passphrase-env
 and --database-url-env. Nothing is provisioned and no network service is used.`))
@@ -217,20 +225,25 @@ func recoverCommand(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if options.file == "" {
-		return errors.New("--file is required")
-	}
 	if options.restoreID == "" {
 		return errors.New("--restore-id is required")
 	}
 	if options.fence == "" {
 		return errors.New("a recovery needs the durable restore fence; set --fence or ONLINE_RESTORE_FENCE_PATH")
 	}
-	secret, err := passphrase(options.passphraseEnv)
-	if err != nil {
-		return err
+	if options.file == "" && options.evidence == "" {
+		return errors.New("a recovery needs the durable evidence of the restore (--evidence) or the bundle of the restore (--file)")
 	}
-	defer clear(secret)
+	// The passphrase is only needed for the bundle: the evidence of a restore
+	// is read from the file the operator hands to the recovery.
+	var secret []byte
+	if options.file != "" {
+		secret, err = passphrase(options.passphraseEnv)
+		if err != nil {
+			return err
+		}
+		defer clear(secret)
+	}
 	url, connections, err := databaseURL(options.databaseURLEnv)
 	if err != nil {
 		return err
@@ -245,42 +258,37 @@ func recoverCommand(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	// The durable evidence of the restore is the removal ledger the restore
-	// had to apply. It survives the crash of the restore and the import of its
+	// The removal ledger the restore had to apply is the durable evidence of
+	// the restore. It survives the crash of the restore and the import of its
 	// bundle, so the recovery can name the ledger even when the removals it
 	// covers are not in the database any more.
+	//
+	// The recovery is identity bound: the ledger it is given has to be the
+	// ledger the fence of the restore names, and the recovery refuses every
+	// other one. The proof of a gate whose evidence is gone is the same
+	// ledger, and the recovery applies it under the ownership of the
+	// lifecycle, never outside it.
 	required, found, err := removals.RestoreRequirement(options.restoreID)
 	if err != nil {
 		return err
 	}
-	// The candidates that may prove the commitment of a gate whose durable
-	// evidence is gone. A candidate proves a gate only when its own digest is
-	// exactly the one the gate names, so a candidate that is larger or newer
-	// proves nothing and the gate stays closed.
-	candidates := make([]backup.AppliedRemovalLedger, 0, 3)
-	if found {
-		candidates = append(candidates, required)
-	}
-	if options.evidence != "" {
-		// The operator restored the evidence of a restore from the protected
+	if !found && options.evidence != "" {
+		// The operator restored the evidence of the restore from the protected
 		// backup of the evidence directory. The evidence names the removal
-		// ledger the restore owed, and it proves the commitment of a gate when
-		// the digest of the ledger is exactly the one the gate names.
+		// ledger the restore owed, and it proves the commitment of the gate
+		// when the digest of the ledger is exactly the one the gate names.
 		record, err := privacy.ReadRemovalRequirement(options.evidence)
 		if err != nil {
 			return fmt.Errorf("the durable evidence of the restore cannot be read: %w", err)
 		}
-		candidates = append(candidates, record.Ledger())
-		if !found {
-			// The evidence directory was lost, so the supplied evidence is the
-			// only description of what the restore owed: the recovery names it.
-			required = record.Ledger()
-			found = true
-		}
+		required = record.Ledger()
+		found = true
 	}
 	if !found {
 		// The restore left no evidence, so the ledger of the bundle and of the
-		// newer rotation copies is the only description of what it owed.
+		// newer rotation copies is the only description of what it owed. The
+		// recovery refuses them when the fence of the restore names another
+		// ledger.
 		verified, err := backup.Verify(options.file, secret)
 		if err != nil {
 			return err
@@ -301,15 +309,6 @@ func recoverCommand(ctx context.Context, arguments []string) error {
 			return err
 		}
 		required = backup.AppliedRemovalLedger{Matches: merged, Subjects: mergedSubjects}
-		candidates = append(candidates, required)
-	}
-	released := 0
-	for _, candidate := range candidates {
-		count, err := removals.ReleaseRestoreGateWithProof(ctx, candidate)
-		if err != nil {
-			return err
-		}
-		released += count
 	}
 	if err = removals.RecoverRestore(ctx, options.restoreID, required); err != nil {
 		if errors.Is(err, privacy.ErrLedgerNotApplied) {
@@ -326,17 +325,31 @@ func recoverCommand(ctx context.Context, arguments []string) error {
 		}
 		return err
 	}
+	// The truth of the recovery: whether the service may serve and how many
+	// gates still wait for their removal ledger. A gate that waits keeps the
+	// service closed, so the recovery never claims that the service serves
+	// while one of them waits.
+	allowed, err := removals.ServingAllowed(ctx)
+	if err != nil {
+		return err
+	}
+	pending, err := removals.PendingRestoreGates(ctx)
+	if err != nil {
+		return err
+	}
 	report := map[string]any{
-		"command":       "recover",
-		"recovered":     true,
-		"restoreId":     options.restoreID,
-		"gatesReleased": released,
+		"command":        "recover",
+		"recovered":      true,
+		"restoreId":      options.restoreID,
+		"servingAllowed": allowed,
+		"pendingGates":   pending,
 	}
 	return emit(options.asJSON, report, func() {
-		fmt.Printf("recovered the restore %s; the service may serve traffic again\n", options.restoreID)
-		if released > 0 {
-			fmt.Printf("released %d restore gate(s) whose removal ledger a supplied ledger proved\n", released)
+		if allowed {
+			fmt.Printf("recovered the restore %s; the service may serve traffic again\n", options.restoreID)
+			return
 		}
+		fmt.Printf("recovered the restore %s; the service stays closed: %d restore gate(s) still wait for their removal ledger\n", options.restoreID, pending)
 	})
 }
 

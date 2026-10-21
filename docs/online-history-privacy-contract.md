@@ -275,20 +275,42 @@ Rules the browser must honour:
 * The **supported recovery of a gate whose evidence is gone** is a supplied removal ledger that
   proves the commitment of the gate. The digest the gate names is one way, so the only proof is a
   removal ledger whose own digest is exactly the one the gate names: a newer or larger ledger is
-  not the same commitment and never proves one. The proof releases the gate only when the applied
-  removal ledger holds the supplied ledger, so the removals the gate waits for are really applied.
-  The operator supplies that ledger with `khabackup recover --evidence <file>`, where the file is
+  not the same commitment and never proves one.
+* The proof is **part of the recovery**, never a step beside it. The recovery takes the ownership
+  of the lifecycle, refuses to act while a restore is alive, refuses the fence of another restore
+  and refuses a ledger that is not the one the fence names, and it releases nothing in any of
+  those cases. The release of the gate and of the gates the proof names runs in one transaction
+  with the facts it depends on: the applied removal ledger, the global state of the erasures and
+  the release itself. A gate is released only when the database holds the removal ledger it waits
+  for **and** every recorded removal is really erased, exactly like the ordinary release of a
+  gate: the rows of the removal ledger are not the erasure of a removal, a seat that still names
+  the removed subject or a replay that is published again keeps the service closed.
+* The operator supplies that ledger with `khabackup recover --evidence <file>`, where the file is
   the durable evidence of the restore, restored from the **protected backup of the evidence
-  directory**. When no supplied ledger proves a gate, the gate is **retained**: the service stays
-  closed, the removals stay owed, and the operator has to restore the evidence of the restore from
-  that protected backup. The gate table is never edited by hand, and the immutable guards of the
-  table are never weakened.
-* A **restore that has a fence and no removal ledger sink** is refused while removals are owed.
-  The fence owns the durable evidence of the removals, so the fence itself says whether any are
-  owed, and the refusal happens under the ownership of the lifecycle and before the import: the
-  database is not touched, the evidence stays pending, and the service keeps the state it had. A
-  restore that carries no removals and has no pending obligation is not affected, so the tooling
-  of the private single-owner backup keeps working.
+  directory**. A recovery that is given the evidence of a restore does not need the bundle of the
+  restore; the bundle is only read when there is no evidence at all. When no supplied ledger proves
+  a gate, the gate is **retained**: the service stays closed, the removals stay owed, and the
+  operator has to restore the evidence of the restore from that protected backup. The gate table is
+  never edited by hand, and the immutable guards of the table are never weakened.
+* The recovery tells the operator the **truth**: whether the service may serve and how many gates
+  still wait for their removal ledger. A gate that waits keeps the service closed, so the recovery
+  never claims that the service serves while one of them waits.
+* A **restore that has a fence and no removal ledger sink** is refused while an evidence record of
+  a removal is pending. The fence owns the durable evidence of the removals, so the fence itself
+  says whether any are owed, and the refusal happens under the ownership of the lifecycle and
+  before the import: the database is not touched, the evidence stays pending, and the service keeps
+  the state it had.
+* The obligation of a pending evidence record is for the **next import**, not for the database of
+  the moment. The import of a restore replaces the schema of the database, so the removals that the
+  evidence names are gone afterwards, and the restore that comes next has to replay them: the
+  database holds them until the next import destroys them. A refusal that looked at what the
+  database holds now would therefore let the next import destroy the removals of the last restore
+  without a replay, which is exactly the hole the refusal closes.
+* The tooling of the private single-owner backup has no removal ledger sink, so it only works while
+  no removal has ever been applied: a pending evidence record is an obligation it cannot
+  discharge, and the refusal tells the operator that the online removals have to be replayed by a
+  restore with the removal ledger sink.
+
 * The **durability** of the fence is explicit: the owner marker is flushed before the directory
   that holds it, and the marker directory is flushed in the parent that holds it, and a failure
   of the flush aborts the restore before it imports anything. Windows offers no flush of a

@@ -22,7 +22,13 @@ import (
 // restore of an older backup, where the deletion table of the account is
 // absent.
 func (s *Service) ListSubjectRemovalRecords(ctx context.Context) ([]backup.SubjectRemovalRecord, error) {
-	rows, err := s.db.Query(ctx, `
+	return s.listSubjectRemovalRecords(ctx, s.db)
+}
+
+// listSubjectRemovalRecords reads the subject level removal ledger of the
+// database.
+func (s *Service) listSubjectRemovalRecords(ctx context.Context, q removalQuerier) ([]backup.SubjectRemovalRecord, error) {
+	rows, err := q.Query(ctx, `
 		SELECT subject_id,subject_kind,subject_ref,scope,removed_at
 		FROM online_removal_subjects
 		ORDER BY subject_id`)
@@ -311,8 +317,18 @@ func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required
 		return errors.New("privacy: the open fence names another removal ledger")
 	}
 	// The applied removal ledger has to hold every removal the restore had to
-	// apply. A database that lost a removal is not released.
-	applied, err := s.AppliedRemovalLedger(ctx)
+	// apply, and every recorded removal has to be erased. A database that lost
+	// a removal is not released.
+	//
+	// The facts and the release run in one transaction, and the ownership of
+	// the lifecycle is held for the whole recovery, so no restore can import
+	// anything in the middle of it.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	applied, err := s.appliedRemovalLedger(ctx, tx)
 	if err != nil {
 		return err
 	}
@@ -322,6 +338,9 @@ func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required
 		// can be run again, and the service stays closed because of the gate.
 		// The durable evidence of the restore stays pending, so the next
 		// restore replays the removals that were lost.
+		if err = tx.Rollback(ctx); err != nil {
+			return err
+		}
 		if err = s.recordBlockingGate(ctx, restoreID, required); err != nil {
 			return err
 		}
@@ -330,16 +349,31 @@ func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required
 		}
 		return ErrLedgerNotApplied
 	}
-	// The removals are applied, so the gate of the restore may be released.
-	var released bool
-	err = s.db.QueryRow(ctx, `SELECT serving_allowed FROM online_restore_gates WHERE restore_id=$1`, restoreID).Scan(&released)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	erased, err := s.ledgerErased(ctx, tx)
+	if err != nil {
 		return err
 	}
-	if !released {
-		if _, err = s.db.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE restore_id=$1 AND serving_allowed=false`, restoreID); err != nil {
+	if !erased {
+		// The rows of the removal ledger are not the erasure of a removal: a
+		// seat that still names the removed subject, or a replay that is
+		// published again, keeps the service closed. The recovery releases
+		// nothing, and the restore has to be run again.
+		if err = tx.Rollback(ctx); err != nil {
 			return err
 		}
+		return ErrLedgerNotApplied
+	}
+	// The removals are applied and erased, so the gate of the restore may be
+	// released, and so may the gates whose awaited removal ledger the
+	// candidate proves.
+	if err = s.releaseRestoreGate(ctx, tx, restoreID); err != nil {
+		return err
+	}
+	if err = s.releaseProvenGates(ctx, tx, required); err != nil {
+		return err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return err
 	}
 	// The fence of the crashed restore is closed, so a new restore can take
 	// the lock.
@@ -348,6 +382,100 @@ func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required
 	}
 	// The evidence of the restore is applied, so it is discharged.
 	return s.dischargeRequirements(applied, "")
+}
+
+// appliedRemovalLedger reads the removal ledger of the database inside a
+// transaction.
+//
+// The rows of the ledger and the release that depends on them are then read
+// in the same transaction, so the facts of the release and the rows it read
+// are the same ones.
+func (s *Service) appliedRemovalLedger(ctx context.Context, tx pgx.Tx) (backup.AppliedRemovalLedger, error) {
+	matches, err := s.listRemovalRecords(ctx, tx)
+	if err != nil {
+		return backup.AppliedRemovalLedger{}, err
+	}
+	subjects, err := s.listSubjectRemovalRecords(ctx, tx)
+	if err != nil {
+		return backup.AppliedRemovalLedger{}, err
+	}
+	return backup.AppliedRemovalLedger{Matches: matches, Subjects: subjects}, nil
+}
+
+// releaseRestoreGate releases the gate of the restore the recovery acts on.
+func (s *Service) releaseRestoreGate(ctx context.Context, tx pgx.Tx, restoreID string) error {
+	if _, err := tx.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE restore_id=$1 AND serving_allowed=false`, restoreID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// releaseProvenGates releases the gates whose awaited removal ledger the
+// candidate proves, and the gate of the restore the recovery acts on.
+//
+// The gate names the digest of the removal ledger it waits for, and that
+// digest is one way: the only proof of the commitment is a removal ledger
+// whose own digest is exactly the one the gate names. A candidate that does
+// not match proves nothing, so the gate stays closed and the removals it
+// waits for stay owed. A newer or larger ledger is not the same commitment
+// and never proves one.
+//
+// The release runs under the ownership of the lifecycle and inside the
+// transaction of the recovery, so it never happens outside the protocol and
+// never on facts that a concurrent import could invalidate.
+func (s *Service) releaseProvenGates(ctx context.Context, tx pgx.Tx, candidate backup.AppliedRemovalLedger) error {
+	digest := gateDigest(requirementDigest(candidate))
+	rows, err := tx.Query(ctx, `SELECT restore_id FROM online_restore_gates WHERE serving_allowed=false AND ledger_digest=$1`, digest)
+	if err != nil {
+		return err
+	}
+	gates := make([]string, 0)
+	for rows.Next() {
+		var gate string
+		if err = rows.Scan(&gate); err != nil {
+			rows.Close()
+			return err
+		}
+		gates = append(gates, gate)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, gate := range gates {
+		if _, err = tx.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE restore_id=$1 AND serving_allowed=false`, gate); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ledgerErased reports whether every recorded removal is erased in the
+// database.
+//
+// It is the global check of the ordinary release: the rows of the removal
+// ledger are not the erasure of a removal, the erased seats and the revoked
+// replays are. The rows are read with a share lock, so an import that
+// replaces them waits for the transaction.
+func (s *Service) ledgerErased(ctx context.Context, tx pgx.Tx) (bool, error) {
+	var pending bool
+	err := tx.QueryRow(ctx, `
+		SELECT
+			EXISTS(
+				SELECT 1 FROM online_removal_ledger l
+				JOIN online_seats s ON s.match_id = l.match_id
+				WHERE `+subject.SQLReference("s.owner_id")+` = l.subject_id
+				  AND s.owner_kind = l.subject_kind
+				  AND s.owner_id <> 'anonymized')
+			OR EXISTS(
+				SELECT 1 FROM online_removal_ledger l
+				JOIN online_public_replays r ON r.match_id = l.match_id
+				WHERE l.scope = 'explicit_removal' AND r.revoked_at IS NULL)`).Scan(&pending)
+	if err != nil {
+		return false, err
+	}
+	return !pending, nil
 }
 
 // recordBlockingGate records a restore gate that keeps the service closed.
@@ -443,7 +571,16 @@ func blockingGateRestoreID(restoreID string, extra ...string) string {
 }
 
 func (s *Service) ListRemovalRecords(ctx context.Context) ([]backup.RemovalRecord, error) {
-	rows, err := s.db.Query(ctx, `
+	return s.listRemovalRecords(ctx, s.db)
+}
+
+// listRemovalRecords reads the removal ledger of the database.
+//
+// The querier is the pool or a transaction, so the ledger can be read inside
+// the transaction of a release: the facts of the release and the rows it read
+// are then the same ones.
+func (s *Service) listRemovalRecords(ctx context.Context, q removalQuerier) ([]backup.RemovalRecord, error) {
+	rows, err := q.Query(ctx, `
 		SELECT removal_id,subject_kind,subject_id,match_id,scope,removed_at
 		FROM online_removal_ledger
 		ORDER BY match_id, removal_id`)
@@ -464,6 +601,11 @@ func (s *Service) ListRemovalRecords(ctx context.Context) ([]backup.RemovalRecor
 		return nil, err
 	}
 	return records, nil
+}
+
+// removalQuerier reads rows. The pool and a transaction both satisfy it.
+type removalQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 // ApplyRemovalRecords replays a removal ledger.
@@ -762,62 +904,17 @@ func (s *Service) ReleaseRestoreGate(ctx context.Context, restoreID string) erro
 	return s.dischargeRequirements(applied, keep)
 }
 
-// ReleaseRestoreGateWithProof releases the restore gates whose awaited
-// removal ledger the candidate proves.
+// PendingRestoreGates counts the restore gates that wait for their release.
 //
-// The gate names the digest of the removal ledger it waits for, and that
-// digest is one way: the only proof of the commitment is a removal ledger
-// whose own digest is exactly the one the gate names. A candidate that does
-// not match proves nothing, so the gate stays closed and the removals it
-// waits for stay owed. A newer or larger ledger is not the same commitment
-// and never proves one.
-//
-// The gate is released only when the applied removal ledger holds the
-// candidate: the proof says what the gate waits for, and the containment says
-// that the database holds it.
-//
-// The candidate is the durable evidence of a restore that the operator
-// restored from its backup, or the encrypted ledger of a bundle or of a
-// rotation copy. When no candidate proves a gate, the gate is retained: the
-// service stays closed and the operator has to restore the evidence of the
-// restore from the protected backup of the evidence directory.
-func (s *Service) ReleaseRestoreGateWithProof(ctx context.Context, candidate backup.AppliedRemovalLedger) (int, error) {
-	digest := gateDigest(requirementDigest(candidate))
-	applied, err := s.AppliedRemovalLedger(ctx)
+// The count is the truth of the service: a gate that waits keeps the service
+// closed, so an operator is told how many of them are still there.
+func (s *Service) PendingRestoreGates(ctx context.Context) (int, error) {
+	var pending int
+	err := s.db.QueryRow(ctx, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed=false`).Scan(&pending)
 	if err != nil {
 		return 0, err
 	}
-	rows, err := s.db.Query(ctx, `SELECT restore_id FROM online_restore_gates WHERE serving_allowed=false AND ledger_digest=$1`, digest)
-	if err != nil {
-		return 0, err
-	}
-	gates := make([]string, 0)
-	for rows.Next() {
-		var gate string
-		if err = rows.Scan(&gate); err != nil {
-			rows.Close()
-			return 0, err
-		}
-		gates = append(gates, gate)
-	}
-	if err = rows.Err(); err != nil {
-		rows.Close()
-		return 0, err
-	}
-	rows.Close()
-	released := 0
-	for _, gate := range gates {
-		if !backup.RemovalLedgerContains(applied, candidate) {
-			// The database does not hold the removal ledger the gate waits
-			// for: the gate is retained and the service stays closed.
-			continue
-		}
-		if _, err = s.db.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE restore_id=$1 AND serving_allowed=false`, gate); err != nil {
-			return released, err
-		}
-		released++
-	}
-	return released, nil
+	return pending, nil
 }
 
 // LedgerApplied reports whether every recorded removal is applied in the

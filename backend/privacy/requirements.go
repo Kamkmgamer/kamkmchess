@@ -109,6 +109,20 @@ func ReadRemovalRequirement(path string) (RemovalRequirement, error) {
 	if record.RestoreID == "" || record.Digest == "" {
 		return RemovalRequirement{}, fmt.Errorf("privacy: the durable evidence of the removal ledger is incomplete")
 	}
+	if !restoreIDPattern.MatchString(record.RestoreID) {
+		// The identifier of a restore is a name and not a path, exactly like
+		// the name of the marker of the lifecycle: a record that names
+		// another restore by a path is refused.
+		return RemovalRequirement{}, fmt.Errorf("privacy: the durable evidence of the removal ledger names an unusable restore")
+	}
+	// The records of the ledger have to be the shape the merge accepts, so a
+	// supplied record cannot carry a record the replay would refuse.
+	if _, err = backup.MergeRemovalLedgers(record.Matches, nil); err != nil {
+		return RemovalRequirement{}, fmt.Errorf("privacy: the durable evidence of the removal ledger is malformed: %w", err)
+	}
+	if _, err = backup.MergeSubjectRemovalLedgers(record.Subjects, nil); err != nil {
+		return RemovalRequirement{}, fmt.Errorf("privacy: the durable evidence of the subject removal ledger is malformed: %w", err)
+	}
 	computed := backup.RemovalLedgerDigest(record.Matches, record.Subjects)
 	if hex.EncodeToString(computed) != record.Digest {
 		return RemovalRequirement{}, fmt.Errorf("privacy: the durable evidence of the removal ledger does not match its digest")
