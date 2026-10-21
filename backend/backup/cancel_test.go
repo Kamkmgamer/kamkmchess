@@ -35,6 +35,10 @@ type failingCancelHandle struct {
 }
 
 // Cancel fails: the marker of the lifecycle cannot be removed.
+//
+// The failure contract fake deliberately does not give the ownership back,
+// so the regression proves that the library defends itself: the restore has
+// to release the ownership itself and to report the failure of the cleanup.
 func (h *failingCancelHandle) Cancel() error {
 	return errors.New("the marker of the lifecycle could not be removed")
 }

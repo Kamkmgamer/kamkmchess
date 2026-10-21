@@ -343,8 +343,11 @@ func (h *fakeFenceHandle) Release() {
 	h.fence.released = append(h.fence.released, "released")
 }
 
+// Cancel honours the ownership contract of the real handle: a cancellation
+// that succeeds gives the ownership back.
 func (h *fakeFenceHandle) Cancel() error {
 	h.fence.cancelled = append(h.fence.cancelled, "cancelled")
+	h.fence.released = append(h.fence.released, "released")
 	return nil
 }
 
