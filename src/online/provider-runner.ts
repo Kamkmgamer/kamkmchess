@@ -2061,6 +2061,12 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         };
       } catch (error) {
         const kind = classifyProviderRunnerError(error);
+        // The decision of the owner is checked after every await: a newer
+        // decision, a stop or a dispose end the settlement, and the older
+        // decision installs nothing and reports nothing.
+        if (!ownerActionIsCurrent(owner.token, owner.generation)) {
+          return { kind: 'superseded' };
+        }
         return {
           kind: 'not-settled',
           detail: kind === 'unauthorized'
@@ -2389,8 +2395,12 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         // The envelope of the accepted command is kept. A decision that could
         // not finish its work may hand the envelope back to the owner, so the
         // receipt of the service is never lost: the owner may send the very
-        // same command again and read the receipt it already earned.
-        lastAcceptedEnvelope = envelope;
+        // same command again and read the receipt it already earned. Only a
+        // command of a decision of the owner is kept: the work of the runner
+        // itself is not a decision the owner may replay.
+        if (fence !== undefined && fence.token !== null) {
+          lastAcceptedEnvelope = envelope;
+        }
         return { kind: 'accepted', receipt };
       } catch (error) {
         const kind = classifyProviderRunnerError(error);
@@ -3127,16 +3137,31 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   }
 
   /**
-   * Keeps the envelope of the last accepted command for the owner.
+   * Keeps the envelope of an accepted command for the owner.
    *
    * A decision that could not finish its work hands the envelope back, so the
    * owner may send the very same command again. The service answers the replay
    * with the receipt it already earned, so the proof of an accepted command is
    * never lost and the private intent of the owner survives the failure.
+   *
+   * The envelope is the one the decision captured, and it is installed only
+   * while the decision is still the decision of the owner: a newer decision
+   * keeps the record of its own command, and the record of a newer pending
+   * submission is never replaced by the envelope of an older command.
    */
-  function keepAcceptedEnvelope(): void {
-    if (lastAcceptedEnvelope === null) return;
-    pendingSubmission = lastAcceptedEnvelope;
+  function keepAcceptedEnvelope(
+    owner: { readonly token: number; readonly generation: number },
+    envelope: CommandEnvelope | null,
+  ): void {
+    if (envelope === null) return;
+    // A newer decision of the owner took the command. Its record is the one the
+    // owner may read the receipt of.
+    if (!ownerActionIsCurrent(owner.token, owner.generation)) return;
+    // A command that waits for its acknowledgement keeps its own record: the
+    // receipt of a newer decision is never replaced by the envelope of an older
+    // one. The record of the very same command is already there.
+    if (pendingSubmission !== null) return;
+    pendingSubmission = envelope;
   }
 
   /** Starts the turn without waiting for the provider answer. */
@@ -3329,6 +3354,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           // published, binds the control epoch of the seat and stands down
           // when the seat belongs to the human owner now.
           const control = provenControl(outcome.receipt, operation.action);
+          // The envelope of the command this decision replayed is captured
+          // now, before any await: a decision that could not finish its work
+          // hands it back to the owner.
+          const acceptedEnvelope = lastAcceptedEnvelope;
           if (control !== null) {
             // Fence snapshots before releasing the lease, which can wait for
             // the service. Only a control change requires a new private binding.
@@ -3360,7 +3389,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
               });
               // The receipt of the accepted command is not lost: the owner may
               // send the very same command again and read it at the service.
-              keepAcceptedEnvelope();
+              keepAcceptedEnvelope(owner, acceptedEnvelope);
               // The decision of the owner was to let the runner play again, and
               // the record of the billable work is still open, so the decision
               // is not complete and the outcome names the reason.
@@ -3475,6 +3504,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       boundSeatControlEpoch = outcome.receipt.controlEpoch;
       superseded = false;
       uncertainty = null;
+      // The envelope of the command this decision sent is captured now, before
+      // any await: a decision that could not finish its work hands it back to
+      // the owner.
+      const acceptedEnvelope = lastAcceptedEnvelope;
       // The control of the seat changed, so the work of the old turn is
       // fenced and the generation of the lifecycle moves. The decision of the
       // owner settles the pending records, so the new agent may ask the
@@ -3504,7 +3537,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         });
         // The receipt of the accepted command is not lost: the owner may send
         // the very same command again and read it at the service.
-        keepAcceptedEnvelope();
+        keepAcceptedEnvelope(owner, acceptedEnvelope);
         // The control change was applied at the service, so the decision of the
         // owner is the decision the caller may bind. The detail names what the
         // settlement had to leave out.
@@ -3640,7 +3673,4 @@ function withLeaseNote(detail: string, note: string | undefined): string {
 export function coordinateMoveToUci(move: CoordinateMove): string {
   return `${move.from}${move.to}${move.promotion ?? ''}`;
 }
-
-
-
 

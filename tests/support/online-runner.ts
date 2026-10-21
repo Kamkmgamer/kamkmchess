@@ -840,6 +840,13 @@ export function deferNextRenewal(port: ProviderRunnerLeasePort): DeferredRenewal
 export interface HeldLeaseAnswer {
   readonly promise: Promise<ProviderRunnerLease>;
   resolve(value: ProviderRunnerLease): void;
+  /**
+   * Refuses the request.
+   *
+   * The service refuses a lease while it is not serving, so a test can answer
+   * a held request with the refusal of the service.
+   */
+  reject(error: unknown): void;
 }
 
 /** The lease client that can hold one request of each kind in flight. */
@@ -883,8 +890,9 @@ export function createHoldableLeasePort(base: ProviderRunnerLeasePort): Holdable
 
   function hold(list: HeldLeaseAnswer[]): Promise<ProviderRunnerLease> {
     let resolve!: (value: ProviderRunnerLease) => void;
-    const promise = new Promise<ProviderRunnerLease>((res) => { resolve = res; });
-    list.push({ promise, resolve });
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<ProviderRunnerLease>((res, rej) => { resolve = res; reject = rej; });
+    list.push({ promise, resolve, reject });
     return promise;
   }
 

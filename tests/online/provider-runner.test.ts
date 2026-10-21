@@ -3386,6 +3386,77 @@ describe('the settlement of a switch that interrupted a billable request', () =>
     expect(releases[0]?.turnVersion).toBe(captured.turnVersion);
   });
 
+  it('keeps the record of a newer decision when the settlement of the older one fails', async () => {
+    const { service, provider, held, commands, runner } = createSettlementHarness();
+    await uncertainRunner(service, provider, runner);
+
+    // The lease of the new epoch waits for the service, so the settlement of
+    // the older decision waits for it.
+    held.holdAcquire();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => held.acquires.length === 1, 'the lease of the new epoch is in flight');
+    const olderOperation = service.recordedCommands.at(-1)?.operationId ?? null;
+    expect(olderOperation).not.toBeNull();
+
+    // A newer decision of the owner sends a command whose acknowledgement is
+    // lost. Its own record is the only way to read the receipt of that command.
+    commands.failEveryAttempt(new Error('The network failed.'));
+    const newer = runner.switchModel('Third Agent');
+    await until(() => runner.state.phase === 'uncertain', 'the newer decision waits for the owner');
+    const newerOutcome = await newer;
+    expect(newerOutcome.kind).toBe('unknown');
+
+    // The service refuses the lease of the settlement of the older decision.
+    held.acquires[0]?.reject(new ProviderRunnerServiceError('unavailable', 'The service is not serving.', 503));
+    const older = await switching;
+
+    // The older decision is not the decision of the owner any more: it reports
+    // that and installs nothing.
+    expect(older.kind).toBe('unknown');
+    expect(older.detail).toBe('A newer decision of the owner ended the switch.');
+
+    // The owner retries: the record of the newer decision is the one that is
+    // replayed, so the receipt of the newer decision can be read at the
+    // service. The command of the older decision is never replayed.
+    commands.failEveryAttempt(null);
+    const before = service.recordedCommands.length;
+    await runner.retry();
+    const replayed = service.recordedCommands.slice(before).map(command => command.operationId);
+    expect(replayed.length).toBeGreaterThan(0);
+    expect(replayed[0]).not.toBe(olderOperation);
+  });
+
+  it('keeps the receipt of its own accepted command when the settlement fails', async () => {
+    const { service, provider, held, runner } = createSettlementHarness();
+    await uncertainRunner(service, provider, runner);
+
+    // The lease of the new epoch waits for the service.
+    held.holdAcquire();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => held.acquires.length === 1, 'the lease of the new epoch is in flight');
+    const operation = service.recordedCommands.at(-1)?.operationId ?? null;
+    expect(operation).not.toBeNull();
+
+    // The service refuses the lease of the settlement.
+    held.acquires[0]?.reject(new ProviderRunnerServiceError('unavailable', 'The service is not serving.', 503));
+    const outcome = await switching;
+
+    // The control change was applied at the service, so the decision of the
+    // owner is the decision the caller may bind, and the detail names what the
+    // settlement had to leave out.
+    expect(outcome.kind).toBe('accepted');
+    expect(outcome.detail).toBe('The service refused the lease of the seat.');
+    expect(runner.state.phase).toBe('uncertain');
+
+    // The owner retries: the command of the switch is replayed with its own
+    // operation identifier, so the receipt of the service can be read.
+    const before = service.recordedCommands.length;
+    await runner.retry();
+    const replayed = service.recordedCommands.slice(before).map(command => command.operationId);
+    expect(replayed.length).toBeGreaterThan(0);
+    expect(replayed[0]).toBe(operation);
+  });
+
   it('gives the lease of the settlement back only when it is still the lease of the settlement', async () => {
     const { service, provider, held, commands, runner } = createSettlementHarness();
     const { uncertain, oldLeaseId } = await uncertainRunner(service, provider, runner);
