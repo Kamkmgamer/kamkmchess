@@ -232,7 +232,9 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
   // private selection of this seat. Without that choice the seat waits.
   const ownSeatIsAgent = view !== null && seat !== null
     && view.seats.find(candidate => candidate.seat === seat)?.control.kind === 'agent';
-  const boundAgentLabel = view && seat ? composition.agentBindingFor(view.matchId, seat) : null;
+  // The binding of the seat is published by its private identity, so the
+  // display asks for the public label of that binding.
+  const boundAgentLabel = view && seat ? composition.agentBindingLabelFor(view.matchId, seat) : null;
   const status = view
     ? (focused && focused.status !== 'live' ? onlineConnectionText(focused.status) : onlineStatusText(view, reading))
     : '';

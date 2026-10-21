@@ -73,6 +73,7 @@ import type { OnlineMatchView } from './updates';
 import type { QueueEntry, Seat, SeatControl, TimeControl } from './contracts';
 import type { OnlineAgentCheck } from './readiness';
 import type { ModelSelection } from '../controller/index.js';
+import { privateAgentId } from '../accounts/agent-catalog.js';
 import type { ConnectionNamespace, ConnectionStore } from '../providers/connections/index.js';
 
 /** The route that answers which online surfaces are open. */
@@ -270,8 +271,17 @@ export interface OnlineComposition {
   setAgentCatalog(entries: readonly { id: string; label: string; selection: ModelSelection }[]): void;
   /** The public labels the owner may choose for a seat. */
   readonly agentCatalog: readonly { readonly id: string; readonly label: string }[];
-  /** The label bound to one seat, or null when the seat has no binding. */
+  /**
+   * The exact private identity of the binding of one seat.
+   *
+   * Two private models of the owner can carry the same public label, so the
+   * binding is published by its private identity and never by its label: the
+   * interface resolves the seat to exactly one model. The identity stays in
+   * the browser and never leaves it.
+   */
   agentBindingFor(matchId: string, seat: Seat): string | null;
+  /** The public label of the binding of one seat, for the display. */
+  agentBindingLabelFor(matchId: string, seat: Seat): string | null;
   /** Binds the chosen private selection to one seat of one match. */
   bindAgentSeat(matchId: string, seat: Seat, choice: string): void;
   /**
@@ -1771,6 +1781,22 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   }
 
   /**
+   * The private identity of the binding of one seat.
+   *
+   * The identity of the catalog entry of that selection is the identity the
+   * interface resolves, so the binding names the same model the catalog
+   * publishes. A selection the catalog does not know keeps the identity of its
+   * own private facts.
+   */
+  function identityOfSelection(selection: ModelSelection): string {
+    const identity = privateAgentId(selection);
+    for (const [id, entry] of agentCatalog) {
+      if (privateAgentId(entry.selection) === identity) return id;
+    }
+    return identity;
+  }
+
+  /**
    * The private selection bound to one seat.
    *
    * The answer is null when the seat has no binding. The interface then asks
@@ -1998,6 +2024,12 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       return [...agentCatalog.entries()].map(([id, entry]) => ({ id, label: entry.label }));
     },
     agentBindingFor(matchId: string, seat: Seat) {
+      // The binding is published by its private identity, so a seat whose two
+      // private models share the public label still resolves to one model.
+      const binding = agentBindingFor(matchId, seat);
+      return binding === null ? null : identityOfSelection(binding.selection);
+    },
+    agentBindingLabelFor(matchId: string, seat: Seat) {
       return agentBindingFor(matchId, seat)?.label ?? null;
     },
     bindAgentSeat(matchId: string, seat: Seat, choice: string) {

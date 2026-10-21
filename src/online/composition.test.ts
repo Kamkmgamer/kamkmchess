@@ -502,13 +502,13 @@ describe('the agent binding follows the seat, never the public label (B-26)', ()
     const second = { connectionId: 'c2', modelRoutingId: 'm2', protocol: 'chat-completions', configurationRevision: 'r2', diagnostic: 'passed-current-session' } as unknown as ModelSelection;
     composition.setAgentCatalog([{ id: 'choice-1', label: 'My agent', selection: first }, { id: 'choice-2', label: 'Other model', selection: second }]);
     // A seat without a binding has no agent: the browser never guesses one.
-    expect(composition.agentBindingFor('match-00000001', 'white')).toBeNull();
+    expect(composition.agentBindingLabelFor('match-00000001', 'white')).toBeNull();
     // The owner chooses the agent of the seat.
     composition.bindAgentSeat('match-00000001', 'white', 'Other model');
-    expect(composition.agentBindingFor('match-00000001', 'white')).toBe('Other model');
+    expect(composition.agentBindingLabelFor('match-00000001', 'white')).toBe('Other model');
     // The binding is stored in the browser, so a reload keeps it.
     const reloaded = createComposition({ storage });
-    expect(reloaded.composition.agentBindingFor('match-00000001', 'white')).toBe('Other model');
+    expect(reloaded.composition.agentBindingLabelFor('match-00000001', 'white')).toBe('Other model');
     composition.dispose();
     reloaded.composition.dispose();
   });
@@ -521,11 +521,11 @@ describe('the agent binding follows the seat, never the public label (B-26)', ()
     // The assignment knows the match and the seat of the owner, and the
     // selection that was captured when the entry was created.
     composition.attachAndFocus('match-00000042', 'black', undefined, selection);
-    expect(composition.agentBindingFor('match-00000042', 'black')).toBe('My agent');
-    expect(composition.agentBindingFor('match-00000042', 'white')).toBeNull();
+    expect(composition.agentBindingLabelFor('match-00000042', 'black')).toBe('My agent');
+    expect(composition.agentBindingLabelFor('match-00000042', 'white')).toBeNull();
     // A seat without a captured selection stays unbound: the owner chooses.
     composition.attachAndFocus('match-00000043', 'black');
-    expect(composition.agentBindingFor('match-00000043', 'black')).toBeNull();
+    expect(composition.agentBindingLabelFor('match-00000043', 'black')).toBeNull();
     composition.dispose();
   });
 
@@ -533,7 +533,27 @@ describe('the agent binding follows the seat, never the public label (B-26)', ()
     const { composition } = createComposition();
     composition.setAgentCatalog([{ id: 'choice-1', label: 'My agent', selection: { connectionId: 'c1', modelRoutingId: 'm1' } as unknown as ModelSelection }]);
     composition.bindAgentSeat('match-00000001', 'white', 'Unknown model');
-    expect(composition.agentBindingFor('match-00000001', 'white')).toBeNull();
+    expect(composition.agentBindingLabelFor('match-00000001', 'white')).toBeNull();
+    composition.dispose();
+  });
+
+  it('publishes the binding by the private identity, so two models of one label stay apart', () => {
+    const { composition } = createComposition();
+    const first = { kind: 'model', providerId: 'p', connectionId: 'c1', configurationRevision: 1, modelRoutingId: 'm1', protocol: 'chat-completions', diagnostic: 'passed-current-session' } as unknown as ModelSelection;
+    const second = { kind: 'model', providerId: 'p', connectionId: 'c1', configurationRevision: 2, modelRoutingId: 'm2', protocol: 'chat-completions', diagnostic: 'passed-current-session' } as unknown as ModelSelection;
+    // Two private models of one connection carry the same public label, so only
+    // their private identity keeps them apart.
+    composition.setAgentCatalog([
+      { id: 'agent-first', label: 'Custom model', selection: first },
+      { id: 'agent-second', label: 'Custom model', selection: second },
+    ]);
+    // The owner binds the second model of the connection to the seat.
+    composition.rebindAgentSeat('match-00000001', 'white', 'agent-second');
+    // The binding is published by the private identity of that model, so the
+    // interface resolves the seat to exactly one model.
+    expect(composition.agentBindingFor('match-00000001', 'white')).toBe('agent-second');
+    // The display still names the model by its public label.
+    expect(composition.agentBindingLabelFor('match-00000001', 'white')).toBe('Custom model');
     composition.dispose();
   });
 
@@ -595,8 +615,8 @@ describe('two private models that share one public label (R4-08)', () => {
     composition.attachAndFocus('match-00000010', 'white', undefined, first);
     composition.attachAndFocus('match-00000011', 'white', undefined, second);
     // Each seat keeps its own private selection.
-    expect(composition.agentBindingFor('match-00000010', 'white')).toBe('Custom model');
-    expect(composition.agentBindingFor('match-00000011', 'white')).toBe('Custom model');
+    expect(composition.agentBindingLabelFor('match-00000010', 'white')).toBe('Custom model');
+    expect(composition.agentBindingLabelFor('match-00000011', 'white')).toBe('Custom model');
     composition.dispose();
   });
 
@@ -610,10 +630,10 @@ describe('two private models that share one public label (R4-08)', () => {
     ]);
     // An ambiguous label resolves to nothing, so the browser never guesses.
     composition.bindAgentSeat('match-00000012', 'white', 'Custom model');
-    expect(composition.agentBindingFor('match-00000012', 'white')).toBeNull();
+    expect(composition.agentBindingLabelFor('match-00000012', 'white')).toBeNull();
     // The private identity of the entry resolves.
     composition.bindAgentSeat('match-00000012', 'white', 'private-b');
-    expect(composition.agentBindingFor('match-00000012', 'white')).toBe('Custom model');
+    expect(composition.agentBindingLabelFor('match-00000012', 'white')).toBe('Custom model');
     composition.dispose();
   });
 });
@@ -625,10 +645,10 @@ describe('the identity handover keeps the model of the returning owner', () => {
     const selection = { kind: 'model', providerId: 'p', connectionId: 'c1', configurationRevision: 1, modelRoutingId: 'm1', protocol: 'chat-completions', diagnostic: 'passed-current-session' } as unknown as ModelSelection;
     composition.setAgentCatalog([{ id: 'private-a', label: 'My agent', selection }]);
     composition.attachAndFocus('match-00000020', 'white', undefined, selection);
-    expect(composition.agentBindingFor('match-00000020', 'white')).toBe('My agent');
+    expect(composition.agentBindingLabelFor('match-00000020', 'white')).toBe('My agent');
     // The identity leaves and comes back: the private binding of that identity
     // is still on the device and is restored.
-    expect(composition.agentBindingFor('match-00000020', 'white')).toBe('My agent');
+    expect(composition.agentBindingLabelFor('match-00000020', 'white')).toBe('My agent');
     composition.dispose();
   });
 });
@@ -1120,7 +1140,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     // outcome is unknown and the binding of the seat stays the old one.
     const unknown = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'private-b');
     expect(unknown.kind).toBe('unknown');
-    expect(composition.agentBindingFor('match-00000001', 'white')).toBe('Custom model');
+    expect(composition.agentBindingLabelFor('match-00000001', 'white')).toBe('Custom model');
     expect(persistedSelection(storage, 'match-00000001', 'white')).toBe('c1');
     // The control of the seat changed at the service. From this moment the
     // browser never asks the provider with the credential of the old model
@@ -1253,7 +1273,7 @@ describe('the recovery of an applied handoff (R10-A)', () => {
     expect(accepted.kind).toBe('accepted');
     // The seat belongs to the human owner now: the binding leaves the memory
     // and the device, and the browser keeps no runner for the seat.
-    expect(composition.agentBindingFor('match-00000001', 'white')).toBeNull();
+    expect(composition.agentBindingLabelFor('match-00000001', 'white')).toBeNull();
     expect(persistedSelection(storage, 'match-00000001', 'white')).toBeNull();
     expect(composition.agentRunnerState('match-00000001', 'white')).toBeNull();
     // The seat is the human's now, so the browser asks the provider for
