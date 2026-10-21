@@ -323,8 +323,8 @@ ok  	github.com/Kamkmgamer/kamkmchess/backend/storage         0.432s
 ```
 
 The `backend/integration` package does not finish inside the default ten
-minute timeout of `go test` on this host, and it carries one failure that
-has nothing to do with the friend surface. **Both are pre-existing**:
+minute timeout of `go test` on this host, and it carries failures that have
+nothing to do with the friend surface. **All of them are pre-existing**:
 
 * the root run of the same suite of this workspace
   (`D:/projects/kamkmchess/.scratch/online-swarm/final-go.jsonl`) records
@@ -334,11 +334,30 @@ has nothing to do with the friend surface. **Both are pre-existing**:
   `TestPostgresMixedControlAttributesEveryMoveAndTheTerminalAction`
   (`online_history_test.go:371: execute op-move-2: online: participant does
   not control seat`), and the test fails the same way on the untouched base
-  of this branch (`git stash` of the whole change set reproduces it three
-  times out of three).
+  of this branch (the whole change set stashed reproduces it three times out
+  of three);
+* `TestQueueCompetingMatchersProduceOneGame` fails with `duplicate key value
+  violates unique constraint "online_matches_pkey"`. It is a defect of the
+  queue path of `backend/queue`, which this ticket does not touch, and it
+  fails the same way with the base of this branch restored
+  (`git checkout 3d63aab -- backend/` reproduces it);
+* `TestPostgresOnlineUpdatesIdleStreamHoldsNoDatabaseConnection` fails only
+  under the load of the full package and passes in isolation. It is a flake
+  of the updates path, which this ticket does not touch.
 
-The friend surface itself is green, and the package run with a longer
-timeout is recorded in the run log of this ticket.
+With a longer timeout the package finishes in 743 seconds and reports
+exactly those three failures:
+
+```
+go test ./backend/integration -count=1 -timeout 40m
+--- FAIL: TestPostgresMixedControlAttributesEveryMoveAndTheTerminalAction (1.96s)
+--- FAIL: TestPostgresOnlineUpdatesIdleStreamHoldsNoDatabaseConnection (5.63s)
+--- FAIL: TestQueueCompetingMatchersProduceOneGame (4.55s)
+FAIL	github.com/Kamkmgamer/kamkmchess/backend/integration	743.461s
+```
+
+The friend surface itself is green, and the focused friend run is the
+evidence of this ticket.
 
 ```
 pnpm vitest run
