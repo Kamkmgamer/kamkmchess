@@ -15,11 +15,11 @@ current state:
 | release-decision | unmet | No owner release decision is recorded for the friend gate. |
 | cohort | unmet | No opt-in cohort is recorded. |
 | host-verification | external | No host verification record exists. |
-| backup-coverage | unmet | The restore path does not reapply the online removal markers. |
-| runtime-grants | met | The policy grants the 23 migrated tables exactly what the writer uses. |
-| local-evidence | unmet | The friend, match and architecture scenarios have no passing evidence yet. |
+| backup-coverage | met | The dump covers the database and the restore reapplies the removal ledger. |
+| runtime-grants | met | The policy grants the 45 migrated tables exactly what the writer uses. |
+| local-evidence | unmet | `FRI-02`, `FRI-04`, `MAT-01`, `MAT-02`, `MAT-07`, `MAT-09`, `MAT-10` and `ARC-07` have no passing evidence, and `ARC-08` is recorded as failed. |
 | native-evidence | unmet | `UX-02` to `UX-06` have no native run. |
-| host-evidence | external | The host scenarios have no host record. |
+| host-evidence | external | `ARC-12`, `ARC-13`, `ARC-14`, `HIS-06` and `HIS-07` have no host record. |
 
 The reversible rollout packet is printed by
 `node scripts/online/feature-gates.mjs packet --gate friend`. It names the
@@ -45,9 +45,12 @@ switch, not a browser flag, owns the surface.
 ## Pending
 
 - The implementation scenarios of the friend gate need passing evidence.
+  `FRI-01` and `FRI-03` have local browser evidence now; `FRI-02`, `FRI-04`,
+  `MAT-01`, `MAT-02`, `MAT-07`, `MAT-09`, `MAT-10` and `ARC-07` do not, and
+  `ARC-08` is recorded as failed.
 - The native scenarios need real devices.
 - The host scenarios need the host.
-- The backup coverage blocker needs the online removal markers in the restore
-  path.
-- The server switches and the feature route need to be implemented and
-  production-wired before any cohort can be opened.
+- The server switches and the feature route are wired and default closed, and
+  the restore fence is shared between the service and the restore command. The
+  crash safety of that fence still needs the host: a container-local file was
+  refused precisely because it would not survive a restart.

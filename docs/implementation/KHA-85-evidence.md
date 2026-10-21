@@ -27,8 +27,8 @@ introduces an arbitrary limit.
 | release-decision | unmet | No owner release decision is recorded for the queue gate. |
 | cohort | unmet | No opt-in cohort is recorded. |
 | host-verification | external | No host verification record exists. |
-| backup-coverage | unmet | The restore path does not reapply the online removal markers. |
-| runtime-grants | met | The policy matches the writer's statements. |
+| backup-coverage | met | The dump covers the database and the restore reapplies the removal ledger. |
+| runtime-grants | met | The policy matches the writer's statements over 45 tables. |
 | local-evidence | unmet | `QUE-01`, `QUE-03`, `QUE-09`, `QUE-11` and `QUE-12` have no passing evidence. |
 | friend-cohort-run | unmet | The friend cohort has not run. |
 

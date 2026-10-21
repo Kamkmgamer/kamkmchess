@@ -1,11 +1,49 @@
 # KHA-80 evidence — local integration under competing clients, workers and failures
 
-Tested commit: `9c6bc79` (the operations slice on top of the integrated
-service `3d63aab`). The application code under test is the integrated tree;
+**Current state: not green.** The latest suite run leaves one mapped scenario
+recorded as failed and the Go integration package shows timing-sensitive
+failures under load. The earlier all-green checkpoint is kept below as
+history, not as the current result.
+
+Tested commit: `f1680c6` (the operations slice on top of the integrated
+service `4a0e46c`). The application code under test is the integrated tree;
 every command below runs against a real PostgreSQL 17 database, the real Go
 service and the pinned private rules worker bundle
 (`build/rules-worker/worker.mjs`, chessops 0.15.1, rules policy
 `online-rules/1`).
+
+## Current result
+
+| Item | Result |
+| --- | --- |
+| Evidence ledger | 15 scenarios passed, **1 failed**, 46 not run |
+| Go integration package | fails under load; a different timing-sensitive test failed in each of three runs |
+| Browser suite (strict, real Chromium, real service) | 4 passed, 1 skipped (the invitation link route is not published) |
+| Grant probe against a real PostgreSQL | 209 probes, 0 failures |
+| Deployment image verification | 9 checks, 0 failures |
+
+The failed record is `ARC-08`: its mapped test
+`TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight` failed
+in the latest suite run. The record is kept as a failure on purpose. The test
+passes in isolation, so the package is flaky under load rather than
+deterministically broken, but a flaky package is not a green package and the
+evidence says so.
+
+### The failures observed in the Go package
+
+| Test | Outcome |
+| --- | --- |
+| `TestPostgresOnlineCommandThatWaitsPastTheMainDeadlineTimesOut` | failed in one suite run, passes in isolation (15s) |
+| `TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight` | failed in one suite run, passes in isolation |
+| `TestPostgresOnlineMixedControlAttributesEveryMoveAndTheTerminalAction` | **fails deterministically**: `execute op-move-2: online: participant does not control seat`. The test hands the black seat to an agent and then submits the next move as the human account; the service refuses it. Either the control rule or the test expectation is wrong. It belongs to the application workers. |
+
+Reproduction of the deterministic one:
+
+```sh
+KHA41_TEST_DATABASE_URL="$ONLINE_FIXTURE_DATABASE_URL" KHA41_REQUIRE_POSTGRES=1 \
+  KHA66_WORKER_ENTRY="$PWD/build/rules-worker/worker.mjs" \
+  go test ./backend/integration -count=1 -run TestPostgresMixedControlAttributesEveryMoveAndTheTerminalAction
+```
 
 ## Reproduction
 
@@ -26,11 +64,12 @@ results onto the approved acceptance scenarios and writes
 `docs/evidence/online/KHA-80-integration.json` plus one evidence record per
 covered scenario.
 
-## What ran and what it showed
+## Earlier checkpoint (history, not the current result)
 
-The run executed 163 Go integration tests; the package passed and every test
-passed. The scenarios covered by the checked-in map (`scripts/online/acceptance-map.json`)
-and their result:
+At commit `9c6bc79` (on top of the integrated service `3d63aab`) the run
+executed 163 Go integration tests and every test passed. The scenario table
+below is that checkpoint. It is kept because it shows what the suite covers,
+not because it is the latest result.
 
 | Scenario | Mapped tests | Result |
 | --- | --- | --- |
@@ -75,7 +114,8 @@ DTO field names of the feature route, the invitation, the acceptance answer,
 the participant live view and an accepted move. A renamed or missing field
 fails the run.
 
-The strict run against the integrated service (`ONLINE_FIXTURE_STRICT=1`):
+The strict run against the integrated service (`ONLINE_FIXTURE_STRICT=1`,
+`ONLINE_FIXTURE_DESCRIPTOR=<descriptor>`):
 
 | Case | Result |
 | --- | --- |
@@ -89,12 +129,19 @@ The friend case proves the whole flow against the real service: the account
 client creates an invitation, the link preview never carries the owner token,
 the guest client accepts it and receives a seat-scoped credential, the account
 client submits `e2e4`, the guest client observes the accepted move with the
-same version, and a stale command is refused.
+same version, the stale command is refused, the guest answers the opening
+move with `e7e5` and both clients see the second move.
 
-The rendered case proves that the interface follows the service: the browser
-asked the service for the surface state and the rendered action matches the
-answer. A build without the account configuration never asks the service, and
-the case then proves that the closed surface stays closed.
+The rendered case proves that the interface follows the service it is bound
+to: the rendered action matches the answer of the service the application
+actually reads, and it never opens a surface that service keeps closed. A
+build without the account configuration never asks the service, and the case
+then proves that the closed surface stays closed.
+
+**Still missing:** the signed-in account path. There is no account build in
+this environment (no identity provider key), so the queue surface cannot be
+driven by a real signed-in account, and the invitation link route of the
+browser is not published yet. The workspace owns both.
 
 ## One failing test in the integrated tree
 

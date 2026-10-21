@@ -27,15 +27,17 @@ The grant probe ran against the local PostgreSQL 17 fixture
 (`127.0.0.1:55467`, database `kamkmchess_online_test`):
 
 ```
-204 probes, 0 failures
+209 probes, 0 failures
 ```
 
 The probe applies the reviewed policy to a throwaway role and schema, then
 executes real statements as that role: a read, an insert, an update and a
 delete on every table the policy covers, and the refusals on every table it
 does not. It proves that the role can do exactly what the policy says and
-nothing else, that PUBLIC holds nothing on the application tables, and that
-the effective privileges match the policy table by table.
+nothing else, that PUBLIC holds nothing on the application tables, that only
+the deployment role holds a privilege on them, and that the effective
+privileges match the policy table by table. The policy covers the 45 migrated
+tables.
 
 The deployment image is built and inspected locally by
 `node deploy/verify-runtime-image.mjs`:
@@ -49,26 +51,36 @@ at its configured entry path, and a real protocol request answered by the
 worker inside the image. The container runs as uid 65532 and carries no
 credential file. Nothing is pushed and nothing is deployed.
 
+The static audits are clean against the integrated tree:
+
+| Audit | Result |
+| --- | --- |
+| `node deploy/runtime-grants.mjs` | clear, 45 tables, no blocker |
+| `node scripts/online/service-wiring.mjs` | the feature route is served, both switches are read with a closed default, the restore fence is loaded and shared |
+| `node scripts/online/backup-coverage.mjs` | the dump covers the database, the game and the online removal ledgers are reapplied, the restore gate is consulted before serving |
+
 The local load report is `docs/evidence/online/KHA-83-local-load.json` when a
 load run has been made. It is a loopback measurement with synthetic accounts.
 It is **not** a capacity claim.
 
 ## Open blockers
 
-1. **The restore gate is not wired.** The privacy service has the gate
-   (`ServingAllowed`) and the restore path reapplies the online removal
-   ledger, but no production read path consults the gate, so a restored copy
-   can serve traffic before the removal ledger is applied.
-   `pnpm run online:backup` reports this as a blocker.
+1. **The host has not been verified.** Apache flushing, finite stream
+   delivery, the delivered CSP and CORS, the TLS chain, the private worker
+   reachability and the capacity need the real host and an authorized staging
+   session. No staging authorization is recorded, so these stay **not run**
+   and the release gates report the host requirement as external.
 2. **The migrations grant privileges of their own.** The online migrations
    create `kamkm_online_api` and `kamkm_online_rules` and grant the first one
    `SELECT, INSERT, UPDATE, DELETE` on the online tables, including the
-   append-only ones. The reviewed policy covers the deployment role
-   `kamkmchess_runtime`, so these grants are unreviewed and wider.
-   `node deploy/runtime-grants.mjs` reports them.
+   append-only ones. The deployment connects as `kamkmchess_runtime`, the role
+   the reviewed policy describes, and provisioning revokes the privileges of
+   the unused roles, so no unused role keeps a grant. The grants themselves
+   still exist in the migrations and are reported by the audit.
 3. **A new migration needs a policy entry.** When the service gate migration
    lands, the audit names the missing table and `--propose` prints the entry
-   with the privileges the writer uses.
+   with the privileges the writer uses. A privacy cleanup that deletes rows
+   will need the matching `DELETE` in the policy.
 
 ## Not run, and why
 
