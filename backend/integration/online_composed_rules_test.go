@@ -580,9 +580,6 @@ func TestOnlineComposedRulesClosedGateRecoversWithTheSameClient(t *testing.T) {
 	if refund.Milliseconds() != interruption {
 		t.Fatalf("the clock of the unfinished match moved by %v, want the recorded interruption of %d ms", refund, interruption)
 	}
-	if refund.Milliseconds() != interruption {
-		t.Fatalf("the clock moved by %v, want the interruption of %d ms", refund, interruption)
-	}
 
 	// The refund happened once: a replay of the recovery changes nothing.
 	//
