@@ -1277,8 +1277,10 @@ func waitForAdvisoryWaiter(t *testing.T, pool *pgxpool.Pool, name string) {
 // restart blocks on it: the old behaviour, which continued without the scope
 // of the stored acceptor, answers the request and never waits.
 func TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor(t *testing.T) {
-	const poolName = "kha75-restart-barrier"
-	pool := friendNamedTestPool(t, 4, poolName)
+	poolName := "kha75-restart-" + randomSchemaSuffix()
+	// Four connections hold the first request, its seat barrier, the retry
+	// and the scope contender. The fifth observes the contender before release.
+	pool := friendNamedTestPool(t, 5, poolName)
 	fixture := newFriendRemovalFixtureWithPool(t, pool)
 	ctx := context.Background()
 	created := friendRemovalCreate(t, fixture, "user_inviter")
@@ -1326,6 +1328,26 @@ func TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor(t *testing
 	go func() {
 		scopeReady <- locks.LockAccountScope(ctx, held, locks.AccountScope(string(online.ParticipantGuest), guestID))
 	}()
+	// Starting the goroutine does not prove that PostgreSQL queued its lock.
+	// Observe this connection before allowing the first request to commit.
+	contenderPID := held.Conn().PgConn().PID()
+	deadline := time.Now().Add(30 * time.Second)
+	queued := false
+	for time.Now().Before(deadline) {
+		if err = pool.QueryRow(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity WHERE pid=$1
+			AND wait_event_type='Lock' AND query LIKE '%pg_advisory_xact_lock%'
+		)`, contenderPID).Scan(&queued); err != nil {
+			t.Fatal(err)
+		}
+		if queued {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !queued {
+		t.Fatal("the scope contender was not queued before the first acceptance committed")
+	}
 	// The first request commits and the test holds the scope of the stored
 	// acceptor.
 	locker.release(t)

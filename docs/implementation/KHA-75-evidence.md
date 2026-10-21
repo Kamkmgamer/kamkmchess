@@ -324,6 +324,16 @@ by the not granted row of that exact advisory key in `pg_locks`.
 --- PASS: TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor (6.98s)
 ```
 
+The integrated test also observes the exact contender connection waiting in
+PostgreSQL before it releases the first acceptance. The pool has a fifth
+connection for that observation and a unique application name. This removes
+the assumption that starting a goroutine has already queued its lock request.
+The parent ran the regression three times against the real local PostgreSQL
+database with `go test -timeout=5m -count=3 -json ./backend/integration -run
+'^TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor$'`.
+All three passed in 9.04, 16.06 and 11.43 seconds, with no skips. The JSON log
+is `.scratch/online-swarm/friends-r8-barrier-parent.jsonl`.
+
 The accept path of the surface was run as well, because the scope of the
 stored acceptor of a resumed acceptance is part of it:
 
