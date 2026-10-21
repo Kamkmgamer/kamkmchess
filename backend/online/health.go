@@ -419,12 +419,13 @@ func (s *Service) noteEvaluatorSuccess() {
 
 // healthCheckpointID mints the identity of one durable checkpoint.
 //
-// The identity carries the dependency, the state and a random suffix, so two
-// observations of the same dependency never collide.
+// The identity carries the dependency, the state, the observation time and a
+// random suffix, so two observations of the same dependency never collide and
+// the newest checkpoint of a dependency is the one with the newest identity.
 func healthCheckpointID(dependency string, state HealthState, at time.Time) string {
 	raw := make([]byte, 6)
 	if _, err := rand.Read(raw); err != nil {
 		return "chk-" + dependency + "-" + string(state) + "-" + at.UTC().Format("20060102T150405000000000")
 	}
-	return "chk-" + dependency + "-" + string(state) + "-" + hex.EncodeToString(raw)
+	return "chk-" + dependency + "-" + string(state) + "-" + at.UTC().Format("20060102T150405000000000") + "-" + hex.EncodeToString(raw)
 }

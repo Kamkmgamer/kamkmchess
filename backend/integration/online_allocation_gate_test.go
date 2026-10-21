@@ -237,3 +237,48 @@ func allocationSetup() online.CreateMatchSetup {
 
 // unused keeps the time import honest when the file changes.
 var _ = time.Second
+
+// TestOnlineRunnerRecordsNoProviderRequestForAFinishedMatch covers the
+// terminal lease lifecycle.
+//
+// A finished match records no provider request and takes no new lease, so a
+// late runner cannot bill against a game that is over.
+func TestOnlineRunnerRecordsNoProviderRequestForAFinishedMatch(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	const matchID = "match-runner-terminal-request"
+	createRunnerMatch(t, fixture.service, matchID, 20*60*1000)
+	version := acceptMovesWithLeases(t, fixture.service, matchID)
+	lease, err := fixture.service.AcquireRunnerLease(ctx, presenceBob().ref, leaseRequest(matchID, online.SeatBlack, "runner-terminal-request", "", version, 1))
+	if err != nil {
+		t.Fatalf("acquire the lease: %v", err)
+	}
+	resign := online.Command{
+		SchemaVersion:   online.ContractsSchemaVersion,
+		MatchID:         matchID,
+		OperationID:     "op-finish-request-resign",
+		ExpectedVersion: version,
+		Seat:            online.SeatBlack,
+		ControlEpoch:    1,
+		Action:          online.Action{Kind: online.ActionResign},
+	}
+	if _, err = fixture.service.Execute(ctx, presenceBob().ref, resign); err != nil {
+		t.Fatalf("resign: %v", err)
+	}
+	request := online.RunnerRequestRequest{
+		SchemaVersion: online.ContractsSchemaVersion,
+		MatchID:       matchID,
+		Seat:          online.SeatBlack,
+		RunnerID:      "runner-terminal-request",
+		LeaseID:       lease.LeaseID,
+		RequestID:     "request-terminal-01",
+		ControlEpoch:  1,
+		TurnVersion:   version,
+	}
+	if _, err = fixture.service.BeginRunnerRequest(ctx, presenceBob().ref, request); !errors.Is(err, online.ErrMatchEnded) {
+		t.Fatalf("the provider request of a finished match = %v, want %v", err, online.ErrMatchEnded)
+	}
+	if _, err = fixture.service.AcquireRunnerLease(ctx, presenceBob().ref, leaseRequest(matchID, online.SeatBlack, "runner-late", "", version, 1)); !errors.Is(err, online.ErrMatchEnded) {
+		t.Fatalf("the lease of a finished match = %v, want %v", err, online.ErrMatchEnded)
+	}
+}

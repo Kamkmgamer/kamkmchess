@@ -542,6 +542,11 @@ func (s *Service) writeRunnerRequest(ctx context.Context, actor ParticipantRef, 
 	if !lease.ExpiresAt.After(decision) {
 		return RunnerLease{}, ErrConflict
 	}
+	// A finished match records no provider request. The work of the match is
+	// over, so a billable request must not start or settle against it.
+	if match.Status != MatchActive {
+		return RunnerLease{}, ErrMatchEnded
+	}
 	if lease.ControlEpoch != match.ControlEpoch || req.ControlEpoch != match.ControlEpoch {
 		return RunnerLease{}, ErrConflict
 	}
