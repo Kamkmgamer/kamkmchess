@@ -27,7 +27,9 @@ import (
 // it is broken.
 type outageEvaluator struct {
 	moveEvaluator
-	broken atomic.Bool
+	broken  atomic.Bool
+	entered chan struct{}
+	release <-chan struct{}
 }
 
 func (e *outageEvaluator) ValidateSetup(ctx context.Context, input online.RulesInput) error {
@@ -39,9 +41,120 @@ func (e *outageEvaluator) ValidateSetup(ctx context.Context, input online.RulesI
 
 func (e *outageEvaluator) Evaluate(ctx context.Context, input online.RulesInput) (online.Candidate, error) {
 	if e.broken.Load() {
+		if e.entered != nil {
+			close(e.entered)
+			select {
+			case <-e.release:
+			case <-ctx.Done():
+				return online.Candidate{}, ctx.Err()
+			}
+		}
 		return online.Candidate{}, errors.New("the rules process is down")
 	}
 	return e.moveEvaluator.Evaluate(ctx, input)
+}
+
+// A request that was already evaluating when a peer recovered belongs to the
+// earlier outage. Its late failure must not suspend the recovered epoch again.
+func TestOnlineFailedRequestKeepsTheEpochBeforeItsEvaluation(t *testing.T) {
+	evaluator := &outageEvaluator{}
+	fixture := newPresenceFixtureWith(t, evaluator)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	const matchID = "match-deferred-outage"
+	createAgentMatch(t, fixture.service, matchID, 20*60*1000)
+	acceptMoves(t, fixture.service, matchID)
+	before, err := fixture.service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluator.entered = make(chan struct{})
+	release := make(chan struct{})
+	evaluator.release = release
+	evaluator.broken.Store(true)
+	done := make(chan error, 1)
+	go func() {
+		_, moveErr := fixture.service.Execute(ctx, presenceAlice().ref,
+			moveOnlineCommand(matchID, "op-deferred-outage", online.SeatWhite, before.Version, "g1f3"))
+		done <- moveErr
+	}()
+	select {
+	case <-evaluator.entered:
+	case <-ctx.Done():
+		t.Fatal("the participant request never entered the rules evaluation")
+	}
+	if _, err = fixture.service.PlanSuspension(ctx, fixture.clock.Now(), fixture.clock.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = fixture.service.RecoverFromInterruption(ctx); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err = <-done; !errors.Is(err, online.ErrUnavailable) {
+		t.Fatalf("the deferred evaluation returned %v, want unavailable", err)
+	}
+	if err = fixture.service.SuspendForDependency(ctx, online.DependencyRules); err != nil {
+		t.Fatal(err)
+	}
+	var pending int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_suspension_boundaries WHERE adjusted_at IS NULL`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 {
+		t.Fatalf("pending boundaries = %d after a deferred failure of the recovered outage, want none", pending)
+	}
+}
+
+// TestOnlineAStalePlanOfAFailedRequestFindsTheBoundaryOfTheOutage covers
+// the identity of the episode of a failed participant request.
+//
+// A request that fails against the rules process is an observation of the
+// outage, so it identifies the episode with the epoch of the outage. The
+// interruption that follows is the one of that epoch: a plan that arrives
+// after the recovery of a peer finds the boundary of the outage and plans
+// nothing, so the clock of the unfinished matches is not refunded twice.
+func TestOnlineAStalePlanOfAFailedRequestFindsTheBoundaryOfTheOutage(t *testing.T) {
+	evaluator := &outageEvaluator{}
+	fixture := newPresenceFixtureWith(t, evaluator)
+	ctx := context.Background()
+	const matchID = "match-stale-plan"
+	createAgentMatch(t, fixture.service, matchID, 20*60*1000)
+	acceptMoves(t, fixture.service, matchID)
+	before, err := fixture.service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The rules process of this instance breaks, and a participant request
+	// fails against it.
+	evaluator.broken.Store(true)
+	_, err = fixture.service.Execute(ctx, presenceAlice().ref,
+		moveOnlineCommand(matchID, "op-move-stale-plan", online.SeatWhite, before.Version, "g1f3"))
+	if !errors.Is(err, online.ErrUnavailable) {
+		t.Fatalf("the move against a broken worker = %v, want %v", err, online.ErrUnavailable)
+	}
+
+	// A peer recovers an interruption of the same outage, so the epoch of
+	// the service moves.
+	if _, err = fixture.service.PlanSuspension(ctx, fixture.clock.Now(), fixture.clock.Now()); err != nil {
+		t.Fatalf("plan the interruption of the peer: %v", err)
+	}
+	if _, err = fixture.service.RecoverFromInterruption(ctx); err != nil {
+		t.Fatalf("recover the interruption of the peer: %v", err)
+	}
+
+	// The monitor of this instance plans the interruption of the outage. The
+	// boundary of the outage exists, so the plan finds it and plans nothing.
+	if err = fixture.service.SuspendForDependency(ctx, online.DependencyRules); err != nil {
+		t.Fatalf("suspend the dependency: %v", err)
+	}
+	var pending int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_suspension_boundaries WHERE adjusted_at IS NULL`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 {
+		t.Fatalf("pending boundaries = %d after the recovery of the peer, want none", pending)
+	}
 }
 
 // TestOnlineMonitorPlansOneInterruptionForOneOutage covers the outage of one

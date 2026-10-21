@@ -224,11 +224,14 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 	}
 	// Validate the immutable setup with no transaction or database lock held.
 	seq := s.observationSeq.Add(1)
+	causal, _ := s.causalEpoch(ctx)
 	if err = s.evaluator.ValidateSetup(ctx, BuildRulesInput(match, match.Moves, "")); err != nil {
 		if errors.Is(err, ErrInvalidContract) || errors.Is(err, ErrActionNotAllowed) {
 			return CommandResult{}, err
 		}
-		s.observeFailure(0, seq, err)
+		// Keep the epoch observed before evaluation. A peer may have recovered
+		// the outage while this evaluation was still waiting for the worker.
+		s.observeFailure(causal, seq, err)
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	s.observeSuccess(seq)
@@ -379,6 +382,7 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 	input := BuildRulesInput(snapshot, snapshot.Moves, cmd.Action.SubmitMove.UCI)
 	// External rules evaluation happens with no database lock or transaction held.
 	seq := s.observationSeq.Add(1)
+	causal, _ := s.causalEpoch(ctx)
 	candidate, err := s.evaluator.Evaluate(ctx, input)
 	if err != nil {
 		// A refused proposal is a contract outcome, not an unavailable
@@ -386,7 +390,9 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 		if errors.Is(err, ErrActionNotAllowed) || errors.Is(err, ErrStaleCandidate) || errors.Is(err, ErrInvalidContract) {
 			return CommandResult{}, err
 		}
-		s.observeFailure(0, seq, err)
+		// Keep the epoch observed before evaluation, including when a peer
+		// recovered the outage before this failure reached the caller.
+		s.observeFailure(causal, seq, err)
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	if err = candidate.Validate(); err != nil {

@@ -211,9 +211,11 @@ hidden by it.
 
 The identity of the episode is fixed by the first plan of the outage. The
 identity of a planned interruption is its **boundary**, so the next plan of the
-same outage finds it and changes nothing. When the epoch of the earliest
-observation could not be read, the plan uses the epoch of the plan itself and
-the episode keeps the boundary that the plan wrote.
+same outage finds it and changes nothing. Every observation of the outage
+identifies the episode with the epoch of that observation, so a plan that
+arrives after the recovery of a peer finds the boundary of the outage and
+plans nothing. When the epoch of an observation could not be read, the plan
+falls back to the epoch of the plan itself and binds the boundary it wrote.
 
 An interruption of a dependency is planned only for an open episode of the
 instance that observed it. A stale failure whose episode was closed already

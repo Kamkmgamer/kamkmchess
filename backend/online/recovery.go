@@ -144,7 +144,7 @@ func (s *Service) PendingSuspension(ctx context.Context) (*RecoveryBoundary, err
 // clock is refunded once.
 func (s *Service) SuspendForDependency(ctx context.Context, dependency string) error {
 	// The interruption of the open failure episode of this instance is
-	// identified by the epoch of its first observation.
+	// identified by the boundary of its first plan.
 	//
 	// Every failure of the same outage therefore plans the same boundary,
 	// even when a peer recovered it in between: the plan finds the boundary
