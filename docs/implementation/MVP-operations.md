@@ -209,12 +209,18 @@ destroyed by the import itself; the evidence lives outside the database, is
 written before the import starts, and is readable by its owner only
 (`0700` for the directory, `0600` for the records).
 
-That directory is **never cleaned by hand**. The newest record is retained on
-purpose: it is the evidence that the last restore closed the fence it owed,
-and the next restore discharges the records whose removals it applied. The
-directory belongs in the backup of the deployment, because a restore of a
-database without the evidence of the pending restores cannot replay the
-removals they owed.
+That directory is **never cleaned by hand**, and neither is the gate of a
+restore. The newest record is retained on purpose: it is the evidence that
+the last restore closed the fence it owed, and the next restore discharges
+the records whose removals it applied. A record is removed by the restore
+that applied the removal, never by an operator.
+
+The directory belongs in the **protected backup** of the deployment, next to
+the encrypted bundles, and it is restored with them: a restore of a database
+without the evidence of the pending restores cannot replay the removals they
+owed. The file of one restore can also be restored on its own, and the
+recovery then proves the ledger it owes against the digest the marker names
+(`--evidence`).
 
 A restore that was killed leaves the marker of the lifecycle behind and the
 service stays closed, and the procedure is:
@@ -234,6 +240,17 @@ docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
   set -a; . /run/secrets/backup.env; set +a
   exec gosu 65532:65532 /opt/kamkmchess/khabackup recover --file /backups/weekly-2026-W42.kha \
     --restore-id <the restore of the marker> \
+    --fence /var/lib/kamkmchess/restore-fence \
+    --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE'
+
+# The recovery of a restore whose evidence directory was lost: the evidence
+# of the restore is read from the protected copy of the file, and the recovery
+# proves the ledger it owes against the digest the marker names.
+docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec gosu 65532:65532 /opt/kamkmchess/khabackup recover --file /backups/weekly-2026-W42.kha \
+    --restore-id <the restore of the marker> \
+    --evidence /var/lib/kamkmchess/restore-requirements/<the restore>.json \
     --fence /var/lib/kamkmchess/restore-fence \
     --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE'
 

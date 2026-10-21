@@ -138,6 +138,7 @@ export const REQUIRED_STEPS = [
   'the-durable-evidence-of-the-owed-ledger-exists',
   'the-gate-stays-closed-after-the-kill',
   'the-recovery-refuses-the-lost-ledger',
+  'the-repeated-recovery-refuses',
   'the-take-over-replays-the-owed-ledger',
   'the-service-admits-after-the-replay',
   'the-removed-data-does-not-come-back',
@@ -382,6 +383,19 @@ export async function runInterruptionProof(options = {}) {
     await seed(sourceDatabase);
     await seed(targetDuring);
     await seed(targetAfter);
+    // The live only row of the target is the snapshot of the import: the
+    // bundle does not carry it, the import replaces it, and a rollback
+    // leaves it where it was.
+    await seedLiveOnly(targetDuring);
+    await seedLiveOnly(targetAfter);
+
+    // The live only row of the target: the bundle does not carry it.
+    async function seedLiveOnly(database) {
+      const fen = 'rnbqkbnr/ppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+      await sql(database, `INSERT INTO online_matches (match_id, schema_version, variant, starting_fen, position_fen, starting_time_ms, increment_ms, version, control_epoch, input_hash, rules_policy_version, status) VALUES ('proof_match_live_only', 1, 'orthodox', '${fen}', '${fen}', 60000, 0, 1, 1, decode(repeat('00',32),'hex'), 'online-rules/1', 'active')`);
+      await sql(database, `INSERT INTO online_seats (match_id, seat, owner_kind, owner_id, public_label, control_kind, model_label, control_epoch) VALUES ('proof_match_live_only', 'white', 'account', 'proof_owner_live_only', 'Proof', 'human', NULL, 1)`);
+      await sql(database, `INSERT INTO online_public_replays (match_id, schema_version, replay_json, result_hash, game_kind, scored) VALUES ('proof_match_live_only', 2, '{"moves":[]}'::jsonb, decode(repeat('00',32),'hex'), 'friend', true)`);
+    }
 
     // The two bundles are created before the removals exist, so no bundle and
     // no newer export carries them: they are live only.
@@ -420,23 +434,25 @@ export async function runInterruptionProof(options = {}) {
     const seedRemovals = async (database) => {
       const removed = await reference(database, 'proof_owner');
       const privateSubject = await reference(database, 'proof_owner_private');
-      const request = await sql(database, `INSERT INTO online_removal_requests (removal_id, subject_kind, subject_id, scope, status, requested_at, verified_at, live_delete_due_at, recovery_sanitize_due_at) VALUES ('rm_interruption_${RUN}', 'account', '${removed}', 'explicit_removal', 'verified', clock_timestamp(), clock_timestamp(), clock_timestamp() + interval '1 day', clock_timestamp() + interval '30 days')`);
+      const request = await sql(database, `INSERT INTO online_removal_requests (removal_id, subject_kind, subject_id, scope, status, requested_at, verified_at, live_delete_due_at, recovery_sanitize_due_at) VALUES ('rm_interruption_match_${RUN}', 'account', '${removed}', 'explicit_removal', 'verified', clock_timestamp(), clock_timestamp(), clock_timestamp() + interval '1 day', clock_timestamp() + interval '30 days')`);
       if (request.code !== 0) throw new Error(`the removal request could not be seeded: ${request.error}`);
-      const ledger = await sql(database, `INSERT INTO online_removal_ledger (ledger_id, removal_id, subject_kind, subject_id, match_id, scope, removed_at) VALUES ('rl_interruption_${RUN}', 'rm_interruption_${RUN}', 'account', '${removed}', '${matchId}', 'explicit_removal', clock_timestamp())`);
+      const ledger = await sql(database, `INSERT INTO online_removal_ledger (ledger_id, removal_id, subject_kind, subject_id, match_id, scope, removed_at) VALUES ('rl_interruption_match_${RUN}', 'rm_interruption_match_${RUN}', 'account', '${removed}', '${matchId}', 'explicit_removal', clock_timestamp())`);
       if (ledger.code !== 0) throw new Error(`the removal ledger could not be seeded: ${ledger.error}`);
-      const subjectRequest = await sql(database, `INSERT INTO online_removal_requests (removal_id, subject_kind, subject_id, scope, status, requested_at, verified_at, live_delete_due_at, recovery_sanitize_due_at) VALUES ('rm_interruption_private_${RUN}', 'account', '${privateSubject}', 'explicit_removal', 'verified', clock_timestamp(), clock_timestamp(), clock_timestamp() + interval '1 day', clock_timestamp() + interval '30 days')`);
+      const subjectRequest = await sql(database, `INSERT INTO online_removal_requests (removal_id, subject_kind, subject_id, scope, status, requested_at, verified_at, live_delete_due_at, recovery_sanitize_due_at) VALUES ('rm_interruption_subject_${RUN}', 'account', '${privateSubject}', 'explicit_removal', 'verified', clock_timestamp(), clock_timestamp(), clock_timestamp() + interval '1 day', clock_timestamp() + interval '30 days')`);
       if (subjectRequest.code !== 0) throw new Error(`the subject removal request could not be seeded: ${subjectRequest.error}`);
-      const subject = await sql(database, `INSERT INTO online_removal_subjects (subject_id, removal_id, subject_kind, subject_ref, scope, removed_at) VALUES ('rs_interruption_${RUN}', 'rm_interruption_private_${RUN}', 'account', '${privateSubject}', 'explicit_removal', clock_timestamp())`);
+      const subject = await sql(database, `INSERT INTO online_removal_subjects (subject_id, removal_id, subject_kind, subject_ref, scope, removed_at) VALUES ('rs_interruption_subject_${RUN}', 'rm_interruption_subject_${RUN}', 'account', '${privateSubject}', 'explicit_removal', clock_timestamp())`);
       if (subject.code !== 0) throw new Error(`the subject removal could not be seeded: ${subject.error}`);
       return { removed, privateSubject };
     };
     const references = await seedRemovals(targetDuring);
     await seedRemovals(targetAfter);
+    const subjectOnly = await sql(targetDuring, `SELECT count(*) FROM online_removal_subjects WHERE subject_id = 'rs_interruption_subject_${RUN}'`);
+    const inBundle = await sql(sourceDatabase, `SELECT count(*) FROM online_removal_subjects WHERE subject_id = 'rs_interruption_subject_${RUN}'`);
     const live = await removalState(context, targetDuring);
     steps.push({
       id: 'the-live-only-removals-are-seeded',
-      passed: live.matches === '1' && live.subjects === '1',
-      detail: `the live database carries ${live.matches} match bound removal and ${live.subjects} subject removal, and no bundle carries them`,
+      passed: live.matches === '1' && live.subjects === '1' && subjectOnly.text === '1' && inBundle.text === '0',
+      detail: `the live database carries ${live.matches} match bound removal and ${live.subjects} subject removal, the subject only record is there (${subjectOnly.text}) and no bundle carries it (${inBundle.text})`,
     });
 
 
@@ -447,6 +463,7 @@ export async function runInterruptionProof(options = {}) {
       const started = await run('docker', [
         'run', '--detach',
         '--network', endpoint.network,
+        '--add-host', 'host.docker.internal:host-gateway',
         '--user', API_UID,
         '--mount', `type=volume,source=${VOLUME},target=/backups`,
         '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
@@ -532,10 +549,11 @@ export async function runInterruptionProof(options = {}) {
 
     const afterRollback = await removalState(context, targetDuring);
     const replayAfterRollback = await replayState(context, targetDuring, matchId);
+    const liveOnlyAfterRollback = await replayState(context, targetDuring, 'proof_match_live_only');
     steps.push({
       id: 'the-import-is-rolled-back',
-      passed: afterRollback.matches === '1' && afterRollback.subjects === '1' && replayAfterRollback.present && !replayAfterRollback.revoked,
-      detail: `the transaction was rolled back: the live removals are still there (${afterRollback.matches} match bound, ${afterRollback.subjects} subject) and the record of the removed match is not revoked`,
+      passed: afterRollback.matches === '1' && afterRollback.subjects === '1' && replayAfterRollback.present && !replayAfterRollback.revoked && liveOnlyAfterRollback.present,
+      detail: `the transaction was rolled back: the live removals are still there (${afterRollback.matches} match bound, ${afterRollback.subjects} subject), the record of the removed match is not revoked, and the live only row of the target survived the import`,
     });
 
     // ---- the recovery of the rolled back restore ------------------------
@@ -543,7 +561,9 @@ export async function runInterruptionProof(options = {}) {
     steps.push({
       id: 'the-marker-names-the-restore-that-crashed',
       passed: duringOwner.length > 0,
-      detail: duringOwner ? `the marker of the lifecycle names the restore ${duringOwner}` : 'the marker of the lifecycle names no restore',
+      detail: duringOwner
+        ? `the marker of the lifecycle names the restore ${duringOwner} (the restore names itself, the command line cannot name it)`
+        : 'the marker of the lifecycle names no restore',
     });
     const recoveredDuring = await tool([
       'recover',
@@ -579,12 +599,13 @@ export async function runInterruptionProof(options = {}) {
 
     const afterImport = await removalState(context, targetAfter);
     const replayAfterImport = await replayState(context, targetAfter, matchId);
+    const liveOnlyAfterImport = await replayState(context, targetAfter, 'proof_match_live_only');
     steps.push({
       id: 'the-import-was-committed',
-      passed: replayAfterImport.present && !replayAfterImport.revoked,
-      detail: replayAfterImport.present
-        ? 'the import committed: the record of the removed match is in the restored database and it is not revoked'
-        : 'the record of the removed match is not in the restored database',
+      passed: replayAfterImport.present && !replayAfterImport.revoked && !liveOnlyAfterImport.present,
+      detail: replayAfterImport.present && !liveOnlyAfterImport.present
+        ? 'the import committed: the record of the removed match is in the restored database, it is not revoked, and the live only row of the target is gone'
+        : 'the import did not replace the row of the target',
     });
     steps.push({
       id: 'the-live-only-ledger-is-lost-from-the-database',
@@ -610,8 +631,8 @@ export async function runInterruptionProof(options = {}) {
     });
 
     // ---- the gate stays closed ------------------------------------------
-    const gate = await startGate(context, endpoint, targetAfter);
-    const refused = await fetch(`http://127.0.0.1:${gate.port}/healthz`).catch(() => null);
+    const gate = await startGate(context, endpoint, targetAfter, containers);
+    const refused = await waitForGate(gate.port);
     steps.push({
       id: 'the-gate-stays-closed-after-the-kill',
       passed: refused !== null && refused.status === 503,
@@ -638,6 +659,24 @@ export async function runInterruptionProof(options = {}) {
         : 'the recovery closed the fence of a database that lost the removals',
     });
 
+    // A second recovery has nothing to recover: the fence of the crashed
+    // restore is closed.
+    const repeated = await tool([
+      'recover',
+      '--file', oldBundle,
+      '--restore-id', afterOwner,
+      '--fence', FENCE,
+      '--database-url-env', 'DATABASE_URL',
+      '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, targetAfter), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    steps.push({
+      id: 'the-repeated-recovery-refuses',
+      passed: repeated.code !== 0,
+      detail: repeated.code !== 0
+        ? `a second recovery of the same restore refuses: ${repeated.stderr.trim().split('\n').slice(-1)[0] ?? ''}`
+        : 'a second recovery of a closed restore was accepted',
+    });
+
     // ---- the take-over replays the owed ledger --------------------------
     const takeover = await tool([
       'restore',
@@ -661,8 +700,8 @@ export async function runInterruptionProof(options = {}) {
     });
 
     // ---- the service admits again ---------------------------------------
-    const gateAfter = await startGate(context, endpoint, targetAfter);
-    const served = await fetch(`http://127.0.0.1:${gateAfter.port}/healthz`).catch(() => null);
+    const gateAfter = await startGate(context, endpoint, targetAfter, containers);
+    const served = await waitForGate(gateAfter.port);
     steps.push({
       id: 'the-service-admits-after-the-replay',
       passed: served !== null && served.status === 200,
@@ -779,7 +818,7 @@ async function fixtureEndpoint(container) {
  * @param {string} database
  * @returns {Promise<{id: string, port: string}>}
  */
-async function startGate(context, endpoint, database) {
+async function startGate(context, endpoint, database, tracked) {
   const url = insideDatabaseUrl(context.target.url, database);
   const started = await run('docker', [
     'run', '--detach',
@@ -796,6 +835,9 @@ async function startGate(context, endpoint, database) {
     throw new Error(`the service that observes the fence could not be started: ${(started.stdout + started.stderr).trim()}`);
   }
   const id = started.stdout.trim();
+  // The container is tracked before anything else can fail, so a throw never
+  // leaves it behind.
+  tracked.push(id);
   let port = '';
   for (let attempt = 0; attempt < 60; attempt += 1) {
     const inspected = await run('docker', ['port', id, '8099/tcp']);
@@ -810,6 +852,23 @@ async function startGate(context, endpoint, database) {
     throw new Error(`the service that observes the fence published no port: ${(logs.stdout + logs.stderr).trim()}`);
   }
   return { id, port };
+}
+
+/**
+ * Waits for the gate to answer.
+ *
+ * The service needs a moment to listen, and the answer of the gate is the
+ * one the proof measures: 503 while the fence is held, 200 after it closed.
+ * @param {string} port
+ * @returns {Promise<{status: number}|null>}
+ */
+async function waitForGate(port) {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const answer = await fetch(`http://127.0.0.1:${port}/healthz`).catch(() => null);
+    if (answer !== null) return answer;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+  }
+  return null;
 }
 
 /**

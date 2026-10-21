@@ -62,23 +62,9 @@ jobs:
   # mapping the proofs pass.
   container-proofs:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17.6
-        env:
-          POSTGRES_USER: kamkmchess_probe
-          POSTGRES_PASSWORD: fixture-only
-          POSTGRES_DB: kamkmchess_probe
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U kamkmchess_probe"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
       ONLINE_FIXTURE_CONTAINER: kamkmchess-fixture
-      ONLINE_FIXTURE_DATABASE_URL: postgres://kamkmchess_probe:fixture-only@127.0.0.1:5432/kamkmchess_probe?sslmode=disable
+      ONLINE_FIXTURE_DATABASE_URL: postgres://postgres:fixture-only@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -92,15 +78,15 @@ jobs:
       - name: Start the fixture database of the proofs
         run: |
           docker run --detach --name "$ONLINE_FIXTURE_CONTAINER" \
-            --publish 127.0.0.1:5432:5432 \
-            --env POSTGRES_USER=kamkmchess_probe \
+            --publish 127.0.0.1:55467:5432 \
+            --env POSTGRES_USER=postgres \
             --env POSTGRES_PASSWORD=fixture-only \
-            --env POSTGRES_DB=kamkmchess_probe \
+            --env POSTGRES_DB=kamkmchess_online_test \
             postgres:17.6
       - name: Wait for the fixture database
         run: |
           for attempt in $(seq 1 60); do
-            if docker exec "$ONLINE_FIXTURE_CONTAINER" pg_isready -U kamkmchess_probe -d kamkmchess_probe; then
+            if docker exec "$ONLINE_FIXTURE_CONTAINER" pg_isready -U postgres -d kamkmchess_online_test; then
               exit 0
             fi
             sleep 2
