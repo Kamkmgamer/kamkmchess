@@ -103,18 +103,12 @@ request run out of time. The queue wait is not reset and a queued request
 does not get a fresh budget; the remedy is to keep the worker warm, not to
 relax the budget.
 
-The **shared** client of the composition is not warmed by the health
-monitor: the monitor owns a separate probe evaluator with its own client and
-its own worker process, so the probe never queues behind a participant
-command, and it never restarts the shared worker. The first request after a
-server start or after a crash of the shared worker therefore still meets a
-cold worker. A `client.Warm(ctx)` call next to the creation of the **shared**
-client in the composition closes that window. The composition is not part of
-this change.
-
-The probe evaluator has its own worker process, so the host runs two rules
-worker processes per server. The probe process must be closed with the
-server; the composition owns that closer.
+The client of the composition is not warmed at boot. The composition
+creates one rules worker client, closes it with the server, and does not call
+`Warm`, so the first request after a server start or after a crash of the
+worker still meets a cold worker. A `client.Warm(ctx)` call next to the
+creation of the client in the composition closes that window. The composition
+is not part of this change.
 
 ## The failure of a call
 
@@ -202,6 +196,13 @@ it never makes a healthy worker look broken. `OnlineEvaluator.Probe` is the
 same seam for the evaluator of the service, and it maps the busy signal of
 the client to `online.ErrRulesBusy`.
 
+A probe of a free worker performs a **real bounded exchange** with it. The
+readiness flag alone is not evidence: a worker that hung or exited after it
+became ready would look healthy forever. The exchange is bounded by the
+internal budgets of the client, so a caller deadline can never mask an
+outage of the worker. A worker that does not answer is killed, reaped and
+reset, and the next probe starts and proves a fresh one.
+
 The setup validation of a match creation keeps its waiting behaviour: a
 creation waits for the worker instead of refusing the match. Only a probe
 reports the busy worker.
@@ -275,6 +276,10 @@ Three further regressions cover the causes and the starts:
 - `TestTheProbeReportsABusyWorkerWithoutWaiting` and
   `TestTheEvaluatorReportsTheBusySignal`: a probe of a busy worker reports
   `online.ErrRulesBusy` and returns at once.
+- `TestTheProbeDetectsAWorkerThatHungAfterItsReadiness` and
+  `TestTheProbeDetectsAWorkerThatExitedAfterItsReadiness`: a probe of a ready
+  worker that hung or exited fails, the process is killed and reaped, and the
+  next probe proves a fresh worker.
 
 `TestTheRealBundleAnswersAColdRequest` is the smoke test of the pinned worker
 bundle: the real process accepts the readiness probe and answers a cold

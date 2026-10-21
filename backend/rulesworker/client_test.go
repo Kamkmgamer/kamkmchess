@@ -110,6 +110,25 @@ function responseFor(req) {
 
 for await (const line of rl) {
   const req = JSON.parse(line);
+  // A fixture can ask the worker to stop answering after its first answer:
+  // the worker is healthy at the readiness probe and broken afterwards. The
+  // marker is used once, so the replacement of a broken worker behaves.
+  const hangAfterReady = join(dirname(process.argv[1]), 'hang-after-ready');
+  const exitAfterReady = join(dirname(process.argv[1]), 'exit-after-ready');
+  if ((existsSync(hangAfterReady) || existsSync(exitAfterReady)) && !existsSync(join(dirname(process.argv[1]), 'broken-used'))) {
+    const counter = join(dirname(process.argv[1]), 'request-counter');
+    let seen = 0;
+    try { seen = Number.parseInt(readFileSync(counter, 'utf8').trim(), 10) || 0; } catch { seen = 0; }
+    writeFileSync(counter, String(seen + 1));
+    if (seen > 1) {
+      writeFileSync(join(dirname(process.argv[1]), 'broken-used'), '1');
+      if (existsSync(exitAfterReady)) {
+        process.exit(9);
+      }
+      await new Promise(() => {});
+      continue;
+    }
+  }
   // The readiness probe is the first request of a cold worker, so it carries
   // the boot delay of the simulated host.
   if (req.requestId === '__READINESS_REQUEST_ID__') {
@@ -251,6 +270,23 @@ func testEntryWithBootDelay(t *testing.T, delay time.Duration) string {
 // testEntryWithHangingProbe writes a fake worker that never answers the
 // readiness probe. It simulates a replacement worker that never becomes ready.
 func testEntryWithHangingProbe(t *testing.T, marker string) string {
+	t.Helper()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "worker.mjs")
+	if err := os.WriteFile(path, []byte(fakeWorkerSource()), 0o600); err != nil {
+		t.Fatalf("write fake worker: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, marker), []byte("1"), 0o600); err != nil {
+		t.Fatalf("write the probe marker: %v", err)
+	}
+	return path
+}
+
+// testEntryThatBreaksAfterReadiness writes a fake worker that answers its
+// first request and then hangs or exits.
+//
+// The marker is used once, so the replacement of a broken worker behaves.
+func testEntryThatBreaksAfterReadiness(t *testing.T, marker string) string {
 	t.Helper()
 	directory := t.TempDir()
 	path := filepath.Join(directory, "worker.mjs")
@@ -660,6 +696,60 @@ func TestTheCancellationWinsOverAnEarlierCrash(t *testing.T) {
 	}
 	if errors.Is(err, ErrCrashed) {
 		t.Fatal("the crash of the first exchange replaced the cancellation of the caller")
+	}
+}
+
+// TestTheProbeDetectsAWorkerThatHungAfterItsReadiness proves that the
+// readiness flag is not evidence.
+//
+// The worker answers the readiness probe and then hangs. A probe of that
+// worker has to fail, the hung process has to be killed and reaped, and the
+// next probe has to prove a fresh worker.
+func TestTheProbeDetectsAWorkerThatHungAfterItsReadiness(t *testing.T) {
+	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "hang-after-ready"), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	// The first probe proves the worker and leaves it ready.
+	if err = client.Probe(context.Background()); err != nil {
+		t.Fatalf("the first probe: %v", err)
+	}
+	if client.proc == nil {
+		t.Fatal("the first probe left no worker")
+	}
+	// The second probe talks to the worker and finds it hung.
+	if err = client.Probe(context.Background()); err == nil {
+		t.Fatal("the probe of a hung worker succeeded")
+	}
+	if client.proc != nil {
+		t.Fatal("the hung worker was not killed and reaped")
+	}
+	// The next probe starts a fresh worker and proves it.
+	if err = client.Probe(context.Background()); err != nil {
+		t.Fatalf("the probe of the replacement worker: %v", err)
+	}
+}
+
+// TestTheProbeDetectsAWorkerThatExitedAfterItsReadiness proves the same for a
+// worker that exits.
+func TestTheProbeDetectsAWorkerThatExitedAfterItsReadiness(t *testing.T) {
+	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "exit-after-ready"), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if err = client.Probe(context.Background()); err != nil {
+		t.Fatalf("the first probe: %v", err)
+	}
+	if err = client.Probe(context.Background()); err == nil {
+		t.Fatal("the probe of an exited worker succeeded")
+	}
+	if client.proc != nil {
+		t.Fatal("the exited worker was not reaped")
+	}
+	if err = client.Probe(context.Background()); err != nil {
+		t.Fatalf("the probe of the replacement worker: %v", err)
 	}
 }
 

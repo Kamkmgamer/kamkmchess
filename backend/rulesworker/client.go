@@ -429,15 +429,19 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 	}
 }
 
-// Probe reports whether the worker is ready, and it never waits.
+// Probe reports whether the worker answers, and it never waits.
 //
 // A probe takes the worker slot only when the slot is free. When another
 // request holds it, the probe reports `ErrBusy` and returns at once: it never
 // queues behind a participant request, it never spends the budget of that
 // request, and a busy worker is never reported as a broken one.
 //
-// The probe performs the readiness probe when the worker is not ready yet,
-// with the start budget of the client.
+// A probe of a free worker performs a **real bounded exchange** with it. The
+// readiness flag alone is not evidence: a worker that hung or exited after it
+// became ready would look healthy forever. The exchange is bounded by the
+// internal budgets of the client, so a caller deadline can never mask an
+// outage of the worker. A worker that does not answer is killed, reaped and
+// reset, and the next probe starts and proves a fresh one.
 func (c *Client) Probe(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
@@ -452,10 +456,54 @@ func (c *Client) Probe(ctx context.Context) error {
 	if c.closed {
 		return ErrClosed
 	}
+	// The worker has to be running and ready. The readiness probe is
+	// itself a bounded exchange, so a worker that never becomes ready
+	// fails here.
 	startDeadline := time.Now().Add(c.config.StartTimeout)
-	startCtx, cancel := context.WithDeadline(ctx, startDeadline)
-	defer cancel()
-	return c.ensureReady(ctx, startCtx, startDeadline)
+	startCtx, cancelStart := context.WithDeadline(ctx, startDeadline)
+	readyErr := c.ensureReady(ctx, startCtx, startDeadline)
+	cancelStart()
+	if readyErr != nil {
+		c.stop()
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return ErrCanceled
+		}
+		return probeFailure(readyErr)
+	}
+	// The worker is ready. It still has to answer.
+	exchangeDeadline := time.Now().Add(c.config.RequestTimeout)
+	exchangeCtx, cancelExchange := context.WithDeadline(ctx, exchangeDeadline)
+	probe := readinessRequest()
+	line, err := c.buildRequest(probe)
+	if err != nil {
+		cancelExchange()
+		c.stop()
+		return err
+	}
+	_, _, err = c.exchange(exchangeCtx, ctx, exchangeDeadline, line, probe)
+	cancelExchange()
+	if err != nil {
+		// The worker did not answer. It is killed, reaped and reset, so the
+		// next probe starts and proves a fresh one.
+		c.stop()
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return ErrCanceled
+		}
+		return probeFailure(err)
+	}
+	return nil
+}
+
+// probeFailure maps a failed probe onto the class of an outage.
+//
+// The internal bound of the client decides the class, so a caller deadline can
+// never hide an outage of the worker. A caller that goes away is a
+// cancellation, and that is decided before the bound.
+func probeFailure(err error) error {
+	if errors.Is(err, ErrMalformed) || errors.Is(err, ErrCrashed) {
+		return err
+	}
+	return ErrTimeout
 }
 
 // Warm starts the worker and waits until it answers the readiness probe.
