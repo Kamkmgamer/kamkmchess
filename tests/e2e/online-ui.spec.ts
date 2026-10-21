@@ -20,6 +20,7 @@
 // Set ONLINE_FIXTURE_STRICT=1 to make a missing descriptor fail as well.
 
 import { expect, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
 type Descriptor = {
@@ -127,6 +128,25 @@ async function point(page: import('@playwright/test').Page, square: string, flip
   };
 }
 
+/**
+ * Plays a move on the online board and waits for the move list to grow.
+ *
+ * The opening reply window is short, so the move is offered again while the
+ * window is open.
+ */
+async function playMove(page: Page, from: string, to: string, flipped = false): Promise<void> {
+  const moves = page.getByRole('table', { name: 'Committed moves' }).getByRole('button');
+  const before = await moves.count();
+  const start = await point(page, from, flipped);
+  const target = await point(page, to, flipped);
+  const deadline = Date.now() + 10_000;
+  while (await moves.count() === before && Date.now() < deadline) {
+    await page.mouse.click(start.x, start.y);
+    await page.mouse.click(target.x, target.y);
+    await page.waitForTimeout(200);
+  }
+}
+
 test('the review cursor holds an earlier position while the live game moves on', async ({ browser }) => {
   // The review cursor is the position the owner looks at. A live update must
   // never throw the owner back to the live end, and the live button restores
@@ -156,34 +176,25 @@ test('the review cursor holds an earlier position while the live game moves on',
     await expect(inviterPage.getByRole('region', { name: 'Online match board' })).toBeVisible({ timeout: 20_000 });
 
     // The inviter opens the game and the invitee answers the opening reply.
-    const first = await point(inviterPage, 'e2');
-    const firstTo = await point(inviterPage, 'e4');
-    await inviterPage.mouse.click(first.x, first.y);
-    await inviterPage.mouse.click(firstTo.x, firstTo.y);
+    await playMove(inviterPage, 'e2', 'e4');
     await expect(inviterPage.getByRole('table', { name: 'Committed moves' }).getByRole('button')).toHaveText(['e4'], { timeout: 15_000 });
-    const reply = await point(inviteePage, 'e7', true);
-    const replyTo = await point(inviteePage, 'e5', true);
-    await inviteePage.mouse.click(reply.x, reply.y);
-    await inviteePage.mouse.click(replyTo.x, replyTo.y);
+    await playMove(inviteePage, 'e7', 'e5', true);
     await expect(inviteePage.getByRole('table', { name: 'Committed moves' }).getByRole('button')).toHaveText(['e4', 'e5'], { timeout: 15_000 });
 
     // The invitee looks at the position before the last move.
-    await inviteePage.getByRole('button', { name: 'Previous' }).click();
-    await expect(inviteePage.getByRole('button', { name: 'View move 1: e4' })).toHaveAttribute('aria-current', 'step');
-    await expect(inviteePage.getByRole('button', { name: 'View move 2: e5' })).not.toHaveAttribute('aria-current', 'step');
+    await inviteePage.getByRole('complementary', { name: 'Online moves' }).getByRole('button', { name: 'Previous' }).click();
+    await expect(inviteePage.getByRole('complementary', { name: 'Online moves' }).getByRole('button', { name: 'View move 1: e4' })).toHaveAttribute('aria-current', 'step');
+    await expect(inviteePage.getByRole('complementary', { name: 'Online moves' }).getByRole('button', { name: 'View move 2: e5' })).not.toHaveAttribute('aria-current', 'step');
 
     // The live game moves on. The review of the invitee holds its position.
-    const next = await point(inviterPage, 'g1');
-    const nextTo = await point(inviterPage, 'f3');
-    await inviterPage.mouse.click(next.x, next.y);
-    await inviterPage.mouse.click(nextTo.x, nextTo.y);
+    await playMove(inviterPage, 'g1', 'f3');
     await expect(inviterPage.getByRole('table', { name: 'Committed moves' }).getByRole('button')).toHaveText(['e4', 'e5', 'Nf3'], { timeout: 20_000 });
-    await expect(inviteePage.getByRole('button', { name: 'View move 1: e4' })).toHaveAttribute('aria-current', 'step');
-    await expect(inviteePage.getByRole('button', { name: 'View move 3: Nf3' })).not.toHaveAttribute('aria-current', 'step');
+    await expect(inviteePage.getByRole('complementary', { name: 'Online moves' }).getByRole('button', { name: 'View move 1: e4' })).toHaveAttribute('aria-current', 'step');
+    await expect(inviteePage.getByRole('complementary', { name: 'Online moves' }).getByRole('button', { name: 'View move 3: Nf3' })).not.toHaveAttribute('aria-current', 'step');
 
     // The live button restores the latest position.
-    await inviteePage.getByRole('button', { name: 'Live' }).click();
-    await expect(inviteePage.getByRole('button', { name: 'View move 3: Nf3' })).toHaveAttribute('aria-current', 'step');
+    await inviteePage.getByRole('complementary', { name: 'Online moves' }).getByRole('button', { name: 'Live' }).click();
+    await expect(inviteePage.getByRole('complementary', { name: 'Online moves' }).getByRole('button', { name: 'View move 3: Nf3' })).toHaveAttribute('aria-current', 'step');
   } finally {
     await inviter.close();
     await invitee.close();
