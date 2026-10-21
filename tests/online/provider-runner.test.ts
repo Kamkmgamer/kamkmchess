@@ -47,7 +47,7 @@ import {
   fakeMatchView,
   fakeSnapshot,
 } from '../support/online-runner';
-import type { FakeOnlineService, FakeProvider, HoldableLeasePort } from '../support/online-runner';
+import type { FakeOnlineService, FakeProvider, HoldableCommandPort, HoldableLeasePort } from '../support/online-runner';
 
 async function until(condition: () => boolean, label: string): Promise<void> {
   const deadline = Date.now() + 2000;
@@ -2967,6 +2967,16 @@ describe('the recovery of an applied control change', () => {
 
 describe('the settlement of a switch that interrupted a billable request', () => {
   /**
+   * The identifier of the lease the settlement of the fixture takes.
+   *
+   * The lease of the settlement is never installed, so the assertions of the
+   * cases below can name it exactly: a release of it is the release of the
+   * settlement and a renewal of it would be a heartbeat the settlement must
+   * never arm.
+   */
+  const SETTLEMENT_LEASE = 'lease-of-the-new-epoch';
+
+  /**
    * The runner of a switch whose lease client can hold one request of each
    * kind in flight.
    *
@@ -2979,21 +2989,23 @@ describe('the settlement of a switch that interrupted a billable request', () =>
     readonly service: FakeOnlineService;
     readonly provider: FakeProvider;
     readonly held: HoldableLeasePort;
+    readonly commands: HoldableCommandPort;
     readonly runner: OnlineProviderRunner;
   } {
     const service = createFakeOnlineService();
     const provider = createFakeProvider();
     const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const commands = createHoldableCommandPort(service.commands);
     const runner = createOnlineProviderRunner({
       matchId: service.match.matchId,
       seat: service.match.seat,
       publicModelLabel: 'Test Agent',
       leases: held.port,
-      commands: service.commands,
+      commands: commands.port,
       provider,
       pending: createMemoryPendingStore(),
     });
-    return { service, provider, held, runner };
+    return { service, provider, held, commands, runner };
   }
 
   /** The answer of a lease of the epoch the seat had before the switch. */
@@ -3023,7 +3035,7 @@ describe('the settlement of a switch that interrupted a billable request', () =>
   function newEpochLease(service: FakeOnlineService, pendingRequestId: string | null): ProviderRunnerLease {
     return {
       ...oldEpochLease(service, pendingRequestId),
-      leaseId: 'lease-of-the-new-epoch',
+      leaseId: SETTLEMENT_LEASE,
       controlEpoch: service.match.controlEpoch,
       generation: 2,
     };
@@ -3065,6 +3077,8 @@ describe('the settlement of a switch that interrupted a billable request', () =>
     readonly action: string;
     readonly leaseId?: string;
     readonly requestId: string;
+    readonly controlEpoch: number;
+    readonly turnVersion: number;
   }[] {
     return service.recordedRequestBodies.filter(body =>
       body.action === 'clear' && body.leaseId !== oldLeaseId);
@@ -3171,7 +3185,8 @@ describe('the settlement of a switch that interrupted a billable request', () =>
     expect(settlementClears(service, oldLeaseId)).toHaveLength(0);
   });
 
-  it('settles the request of the old epoch when the owner retries a switch whose command never reached the service', async () => {    const service = createFakeOnlineService();
+  it('settles the request of the old epoch when the owner retries a switch whose command never reached the service', async () => {
+    const service = createFakeOnlineService();
     const provider = createFakeProvider();
     const commands = createHoldableCommandPort(service.commands);
     const runner = createOnlineProviderRunner({
@@ -3253,9 +3268,18 @@ describe('the settlement of a switch that interrupted a billable request', () =>
     expect(runner.state.leaseId).toBeNull();
     // The record of the service keeps its request: no clearing was sent.
     expect(settlementClears(service, oldLeaseId)).toHaveLength(0);
-    // The lease that arrived for the settlement is given back, and only it.
-    const releases = service.recordedLeaseBodies.filter(body => body.action === 'release');
-    expect(releases.length).toBeGreaterThanOrEqual(1);
+    expect(service.lease?.pendingRequestId).toBe(uncertain);
+    // The lease that arrived for the settlement is given back, and only it: the
+    // release names that lease with the envelope it arrived with.
+    const releases = service.recordedLeaseBodies.filter(body =>
+      body.action === 'release' && body.leaseId === SETTLEMENT_LEASE);
+    expect(releases).toHaveLength(1);
+    expect(releases[0]?.controlEpoch).toBe(service.match.controlEpoch);
+    expect(releases[0]?.turnVersion).toBe(service.match.version);
+    // The lease of the settlement is never installed, so it arms no heartbeat.
+    const renewals = service.recordedLeaseBodies.filter(body =>
+      body.action === 'renew' && body.leaseId === SETTLEMENT_LEASE);
+    expect(renewals).toHaveLength(0);
   });
 
   it('takes no lease and settles no request when the runner is disposed while the new epoch is acquired', async () => {
@@ -3275,10 +3299,137 @@ describe('the settlement of a switch that interrupted a billable request', () =>
 
     expect(outcome.kind).toBe('unknown');
     expect(runner.state.leaseId).toBeNull();
+    // The record of the service keeps its request: no clearing was sent.
     expect(settlementClears(service, oldLeaseId)).toHaveLength(0);
-    // The lease that arrived for the settlement is given back, and only it.
-    const releases = service.recordedLeaseBodies.filter(body => body.action === 'release');
-    expect(releases.length).toBeGreaterThanOrEqual(1);
+    expect(service.lease?.pendingRequestId).toBe(uncertain);
+    // The lease that arrived for the settlement is given back, and only it: the
+    // release names that lease with the envelope it arrived with.
+    const releases = service.recordedLeaseBodies.filter(body =>
+      body.action === 'release' && body.leaseId === SETTLEMENT_LEASE);
+    expect(releases).toHaveLength(1);
+    expect(releases[0]?.controlEpoch).toBe(service.match.controlEpoch);
+    expect(releases[0]?.turnVersion).toBe(service.match.version);
+    // The lease of the settlement is never installed, so it arms no heartbeat.
+    const renewals = service.recordedLeaseBodies.filter(body =>
+      body.action === 'renew' && body.leaseId === SETTLEMENT_LEASE);
+    expect(renewals).toHaveLength(0);
+  });
+
+  it('settles nothing when the lease of the new epoch carries no request', async () => {
+    const { service, provider, held, runner } = createSettlementHarness();
+    const { uncertain, oldLeaseId } = await uncertainRunner(service, provider, runner);
+
+    // The lease of the new epoch waits for the service.
+    held.holdAcquire();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => held.acquires.length === 1, 'the lease of the new epoch is in flight');
+
+    // The service answers with a lease that carries no request: the record of
+    // the billable work is already closed at the service.
+    held.acquires[0]?.resolve(newEpochLease(service, null));
+    const outcome = await switching;
+
+    // The decision of the owner is applied and the control of the seat is
+    // proven, because the receipt of the service carries it.
+    expect(outcome.kind).toBe('accepted');
+    if (outcome.kind !== 'accepted') throw new Error('the switch was not accepted');
+    expect(outcome.control?.kind).toBe('agent');
+    expect(outcome.control?.controlEpoch).toBe(service.match.controlEpoch);
+    // The settlement closed no record: there was none to close.
+    expect(settlementClears(service, oldLeaseId)).toHaveLength(0);
+    // The record of the service keeps its request: the settlement never
+    // touched it.
+    expect(service.lease?.pendingRequestId).toBe(uncertain);
+  });
+
+  it('presents the epoch and the turn of the lease it closes the record under', async () => {
+    const { service, provider, held, runner } = createSettlementHarness();
+    const { uncertain, oldLeaseId } = await uncertainRunner(service, provider, runner);
+
+    // The lease of the new epoch waits for the service.
+    held.holdAcquire();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => held.acquires.length === 1, 'the lease of the new epoch is in flight');
+
+    // The envelope of the lease of the settlement, as it was taken.
+    const lease = newEpochLease(service, uncertain);
+    const captured = { controlEpoch: lease.controlEpoch, turnVersion: lease.turnVersion };
+
+    // The match moves on while the lease of the settlement waits: the runner
+    // learns the new version of the service.
+    service.match.version += 1;
+    runner.applySnapshot(fakeSnapshot(service.match));
+
+    // The lease of the new epoch answers now.
+    held.acquires[0]?.resolve(lease);
+    const outcome = await switching;
+
+    // The service fences a request whose turn moved on, so the record of the
+    // billable work stays open and the seat asks the owner about it.
+    expect(outcome.kind).toBe('accepted');
+    expect(outcome.detail).toBe('The service refused to settle the request of the seat.');
+    expect(runner.state.phase).toBe('uncertain');
+    // The record of the service keeps its request.
+    expect(service.lease?.pendingRequestId).toBe(uncertain);
+    // The request carried the epoch and the turn of the lease it closes the
+    // record under, never the facts the runner knows in the meantime.
+    const clears = settlementClears(service, oldLeaseId);
+    expect(clears).toHaveLength(1);
+    expect(clears[0]?.requestId).toBe(uncertain);
+    expect(clears[0]?.controlEpoch).toBe(captured.controlEpoch);
+    expect(clears[0]?.turnVersion).toBe(captured.turnVersion);
+    // The lease of the settlement is given back with the same envelope.
+    const releases = service.recordedLeaseBodies.filter(body =>
+      body.action === 'release' && body.leaseId === SETTLEMENT_LEASE);
+    expect(releases).toHaveLength(1);
+    expect(releases[0]?.controlEpoch).toBe(captured.controlEpoch);
+    expect(releases[0]?.turnVersion).toBe(captured.turnVersion);
+  });
+
+  it('gives the lease of the settlement back only when it is still the lease of the settlement', async () => {
+    const { service, provider, held, commands, runner } = createSettlementHarness();
+    const { uncertain, oldLeaseId } = await uncertainRunner(service, provider, runner);
+
+    // The lease of the new epoch waits for the service.
+    held.holdAcquire();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => held.acquires.length === 1, 'the lease of the new epoch is in flight');
+
+    // The command of the newer decision waits for the service as well, so the
+    // newer decision keeps the lease of the seat while the old settlement runs.
+    commands.arm();
+    // A newer decision of the owner takes the lease of the seat. The service
+    // answers with the lease of the seat, and the runner installs it.
+    const newer = runner.switchModel('Third Agent');
+    await until(() => runner.state.leaseId !== null, 'the newer decision holds the lease of the seat');
+    const adopted = runner.state.leaseId;
+    expect(adopted).not.toBeNull();
+    expect(adopted).not.toBe(oldLeaseId);
+
+    // The lease of the settlement answers with the very same lease, because the
+    // newer decision adopted it while the settlement waited.
+    held.acquires[0]?.resolve({ ...newEpochLease(service, uncertain), leaseId: adopted ?? '' });
+    const outcome = await switching;
+
+    // The superseded decision settled nothing: it sent no clearing of the
+    // record, and the outcome names the newer decision.
+    expect(outcome.kind).toBe('unknown');
+    expect(outcome.detail).toBe('A newer decision of the owner ended the switch.');
+    expect(settlementClears(service, oldLeaseId)).toHaveLength(0);
+    // The record of the service keeps its request.
+    expect(service.lease?.pendingRequestId).toBe(uncertain);
+    // The old settlement did not give the lease of the newer decision back:
+    // that lease is live at the service.
+    const releases = service.recordedLeaseBodies.filter(body =>
+      body.action === 'release' && body.leaseId === adopted);
+    expect(releases).toHaveLength(0);
+    expect(service.lease?.status).toBe('active');
+    expect(service.lease?.leaseId).toBe(adopted);
+
+    // The newer decision sends its command and settles the record itself.
+    await commands.release(0);
+    const newerOutcome = await newer;
+    expect(newerOutcome.kind).toBe('accepted');
   });
 });
 
@@ -3840,6 +3991,3 @@ describe('a fenced command of the runner', () => {
     expect(service.match.illegalAttemptsSpent).toBe(0);
   });
 });
-
-
-

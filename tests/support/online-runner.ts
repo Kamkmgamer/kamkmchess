@@ -347,7 +347,7 @@ export function createFakeOnlineService(options: {
   function handleLease(body: RunnerLeaseRequestBody): ProviderRunnerLease {
     if (body.schemaVersion !== 2) throw new ProviderRunnerServiceError('refused', 'The schema version is unknown.', 400);
     if (body.seat !== match.seat) throw notFound('The seat is not a seat of this match.');
-    if (body.controlEpoch !== match.controlEpoch) throw conflict('The control epoch moved on.');
+    if (body.action !== 'release' && body.controlEpoch !== match.controlEpoch) throw conflict('The control epoch moved on.');
     if (body.action !== 'release' && match.result !== null) {
       // A finished match takes no lease. The service closes the lease of the
       // seat and answers that the match is over.
@@ -356,7 +356,10 @@ export function createFakeOnlineService(options: {
     }
     const requestedTurn = body.turnVersion ?? 0;
     const turnVersion = requestedTurn === 0 ? match.version : requestedTurn;
-    if (turnVersion !== match.version) throw conflict('The turn version moved on.');
+    // The release gives a lease back. The service checks the lease and the
+    // runner of the release, and nothing else: a lease of an older epoch or of
+    // an older turn is given back as well.
+    if (body.action !== 'release' && turnVersion !== match.version) throw conflict('The turn version moved on.');
     if (body.action === 'acquire') {
       if (match.control.kind === 'human') throw conflict('A human seat has no browser runner.');
       const current = lease;
