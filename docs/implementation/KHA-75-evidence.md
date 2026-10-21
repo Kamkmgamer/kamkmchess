@@ -790,10 +790,10 @@ history of the runs is kept below under its own heading.
 
 1. The friend client is composed into the application: the composition builds
    the friend surface and the browser owned secret store
-   (`src/online/composition.ts`). What is still missing is the *product*
-   half of the rematch: the interface offers a rematch but never shows the
-   pending offer of the opponent and never accepts one (the round 5 finding
-   R5-09, owned by the workspace worker).
+   (`src/online/composition.ts`). The interface can check for and accept a
+   pending rematch. The browser review found that guest rematch requests
+   lacked the seat credential, so that rendered flow remains under correction
+   and verification by the workspace worker.
 2. A guest that lost the answer of an **invitation** acceptance still has to
    ask for the replacement explicitly with `rotateCredential`, because the
    service cannot tell a caller that holds no credential from one that holds
