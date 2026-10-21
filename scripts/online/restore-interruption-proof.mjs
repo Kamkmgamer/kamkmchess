@@ -427,7 +427,8 @@ export async function runInterruptionProof(options = {}) {
       const chunk = `'\\x${Buffer.from('{"chunk":1}', 'utf8').toString('hex')}'::bytea`;
       const event = `'\\x${Buffer.from('{"event":1}', 'utf8').toString('hex')}'::bytea`;
       const result = `'\\x${Buffer.from('{"result":1}', 'utf8').toString('hex')}'::bytea`;
-      for (const [game, owner, body] of [['proof_private_game', 'proof_owner_private', payload], ['proof_control_game', 'proof_owner_control', chunk]]) {
+      const controlBody = `'\\x${Buffer.from('{"control":"payload"}', 'utf8').toString('hex')}'::bytea`;
+      for (const [game, owner, body] of [['proof_private_game', 'proof_owner_private', payload], ['proof_control_game', 'proof_owner_control', controlBody]]) {
         const inserted = await sql(database, `INSERT INTO games (game_id, owner_id, revision, ownership_epoch, checkpoint_json) VALUES ('${game}', '${owner}', 1, 1, ${body})`);
         if (inserted.code !== 0) throw new Error(`the private game ${game} could not be seeded: ${inserted.error}`);
       }
@@ -438,6 +439,8 @@ export async function runInterruptionProof(options = {}) {
       const seededOperation = await sql(database, `INSERT INTO operations (owner_id, game_id, operation_id, request_hash, revision, ownership_epoch, accepted_at, result_json) VALUES ('proof_owner_private', 'proof_private_game', 'proof_private_operation', decode(repeat('11',32),'hex'), 1, 1, clock_timestamp(), ${result})`);
       if (seededOperation.code !== 0) throw new Error(`the private operation receipt could not be seeded: ${seededOperation.error}`);
       const controlChunk = await sql(database, `INSERT INTO archive_chunks (game_id, sequence, item_id, raw_json, sha256) VALUES ('proof_control_game', 0, 'proof_control_item', ${chunk}, encode(sha256(convert_to('{"chunk":1}','UTF8')), 'hex'))`);
+      const controlOperation = await sql(database, `INSERT INTO operations (owner_id, game_id, operation_id, request_hash, revision, ownership_epoch, accepted_at, result_json) VALUES ('proof_owner_control', 'proof_control_game', 'proof_control_operation', decode(repeat('22',32),'hex'), 1, 1, clock_timestamp(), ${result})`);
+      if (controlOperation.code !== 0) throw new Error(`the operation receipt of the control could not be seeded: ${controlOperation.error}`);
       if (controlChunk.code !== 0) throw new Error(`the archive chunk of the control could not be seeded: ${controlChunk.error}`);
       const controlEvent = await sql(database, `INSERT INTO archive_events (game_id, sequence, item_id, raw_json) VALUES ('proof_control_game', 0, 'proof_control_event', ${event})`);
       if (controlEvent.code !== 0) throw new Error(`the archive event of the control could not be seeded: ${controlEvent.error}`);
@@ -688,10 +691,14 @@ export async function runInterruptionProof(options = {}) {
     const liveOnlyAfterImport = await replayState(context, targetAfter, 'proof_match_live_only');
     const payloadInSource = await sql(sourceDatabase, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND length(checkpoint_json) > 2`);
     const payloadAfterImport = await sql(targetAfter, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND length(checkpoint_json) > 2`);
+    const archiveAfterImport = await sql(targetAfter, `SELECT count(*) FROM archive_chunks WHERE game_id = 'proof_private_game' AND length(raw_json) > 2`);
+    const eventAfterImport = await sql(targetAfter, `SELECT count(*) FROM archive_events WHERE game_id = 'proof_private_game' AND length(raw_json) > 2`);
+    const receiptAfterImport = await sql(targetAfter, `SELECT count(*) FROM operations WHERE game_id = 'proof_private_game' AND length(result_json) > 2`);
     steps.push({
       id: 'the-private-payload-is-in-the-bundle-and-in-the-restored-database',
-      passed: payloadInSource.text === '1' && payloadAfterImport.text === '1',
-      detail: `the bundle carries the private payload of the removed subject (${payloadInSource.text}) and the import brought it into the target (${payloadAfterImport.text})`,
+      passed: payloadInSource.text === '1' && payloadAfterImport.text === '1'
+        && archiveAfterImport.text === '1' && eventAfterImport.text === '1' && receiptAfterImport.text === '1',
+      detail: `the bundle carries the private payload of the removed subject (${payloadInSource.text}) and the import brought it into the target: the checkpoint (${payloadAfterImport.text}), the archive chunk (${archiveAfterImport.text}), the archive event (${eventAfterImport.text}) and the operation receipt (${receiptAfterImport.text})`,
     });
     steps.push({
       id: 'the-import-was-committed',
@@ -811,9 +818,13 @@ export async function runInterruptionProof(options = {}) {
     const events = await sql(targetAfter, `SELECT count(*) FROM archive_events WHERE game_id = 'proof_private_game'`);
     const operation = await sql(targetAfter, `SELECT count(*) FROM operations WHERE game_id = 'proof_private_game' AND result_json = '{}'::bytea`);
     const tombstone = await sql(targetAfter, `SELECT count(*) FROM deletion_tombstones WHERE game_id = 'proof_private_game'`);
-    const controlPayload = await sql(targetAfter, `SELECT count(*) FROM games WHERE game_id = 'proof_control_game' AND length(checkpoint_json) > 2`);
-    const controlChunks = await sql(targetAfter, `SELECT count(*) FROM archive_chunks WHERE game_id = 'proof_control_game'`);
+    const controlPayload = await sql(targetAfter, `SELECT count(*) FROM games WHERE game_id = 'proof_control_game' AND checkpoint_json = '\\x7b22636f6e74726f6c223a227061796c6f6164227d'::bytea`);
+    const controlChunks = await sql(targetAfter, `SELECT count(*) FROM archive_chunks WHERE game_id = 'proof_control_game' AND length(raw_json) > 2`);
+    const controlEvents = await sql(targetAfter, `SELECT count(*) FROM archive_events WHERE game_id = 'proof_control_game' AND length(raw_json) > 2`);
+    const controlReceipts = await sql(targetAfter, `SELECT count(*) FROM operations WHERE game_id = 'proof_control_game' AND length(result_json) > 2`);
+    const tombstonePayload = await sql(targetAfter, `SELECT count(*) FROM deletion_tombstones t JOIN games g ON g.game_id = t.game_id WHERE t.game_id = 'proof_private_game' AND length(g.checkpoint_json) > 2`);
     const session = await sql(targetAfter, `SELECT count(*) FROM online_session_revocations WHERE subject_id = 'proof_owner_private'`);
+    const sessionCount = session.code === 0 ? Number(session.text) : -1;
     steps.push({
       id: 'the-private-payload-of-the-removed-subject-is-gone',
       passed: emptied.text === '1' && chunks.text === '0' && events.text === '0' && operation.text === '1',
@@ -821,18 +832,18 @@ export async function runInterruptionProof(options = {}) {
     });
     steps.push({
       id: 'the-tombstone-of-the-removed-private-game-is-retained',
-      passed: tombstone.text === '1',
-      detail: `the payload free tombstone of the removed game is retained (${tombstone.text})`,
+      passed: tombstone.text === '1' && tombstonePayload.text === '0',
+      detail: `the payload free tombstone of the removed game is retained (${tombstone.text}) and carries no private payload (${tombstonePayload.text} payload rows)`,
     });
     steps.push({
       id: 'the-unrelated-private-payload-survives',
-      passed: controlPayload.text === '1' && controlChunks.text === '1',
-      detail: `the private payload of the unrelated subject survived (${controlPayload.text} game, ${controlChunks.text} archive chunk)`,
+      passed: controlPayload.text === '1' && controlChunks.text === '1' && controlEvents.text === '1' && controlReceipts.text === '1',
+      detail: `the private payload of the unrelated subject survived byte for byte (${controlPayload.text} game, ${controlChunks.text} archive chunk, ${controlEvents.text} archive event, ${controlReceipts.text} operation receipt)`,
     });
     steps.push({
       id: 'the-session-of-the-removed-subject-is-fenced',
-      passed: session.text >= '1',
-      detail: `the sessions of the removed subject are fenced (${session.text} revocation)`,
+      passed: sessionCount > 0,
+      detail: `the sessions of the removed subject are fenced (${sessionCount} revocation)`,
     });
 
     // ---- the removed data and the control -------------------------------
