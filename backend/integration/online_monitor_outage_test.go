@@ -3,12 +3,14 @@ package integration
 import (
 	"context"
 	"errors"
+	"os"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/serverapp"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // One outage, one interruption.
@@ -220,6 +222,85 @@ func TestOnlineTheSharedHealthRecoversWhenAHealthyPeerAnswers(t *testing.T) {
 	}
 	if local.Rules.State != online.HealthDegraded {
 		t.Fatalf("the local state of the broken instance = %q, want %q", local.Rules.State, online.HealthDegraded)
+	}
+}
+
+// TestOnlineAFailedHealthReportIsRetriedByTheNextSuccess covers the retry of
+// a report that failed.
+//
+// The durable report of the dependency is a database write, and it happens
+// while the episode of the instance is guarded, so it is bounded by a short
+// budget. A write that could not happen leaves the durable state of the
+// dependency unchanged, so the next success writes the checkpoint and
+// refreshes the liveness of the service.
+func TestOnlineAFailedHealthReportIsRetriedByTheNextSuccess(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+
+	// The reporter writes on a pool with one connection, and the connection
+	// is held by the test, so the first report cannot happen.
+	var schema string
+	if err := fixture.pool.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	config, err := pgxpool.ParseConfig(os.Getenv(databaseEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ConnConfig.RuntimeParams == nil {
+		config.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	config.MaxConns = 1
+	config.MinConns = 1
+	blocked, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		t.Fatalf("open the blocked pool: %v", err)
+	}
+	defer blocked.Close()
+	held, err := blocked.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("hold the only connection: %v", err)
+	}
+	defer held.Release()
+
+	reporter := online.NewHealthReporter(blocked)
+	service, err := online.Open(ctx, fixture.pool, moveEvaluator{}, online.WithHealthReporter(reporter))
+	if err != nil {
+		t.Fatalf("open the service: %v", err)
+	}
+
+	// The first success cannot write its checkpoint: the pool has no free
+	// connection. The report is bounded, so the observation returns.
+	if err = service.ProbeRules(ctx); err != nil {
+		t.Fatalf("the probe of the healthy worker: %v", err)
+	}
+	var checkpoints int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_service_health WHERE dependency=$1`, online.DependencyRules).Scan(&checkpoints); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoints != 0 {
+		t.Fatalf("the checkpoints of the dependency = %d while the pool was blocked, want none", checkpoints)
+	}
+
+	// The pool is free again, so the next success writes the checkpoint and
+	// refreshes the liveness.
+	held.Release()
+	if err = service.ProbeRules(ctx); err != nil {
+		t.Fatalf("the probe of the healthy worker: %v", err)
+	}
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_service_health WHERE dependency=$1 AND state=$2`, online.DependencyRules, string(online.HealthHealthy)).Scan(&checkpoints); err != nil {
+		t.Fatal(err)
+	}
+	if checkpoints != 1 {
+		t.Fatalf("the healthy checkpoints of the dependency = %d after the retry, want 1", checkpoints)
+	}
+	var liveness time.Time
+	if err = fixture.pool.QueryRow(ctx, `SELECT last_seen_at FROM online_service_liveness WHERE singleton`).Scan(&liveness); err != nil {
+		t.Fatalf("read the liveness: %v", err)
+	}
+	if age := time.Since(liveness.UTC()); age > time.Minute {
+		t.Fatalf("the liveness is %s old after the retry, want a fresh record", age)
 	}
 }
 

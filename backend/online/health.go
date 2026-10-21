@@ -171,8 +171,11 @@ func (h *HealthReporter) ReportDependency(ctx context.Context, dependency string
 		h.order = append(h.order, dependency)
 	}
 	h.dependencies[dependency] = DependencyHealth{State: state, Detail: detail, RecordedAt: recordedAt}
-	h.mu.Unlock()
+	// The durable state is read under the same lock as it is written, so a
+	// concurrent report of the same dependency never reads the map while
+	// another report writes it.
 	durable, known := h.written[dependency]
+	h.mu.Unlock()
 	if h.db == nil {
 		// Without a database there is no durable state, so the observation
 		// is the state.
@@ -709,6 +712,11 @@ func (s *Service) reportRulesDegraded(ctx context.Context, err error) {
 // Only a real evaluation clears a degraded rules state. A healthy database
 // never does.
 //
+// The report of the healthy observation always runs. The durable state of the
+// dependency decides whether a checkpoint is written, so an observation whose
+// write failed is written again by the next one, and the liveness of the
+// service is refreshed with it.
+//
 // The shared state is the newest checkpoint of every dependency, so a healthy
 // instance that answers again restores it and the claim path of the healthy
 // instances opens again. The refresh is not a claim that every instance is
@@ -718,10 +726,7 @@ func (s *Service) reportRulesHealthy(ctx context.Context) {
 	if s.health == nil {
 		return
 	}
-	if s.health.Current().Rules.State != HealthHealthy {
-		_ = s.health.ReportDependency(ctx, DependencyRules, HealthHealthy, "the rules process answered")
-		return
-	}
+	_ = s.health.ReportDependency(ctx, DependencyRules, HealthHealthy, "the rules process answered")
 	_ = s.health.RefreshDependency(ctx, DependencyRules, HealthHealthy, "the rules process answered")
 }
 

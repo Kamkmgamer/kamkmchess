@@ -234,6 +234,35 @@ func TestEpisodeIgnoresABusyOrCancelledObservation(t *testing.T) {
 	}
 }
 
+// TestHealthReporterServesConcurrentReportsOfOneDependency covers the
+// concurrent reports of one dependency.
+//
+// The reporter keeps the durable state of every dependency, and the reports
+// of the same dependency may come from the episode of the instance, from the
+// monitor and from another dependency. Every access to that state is guarded,
+// so the reports never read the map while another report writes it.
+func TestHealthReporterServesConcurrentReportsOfOneDependency(t *testing.T) {
+	reporter := NewHealthReporter(nil)
+	var group sync.WaitGroup
+	for index := 0; index < 32; index++ {
+		group.Add(1)
+		go func(observation int) {
+			defer group.Done()
+			state := HealthHealthy
+			if observation%2 == 0 {
+				state = HealthDegraded
+			}
+			if err := reporter.ReportDependency(context.Background(), DependencyRules, state, "the observation of the instance"); err != nil {
+				t.Errorf("the report of the dependency: %v", err)
+			}
+		}(index)
+	}
+	group.Wait()
+	if state := reporter.Current().Rules.State; state != HealthHealthy && state != HealthDegraded {
+		t.Fatalf("the state of the dependency = %q after the concurrent reports", state)
+	}
+}
+
 // TestEpisodeKeepsAKnownIdentityWhenTheEpochIsUnreadable covers the
 // unreadable epoch.
 //
