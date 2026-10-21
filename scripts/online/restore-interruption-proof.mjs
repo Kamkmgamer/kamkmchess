@@ -752,7 +752,7 @@ export async function runInterruptionProof(options = {}) {
         '--restore-id', owner.restoreId,
         '--digest', owner.digest,
       ]);
-      let answer = { valid: false, reason: 'the evidence could not be read' };
+      let answer;
       try {
         answer = JSON.parse((verified.stdout || '').trim() || '{}');
       } catch {
