@@ -342,6 +342,37 @@ func runLiveSequenceAudit(t *testing.T, config *pgx.ConnConfig, role, schema str
 	return output
 }
 
+// pythonInterpreter returns the interpreter that runs the provisioning
+// routine.
+//
+// The routine is a Python 3 script and the name of the interpreter differs
+// between the hosts: a Linux image carries python3 and no python alias, while
+// a Windows host often carries only python. A candidate is used only when it
+// really is Python 3, because a host may also carry an alias that opens the
+// store instead of running the script.
+//
+// The proof of the provisioning needs an interpreter, so a host without one
+// fails the test with the reason it was refused. The proof is never skipped.
+func pythonInterpreter(t *testing.T) string {
+	t.Helper()
+	refused := make([]string, 0, 2)
+	for _, name := range []string{"python3", "python"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			refused = append(refused, name+" is not on the PATH")
+			continue
+		}
+		probe := exec.Command(path, "-c", "import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)")
+		if output, err := probe.CombinedOutput(); err != nil {
+			refused = append(refused, fmt.Sprintf("%s is not a Python 3 interpreter (%v: %s)", path, err, strings.TrimSpace(string(output))))
+			continue
+		}
+		return path
+	}
+	t.Fatalf("the provisioning proof needs a Python 3 interpreter: %s", strings.Join(refused, "; "))
+	return ""
+}
+
 // generatedProvisionGrantSQL captures SQL from the actual provisioning routine.
 func generatedProvisionGrantSQL(t *testing.T) string {
 	t.Helper()
@@ -384,7 +415,7 @@ with patch.object(module.os, 'chdir'), patch.object(module.subprocess, 'run'), c
     module.main()
 print(json.dumps(statements))
 `
-	command := exec.Command("python", "-B", "-c", script, filepath.Join(root, "deploy", "provision-runtime.py"))
+	command := exec.Command(pythonInterpreter(t), "-B", "-c", script, filepath.Join(root, "deploy", "provision-runtime.py"))
 	command.Dir = directory
 	output, err := command.CombinedOutput()
 	if err != nil {
