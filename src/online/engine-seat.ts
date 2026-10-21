@@ -25,7 +25,7 @@
  *   running and the owner may take over.
  */
 import { searchBrowserEngine } from '../engines/browser';
-import type { BrowserEngineId } from '../engines/browser';
+import type { BrowserEngineId, BrowserEngineResult } from '../engines/browser';
 import { createParticipantSession } from './session';
 import { createAuthorizedRequester } from './request';
 import { createOnlineMatchCommandClient } from './match-client';
@@ -35,6 +35,28 @@ import type { GuestOnlineCredential } from './auth';
 import type { Seat } from './contracts';
 import type { OnlineMatchView } from './updates';
 import { onlineSeatToMove } from './turn';
+
+/**
+ * The time the engine seat waits for a busy engine worker.
+ *
+ * The browser engine worker is one worker for the whole page, so the offline
+ * board and the online engine seat share it. A search of the offline board
+ * holds the worker for the length of that search, and the engine seat waits
+ * for it instead of losing the turn. The wait is bounded: a worker that stays
+ * busy longer fails the turn, and the owner may take over the seat.
+ */
+export const ONLINE_ENGINE_BUSY_WAIT_MS = 20_000;
+
+/** The poll of the wait for a busy engine worker. */
+const ONLINE_ENGINE_BUSY_POLL_MS = 250;
+
+/**
+ * The message of a busy engine worker.
+ *
+ * The engine module names the condition in the error it throws. The engine
+ * seat waits for that condition and never for a failure of its own.
+ */
+const ENGINE_BUSY_MESSAGE = 'still finishing another turn';
 
 /** The outcome of one engine turn. */
 export type OnlineEngineTurnResult =
@@ -119,6 +141,13 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
   let prepared = false;
   /** The lease of the current turn. */
   let lease: ProviderRunnerLease | null = null;
+  /**
+   * The controller of the running search.
+   *
+   * A disposed seat aborts its search, so a search of a seat that lost its
+   * credential never holds the shared engine worker.
+   */
+  let searchController: AbortController | null = null;
 
   async function releaseLease(): Promise<void> {
     const current = lease;
@@ -132,6 +161,51 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
       });
     } catch {
       // A lease that cannot be released expires on its own.
+    }
+  }
+
+  /** Waits for the given time, unless the seat stops or the caller aborts. */
+  async function wait(ms: number, signal: AbortSignal | undefined, controller: AbortController): Promise<void> {
+    await new Promise<void>(resolve => {
+      const timer = globalThis.setTimeout(finish, ms);
+      const onAbort = () => finish();
+      function finish(): void {
+        globalThis.clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        controller.signal.removeEventListener('abort', onAbort);
+        resolve();
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
+      controller.signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  /**
+   * Searches the engine turn.
+   *
+   * The engine worker is shared with the offline board. A search of the
+   * offline board holds the worker for the length of that search, and the
+   * engine seat waits for the worker and searches again. The wait is bounded,
+   * so a worker that stays busy fails the turn instead of holding the seat.
+   */
+  async function searchTurn(
+    position: { startingFen: string; moves: readonly string[] },
+    controller: AbortController,
+  ): Promise<BrowserEngineResult> {
+    const deadline = Date.now() + ONLINE_ENGINE_BUSY_WAIT_MS;
+    for (;;) {
+      try {
+        return await searchBrowserEngine(
+          { engineId, hashMb, moveTimeMs },
+          position,
+          controller.signal,
+        );
+      } catch (error) {
+        const busy = error instanceof Error && error.message.includes(ENGINE_BUSY_MESSAGE);
+        if (!busy || Date.now() >= deadline) throw error;
+        await wait(ONLINE_ENGINE_BUSY_POLL_MS, undefined, controller);
+        if (controller.signal.aborted) throw error;
+      }
     }
   }
 
@@ -176,6 +250,12 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
       if (!onlineSeatToMove(view, options.seat)) return { kind: 'not-turn' };
       const epoch = view.controlEpoch;
       const version = view.version;
+      // The search of the turn runs under a controller of the seat, so a
+      // disposed seat stops it and never holds the shared engine worker.
+      const controller = new AbortController();
+      searchController = controller;
+      const abort = () => controller.abort();
+      signal?.addEventListener('abort', abort, { once: true });
       try {
         if (!prepared && options.prepareEngine) {
           await options.prepareEngine();
@@ -186,10 +266,9 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
         if (!held || held.status !== 'active') {
           return { kind: 'failed', detail: 'The engine could not take its seat lease.' };
         }
-        const result = await searchBrowserEngine(
-          { engineId, hashMb, moveTimeMs },
+        const result = await searchTurn(
           { startingFen: view.startingFen, moves: view.moves.map(move => move.uci) },
-          signal,
+          controller,
         );
         if (stopped || signal?.aborted) return { kind: 'stopped' };
         // A control change or a newer version fences the answer.
@@ -211,11 +290,16 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
           detail: error instanceof Error ? error.message : 'The engine move was not accepted.',
         };
       } finally {
+        signal?.removeEventListener('abort', abort);
+        if (searchController === controller) searchController = null;
         await releaseLease();
       }
     },
     async dispose() {
       stopped = true;
+      // The search of the seat stops with it, so a search of a seat that lost
+      // its credential never holds the shared engine worker.
+      searchController?.abort();
       // The lease of the seat is released before the requester goes away, so
       // a new runner of the seat is never refused by an orphaned lease.
       await releaseLease();

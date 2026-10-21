@@ -106,7 +106,7 @@ test('a guest creates a friend link and the other guest joins the game', async (
     await expect(inviteePage.getByRole('region', { name: 'Online match board' })).toBeVisible();
 
     // The inviter sees the same match.
-    await inviterPage.getByRole('button', { name: 'Games' }).click();
+    await inviterPage.getByRole('region', { name: 'Online play' }).getByRole('button', { name: 'Games', exact: true }).click();
     await expect(inviterPage.getByRole('region', { name: 'Online match board' })).toBeVisible();
   } finally {
     await inviter.close();
@@ -143,7 +143,7 @@ test('the first move and the opening reply are playable in the real service', as
     const invitationId = link.split('/invite/')[1] ?? '';
     // The inviter watches its games, so its board is ready when the match
     // arrives.
-    await inviterPage.getByRole('button', { name: 'Games' }).click();
+    await inviterPage.getByRole('region', { name: 'Online play' }).getByRole('button', { name: 'Games', exact: true }).click();
 
     await inviteePage.goto('/play?online=1');
     await inviteePage.getByRole('button', { name: 'Online play' }).click();

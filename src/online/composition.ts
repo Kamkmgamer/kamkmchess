@@ -1165,8 +1165,11 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         record.state = state;
         if (activeQueueId === id) queueState = state;
         // A terminal entry releases the intent of *this* record. The intent of
-        // another entry stays untouched.
-        if (state.phase === 'matched' || state.phase === 'cancelled' || state.phase === 'expired') {
+        // another entry stays untouched. A matched entry keeps its intent:
+        // the entry id is the only way to ask the service to rotate the
+        // credential of the engine seat when the identity comes back, and the
+        // credential of a lost answer never returns on its own.
+        if (state.phase === 'cancelled' || state.phase === 'expired') {
           const identity = queueIdentity();
           for (const intent of readIntents(storage, identity)) {
             if (intent.recordId === id) removeIntent(intent.key);
@@ -1273,6 +1276,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     // answer of an older request.
     const identityKey = queueIdentity();
     const generation = identityGeneration;
+    const owner: 'account' | 'guest' = accountParticipant?.accountId ? 'account' : 'guest';
     for (const intent of readIntents(storage, identityKey)) {
       if (!intent.entryId) continue;
       void queueClient.fallback(intent.entryId).then(assignment => {
@@ -1283,7 +1287,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
           matchId: assignment.guestCredential.matchId,
           seat: assignment.guestCredential.seat,
           token: assignment.guestCredential.token,
-        }), 'account');
+        }), owner);
       }).catch(() => {
         // The service has no engine seat for the entry, or the entry is gone.
       });
@@ -1425,10 +1429,22 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         session.dispose();
         guestSessions.delete(key);
       }
+      // The browser engine seat of the match used the revoked credential, so
+      // it is released and built again with the fresh one.
+      const engine = engineSeats.get(key);
+      if (engine) {
+        void engine.dispose().catch(() => undefined);
+        engineSeats.delete(key);
+      }
+      engineTurns.delete(key);
     }
     seats.set(key, { credential, owner, identityKey: queueIdentity() });
     if (owner === 'guest') guestSeats.add(key);
     notify();
+    // A recovered credential makes the engine seat of the match usable again,
+    // so the turn that waits for it is played without waiting for another
+    // snapshot of the game.
+    if (ready) driveEngineSeats();
   }
 
   function credentialFor(matchId: string, seat: Seat): OnlineCredential | null {
@@ -1545,12 +1561,13 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         engineSeats.set(key, engine);
       }
       void engine.play(view).then(result => {
-        if (result.kind === 'failed') {
-          // A failed engine turn is reported and never retried silently. The
-          // owner may take over the seat.
-          engineTurns.delete(key);
-          notify();
-        }
+        if (result.kind === 'moved') return;
+        // A stopped turn - a search of a seat that lost its credential, or a
+        // fenced answer - is not a failure of the engine, so the turn is
+        // played again with the next snapshot. A failed turn is reported to
+        // the owner, who may take over the seat.
+        engineTurns.delete(key);
+        if (result.kind === 'failed') notify();
       }).catch(() => {
         engineTurns.delete(key);
       });
@@ -2164,6 +2181,10 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     },
     resumeMatches() {
       restorePersistedMatches();
+      // The engine seats of the restored games need a usable credential. The
+      // browser holds none after a reload, so the service is asked to rotate
+      // it.
+      recoverEngineCredentials();
     },
     async loadFeatures() {
       let service: OnlineFeatureFlags = ONLINE_FEATURES_DISABLED;

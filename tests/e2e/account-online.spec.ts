@@ -181,6 +181,27 @@ function committedMoves(page: Page) {
   return page.getByRole('table', { name: 'Committed moves' }).getByRole('button');
 }
 
+/**
+ * The committed moves of the online board, counted per colour.
+ *
+ * The two colours are counted apart, so a case can prove that the owner and
+ * the engine seat both committed a move of their own colour.
+ */
+async function committedMovesByColour(page: Page): Promise<{ white: string[]; black: string[] }> {
+  const rows = page.getByRole('table', { name: 'Committed moves' }).getByRole('row');
+  const white: string[] = [];
+  const black: string[] = [];
+  for (const row of await rows.all()) {
+    const cells = await row.getByRole('cell').all();
+    if (cells.length < 2) continue;
+    const first = ((await cells[0].textContent()) ?? '').trim();
+    const second = ((await cells[1].textContent()) ?? '').trim();
+    if (first) white.push(first);
+    if (second) black.push(second);
+  }
+  return { white, black };
+}
+
 /** The clock of the first seat of the online board. */
 async function onlineClock(page: Page): Promise<string> {
   const clock = page.getByRole('region', { name: 'Online match board' }).locator('time').first();
@@ -455,36 +476,55 @@ test('the first account gets its game back when it signs in again', async ({ pag
   await showGames(page);
   await expect(page.getByRole('region', { name: 'Online match board' })).toBeVisible({ timeout: 60_000 });
   // The owner plays the first move when the seat is its turn. Otherwise the
-  // browser engine opens the game.
+  // browser engine opens the game. The board tells the colour of the owner,
+  // so the case proves both colours in the runs that cover them.
   const flipped = await page.getByRole('region', { name: 'Online match board' })
     .locator('.board-host').evaluate(element => element.classList.contains('orientation-black'));
+  const owner = flipped ? 'black' : 'white';
+  const engine = flipped ? 'white' : 'black';
+  console.log('[colour] the owner is', owner, 'the engine is', engine);
+  const opening = await committedMovesByColour(page);
   if (!flipped) {
     const from = await point(page, 'e2');
     const to = await point(page, 'e4');
     await page.mouse.click(from.x, from.y);
     await page.mouse.click(to.x, to.y);
   }
-  await expect.poll(async () => committedMoves(page).count(), { timeout: 60_000 }).toBeGreaterThan(0);
-  const played = await committedMoves(page).count();
+  // The browser engine seat answers in the other colour. The colours are
+  // counted apart, so a move of the owner alone never satisfies the case.
+  await expect.poll(async () => (await committedMovesByColour(page))[engine].length, { timeout: 90_000 })
+    .toBeGreaterThan(opening[engine].length);
+  if (!flipped) {
+    await expect.poll(async () => (await committedMovesByColour(page))[owner].length, { timeout: 60_000 })
+      .toBeGreaterThan(opening[owner].length);
+  }
 
   // The second account signs in and the game of the first account is hidden.
   await switchFixtureAccount(page, loaded!, second);
   await expect(page.getByRole('region', { name: 'Concurrent games' }).getByRole('listitem')).toHaveCount(0, { timeout: 30_000 });
 
   // The first account signs in again. Its game comes back with its moves,
-  // and the browser engine seat of the game still plays, so the credential
-  // of the engine seat is still usable.
+  // and the browser engine seat of the game plays again, so the credential
+  // of the engine seat was issued again.
   await switchFixtureAccount(page, loaded!, first);
   await expect(page.getByRole('region', { name: 'Concurrent games' }).getByRole('listitem')).toHaveCount(1, { timeout: 30_000 });
   await showGames(page);
-  await expect.poll(async () => committedMoves(page).count(), { timeout: 60_000 }).toBeGreaterThanOrEqual(played);
-  if (!flipped) {
-    const from = await point(page, 'd2');
-    const to = await point(page, 'd4');
-    await page.mouse.click(from.x, from.y);
-    await page.mouse.click(to.x, to.y);
-  }
-  await expect.poll(async () => committedMoves(page).count(), { timeout: 60_000 }).toBeGreaterThan(played);
+  await expect.poll(async () => (await committedMovesByColour(page))[engine].length, { timeout: 60_000 })
+    .toBeGreaterThanOrEqual(opening[engine].length);
+  // The owner plays a move of its own colour, and the browser engine seat
+  // answers it in the other colour. The two colours are counted apart, so
+  // the move of the owner alone never satisfies the case.
+  const ownerBefore = (await committedMovesByColour(page))[owner].length;
+  const engineBefore = (await committedMovesByColour(page))[engine].length;
+  const reply = flipped ? { from: 'd7', to: 'd5' } : { from: 'd2', to: 'd4' };
+  const from = await point(page, reply.from, flipped);
+  const to = await point(page, reply.to, flipped);
+  await page.mouse.click(from.x, from.y);
+  await page.mouse.click(to.x, to.y);
+  await expect.poll(async () => (await committedMovesByColour(page))[owner].length, { timeout: 90_000 })
+    .toBeGreaterThan(ownerBefore);
+  await expect.poll(async () => (await committedMovesByColour(page))[engine].length, { timeout: 90_000 })
+    .toBeGreaterThan(engineBefore);
 });
 
 test('a late seat change never writes into the next account', async ({ page }) => {

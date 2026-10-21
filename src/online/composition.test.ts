@@ -406,6 +406,30 @@ describe('the online composition wires the product (B-2, B-5, B-7, B-12)', () =>
     expect(keys.some(key => key.includes('account-1'))).toBe(true);
     composition.dispose();
   });
+
+  it('keeps the intent of a matched entry for the recovery of the engine seat', async () => {
+    // The entry id of a matched entry is the only way to ask the service to
+    // rotate the credential of the engine seat when the identity comes back,
+    // so the intent of a matched entry survives the match.
+    const storage = createStorage();
+    const { composition } = createComposition({ storage });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    const key = 'kamkmchess.online.queue.intent.v1:account%3Aaccount-1';
+    const before = JSON.parse(String(storage.getItem(key) ?? '[]')) as { entryId: string | null }[];
+    expect(before.length).toBe(1);
+    expect(before[0]?.entryId).toBeTruthy();
+    // The entry produced a game.
+    composition.queueEntries[0]?.observe({
+      ...entryAnswer(null),
+      status: 'assigned',
+      assignedMatchId: 'match-00000031',
+    } as unknown as QueueEntry);
+    await settle();
+    const after = JSON.parse(String(storage.getItem(key) ?? '[]')) as { entryId: string | null }[];
+    expect(after.length).toBe(1);
+    expect(after[0]?.entryId).toBe(before[0]?.entryId);
+    composition.dispose();
+  });
 });
 
 describe('the agent binding follows the seat, never the public label (B-26)', () => {

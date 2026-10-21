@@ -192,7 +192,7 @@ describe('the browser engine seat', () => {
         startingFen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
         moves: ['e2e4'],
       },
-      undefined,
+      expect.any(AbortSignal),
     );
     const lease = wires.find(wire => wire.path.includes('/runner/lease'));
     expect(lease?.body.action).toBe('acquire');
@@ -221,5 +221,48 @@ describe('the browser engine seat', () => {
       ],
     }));
     expect(result).toEqual({ kind: 'not-turn' });
+  });
+
+  it('stops the search of a disposed seat', async () => {
+    // A search of a seat that lost its credential must not hold the shared
+    // engine worker, so the disposal aborts the search.
+    let signal: AbortSignal | undefined;
+    search.mockImplementationOnce((async (...args: unknown[]) => {
+      const running = args[2] as AbortSignal | undefined;
+      signal = running;
+      return new Promise<never>((_resolve, reject) => {
+        running?.addEventListener('abort', () => {
+          reject(new DOMException('Engine stopped.', 'AbortError'));
+        });
+      });
+    }) as unknown as typeof search);
+    const { seat } = createSeat(() => ({ status: 200, data: leaseAnswer }));
+    const view = matchView({
+      clock: { ...matchView().clock, activeSeat: 'black', activeSince: '2026-10-21T10:00:00.000Z' },
+    });
+    const turn = seat.play(view);
+    await vi.waitFor(() => { expect(signal).toBeDefined(); });
+    await seat.dispose();
+    const result = await turn;
+    expect(result).toEqual({ kind: 'stopped' });
+    expect(signal?.aborted).toBe(true);
+  });
+
+  it('waits for a busy engine worker and searches again', async () => {
+    // The engine worker is shared with the offline board. A busy worker is
+    // waited for, so the turn is not lost.
+    search
+      .mockRejectedValueOnce(new Error('This engine is still finishing another turn. Stop that turn and retry.'))
+      .mockResolvedValueOnce({ move: 'e2e4', engineName: 'Stockfish 19', elapsedMs: 5 });
+    const { seat } = createSeat(wire => ({
+      status: 200,
+      data: wire.path.includes('/runner/lease') ? leaseAnswer : receiptAnswer,
+    }));
+    const view = matchView({
+      clock: { ...matchView().clock, activeSeat: 'black', activeSince: '2026-10-21T10:00:00.000Z' },
+    });
+    const result = await seat.play(view);
+    expect(result).toEqual({ kind: 'moved', move: 'e2e4' });
+    expect(search).toHaveBeenCalledTimes(2);
   });
 });
