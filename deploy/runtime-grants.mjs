@@ -912,7 +912,7 @@ export async function loadTree(root) {
   const sequences = new Set();
   /** @type {{name: string, trigger: boolean}[]} */
   const functions = [];
-  /** @type {{role: string, table: string, privileges: string[]}[]} */
+  /** @type {{role: string, table?: string, sequence?: string, privileges: string[]}[]} */
   const migrationGrants = [];
   /** @type {Set<string>} */
   const migrationReads = new Set();
