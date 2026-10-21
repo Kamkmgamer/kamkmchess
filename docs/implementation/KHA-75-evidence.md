@@ -299,8 +299,40 @@ The bounded races were repeated, because they are the ones that can hide a
 lock discipline defect:
 
 ```
-go test ./backend/integration -run 'TestPostgresFriendConcurrentAcceptanceAndCancellationHaveOneWinner|TestPostgresFriendConcurrentRematchAcceptanceCreatesOneMatch' -count=5
-ok  	github.com/Kamkmgamer/kamkmchess/backend/integration	28.115s
+go test ./backend/integration -run 'Friend|Invite|Rematch' -count=1 -v
+--- PASS: TestPostgresFriendHTTPRoutesAndAnswers
+--- PASS: TestPostgresFriendFeatureStateRoute
+--- PASS: TestPostgresFriendInvitationTTLIsTwelveHours
+--- PASS: TestPostgresFriendNeverPublishesAPrivateRoutingIdentity
+--- PASS: TestPostgresFriendKeepsARegisteredPublicModelLabel
+--- PASS: TestPostgresFriendAcceptanceCommitsTheMatchAndTheCredentialTogether
+--- PASS: TestPostgresFriendExpiredInvitationReportsItsState
+--- PASS: TestPostgresFriendNamedChallengeIsInvisibleToAStranger
+--- PASS: TestPostgresFriendGuestRematchLostAnswerRecoversTheCredential
+--- PASS: TestPostgresFriendGuestRematchRetryAnswersTheLiveView
+--- PASS: TestPostgresFriendRematchAcceptanceCommitsTheOfferAndTheMatchTogether
+--- PASS: TestPostgresFriendConcurrentAcceptanceAndCancellationHaveOneWinner
+--- PASS: TestPostgresFriendConcurrentRematchAcceptanceCreatesOneMatch
+--- PASS: TestPostgresFriendCreationWaitsForTheAccountScopeLock
+--- PASS: TestPostgresFriendAcceptanceWaitsForTheAccountScopeLock
+--- PASS: TestPostgresFriendRemovedAccountCannotCreateAnInvitation
+--- PASS: TestPostgresFriendRemovedAccountCannotAcceptAnInvitation
+--- PASS: TestPostgresFriendRemovedParticipantCannotProposeOrAcceptARematch
+--- PASS: TestPostgresFriendRemovedGuestNeverGetsAFreshCredential
+--- PASS: TestPostgresFriendRemovalAndTheInvitationWriteNeverDeadlock
+--- PASS: TestPostgresFriendContendedAcceptanceDoesNotStarveTheWinner
+--- PASS: TestPostgresFriendInvitationLinkAndChallengePaths
+--- PASS: TestPostgresFriendInvitationCancellationAndExpiry
+--- PASS: TestPostgresFriendSeatCombinationsAndVisibleSetup
+--- PASS: TestPostgresFriendCustomPositionIsVisibleAndValidated
+--- PASS: TestPostgresFriendLostAnswerRetryRecoversTheSameAcceptance
+--- PASS: TestPostgresFriendConcurrentAcceptanceHasOneWinner
+--- PASS: TestPostgresFriendSelfAcceptanceIsRefusedBeforeConsumption
+--- PASS: TestPostgresFriendCancelAfterConcurrentAcceptanceReportsTheRealState
+--- PASS: TestPostgresFriendGuestInviterClaimsItsSeatCredential
+--- PASS: TestPostgresFriendMutualRematchReversesColorsAndKeepsTheSetup
+--- PASS: TestPostgresFriendRematchGivesBothGuestsTheirOwnCredential
+ok  	github.com/Kamkmgamer/kamkmchess/backend/integration	219.910s
 ```
 
 The whole backend suite was run as well:
@@ -369,6 +401,55 @@ pnpm exec tsc -p tsconfig.node.json --noEmit    # clean
 pnpm exec eslint src/online/friends.ts src/online/friends.test.ts --max-warnings 0   # clean
 ```
 
+## The removal of a participant
+
+The privacy worker sanitizes the auxiliary rows of a removed participant, and
+it does it **account first**: the removal takes the account scope lock of the
+removed subject and then the row locks of the rows it sanitizes. A friend
+write that names a participant therefore has to take the same account scope
+lock **before** its own row lock, or the two flows invert and deadlock.
+
+The friend service now follows the canonical protocol of `backend/locks` and
+the shared reference of `backend/subject`:
+
+| Write | Scopes it locks | Recheck |
+| --- | --- | --- |
+| the creation of an invitation | the inviter, the named recipient of a challenge | the inviter, the recipient |
+| the acceptance of an invitation | the inviter, the acceptor | the inviter, the acceptor |
+| the proposal of a rematch | the two participants of the finished match | the two participants |
+| the acceptance of a rematch | the two participants of the finished match | the two participants |
+| the credential recovery of an invitation or of a rematch | the owner of the seat | the owner of the seat |
+
+The scope locks are taken before the row lock of the invitation or of the
+rematch offer, and the durable removal of every participant is rechecked after
+the locks and before the row is written. The check names a participant by its
+one-way reference, so the removal tables are read without the raw identifier
+of a removed subject, and the guest path keeps its bearer capability: an
+anonymous guest is a fresh identity that no removal names.
+
+The new refusal is `invite.ErrRemoved`, and the HTTP surface answers it with
+`403` and the code `not_authorized`, so the error vocabulary of the surface
+does not change.
+
+The regressions of the new file
+`backend/integration/online_friends_removal_test.go` prove the order and the
+outcome:
+
+* `TestPostgresFriendCreationWaitsForTheAccountScopeLock` (the creation
+  waits for the lock the removal holds)
+* `TestPostgresFriendAcceptanceWaitsForTheAccountScopeLock` (the acceptance
+  waits for the lock the removal holds)
+* `TestPostgresFriendRemovedAccountCannotCreateAnInvitation` (no row names
+  the removed account)
+* `TestPostgresFriendRemovedAccountCannotAcceptAnInvitation` (the
+  invitation is not consumed and no acceptance is recorded)
+* `TestPostgresFriendRemovedParticipantCannotProposeOrAcceptARematch` (no
+  offer and no seat names the removed participant)
+* `TestPostgresFriendRemovedGuestNeverGetsAFreshCredential` (no live
+  credential of the removed guest and no revived acceptance)
+* `TestPostgresFriendRemovalAndTheInvitationWriteNeverDeadlock` (a pool of
+  four connections, the removal and the acceptance race, both finish)
+
 ## The changed wire
 
 The browser workspace owns the production composition. These are the changes
@@ -382,6 +463,7 @@ it has to read:
 | Browser client | `acceptRematch(rematchId, { rotateCredential })`; `isLocallyOwnedInvitation(invitationId, ownedIds)` is new |
 | Browser client | `createAcceptanceKey()` now fails closed without a secure random source |
 | Public model label | the published model label of a seat is the canonical public label; it may be collapsed to `Custom model`, so the browser keeps its own binding of a model opponent and never identifies a model by the published label |
+| Removed participant | a write that names a removed participant is refused with `403` and the code `not_authorized`, the same code as an unauthorized caller |
 
 ## Known limitations
 
@@ -413,6 +495,11 @@ it has to read:
    gate of the foundation covers the friend path as well, as long as the gate
    sits inside `createMatchInTx` and not only inside `CreateAllocatedMatch`.
    The foundation worker owns that file; this ticket does not touch it.
+8. The refusal of a removed participant is conservative. A resumed
+   acceptance whose invitation names a removed participant is refused as
+   well, even though the recovery itself would not write the identifier of the
+   removed subject again. The refusal is the fail closed answer, and the
+   privacy sanitation of that invitation would break the recovery anyway.
 
 ## Status
 

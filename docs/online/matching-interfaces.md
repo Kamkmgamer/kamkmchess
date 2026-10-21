@@ -241,6 +241,33 @@ Errors:
 A challenge that is not visible to the caller answers exactly like an unknown
 invitation, so a caller cannot learn that a named challenge exists.
 
+### The removal of a participant
+
+A write of this surface names a participant: the inviter of an invitation, the
+acceptor, the named recipient of a challenge, the proposer of a rematch and
+the accepter of one. The removal of a participant is durable, and a removed
+participant may not name a new personal row.
+
+Every write therefore takes the **account scope lock** of the participants it
+names, before the row lock of the invitation or of the rematch offer, and it
+rechecks the durable removal of every participant after the lock. The removal
+of a participant takes the same account scope lock and then the row locks of
+the rows it sanitizes, so the two flows are ordered instead of racing:
+
+* a write that was authenticated before the removal waits for the removal and
+  is then refused, so it never creates a personal row after the removal;
+* a write that was authenticated after the removal is refused at once;
+* a removed participant never receives a fresh seat credential, so a
+  credential that was issued before the removal is not revived after it.
+
+The refusal is `403` with the code `not_authorized`, the same code as an
+unauthorized caller, so the error vocabulary of the surface does not change.
+
+The scopes are taken in ascending order, so two writes that name the same
+participants take them in the same order and never deadlock. The guest path is
+unaffected: an anonymous guest is a fresh identity that no removal names, and
+the acceptance key stays the whole capability of a guest acceptance.
+
 ### Cancel an invitation
 
 ```
