@@ -178,13 +178,41 @@ behaviour.
 * the shipped test `TestPostgresFriendInvitationLinkAndChallengePaths` now
   expects the same refusal for the preview and for the acceptance
 
+### B-09 (P1, `backend-review-r2.md`) — the public preview published the raw routing identity — **implemented**
+
+A declared model label is a private routing identity until its owner chooses
+a public label for it, and the preview of a link is unauthenticated. The
+invitation path stored the declared label verbatim and published it in the
+`inviterControl` field of the preview.
+
+The declared control of the inviter and of the acceptor is now resolved
+**before** it is stored, with the canonical resolution of the service
+(`online_resolve_public_model_label`). The resolution is the single source of
+that policy, so the friend module owns no second copy of it: a known public
+model name and a public label the owner registered for their own account are
+kept, and every other declared label becomes the neutral label. The stored
+invitation, the stored acceptance, the stored seats, the creation answer, the
+preview, the acceptance answer and the rematch answers therefore carry the
+publishable label only.
+
+* `TestPostgresFriendNeverPublishesAPrivateRoutingIdentity` (the private
+  label appears in none of the answers, in neither stored row and in neither
+  seat of the created match)
+* `TestPostgresFriendKeepsARegisteredPublicModelLabel` (a registered public
+  label and a known public model name are kept, the label of another owner is
+  not, and the engine constant of the shared policy is intact)
+
+The human and the no-model validation of a control is unchanged, and the
+friend surface still offers no built-in engine seat, so the engine constant
+never appears in a friend answer.
+
 ## Acceptance scenarios
 
 | Scenario | Evidence | Status |
 | --- | --- | --- |
 | `FRI-01` invitation paths | `TestPostgresFriendInvitationLinkAndChallengePaths` (a link and a named challenge, one use, the recipient isolation), `TestPostgresFriendInvitationCancellationAndExpiry` (a cancelled and an expired link), `TestPostgresFriendConcurrentAcceptanceHasOneWinner` (one winner), `TestPostgresFriendExpiredInvitationReportsItsState` (the effective expiry) | covered |
 | `FRI-02` independent seats | `TestPostgresFriendSeatCombinationsAndVisibleSetup` (human/human, human/agent and agent/agent), `TestPostgresFriendCustomPositionIsVisibleAndValidated` (an invalid position never consumes an invitation) | covered |
-| `FRI-03` visible setup | `TestPostgresFriendSeatCombinationsAndVisibleSetup` (the color, the clock and the custom position), `TestPostgresFriendHTTPRoutesAndAnswers` (the preview carries no participant reference, no owner token and no credential) | covered |
+| `FRI-03` visible setup | `TestPostgresFriendSeatCombinationsAndVisibleSetup` (the color, the clock and the custom position), `TestPostgresFriendHTTPRoutesAndAnswers` (the preview carries no participant reference, no owner token and no credential), `TestPostgresFriendNeverPublishesAPrivateRoutingIdentity` (the preview publishes no private routing identity) | covered |
 | `FRI-04` mutual rematch | `TestPostgresFriendMutualRematchReversesColorsAndKeepsTheSetup` (reversed colors, retained setup, the old result stays final, a duplicate acceptance creates no second match), `TestPostgresFriendRematchGivesBothGuestsTheirOwnCredential` (both guests have their own credential of the new match) | covered |
 
 The recovery rules that the scenarios do not name are covered by the
@@ -242,6 +270,8 @@ go test ./backend/integration -run 'Friend|Invite|Rematch' -count=1 -v
 --- PASS: TestPostgresFriendHTTPRoutesAndAnswers
 --- PASS: TestPostgresFriendFeatureStateRoute
 --- PASS: TestPostgresFriendInvitationTTLIsTwelveHours
+--- PASS: TestPostgresFriendNeverPublishesAPrivateRoutingIdentity
+--- PASS: TestPostgresFriendKeepsARegisteredPublicModelLabel
 --- PASS: TestPostgresFriendAcceptanceCommitsTheMatchAndTheCredentialTogether
 --- PASS: TestPostgresFriendExpiredInvitationReportsItsState
 --- PASS: TestPostgresFriendNamedChallengeIsInvisibleToAStranger
@@ -262,7 +292,7 @@ go test ./backend/integration -run 'Friend|Invite|Rematch' -count=1 -v
 --- PASS: TestPostgresFriendGuestInviterClaimsItsSeatCredential
 --- PASS: TestPostgresFriendMutualRematchReversesColorsAndKeepsTheSetup
 --- PASS: TestPostgresFriendRematchGivesBothGuestsTheirOwnCredential
-ok  	github.com/Kamkmgamer/kamkmchess/backend/integration	57.459s
+ok  	github.com/Kamkmgamer/kamkmchess/backend/integration	100.927s
 ```
 
 The bounded races were repeated, because they are the ones that can hide a
@@ -332,6 +362,7 @@ it has to read:
 | Rematch request | `POST /v1/online/rematches/{rematchId}/accept` accepts `rotateCredential` and the service honours it on the duplicate path |
 | Browser client | `acceptRematch(rematchId, { rotateCredential })`; `isLocallyOwnedInvitation(invitationId, ownedIds)` is new |
 | Browser client | `createAcceptanceKey()` now fails closed without a secure random source |
+| Public model label | the published model label of a seat is the canonical public label; it may be collapsed to `Custom model`, so the browser keeps its own binding of a model opponent and never identifies a model by the published label |
 
 ## Known limitations
 

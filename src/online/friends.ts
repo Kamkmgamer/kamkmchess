@@ -38,6 +38,9 @@
  *   instead of reporting a generic conflict.
  * - The preview shows the inviter's public name or Guest, the color, the
  *   clock and the custom position. It never invents a pairing.
+ * - A published model label is the canonical public label. It may be
+ *   collapsed to the neutral label, so the browser keeps its own binding of
+ *   a model opponent and never identifies a model by the published label.
  */
 import type { OnlineMatchView } from './updates';
 import type { Seat, SeatControl, TimeControl } from './contracts';

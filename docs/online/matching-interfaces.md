@@ -117,6 +117,33 @@ the browser avoids accepting a link it created itself with
 `isLocallyOwnedInvitation`. That is a convenience of the interface, not a
 sybil defence, and no such claim is made.
 
+### The public model label
+
+A declared model label is a **private routing identity** until its owner
+chooses a public label for it. The service never receives a routing
+identifier, an endpoint, a connection nickname or a credential, and the
+public preview of a link is unauthenticated, so the declared label is
+resolved to the label that may be published **before** the invitation is
+stored and before any answer carries it.
+
+The resolution is the canonical one of the service
+(`online_resolve_public_model_label`):
+
+| Declared label | Published label |
+| --- | --- |
+| a known public model name (`gpt-4o`) | its published name (`GPT-4o`) |
+| a public label the owner registered for their own account | that label (`My Bot`) |
+| the browser engine | `Stockfish 19 Lite (browser)` |
+| anything else, including a private routing identity | `Custom model` |
+
+A human seat declares no model label and is published unchanged. The friend
+surface offers no built-in engine seat, so the engine constant never appears
+in a friend answer.
+
+The browser keeps its own binding of a model opponent. The published label
+may be collapsed to the neutral label, so the browser never identifies a
+model by the published label and never expects it to be unique.
+
 ### Read an invitation (the link preview)
 
 ```
