@@ -16,7 +16,7 @@ import (
 
 const fakeWorkerScript = `
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -111,8 +111,23 @@ for await (const line of rl) {
   const req = JSON.parse(line);
   // The readiness probe is the first request of a cold worker, so it carries
   // the boot delay of the simulated host.
-  if (req.requestId === '__READINESS_REQUEST_ID__' && bootDelay > 0) {
-    await new Promise((resolve) => setTimeout(resolve, bootDelay));
+  if (req.requestId === '__READINESS_REQUEST_ID__') {
+    if (bootDelay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, bootDelay));
+    }
+    // A fixture can ask the worker to stop answering the readiness probe of
+    // a replacement worker, so the start of the replacement fails. The first
+    // probe still answers, so the first request reaches the worker.
+    const marker = join(dirname(process.argv[1]), 'hang-probe');
+    if (existsSync(marker)) {
+      const counter = join(dirname(process.argv[1]), 'probe-counter');
+      let seen = 0;
+      try { seen = Number.parseInt(readFileSync(counter, 'utf8').trim(), 10) || 0; } catch { seen = 0; }
+      writeFileSync(counter, String(seen + 1));
+      if (seen > 0) {
+        await new Promise(() => {});
+      }
+    }
   }
   switch (req.requestId) {
     case 'crash':
@@ -153,7 +168,7 @@ for await (const line of rl) {
       await new Promise((resolve) => setTimeout(resolve, 700));
       break;
     case 'oversized':
-      process.stdout.write('x'.repeat(65536) + '\n');
+      process.stdout.write('x'.repeat(16384) + '\n');
       continue;
     case 'reject':
       process.stdout.write(JSON.stringify({
@@ -227,6 +242,21 @@ func testEntryWithBootDelay(t *testing.T, delay time.Duration) string {
 	return path
 }
 
+// testEntryWithHangingProbe writes a fake worker that never answers the
+// readiness probe. It simulates a replacement worker that never becomes ready.
+func testEntryWithHangingProbe(t *testing.T) string {
+	t.Helper()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "worker.mjs")
+	if err := os.WriteFile(path, []byte(fakeWorkerSource()), 0o600); err != nil {
+		t.Fatalf("write fake worker: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "hang-probe"), []byte("1"), 0o600); err != nil {
+		t.Fatalf("write the probe marker: %v", err)
+	}
+	return path
+}
+
 // The budgets of the fixtures.
 //
 // The exchange budget must cover the bounded work a fixture performs. The
@@ -237,7 +267,7 @@ func testEntryWithBootDelay(t *testing.T, delay time.Duration) string {
 // client budgets the start of the worker separately, and the regressions
 // below cover it.
 const (
-	exchangeBudget = 2 * time.Second
+	exchangeBudget = 1 * time.Second
 	// warmBudget bounds the warm-up of a fixture client. A warm-up that
 	// cannot finish is a failure of the fixture, not a stall of the
 	// package.
@@ -337,14 +367,6 @@ func TestTheRestartAfterATimeoutKeepsItsOwnStartBudget(t *testing.T) {
 	}
 }
 
-// TestTheFailureClassDoesNotDependOnTheDeadline proves that a worker that
-// died is reported as a crash even when the deadline of the exchange expired
-// first.
-//
-// The client waits a short bounded grace after the deadline, so the failure
-// it reports is the failure that happened. Without the grace the same
-// failure is reported as a timeout, and the answer depends on which case the
-// select happens to pick.
 // TestTheCrashOfTheFirstExchangeIsNotReplacedByTheTimeoutOfTheRetry proves
 // that a specific failure survives the retry.
 //
@@ -446,6 +468,70 @@ func TestTheRealBundleAnswersAColdRequest(t *testing.T) {
 	}
 	if response.Candidate == nil || response.Candidate.Move.From != "e2" {
 		t.Fatalf("candidate = %+v", response.Candidate)
+	}
+}
+
+// TestTheCancellationCarriesTheCauseOfTheCaller proves that the class of a
+// cancellation can be told apart from a failure of the worker.
+//
+// The health probe of the service skips the downgrade of the rules
+// dependency when the error is a cancellation of its own context, and that
+// guard needs the cause. An internal timeout of the request or of the start
+// carries no cause, so a genuine outage of the worker is never recorded as
+// the deadline of a caller.
+func TestTheCancellationCarriesTheCauseOfTheCaller(t *testing.T) {
+	if !errors.Is(ErrCanceled, context.Canceled) {
+		t.Fatal("the cancellation does not carry the cause of the context")
+	}
+	if errors.Is(ErrTimeout, context.DeadlineExceeded) {
+		t.Fatal("an internal timeout is reported as the deadline of a caller")
+	}
+	if errors.Is(ErrTimeout, context.Canceled) {
+		t.Fatal("an internal timeout is reported as a cancellation")
+	}
+}
+
+// TestTheCrashSurvivesAFailedStartOfTheReplacement proves that a failure of
+// the start does not replace the specific failure of an earlier attempt.
+//
+// The worker dies on the first exchange and the replacement never answers
+// the readiness probe. The call reports the crash: an operator must be able
+// to tell "the worker died" from "the replacement never became ready".
+func TestTheCrashSurvivesAFailedStartOfTheReplacement(t *testing.T) {
+	client, err := New(Config{Entry: testEntryWithHangingProbe(t), RequestTimeout: 2 * time.Second, StartTimeout: time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	_, err = client.Evaluate(context.Background(), request("crash"))
+	if !errors.Is(err, ErrCrashed) {
+		t.Fatalf("the crash was replaced by the failed start of the replacement: %v", err)
+	}
+}
+
+// TestTheCancellationWinsOverAnEarlierCrash proves that the cancellation of
+// the caller keeps its class, whatever happened before it.
+//
+// The first exchange crashes and the retry is in flight when the caller
+// goes away. The call reports the cancellation, because the caller knows
+// that it left.
+func TestTheCancellationWinsOverAnEarlierCrash(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 5 * time.Second, StartTimeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		cancel()
+	}()
+	_, err = client.Evaluate(ctx, request("crash-then-hang"))
+	if !errors.Is(err, ErrCanceled) {
+		t.Fatalf("a canceled caller got %v instead of a cancellation", err)
+	}
+	if errors.Is(err, ErrCrashed) {
+		t.Fatal("the crash of the first exchange replaced the cancellation of the caller")
 	}
 }
 

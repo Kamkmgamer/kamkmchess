@@ -62,11 +62,22 @@ const (
 var (
 	ErrClosed         = errors.New("rules worker client is closed")
 	ErrInvalidRequest = errors.New("invalid rules worker request")
-	ErrTimeout        = errors.New("rules worker timed out")
-	ErrCanceled       = errors.New("rules worker request was canceled")
-	ErrCrashed        = errors.New("rules worker exited without a valid response")
-	ErrMalformed      = errors.New("rules worker returned malformed output")
-	ErrCorrelation    = errors.New("rules worker response does not match the request")
+	// ErrTimeout marks a request that ran out of its budget.
+	//
+	// It carries no context cause on purpose. A timeout of the worker is
+	// not the deadline of the caller, and a caller that tells the two
+	// apart must not record a genuine outage as a caller deadline.
+	ErrTimeout = errors.New("rules worker timed out")
+	// ErrCanceled marks a request that the caller canceled.
+	//
+	// It carries the cause of the context, so that a caller can tell a
+	// cancellation from a failure of the worker. The health probe of the
+	// service skips the downgrade of the rules dependency for a canceled
+	// probe, and that guard needs the cause.
+	ErrCanceled    = fmt.Errorf("%w: %w", errors.New("rules worker request was canceled"), context.Canceled)
+	ErrCrashed     = errors.New("rules worker exited without a valid response")
+	ErrMalformed   = errors.New("rules worker returned malformed output")
+	ErrCorrelation = errors.New("rules worker response does not match the request")
 )
 
 // RejectionError is a valid protocol response that refused the input. It never
@@ -325,7 +336,7 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 	defer c.release()
 
 	if err := wait.Err(); err != nil {
-		return Response{}, contextError(wait)
+		return Response{}, contextError(wait, ctx)
 	}
 	if c.closed {
 		return Response{}, ErrClosed
@@ -340,6 +351,11 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 	var lastErr error
 
 	for attempt := 0; ; attempt++ {
+		// The cancellation of the caller keeps its class, whatever else
+		// happened before it.
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return Response{}, ErrCanceled
+		}
 		if !time.Now().Before(expiry) {
 			if lastErr != nil {
 				return Response{}, lastErr
@@ -354,15 +370,29 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 		startElapsed := time.Since(started)
 		cancelStart()
 		if readyErr != nil {
+			// A failure of the start does not replace the specific failure
+			// of an earlier attempt: a worker that died and a replacement
+			// that never became ready is still a crash of the worker.
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return Response{}, ErrCanceled
+			}
+			if lastErr != nil && !errors.Is(lastErr, ErrTimeout) {
+				return Response{}, lastErr
+			}
 			return Response{}, readyErr
 		}
 		// The start is not charged to the exchange budget.
 		expiry = expiry.Add(startElapsed)
 		exchange, cancelExchange := context.WithDeadline(ctx, expiry)
-		response, retry, exchangeErr := c.exchange(exchange, line, request)
+		response, retry, exchangeErr := c.exchange(exchange, ctx, line, request)
 		cancelExchange()
 		if exchangeErr == nil {
 			return response, nil
+		}
+		// The cancellation of the caller keeps its class, even when a
+		// specific failure of an earlier attempt is known.
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return Response{}, ErrCanceled
 		}
 		// The specific failure wins. A retry that runs out of budget does
 		// not turn a crash into a timeout.
@@ -421,7 +451,7 @@ func (c *Client) ensureReady(ctx context.Context, startCtx context.Context) erro
 	}
 	// A canceled caller never starts a worker.
 	if err := ctx.Err(); err != nil {
-		return contextError(ctx)
+		return contextError(ctx, nil)
 	}
 	if c.proc == nil {
 		if err := c.start(); err != nil {
@@ -434,7 +464,7 @@ func (c *Client) ensureReady(ctx context.Context, startCtx context.Context) erro
 		c.stop()
 		return err
 	}
-	if _, _, err = c.exchange(startCtx, line, probe); err != nil {
+	if _, _, err = c.exchange(startCtx, ctx, line, probe); err != nil {
 		c.stop()
 		return err
 	}
@@ -459,7 +489,7 @@ func readinessRequest() Request {
 // in-flight request and process untouched.
 func (c *Client) acquire(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
-		return contextError(ctx)
+		return contextError(ctx, nil)
 	}
 	select {
 	case c.slot <- struct{}{}:
@@ -470,7 +500,7 @@ func (c *Client) acquire(ctx context.Context) error {
 	case c.slot <- struct{}{}:
 		return nil
 	case <-ctx.Done():
-		return contextError(ctx)
+		return contextError(ctx, nil)
 	}
 }
 
@@ -600,7 +630,11 @@ type readResult struct {
 // exchange performs one bounded write/read round trip. The caller's deadline
 // already covers this call; a timeout must terminate the process so a late
 // reply can never be read against a newer request.
-func (c *Client) exchange(ctx context.Context, line []byte, request Request) (Response, bool, error) {
+//
+// The caller's context is passed separately, because the class of the failure
+// depends on whether the caller's own context ended or the internal budget
+// of the exchange did.
+func (c *Client) exchange(ctx context.Context, caller context.Context, line []byte, request Request) (Response, bool, error) {
 	writeDone := make(chan error, 1)
 	stdin := c.stdin
 	go func() {
@@ -614,7 +648,7 @@ func (c *Client) exchange(ctx context.Context, line []byte, request Request) (Re
 		}
 	case <-ctx.Done():
 		c.kill()
-		return Response{}, false, contextError(ctx)
+		return Response{}, false, contextError(ctx, caller)
 	}
 
 	readDone := make(chan readResult, 1)
@@ -631,8 +665,16 @@ func (c *Client) exchange(ctx context.Context, line []byte, request Request) (Re
 		// context: a cancellation stays a cancellation and a deadline stays
 		// a timeout.
 		c.kill()
-		return Response{}, false, contextError(ctx)
+		return Response{}, false, contextError(ctx, caller)
 	case result := <-readDone:
+		// The answer may have arrived after the deadline of the exchange.
+		// A request that ran out of its budget is never answered with a
+		// contract outcome, so the budget is checked once more before the
+		// answer is accepted.
+		if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+			c.kill()
+			return Response{}, false, contextError(ctx, caller)
+		}
 		if result.err != nil {
 			if errors.Is(result.err, errLineTooLong) {
 				return Response{}, false, fmt.Errorf("%w: response exceeds the size limit", ErrMalformed)
@@ -906,11 +948,21 @@ func (c *Client) stop() {
 	c.ready = false
 }
 
-func contextError(parent context.Context) error {
-	if errors.Is(parent.Err(), context.DeadlineExceeded) {
-		return ErrTimeout
+// contextError maps the end of an exchange onto the class of the failure.
+//
+// The cause of the caller is carried when the caller's own context ended: a
+// cancellation stays a cancellation and the deadline of the caller stays the
+// deadline of the caller. An internal timeout of the request or of the start
+// carries no cause, so a genuine outage of the worker is never recorded as
+// the deadline of a caller.
+func contextError(exchange context.Context, caller context.Context) error {
+	if caller != nil && caller.Err() != nil {
+		if errors.Is(caller.Err(), context.Canceled) {
+			return ErrCanceled
+		}
+		return fmt.Errorf("%w: %w", ErrTimeout, context.DeadlineExceeded)
 	}
-	if errors.Is(parent.Err(), context.Canceled) {
+	if errors.Is(exchange.Err(), context.Canceled) {
 		return ErrCanceled
 	}
 	return ErrTimeout

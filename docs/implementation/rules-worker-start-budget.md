@@ -87,12 +87,13 @@ The call is bounded by three things, and the caller must know all of them:
   starts the worker at most twice: once for the request and once for the
   retry after a crash.
 
-The wall-clock bound of one call is therefore `RequestTimeout + StartTimeout`
-for a call that starts the worker once, and `RequestTimeout + 2 *
-StartTimeout` for a call that starts it twice. The start durations are added
-back to the exchange deadline, so the exchange always keeps its own budget.
-The call never outlives the deadline of its caller: the client does not wait
-past it to classify a failure.
+The wall-clock bound of one call is therefore `RequestTimeout + n *
+StartTimeout + cleanup` for a call with `n` starts, where `n` is at most two.
+The start durations are added back to the exchange deadline, so the exchange
+always keeps its own budget. The cleanup is the kill and the reap of the
+worker process; it is not part of any budget and it measured 7 to 19 ms on the
+host of the review. The client does not wait past the deadline of its caller
+to classify a failure; only that cleanup can outlive the deadline.
 
 **The cold start is charged to the requests that are queued behind it.** The
 worker has one slot, and the request that triggers a cold start holds that
@@ -102,13 +103,18 @@ request run out of time. The queue wait is not reset and a queued request
 does not get a fresh budget; the remedy is to keep the worker warm, not to
 relax the budget.
 
-The server composition keeps the worker warm through the health monitor: the
-periodic rules probe of `backend/serverapp/health.go` evaluates a position
-through the same client, so the worker is started and ready again after a
-crash. The probe runs on its interval, so the first requests after a server
-start still meet a cold worker; a `client.Warm(ctx)` call next to the
-creation of the client in the composition closes that window. The composition
-is not part of this change.
+The **shared** client of the composition is not warmed by the health
+monitor: the monitor owns a separate probe evaluator with its own client and
+its own worker process, so the probe never queues behind a participant
+command, and it never restarts the shared worker. The first request after a
+server start or after a crash of the shared worker therefore still meets a
+cold worker. A `client.Warm(ctx)` call next to the creation of the **shared**
+client in the composition closes that window. The composition is not part of
+this change.
+
+The probe evaluator has its own worker process, so the host runs two rules
+worker processes per server. The probe process must be closed with the
+server; the composition owns that closer.
 
 ## The failure of a call
 
@@ -120,12 +126,22 @@ outcome for a request that ran out of time.
   late **rejection** can never reach the participant as "illegal move". A
   request that ran out of its deadline is a timeout.
 - The caller's own **cancellation** keeps its class: a caller that went away
-  is told that it was canceled, not that the worker was slow.
-- A **specific** failure survives the retry. A worker that died on the first
-  exchange and hung on the second is reported as the crash, because the caller
-  must be able to tell "the worker died" from "the worker was slow". The
-  generic timeout of the last attempt never replaces a crash or a malformed
-  answer.
+  is told that it was canceled, not that the worker was slow. The
+  cancellation wins over a specific failure of an earlier attempt, because
+  the caller knows that it left.
+- The cancellation carries the **cause** of the context, so that every caller
+  of the client can tell a cancellation from a failure of the worker. An
+  internal timeout of the request or of the start carries **no** cause, so a
+  genuine outage of the worker is never recorded as the deadline of a caller.
+- A **specific** failure survives the retry and the restart. A worker that
+  died on the first exchange and hung on the second is reported as the crash,
+  and a replacement worker that never becomes ready does not replace it
+  either, because the caller must be able to tell "the worker died" from
+  "the replacement never became ready". The generic timeout of the last
+  attempt never replaces a crash or a malformed answer.
+- An answer that arrives after the budget of the exchange is not accepted:
+  the budget is checked again before the answer or the rejection is used, so
+  a request that ran out of time is never answered with a contract outcome.
 
 The client does not wait past the deadline of the caller to classify the
 failure. A bounded grace was tried and removed: it extended the caller's
@@ -139,9 +155,11 @@ A fixture budget must cover the bounded work the fixture performs. The size
 limit fixture installs a line that is longer than the limit, and it
 configures a **small response limit** (8 KiB) for that fixture, so the
 violation is detected after a modest transfer instead of after a megabyte of
-pipe traffic. The assertion stays exact: an oversized answer is malformed.
-The other fixtures perform one bounded exchange and use the production
-budget of the client.
+pipe traffic. The transfer is bounded by the read buffer of the client
+(64 KiB), not by the limit itself, because the reader takes a whole buffer
+before it compares the length. The assertion stays exact: an oversized answer
+is malformed. The other fixtures perform one bounded exchange and use the
+budget of the original fixtures (one second).
 
 The cold start of the worker is not part of any of these budgets: the client
 budgets the start separately, and the regressions below cover it. The
@@ -177,6 +195,15 @@ candidate and pass with the current code:
 - `TestALateRejectionIsNotAContractOutcome`: a worker that rejects after the
   deadline. The call reports a timeout, and the rejection never reaches the
   participant as "illegal move".
+
+Three further regressions cover the causes and the starts:
+
+- `TestTheCancellationCarriesTheCauseOfTheCaller`: the cancellation carries
+  the cause of the context, and an internal timeout carries none.
+- `TestTheCrashSurvivesAFailedStartOfTheReplacement`: a worker that dies and
+  a replacement that never becomes ready. The call still reports the crash.
+- `TestTheCancellationWinsOverAnEarlierCrash`: a crash followed by the
+  cancellation of the caller. The call reports the cancellation.
 
 `TestTheRealBundleAnswersAColdRequest` is the smoke test of the pinned worker
 bundle: the real process accepts the readiness probe and answers a cold
