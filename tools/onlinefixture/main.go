@@ -280,6 +280,12 @@ func run() error {
 	if err := waitForAPI(ctx, baseURL); err != nil {
 		return err
 	}
+	// The identity document must also work for the service itself. A fixture
+	// whose verifier cannot check a signed session is not usable, so the
+	// fixture proves an authenticated request before it reports itself ready.
+	if err := probeAuthenticated(ctx, baseURL, accounts[0].Token); err != nil {
+		return err
+	}
 
 	started := time.Now()
 	result := descriptor{
@@ -383,6 +389,36 @@ func waitForAPI(ctx context.Context, baseURL string) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return errors.New("fixture API did not answer in time")
+}
+
+// probeAuthenticated proves that the service verifies a signed session. It
+// fails when the identity document is not served, because the verifier cannot
+// check the token then.
+func probeAuthenticated(ctx context.Context, baseURL, token string) error {
+	deadline := time.Now().Add(20 * time.Second)
+	client := &http.Client{Timeout: 3 * time.Second}
+	for time.Now().Before(deadline) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/online/features", nil)
+		if err != nil {
+			return errors.New("fixture authenticated request could not be built")
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		response, err := client.Do(request)
+		if err == nil {
+			body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<16))
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK && strings.Contains(string(body), "friends") && strings.Contains(string(body), "queue") {
+				return nil
+			}
+			return errors.New("fixture API refused the authenticated probe, so the identity document is not served")
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("fixture authenticated probe did not finish")
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	return errors.New("fixture API did not answer the authenticated probe in time")
 }
 
 // stringList collects a repeatable string flag.

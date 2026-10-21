@@ -114,3 +114,47 @@ func TestReadinessRefusesAnUnreachableAPI(t *testing.T) {
 		t.Fatal("the readiness check accepted an API that does not answer")
 	}
 }
+
+// The authenticated probe must fail when the service cannot verify a session.
+// That is the state of a fixture whose identity document is not served.
+func TestReadinessRefusesAnAPIThatCannotVerifyASession(t *testing.T) {
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	})}
+	listener, err := net.Listen("tcp", net.JoinHostPort(loopbackHost, "0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := probeAuthenticated(ctx, "http://"+listener.Addr().String(), "token"); err == nil {
+		t.Fatal("the readiness check accepted a service that cannot verify a session")
+	}
+}
+
+// The authenticated probe must pass when the service verifies the session.
+func TestReadinessAcceptsAnAPIThatVerifiesASession(t *testing.T) {
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"friends":true,"queue":true}`))
+	})}
+	listener, err := net.Listen("tcp", net.JoinHostPort(loopbackHost, "0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Serve(listener) }()
+	defer func() { _ = server.Close() }()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := probeAuthenticated(ctx, "http://"+listener.Addr().String(), "token"); err != nil {
+		t.Fatalf("the readiness check refused a working service: %v", err)
+	}
+}
