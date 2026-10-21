@@ -527,6 +527,42 @@ test('the first account gets its game back when it signs in again', async ({ pag
     .toBeGreaterThan(engineBefore);
 });
 
+test('a waiting entry survives a reload without committing the browser engine', async ({ page }) => {
+  // The fallback route of the service is the authoritative allocation of the
+  // browser engine. A waiting entry must never reach it: the engine would be
+  // committed before the deadline of the search, without the readiness flow
+  // and without an owner action.
+  test.setTimeout(180_000);
+  const loaded = await loadDescriptor();
+  expect(loaded).not.toBeNull();
+  await signInWithFixtureAccount(page, loaded!, await firstAccount());
+  await page.goto('/play?online=1');
+  await openOnline(page);
+  await page.getByRole('button', { name: 'Play yourself' }).click();
+  // The entry is created and shown before the reload, so the browser owns the
+  // entry of the service when the page comes back.
+  await expect(page.getByRole('list', { name: 'Queue entries' }).getByRole('listitem')).toHaveCount(1, { timeout: 30_000 });
+  // Every request of the fallback route is counted.
+  const fallbacks: string[] = [];
+  page.on('request', request => {
+    if (request.url().includes('/fallback')) fallbacks.push(request.url());
+  });
+  // The reload restores the persisted games of the account, resumes the
+  // waiting entry and runs the recovery of the engine credentials.
+  await page.reload();
+  await openOnline(page);
+  // The same entry is shown again, with the cutoff the service gave it.
+  await expect(page.getByRole('list', { name: 'Queue entries' }).getByRole('listitem')).toHaveCount(1, { timeout: 30_000 });
+  // The service was never asked to commit the engine of the waiting entry.
+  expect(fallbacks).toHaveLength(0);
+  // The entry is cancelled, so the cutoff of the entry cannot commit the
+  // engine behind the back of the owner.
+  await page.getByRole('button', { name: /Cancel queue entry/ }).click();
+  // The entry still waits for a human opponent: it was not matched.
+  await expect(page.getByRole('status').filter({ hasText: 'Matched.' })).toHaveCount(0, { timeout: 20_000 });
+  await expect(page.getByRole('list', { name: 'Queue entries' }).getByRole('listitem')).toHaveCount(1, { timeout: 20_000 });
+});
+
 test('a late seat change never writes into the next account', async ({ page }) => {
   test.setTimeout(300_000);
   const loaded = await loadDescriptor();
