@@ -20,6 +20,7 @@
 // Usage:
 //   node scripts/online/evidence-ledger.mjs [--root DIR] [--json] [--write]
 
+import { spawn } from 'node:child_process';
 import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -116,7 +117,7 @@ export async function readRecords(root) {
  * @param {{cases: {id: string, scenario: string, status: string}[], records: any[], problems: {file: string, problems: string[]}[]}} input
  * @returns {{cases: any[], counts: Record<string, number>, invalidRecords: {file: string, problems: string[]}[]}}
  */
-export function buildLedger({ cases, records, problems }) {
+export function buildLedger({ cases, records, problems, staleCommits = new Set(), failedScenarios = new Set() }) {
   const known = new Set(cases.map((entry) => entry.id));
   /** @type {Map<string, any>} */
   const byScenario = new Map();
@@ -138,15 +139,22 @@ export function buildLedger({ cases, records, problems }) {
       });
       continue;
     }
+    const stale = staleCommits.has(String(body.commit ?? ''));
+    const failed = failedScenarios.has(validation.scenarioId);
+    const status = stale || failed ? 'failed' : validation.status;
     byScenario.set(validation.scenarioId, {
       scenarioId: validation.scenarioId,
-      status: validation.status,
+      status,
       kind: body.kind,
       commit: body.commit,
       command: body.command,
       expected: body.expected ?? '',
       actual: body.actual,
-      notes: body.notes ?? '',
+      notes: [
+        body.notes ?? '',
+        stale ? 'the recorded commit is not an ancestor of the tested tree, so the record is not a pass' : '',
+        failed ? 'the newest run failed this scenario, so the record is not a pass' : '',
+      ].filter(Boolean).join(' '),
       record: record.file,
     });
   }
@@ -179,10 +187,65 @@ export function buildLedger({ cases, records, problems }) {
  * @param {string} root
  * @returns {Promise<Awaited<ReturnType<typeof buildLedger>> & {contract: string}>}
  */
+/**
+ * Reports the commits that are ancestors of the tested tree.
+ *
+ * A record that cites a commit outside the tested tree describes a different
+ * code base, so it cannot close a scenario.
+ * @param {string} root
+ * @param {string[]} commits
+ * @returns {Promise<Set<string>>}
+ */
+export async function staleCommits(root, commits) {
+  const stale = new Set();
+  for (const commit of commits) {
+    if (!commit) continue;
+    const ancestor = await new Promise((resolvePromise) => {
+      const child = spawn('git', ['merge-base', '--is-ancestor', commit, 'HEAD'], { cwd: root, windowsHide: true });
+      child.on('error', () => resolvePromise(false));
+      child.on('close', (code) => resolvePromise(code === 0));
+    });
+    if (!ancestor) stale.add(commit);
+  }
+  return stale;
+}
+
+/**
+ * Reports the scenarios the newest run failed.
+ * @param {string} root
+ * @returns {Promise<Set<string>>}
+ */
+export async function failedScenarios(root) {
+  /** @type {Set<string>} */
+  const failed = new Set();
+  /** @type {any} */
+  let report;
+  try {
+    report = JSON.parse(await readFile(join(root, 'docs', 'evidence', 'online', 'KHA-80-integration.json'), 'utf8'));
+  } catch {
+    return failed;
+  }
+  for (const entry of report.coverage ?? []) {
+    if (entry.status === 'failed') failed.add(entry.scenarioId);
+  }
+  if (report.browser && report.browser.status !== 'passed') {
+    try {
+      const browserMap = JSON.parse(await readFile(join(root, 'scripts', 'online', 'browser-map.json'), 'utf8'));
+      for (const scenarioId of Object.keys(browserMap.scenarios ?? {})) failed.add(scenarioId);
+    } catch {
+      // A missing map cannot fail a scenario.
+    }
+  }
+  return failed;
+}
+
 export async function buildEvidenceLedger(root) {
   const contract = JSON.parse(await readFile(join(root, 'docs', 'spec', 'online-play-acceptance.json'), 'utf8'));
   const { records, problems } = await readRecords(root);
-  const ledger = buildLedger({ cases: contract.cases, records, problems });
+  const commits = records.map((record) => String(record.body?.commit ?? '')).filter(Boolean);
+  const stale = await staleCommits(root, [...new Set(commits)]);
+  const failed = await failedScenarios(root);
+  const ledger = buildLedger({ cases: contract.cases, records, problems, staleCommits: stale, failedScenarios: failed });
   return { ...ledger, contract: contract.title };
 }
 

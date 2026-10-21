@@ -85,7 +85,11 @@ export function parseMigrationTables(sql) {
 export function parseMigrationGrants(sql) {
   /** @type {{role: string, table: string, privileges: string[]}[]} */
   const grants = [];
-  const pattern = /GRANT\s+([A-Za-z,\s]+?)\s+ON\s+(?:TABLE\s+)?([A-Za-z_][A-Za-z0-9_.]*)\s+TO\s+([A-Za-z_][A-Za-z0-9_]*)/gi;
+  // The online migrations write their grants inside a format() call with a
+  // schema placeholder, for example:
+  //   EXECUTE format('GRANT SELECT, INSERT ON TABLE %I.online_matches TO kamkm_online_api', schema_name);
+  // The placeholder and the schema prefix are both normalised away.
+  const pattern = /GRANT\s+([A-Za-z,\s]+?)\s+ON\s+(?:TABLE\s+)?(?:(?:%I|"%I"|[A-Za-z_][A-Za-z0-9_]*)\.)?([A-Za-z_][A-Za-z0-9_]*)\s+TO\s+([A-Za-z_][A-Za-z0-9_]*)/gi;
   for (const match of sql.matchAll(pattern)) {
     const privileges = (match[1] ?? '')
       .split(',')
@@ -200,8 +204,7 @@ export function scanGoUsage(source) {
   };
   for (const match of text.matchAll(/INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) record(match[1], 'INSERT');
   for (const match of text.matchAll(/DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) record(match[1], 'DELETE');
-  for (const match of text.matchAll(/UPDATE\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?[A-Za-z_][A-Za-z0-9_]*)?\s+SET\b/gi)) record(match[1], 'UPDATE');
-  for (const match of text.matchAll(/\bFROM\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)\b/gi)) record(match[1], 'SELECT');
+  for (const match of text.matchAll(/UPDATE\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?[A-Za-z_][A-Za-z0-9_]*)?\s+SET\b/gi)) record(match[1], 'UPDATE');  for (const match of text.matchAll(/\bFROM\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)\b/gi)) record(match[1], 'SELECT');
   return usage;
 }
 
@@ -248,25 +251,40 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
   const migrated = new Set(tables.map((table) => table.toLowerCase()));
   const known = new Set([...migrated, ...policy.privileges.keys()]);
 
+  /** @type {Map<string, {tables: Set<string>, privileges: Set<string>}>} */
+  const migrationGrantsByRole = new Map();
   for (const grant of migrationGrants) {
-    const granted = policy.privileges.get(grant.table);
-    if (grant.role === policy.role) {
-      const extra = grant.privileges.filter((verb) => !granted || !granted.has(verb));
-      if (extra.length > 0) {
-        findings.push(finding(
-          'blocker',
-          'migration-grant-exceeds-policy',
-          `A migration grants ${extra.join(', ')} on ${grant.table} to ${grant.role}, which the reviewed policy does not grant.`,
-          `Remove the grant from the migration or extend the policy deliberately. The policy is the reviewed least-privilege contract.`,
-        ));
+    if (!migrationGrantsByRole.has(grant.role)) {
+      migrationGrantsByRole.set(grant.role, { tables: new Set(), privileges: new Set() });
+    }
+    const entry = migrationGrantsByRole.get(grant.role);
+    entry.tables.add(grant.table);
+    for (const privilege of grant.privileges) entry.privileges.add(privilege);
+  }
+  for (const [role, entry] of [...migrationGrantsByRole.entries()].sort()) {
+    if (role === policy.role) {
+      for (const table of [...entry.tables].sort()) {
+        const granted = policy.privileges.get(table);
+        const extra = [...entry.privileges].filter((verb) => !granted || !granted.has(verb));
+        if (extra.length > 0) {
+          findings.push(finding(
+            'blocker',
+            'migration-grant-exceeds-policy',
+            `A migration grants ${extra.join(', ')} on ${table} to ${role}, which the reviewed policy does not grant.`,
+            `Remove the grant from the migration or extend the policy deliberately. The policy is the reviewed least-privilege contract.`,
+          ));
+        }
       }
       continue;
     }
+    const stripped = (policy.unusedRoles ?? []).includes(role);
     findings.push(finding(
-      'warning',
-      'migration-grants-unreviewed-role',
-      `A migration grants ${grant.privileges.join(', ')} on ${grant.table} to ${grant.role}, a role the deployment does not connect as.`,
-      `The deployment connects as ${policy.role}. Provisioning revokes the privileges of the unused roles, so they cannot hold anything.`,
+      stripped ? 'warning' : 'blocker',
+      stripped ? 'migration-grant-stripped-role' : 'migration-grants-unreviewed-role',
+      `The migrations grant ${[...entry.privileges].sort().join(', ')} on ${entry.tables.size} table(s) to ${role}, a role the deployment does not connect as.`,
+      stripped
+        ? `The deployment connects as ${policy.role}. Provisioning revokes the privileges of ${role} and the grant probe proves it holds nothing on a real database.`
+        : `The deployment connects as ${policy.role}. List ${role} in the unused roles of the policy so the deployment strips it, or remove the grant from the migration.`,
     ));
   }
 

@@ -123,6 +123,11 @@ export async function inspectBackup(root) {
 
   const runbookMentionsLedger = /newer-ledger|ledger/i.test(runbook);
 
+  // The restore refuses to run without a durable fence, so the documented
+  // restore command has to name it.
+  const restoreCommand = runbook.match(/khabackup restore[^\n]*(?:\n[^\n]*){0,4}/)?.[0] ?? '';
+  const restoreNamesFence = /--fence|ONLINE_RESTORE_FENCE_PATH/.test(restoreCommand);
+
   return {
     tables: await migrationTables(root),
     dumpIsFullDatabase,
@@ -133,6 +138,8 @@ export async function inspectBackup(root) {
     servingGateWired,
     gateFunction,
     runbookMentionsLedger,
+    restoreCommand,
+    restoreNamesFence,
   };
 }
 
@@ -208,6 +215,16 @@ export function auditBackup(state) {
       'The operations runbook does not document the ledger step, so an operator can restore without reapplying the removal ledger.',
       'Document the ledger step in docs/implementation/MVP-operations.md.',
     ));
+  }
+  if (state.restoreCommand && !state.restoreNamesFence) {
+    findings.push(finding(
+      'blocker',
+      'restore-command-without-fence',
+      'The documented restore command names no durable fence, and the restore refuses to run without one.',
+      'Add the fence path to the restore command in docs/implementation/MVP-operations.md.',
+    ));
+  } else if (state.restoreCommand) {
+    findings.push(finding('info', 'restore-command-names-fence', 'The documented restore command names the durable fence.', null));
   }
   for (const table of REMOVAL_LEDGER_TABLES) {
     if (!state.tables.includes(table)) {

@@ -5,6 +5,12 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     env_file: postgres.env
+    environment:
+      # The restore command runs inside this container, so the durable fence
+      # path has to be set here as well as for the API. Without it the restore
+      # refuses to run, which is the correct fail-closed behaviour but an
+      # unusable procedure.
+      ONLINE_RESTORE_FENCE_PATH: /var/lib/kamkmchess/restore-fence/fence.json
     networks:
       default:
         aliases:

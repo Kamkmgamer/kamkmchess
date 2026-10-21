@@ -97,6 +97,24 @@ or a path the two services do not share is not a fence: the service would
 never see an open fence and would serve a restored copy whose removal ledger
 was not applied.
 
+The restore command runs inside the database container, so the setting is
+configured for that service as well, and the documented restore command names
+the fence path explicitly. The restore also has to run as the user the API
+reads the fence as: the fence file is private to its owner, and the API
+refuses every request while it cannot read it.
+
+```sh
+node verify-fence-access.mjs      # proves the access with two throwaway containers
+```
+
+The proof writes a fence with the modes the restore uses, in a container that
+runs as the database user, and reads it from the same volume as the API user.
+At the moment it **fails**: the fence is `0600` and its directory is `0700`,
+so the API user cannot read it and the service refuses every request for the
+wrong reason. Writing the fence as the API user makes it readable without
+loosening the mode; the fence code owns the mode and the deployment owns the
+user.
+
 The server must load `ONLINE_RESTORE_FENCE_PATH` into its online configuration.
 `node scripts/online/service-wiring.mjs` reports it as a blocker while the
 setting is not read, so a configuration that silently disables the fence

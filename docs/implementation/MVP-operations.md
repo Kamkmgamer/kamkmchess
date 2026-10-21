@@ -156,8 +156,12 @@ retention requires it; this tool only rotates its own directory.
 go run ./backend/backup/cmd/khabackup plan --file /backups/weekly-2026-W42.kha
 
 # 2. Execute, reapplying the newer daily ledger so nothing deleted since is resurrected.
-go run ./backend/backup/cmd/khabackup restore --file /backups/weekly-2026-W42.kha \
-  --newer-ledger /backups/daily-2026-10-18.kha --apply
+# The restore refuses to run without a durable fence, and it has to run as the
+# user the API reads the fence as, so the fence stays private and readable.
+docker compose -f postgres.compose.yml -f api.compose.yml exec --user 65532 \
+  postgres /opt/kamkmchess/khabackup restore --file /backups/weekly-2026-W42.kha \
+  --newer-ledger /backups/daily-2026-10-18.kha \
+  --fence /var/lib/kamkmchess/restore-fence/fence.json --apply
 ```
 
 The order inside a restore is fixed and tested:

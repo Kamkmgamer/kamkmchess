@@ -16,13 +16,27 @@ service and the pinned private rules worker bundle
 
 | Item | Result |
 | --- | --- |
-| Evidence ledger | 15 scenarios passed, **1 failed**, 46 not run |
+| Evidence ledger | **0 passed, 16 failed, 46 not run** |
+| Why | every recorded scenario cites a commit that is not an ancestor of the tested tree, or its case failed in the newest run, so the ledger refuses to count it as a pass |
 | Go integration package | fails under load; a different timing-sensitive test failed in each of three runs |
-| Browser suite (strict, real Chromium, real service) | 4 passed, 1 skipped (the invitation link route is not published) |
-| Grant probe against a real PostgreSQL | 209 probes, 0 failures |
+| Browser suite (strict, real Chromium, real service) | 4 passed, 1 skipped in isolation; the suite run that produced the newest report failed |
+| Grant probe against a real PostgreSQL | the privilege probes pass; the behavioural scenarios pass, including the seeded control timeline write |
 | Deployment image verification | 9 checks, 0 failures |
 
-The failed record is `ARC-08`: its mapped test
+The ledger now enforces two rules that make a stale pass impossible:
+
+- a record whose commit is **not an ancestor of the tested tree** is not a
+  pass. The earlier records cited the pre-integration worker commits
+  (`9c6bc79`, `e283d27`), which describe a different code base than the
+  integrated tree, so they are failures now;
+- a record whose scenario **failed in the newest run** is not a pass. The
+  browser records are rewritten for every outcome, so a failed browser run
+  replaces the earlier passing record of the same scenario.
+
+A fresh run on the assembled root is therefore required before any scenario
+can be recorded as passing again. The parent runs that final suite.
+
+The failed record that is left is `ARC-08`: its mapped test
 `TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight` failed
 in the latest suite run. The record is kept as a failure on purpose. The test
 passes in isolation, so the package is flaky under load rather than

@@ -172,6 +172,150 @@ export function evaluateProbe(probe, result) {
 }
 
 /**
+ * Builds the behavioural scenarios.
+ *
+ * The privilege probes show that a statement reaches a table. These scenarios
+ * show that the runtime role can really do the work the service does: they
+ * seed valid rows, run the real statements as the role and prove the result
+ * by counting rows.
+ *
+ * Every scenario runs in its own transaction and is rolled back, so the probe
+ * leaves nothing behind. The whole set runs in one session, so the run does
+ * not pay a round trip per statement.
+ *
+ * @param {string} role
+ * @returns {string}
+ */
+export function buildBehaviorScript(role, schema) {
+  const fen = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+  const matchInsert = (id) => `INSERT INTO online_matches (match_id, schema_version, variant, starting_fen, position_fen, starting_time_ms, increment_ms, version, control_epoch, input_hash, rules_policy_version, status)
+      VALUES ('${id}', 1, 'orthodox', '${fen}', '${fen}', 60000, 0, 1, 1, decode(repeat('00',32),'hex'), 'online-rules/1', 'active');`;
+  const seatInsert = (id) => `INSERT INTO online_seats (match_id, seat, owner_kind, owner_id, public_label, control_kind, model_label, control_epoch)
+      VALUES ('${id}', 'white', 'account', 'probe-owner', 'Probe', 'human', NULL, 1);`;
+
+  /**
+   * One scenario.
+   *
+   * @param {string} id the scenario name
+   * @param {string} body the statements the runtime role runs
+   * @param {string} success the expression a successful run raises
+   * @param {string} expected the outcome that counts as a pass
+   * @param {string} detail what the scenario proves
+   */
+  const scenario = (id, body, success, expected, detail) => `BEGIN;
+SET LOCAL ROLE ${role};
+SET LOCAL search_path TO ${schema};
+DO $probe$
+BEGIN
+  BEGIN
+    ${body}
+    RAISE NOTICE 'probe:${id}:%:${expected}:${detail}', (${success});
+  EXCEPTION WHEN insufficient_privilege THEN
+    RAISE NOTICE 'probe:${id}:refused:${expected}:${detail}: %', SQLERRM;
+  WHEN OTHERS THEN
+    RAISE NOTICE 'probe:${id}:error:${expected}:${detail}: %', SQLERRM;
+END;
+END
+$probe$;
+ROLLBACK;`;
+
+  return `
+${scenario(
+    'seat-control-timeline',
+    `${matchInsert('probe_match_seat')}
+    ${seatInsert('probe_match_seat')}`,
+    `CASE WHEN (SELECT count(*) FROM online_seat_control_timeline WHERE match_id = 'probe_match_seat') = 1 THEN 'passed' ELSE 'failed' END`,
+    'passed',
+    'the seat insert appended one control timeline row',
+  )}
+
+${scenario(
+    'control-change-timeline',
+    `${matchInsert('probe_match_control')}
+    ${seatInsert('probe_match_control')}
+    INSERT INTO online_events (match_id, version, event_kind, seat, control_epoch, decision_at, control_kind, control_model_label)
+      VALUES ('probe_match_control', 2, 'control_change', 'white', 2, clock_timestamp(), 'agent', 'Probe model');`,
+    `CASE WHEN (SELECT count(*) FROM online_seat_control_timeline WHERE match_id = 'probe_match_control') = 2 THEN 'passed' ELSE 'failed' END`,
+    'passed',
+    'the seat insert and the control change appended two control timeline rows',
+  )}
+
+${scenario(
+    'auxiliary-removal-delete',
+    `INSERT INTO online_friend_invitations (invitation_id, kind, status, inviter_kind, inviter_id, inviter_public_label, inviter_control_kind, inviter_model_label, inviter_seat, starting_time_ms, increment_ms, starting_fen, recipient_account_id, owner_token_hash, expires_at)
+      VALUES ('inv_probe_0123456789abcdef0123456789abcdef', 'link', 'open', 'account', 'probe-owner', 'Probe', 'human', NULL, 'white', 60000, 0, NULL, NULL, NULL, clock_timestamp() + interval '1 hour');
+    DELETE FROM online_friend_invitations WHERE invitation_id = 'inv_probe_0123456789abcdef0123456789abcdef';`,
+    `CASE WHEN (SELECT count(*) FROM online_friend_invitations WHERE invitation_id = 'inv_probe_0123456789abcdef0123456789abcdef') = 0 THEN 'passed' ELSE 'failed' END`,
+    'passed',
+    'the auxiliary sanitation deleted the invitation of a removed subject',
+  )}
+
+${scenario(
+    'recovery-epoch-update',
+    `INSERT INTO online_service_epochs (epoch, started_at, note) VALUES (9001, clock_timestamp(), 'probe');
+    UPDATE online_service_epochs SET recovered_at = clock_timestamp() WHERE epoch = 9001;`,
+    `CASE WHEN (SELECT count(*) FROM online_service_epochs WHERE epoch = 9001 AND recovered_at IS NOT NULL) = 1 THEN 'passed' ELSE 'failed' END`,
+    'passed',
+    'the service gate recorded the recovered epoch',
+  )}
+
+${scenario(
+    'immutable-event-update-refused',
+    `UPDATE online_events SET decision_at = clock_timestamp() WHERE false;`,
+    `'completed'`,
+    'refused',
+    'an accepted event cannot be rewritten',
+  )}
+
+${scenario(
+    'immutable-timeline-delete-refused',
+    `DELETE FROM online_seat_control_timeline WHERE false;`,
+    `'completed'`,
+    'refused',
+    'the control timeline cannot be deleted',
+  )}
+`;
+}
+
+/**
+ * Runs the behavioural scenarios.
+ * @param {LocalPostgres} postgres
+ * @param {string} role
+ * @returns {Promise<{id: string, passed: boolean, detail: string}[]>}
+ */
+export async function runBehaviorScenarios(postgres, role, schema) {
+  const result = await postgres.query(buildBehaviorScript(role, schema));
+  /** @type {{id: string, passed: boolean, detail: string}[]} */
+  const outcomes = [];
+  // The outcome of a scenario is a notice, so it survives the rollback of the
+  // transaction it was measured in.
+  for (const match of (result.stderr || '').matchAll(/probe:([^:\n]+):(passed|failed|refused|error|completed):([^:\n]*):([^\n]*)/g)) {
+    const id = (match[1] ?? '').trim();
+    const outcome = (match[2] ?? '').trim();
+    const expected = (match[3] ?? '').trim();
+    const detail = (match[4] ?? '').trim();
+    // A scenario passes when it produced the outcome it was asked for. A
+    // negative scenario expects the refusal, so a statement that went through
+    // where a refusal was required is a failure.
+    outcomes.push({
+      id,
+      passed: outcome === expected,
+      detail: `${outcome}${detail ? `: ${detail}` : ''}`,
+    });
+  }
+  if (outcomes.length === 0) {
+    outcomes.push({
+      id: 'behavior-scenarios',
+      passed: false,
+      detail: result.ok
+        ? 'the behavioural scenarios returned no result'
+        : `the behavioural scenarios could not run: ${(result.stderr || '').trim().split('\n')[0] ?? ''}`,
+    });
+  }
+  return outcomes;
+}
+
+/**
  * Runs SQL against a local PostgreSQL server.
  *
  * It uses a local psql binary when one is available and otherwise runs psql
@@ -247,6 +391,7 @@ export class LocalPostgres {
  * @returns {Promise<{probes: {id: string, passed: boolean, detail: string}[], failures: number, cleanup: string[]}>}
  */
 export async function runProbe(options) {
+  const onlyBehavior = options.onlyBehavior === true;
   const { databaseUrl, root, policy } = options;
   const postgres = new LocalPostgres({
     databaseUrl,
@@ -311,6 +456,7 @@ export async function runProbe(options) {
   }
 
   for (const probe of buildProbes(policy, schema, columns)) {
+    if (onlyBehavior) break;
     const outcome = await postgres.query(`SET ROLE ${role}; SET search_path TO ${schema}; ${probe.sql}`);
     if (probe.verifySql) {
       const verification = await postgres.query(probe.verifySql);
@@ -327,6 +473,11 @@ export async function runProbe(options) {
     }
     const evaluation = evaluateProbe(probe, outcome);
     results.push({ id: probe.id, passed: evaluation.passed, detail: evaluation.detail });
+  }
+
+  // The behavioural scenarios prove that the role can do the real work.
+  for (const outcome of await runBehaviorScenarios(postgres, role, schema)) {
+    results.push({ id: `behavior-${outcome.id}`, passed: outcome.passed, detail: outcome.detail });
   }
 
   // The effective privileges must match the policy exactly.
@@ -455,6 +606,7 @@ async function main() {
   }
 
   const report = await runProbe({
+    onlyBehavior: arguments_.includes('--only-behavior'),
     databaseUrl,
     container,
     psqlPath: process.env.PSQL_PATH ?? null,

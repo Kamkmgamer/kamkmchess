@@ -152,9 +152,10 @@ export async function runIntegrationSuite(options) {
 
   if (options.record) {
     await writeRecords(root, report, map);
-    if (report.browser?.status === 'passed') {
-      await writeBrowserRecords(root, report);
-    }
+    // The browser records are written for every outcome. A failed or skipped
+    // browser run overwrites the earlier records of the same scenarios, so a
+    // stale pass cannot survive a later failure.
+    await writeBrowserRecords(root, report);
   }
   return report;
 }
@@ -172,17 +173,22 @@ async function writeBrowserRecords(root, report) {
   const browserMap = JSON.parse(await readFile(join(root, 'scripts', 'online', 'browser-map.json'), 'utf8'));
   const directory = join(root, 'docs', 'evidence', 'online', 'records');
   await mkdir(directory, { recursive: true });
+  const passed = report.browser?.status === 'passed';
   for (const [scenarioId, cases] of Object.entries(browserMap.scenarios)) {
     const scenario = contract.cases.find((item) => item.id === scenarioId);
     const record = {
       scenarioId,
-      status: 'passed',
+      status: passed ? 'passed' : 'failed',
       kind: 'local',
       commit: report.commit,
       command: 'pnpm exec playwright test tests/e2e/online-clients.spec.ts (ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1)',
       expected: scenario?.scenario ?? '',
-      actual: `The browser cases passed against the real service: ${cases.join('; ')}.`,
-      notes: 'Local browser evidence. It does not certify a native assistive-technology run, a live host or a released cohort.',
+      actual: passed
+        ? `The browser cases passed against the real service: ${cases.join('; ')}.`
+        : `The browser run did not pass (${report.browser?.status ?? 'not run'}), so these scenarios carry no passing evidence: ${cases.join('; ')}.`,
+      notes: passed
+        ? 'Local browser evidence. It does not certify a native assistive-technology run, a live host or a released cohort.'
+        : 'The browser run failed, so this record is a failure and not a pass. It replaces the earlier record of the same scenario.',
     };
     await writeFile(join(directory, `${scenarioId}.json`), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
   }

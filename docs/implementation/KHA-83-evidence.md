@@ -83,19 +83,35 @@ It is **not** a capacity claim.
 
 ## Open blockers
 
-1. **The host has not been verified.** Apache flushing, finite stream
+1. **The API cannot read the restore fence.** `node deploy/verify-fence-access.mjs`
+   proves it with two throwaway containers: the restore writes a fence with a
+   private directory and a private file as the database user, and the API user
+   (65532) cannot read it. The service then refuses every request for the
+   wrong reason: it never sees the fence close. The proof also shows the
+   mitigation — writing the fence as the user the API reads it as makes it
+   readable without loosening the mode. The fence code owns the mode, the
+   deployment owns the user, and the privacy worker has the pending fence
+   change.
+2. **The host has not been verified.** Apache flushing, finite stream
    delivery, the delivered CSP and CORS, the TLS chain, the private worker
    reachability and the capacity need the real host and an authorized staging
    session. No staging authorization is recorded, so these stay **not run**
    and the release gates report the host requirement as external.
-2. **The migrations grant privileges of their own.** The online migrations
+3. **The migrations grant privileges of their own.** The online migrations
    create `kamkm_online_api` and `kamkm_online_rules` and grant the first one
    `SELECT, INSERT, UPDATE, DELETE` on the online tables, including the
-   append-only ones. The deployment connects as `kamkmchess_runtime`, the role
-   the reviewed policy describes, and provisioning revokes the privileges of
-   the unused roles, so no unused role keeps a grant. The grants themselves
-   still exist in the migrations and are reported by the audit.
-3. **A new migration needs a policy entry.** The audit names the missing
+   append-only ones. The audit now sees all 43 of those grants. The
+   deployment connects as `kamkmchess_runtime`, the role the reviewed policy
+   describes, and provisioning revokes the privileges of the unused roles, so
+   no unused role keeps a grant. The grants themselves still exist in the
+   migrations.
+4. **The removal marker is a consistency check, not an authorisation
+   boundary.** The runtime role can write the removal request the redaction
+   guard demands, so the marker does not stop an actor that already controls
+   the API's SQL. The ownership proof in the application layer is the actual
+   boundary. Nothing in the deployment changes that, and the grant policy
+   does not grant `DELETE` on the removal requests.
+5. **A new migration needs a policy entry.** The audit names the missing
    table and `--propose` prints the entry with the privileges the writer uses.
    A privacy cleanup that deletes rows needs the matching `DELETE` in the
    policy, and a plain function needs an entry in the function section so the
