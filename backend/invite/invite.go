@@ -74,21 +74,8 @@ const (
 	StandardStartingFEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 	// GuestLabel is the public label of a participant without a public name.
 	GuestLabel = "Guest"
-	// anonymizedParticipant is the sentinel the privacy sanitation writes
-	// into the rows that named a removed subject.
-	//
-	// The sanitation replaces the identifier of the removed subject with
-	// this constant, so a row that carries it names nobody any more. A
-	// write that would seat such a participant would seat a subject that no
-	// longer exists, so the friend surface refuses it exactly like it
-	// refuses a participant whose removal is recorded.
-	//
-	// The constant is the vocabulary of the privacy sanitation
-	// (`backend/privacy`). The canonical writer of the service owns the same
-	// sentinel, and the shared removal vocabulary is the place where the
-	// constant belongs; the friend surface keeps its own copy until that
-	// shared home exists.
-	anonymizedParticipant = "anonymized"
+	// anonymizedParticipant is the shared sentinel for a removed subject.
+	anonymizedParticipant = subject.AnonymizedID
 )
 
 var (
