@@ -40,14 +40,16 @@ func TestOnlineTheRuntimeRoleCanWriteACheckpointWithTheOrderOfTheSequence(t *tes
 	runtimeRole := "kha_test_runtime_" + suffix
 	rulesRole := "kha_test_rules_" + suffix
 	for _, role := range []string{runtimeRole, rulesRole} {
-		if _, err := fixture.pool.Exec(ctx, `DROP ROLE IF EXISTS `+role); err != nil {
-			t.Fatalf("drop the role %s: %v", role, err)
-		}
 		if _, err := fixture.pool.Exec(ctx, `CREATE ROLE `+role); err != nil {
 			t.Fatalf("create the role %s: %v", role, err)
 		}
 		t.Cleanup(func() {
-			_, _ = fixture.pool.Exec(context.Background(), `DROP ROLE IF EXISTS `+role)
+			if _, err := fixture.pool.Exec(context.Background(), `DROP OWNED BY `+role); err != nil {
+				t.Errorf("drop the grants of the role %s: %v", role, err)
+			}
+			if _, err := fixture.pool.Exec(context.Background(), `DROP ROLE `+role); err != nil {
+				t.Errorf("drop the role %s: %v", role, err)
+			}
 		})
 	}
 
