@@ -28,6 +28,10 @@ the control changes and the spent recovery attempts.
   browser follows the canonical counts of the current turn: a retry, a switch
   or a takeover never refills a spent budget, and the next turn starts with the
   budget of the service.
+- The corrections of the prompt belong to the turn. A correction of an earlier
+  turn belongs to another position and is never sent again, while a correction
+  of the same turn survives a retry, a switch and a takeover. The history of
+  the conversation is never cleared.
 - The controller of the seat is the control epoch of the seat, never a label.
   A runner of a superseded controller stands down and never submits a move.
 - The published label of the agent is the label the service resolves, never the
@@ -185,6 +189,12 @@ The conversation store and the pending store are browser-local. The module
 ships an in-memory conversation store, a local storage conversation store and a
 local storage pending store. Nothing of them is ever sent to the service.
 
+A conversation record carries the turn it belongs to, named by the canonical
+position of that turn. The prompt of a turn reads the corrections of that
+turn only, while the history of the conversation itself stays in the store:
+the accepted moves of the game are never cleared, and the correction of a
+turn survives a retry, a switch and a takeover of that turn.
+
 ## The state the runner needs
 
 The runner acts on the canonical match state. The interface is
@@ -308,6 +318,16 @@ another snapshot.
 A lease that was revoked or that expired is given up and taken again, at most
 a few times per turn.
 
+The answers of the lease requests are fenced by the generation of the lease.
+The generation moves whenever the lease is taken, given back or dropped, and
+the identifier of the lease names the answer. An answer of a request that is
+still in flight therefore never resurrects a lease the runner does not hold,
+never overwrites the lease it holds now and never arms a heartbeat for it. A
+stopped or a disposed runner holds no lease at all, so every answer that
+arrives after it changes nothing. The durable pending record of an uncertain
+request is never dropped by this fence: the uncertainty of a lost runner stays
+recoverable.
+
 ## The uncertainty of a lost runner
 
 When the runner loses its lease while a provider request may still be running,
@@ -374,6 +394,8 @@ seat with an accepted move, exactly like the service does.
 | — | The published label of the seat is the identity of the agent |
 | — | The first move of a fresh match and of a custom position that starts with Black |
 | — | The provider reads the moves of the match in the notation of the game record |
+| — | The corrections of an earlier turn are not sent again, the corrections of the same turn are |
+| — | A lease answer that arrives after a release, after the end of the match or after a new lease changes nothing |
 | — | The budget of the browser follows the canonical counts of the turn |
 | — | The heartbeat of the lease survives a transient failure and fails closed near the lease expiry |
 | — | No renewal is ever armed behind the life of the lease |

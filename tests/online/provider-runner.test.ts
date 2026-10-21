@@ -35,6 +35,8 @@ import {
   createFakeProvider,
   createFakeTimers,
   createMemoryPendingStore,
+  deferNextRenewal,
+  fakeLeaseAnswer,
   fakeMatchView,
   fakeSnapshot,
 } from '../support/online-runner';
@@ -531,6 +533,190 @@ describe('the online agent runner', () => {
     expect(lease.runnerEpoch).toBe(4);
     expect(lease.pendingRequestId).toBe('request-1');
     expect(() => parseRunnerLeaseAnswer({ leaseId: 'lease-1' }, 'match-0002', 'white')).toThrow(ProviderRunnerServiceError);
+  });
+});
+
+describe('the private corrections of the prompt', () => {
+  it('does not send the corrections of an earlier turn again', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+
+    // A reply with an invalid format spends one formatting correction of this
+    // turn.
+    provider.answer('I am not JSON at all.');
+    await until(() => provider.prompts.length === 2, 'the runner asks again');
+    expect(provider.prompts[0]?.corrections.length).toBe(0);
+    expect(provider.prompts[1]?.corrections.length).toBe(1);
+
+    // The turn ends with an accepted move and the opponent answers.
+    provider.answer('{"move":"e2e4"}');
+    await until(
+      () => service.recordedCommands.some((command) => command.action.kind === 'submit_move'),
+      'the move is accepted',
+    );
+    service.opponentMove('e7e5');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => provider.prompts.length === 3, 'the runner plays the next turn');
+
+    // The correction of the earlier turn is not sent again, and the history of
+    // the game is complete.
+    expect(provider.prompts[2]?.corrections.length).toBe(0);
+    expect(provider.prompts[2]?.budgets.formatCorrectionsSpent).toBe(0);
+    expect(provider.prompts[2]?.moves).toEqual(['e4', 'e5']);
+  });
+
+  it('keeps the corrections of the same turn across a switch and a takeover', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('I am not JSON at all.');
+    await until(() => provider.prompts.length === 2, 'the runner asks again');
+    expect(provider.prompts[1]?.corrections.length).toBe(1);
+
+    // A model switch does not end the turn, so the correction of the turn
+    // stays in the prompt of the next request.
+    await runner.switchModel('Second Agent');
+    await until(() => service.match.control.modelLabel === 'Second Agent', 'the agent is switched');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => provider.prompts.length === 3, 'the runner asks the new agent');
+    expect(provider.prompts[2]?.corrections.length).toBe(1);
+  });
+});
+
+describe('the answers of a lease request in flight', () => {
+  it('does not resurrect the lease when a renewal answers after the match ended', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const timers = createFakeTimers();
+    const base = service.leasePort('runner-a');
+    const renewal = deferNextRenewal(base);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: renewal.port,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+      timers,
+      renewIntervalMs: 5000,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    expect(runner.state.leaseId).not.toBeNull();
+
+    // The heartbeat of the lease is in flight.
+    renewal.defer();
+    timers.fire();
+    await until(() => renewal.inFlight(), 'the renewal is in flight');
+
+    // The match ends while the renewal is in flight. The lease is given back.
+    service.match.result = { kind: 'win', winner: 'black', reason: 'timeout' };
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => runner.state.leaseId === null, 'the lease is given back');
+
+    // The renewal answers now. It may not resurrect the lease, arm a
+    // heartbeat or ask the provider again.
+    const armsBefore = timers.arms;
+    const answered = fakeLeaseAnswer(service.lease);
+    renewal.answer.resolve(answered ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-unknown',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    expect(runner.state.leaseId).toBeNull();
+    expect(timers.arms).toBe(armsBefore);
+    expect(timers.armed).toHaveLength(0);
+    expect(provider.prompts).toHaveLength(1);
+  });
+
+  it('does not disturb the new lease when an old renewal answers', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const timers = createFakeTimers();
+    const base = service.leasePort('runner-a');
+    const renewal = deferNextRenewal(base);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: renewal.port,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+      timers,
+      renewIntervalMs: 5000,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    const firstLease = runner.state.leaseId;
+    const firstLeaseAnswer = fakeLeaseAnswer(service.lease);
+
+    // The heartbeat of the lease is in flight.
+    renewal.defer();
+    timers.fire();
+    await until(() => renewal.inFlight(), 'the renewal is in flight');
+
+    // The turn ends, the lease is given back, and the next turn takes a new
+    // one.
+    provider.answer('{"move":"e2e4"}');
+    await until(
+      () => service.recordedCommands.some((command) => command.action.kind === 'submit_move'),
+      'the move is accepted',
+    );
+    service.opponentMove('e7e5');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => provider.prompts.length === 2, 'the runner plays the next turn');
+    const secondLease = runner.state.leaseId;
+    expect(secondLease).not.toBe(firstLease);
+
+    // The old renewal answers now with the lease it was sent for. It may not
+    // overwrite the new lease and it may not arm a second heartbeat.
+    const armsBefore = timers.arms;
+    renewal.answer.resolve(firstLeaseAnswer ?? {
+      schemaVersion: 2,
+      leaseId: firstLease ?? 'lease-unknown',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    expect(runner.state.leaseId).toBe(secondLease);
+    expect(timers.arms).toBe(armsBefore);
+    expect(timers.armed.length).toBeLessThanOrEqual(1);
+    expect(provider.prompts).toHaveLength(2);
   });
 });
 

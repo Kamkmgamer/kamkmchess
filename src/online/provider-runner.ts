@@ -453,12 +453,21 @@ export interface ProviderRunnerProviderPort {
   run(prompt: ProviderRunnerPrompt): Promise<ProviderRunnerAnswer>;
 }
 
-/** One private conversation record of a turn. */
+/**
+ * One private conversation record of a seat.
+ *
+ * The record belongs to the turn it was written in. The turn is named by the
+ * canonical position the turn was played from, so a correction of an earlier
+ * turn is never sent again in a later one, while a correction of the same turn
+ * survives a retry, a switch and a takeover.
+ */
 export interface ProviderRunnerConversationRecord {
   readonly id: string;
   readonly role: 'user' | 'agent';
   readonly text: string;
   readonly createdAt: number;
+  /** The canonical position of the turn the record belongs to. */
+  readonly turn?: string;
 }
 
 /**
@@ -936,6 +945,7 @@ export function createLocalConversationStore(
             role: record.role,
             text: record.text,
             createdAt: typeof record.createdAt === 'number' ? record.createdAt : 0,
+            ...(typeof record.turn === 'string' ? { turn: record.turn } : {}),
           });
         }
         return records;
@@ -1245,9 +1255,11 @@ type RenewOutcome =
     /**
      * `lease-gone` means the lease was revoked or it expired and a new one
      * may be taken. `unusable` means the runner has to fail closed. A
-     * `transient` failure keeps the lease and arms the next renewal.
+     * `transient` failure keeps the lease and arms the next renewal. A
+     * `stale` answer belongs to a lease the runner does not hold any more, so
+     * it changes nothing.
      */
-    readonly state: 'lease-gone' | 'unusable' | 'transient';
+    readonly state: 'lease-gone' | 'unusable' | 'transient' | 'stale';
   };
 
 /**
@@ -1273,6 +1285,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   let snapshot: ProviderRunnerSnapshot | null = null;
   let phase: ProviderRunnerPhase = 'idle';
   let leaseRecord: ProviderRunnerLease | null = null;
+  /**
+   * The generation of the lease of the seat.
+   *
+   * The generation moves whenever the lease is taken, given back or dropped.
+   * An answer of a lease request that is still in flight belongs to the
+   * generation it was sent in, and it may not resurrect a lease the runner
+   * does not hold any more.
+   */
+  let leaseGeneration = 0;
   let leaseId: string | null = null;
   let turnVersion: number | null = null;
   let version = 0;
@@ -1430,6 +1451,12 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       renewHandle = null;
       void renewLease().then((outcome) => {
         if (outcome.ok) return;
+        if (outcome.state === 'stale') {
+          // The answer belongs to a lease the runner does not hold any more.
+          // It may not resurrect the lease, arm a heartbeat or change the
+          // state of the runner.
+          return;
+        }
         if (outcome.state === 'transient') {
           // A transient failure. The renewal is armed again with a bounded
           // backoff, and the runner fails closed when the lease is about to
@@ -1484,8 +1511,16 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   }
 
   async function acquireLease(): Promise<{ ok: true } | { ok: false; detail: string }> {
+    // The answer of the acquisition belongs to the lease the runner holds now.
+    // A lease that is given back, replaced or dropped while the acquisition is
+    // in flight may not be resurrected by the answer.
+    const generation = leaseGeneration;
     try {
       const lease = await leases.acquire({ controlEpoch, turnVersion: version > 0 ? version : null });
+      if (leaseResponseIsStale(generation, null, lease.leaseId)) {
+        return { ok: false, detail: 'The lease of the seat was taken back.' };
+      }
+      leaseGeneration += 1;
       leaseRecord = lease;
       leaseId = lease.leaseId;
       turnVersion = lease.turnVersion;
@@ -1513,6 +1548,12 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       clearRenewal();
       return { ok: false, kind: 'conflict', state: 'lease-gone' };
     }
+    // The response of the renewal belongs to the lease the runner holds now.
+    // A lease that is given back, replaced or revoked while the renewal is in
+    // flight may not be resurrected by the answer, and it may not disturb the
+    // lease the runner holds now.
+    const generation = leaseGeneration;
+    const requestedLeaseId = leaseId;
     try {
       const lease = await leases.renew({
         controlEpoch,
@@ -1520,8 +1561,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         // the latest version of the match is refused instead of silently
         // rebinding to a turn it never observed.
         turnVersion: version > 0 ? version : null,
-        leaseId,
+        leaseId: requestedLeaseId,
       });
+      if (leaseResponseIsStale(generation, requestedLeaseId, lease.leaseId)) {
+        return { ok: false, kind: 'conflict', state: 'stale' };
+      }
       if (lease.status !== 'active') {
         leaseRecord = lease;
         clearRenewal();
@@ -1534,6 +1578,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       scheduleRenewal();
       return { ok: true };
     } catch (error) {
+      if (leaseResponseIsStale(generation, requestedLeaseId, requestedLeaseId)) {
+        // The failure of a lease the runner does not hold any more may not
+        // disturb the lease it holds now, and it may not arm a heartbeat.
+        return { ok: false, kind: classifyProviderRunnerError(error), state: 'stale' };
+      }
       const kind = classifyProviderRunnerError(error);
       renewalFailures += 1;
       if (kind === 'unauthorized') {
@@ -1568,10 +1617,34 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     }
   }
 
+  /**
+   * Reports whether the answer of a lease request belongs to a lease the
+   * runner no longer holds.
+   *
+   * The generation of the lease changes whenever the lease is taken, given
+   * back or dropped, and the identifier of the lease names the one answer.
+   * A stopped or a disposed runner holds no lease at all.
+   */
+  function leaseResponseIsStale(
+    generation: number,
+    requestedLeaseId: string | null,
+    answeredLeaseId: string | null,
+  ): boolean {
+    if (disposed) return true;
+    if (generation !== leaseGeneration) return true;
+    if (requestedLeaseId !== null && answeredLeaseId !== null && requestedLeaseId !== answeredLeaseId) {
+      return true;
+    }
+    return phase === 'stopped' && leaseRecord === null;
+  }
+
   async function releaseLease(): Promise<void> {
     clearRenewal();
     if (leaseRecord === null || leaseId === null) return;
     const current = leaseId;
+    // The generation of the lease moves, so an answer of a renewal that is
+    // still in flight cannot resurrect the lease.
+    leaseGeneration += 1;
     leaseRecord = null;
     leaseId = null;
     turnVersion = null;
@@ -1585,6 +1658,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   /** Gives up a lease that the service does not accept any more. */
   function dropLease(): void {
     clearRenewal();
+    // The generation of the lease moves, so an answer of a renewal that is
+    // still in flight cannot resurrect the lease.
+    leaseGeneration += 1;
     leaseRecord = null;
     leaseId = null;
     turnVersion = null;
@@ -1630,6 +1706,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     if (leaseRecord.turnVersion !== version) {
       const renewed = await renewLease();
       if (!renewed.ok) {
+        if (renewed.state === 'stale') {
+          // The lease moved on while the renewal was in flight. The runner
+          // takes a new lease on the next turn.
+          return { ok: false, detail: 'The lease of the seat was taken back.' };
+        }
         const detail = 'The lease of the seat is no longer current.';
         lastError = detail;
         return { ok: false, detail };
@@ -1698,11 +1779,51 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     }
   }
 
+  /**
+   * The corrections of the current turn.
+   *
+   * The corrections are the private messages of the turn the runner is
+   * playing. A correction of an earlier turn belongs to another position and
+   * is never sent again, so the prompt of a later turn does not tell the
+   * model to fix a mistake that it cannot make any more. The history of the
+   * conversation itself is never cleared: the accepted moves of the game stay
+   * in the store.
+   */
   function correctionsOf(): readonly string[] {
+    const turn = currentTurnKey();
+    if (turn === null) return [];
     return conversation
       .read(matchId, seat)
-      .filter((record) => record.role === 'user')
+      .filter((record) => record.role === 'user' && record.turn === turn)
       .map((record) => record.text);
+  }
+
+  /**
+   * The canonical position of the turn the runner plays.
+   *
+   * The position names the turn, so a correction of the same turn is found
+   * again and a correction of another turn is not.
+   */
+  function currentTurnKey(): string | null {
+    return snapshot === null ? null : snapshot.positionFen;
+  }
+
+  /**
+   * Appends one record to the private conversation of the seat.
+   *
+   * The record is stamped with the turn it belongs to. The history of the
+   * conversation is never cleared, so the accepted moves of the game stay in
+   * the store; only the prompt of a turn reads the corrections of that turn.
+   */
+  function appendConversation(role: 'user' | 'agent', text: string): void {
+    const turn = currentTurnKey();
+    conversation.append(matchId, seat, {
+      id: idFactory(),
+      role,
+      text,
+      createdAt: now(),
+      ...(turn === null ? {} : { turn }),
+    });
   }
 
   function rejectedMovesOf(): readonly { move: string; reason: string }[] {
@@ -1809,6 +1930,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       bindSeatControlEpoch(current);
       const renewed = await renewLease();
       if (!renewed.ok) {
+        if (renewed.state === 'stale') {
+          // The lease moved on while the renewal was in flight. The runner
+          // waits for the state of the seat and takes a new lease then.
+          return;
+        }
         if (renewed.state === 'unusable') {
           // The runner fails closed. It never asks for a lease in a loop.
           dropLease();
@@ -1981,6 +2107,13 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // revoked or that expired while the request ran cannot accept the move,
       // and the billable work of this turn is then uncertain.
       const submitted = await renewLease();
+      if (!submitted.ok && submitted.state === 'stale') {
+        // The lease moved on while the renewal was in flight. The answer of
+        // the provider belongs to a turn the runner does not hold any more, so
+        // it is not submitted.
+        setPhase('idle', 'The answer of a superseded turn was dropped.');
+        return;
+      }
       if (!submitted.ok && submitted.state !== 'transient') {
         enterUncertainty({
           kind: 'provider-request',
@@ -2041,12 +2174,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         return;
       }
       if (decision.kind === 'model-resignation') {
-        conversation.append(matchId, seat, {
-          id: idFactory(),
-          role: 'agent',
-          text: decision.statement,
-          createdAt: now(),
-        });
+        appendConversation('agent', decision.statement);
         const outcome = await submitAction({ kind: 'resign' }, nextOperationId('resign'));
         if (outcome.kind === 'accepted') {
           await releaseLease();
@@ -2088,18 +2216,8 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         // after the service accepted it.
         illegalSpent = decision.attempt;
         rejectedMoves = [...rejectedMoves, { move: uci, reason: decision.record.violation.message }];
-        conversation.append(matchId, seat, {
-          id: idFactory(),
-          role: 'agent',
-          text: uci,
-          createdAt: now(),
-        });
-        conversation.append(matchId, seat, {
-          id: idFactory(),
-          role: 'user',
-          text: decision.correction,
-          createdAt: now(),
-        });
+        appendConversation('agent', uci);
+        appendConversation('user', decision.correction);
         if (decision.loss !== null) {
           // The fourth illegal attempt ends the match. The service decides the
           // result, so the runner only stops.
@@ -2116,12 +2234,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         // switch, and no further correction is issued by itself. The spent
         // budget is not reported again, because the service refuses a
         // correction beyond its budget.
-        conversation.append(matchId, seat, {
-          id: idFactory(),
-          role: 'user',
-          text: decision.correction,
-          createdAt: now(),
-        });
+        appendConversation('user', decision.correction);
         await releaseLease();
         setPhase('paused', 'The formatting correction budget is spent.');
         return;
@@ -2132,12 +2245,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         return;
       }
       formatSpent = decision.budgets.formatCorrections;
-      conversation.append(matchId, seat, {
-        id: idFactory(),
-        role: 'user',
-        text: decision.correction,
-        createdAt: now(),
-      });
+      appendConversation('user', decision.correction);
     }
   }
 

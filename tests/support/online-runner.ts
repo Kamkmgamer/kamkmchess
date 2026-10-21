@@ -161,6 +161,11 @@ function cloneLease(lease: FakeLease): ProviderRunnerLease {
   };
 }
 
+/** The lease answer of the service for the lease the fixture stores. */
+export function fakeLeaseAnswer(lease: FakeLease | null): ProviderRunnerLease | null {
+  return lease === null ? null : cloneLease(lease);
+}
+
 function otherSeat(seat: Seat): Seat {
   return seat === 'white' ? 'black' : 'white';
 }
@@ -576,6 +581,8 @@ export interface FakeTimer {
 export interface FakeTimers extends ProviderRunnerTimers {
   /** The armed timers. */
   readonly armed: readonly FakeTimer[];
+  /** The number of timers that were armed since the start. */
+  readonly arms: number;
   /** Fires the oldest armed timer, or the timer with the given identifier. */
   fire(id?: number): void;
 }
@@ -584,11 +591,16 @@ export interface FakeTimers extends ProviderRunnerTimers {
 export function createFakeTimers(): FakeTimers {
   const armed: FakeTimer[] = [];
   let nextId = 1;
+  let arms = 0;
   return {
     armed,
+    get arms() {
+      return arms;
+    },
     setTimeout(callback, delayMs) {
       const id = nextId;
       nextId += 1;
+      arms += 1;
       armed.push({ id, callback, delayMs });
       return id;
     },
@@ -604,6 +616,71 @@ export function createFakeTimers(): FakeTimers {
       if (timer === undefined) throw new Error('No timer is armed.');
       armed.splice(index, 1);
       timer.callback();
+    },
+  };
+}
+
+/** One answer that a test resolves by hand. */
+export interface DeferredAnswer<T> {
+  readonly promise: Promise<T>;
+  resolve(value: T): void;
+  reject(error: unknown): void;
+}
+
+/** Creates an answer that a test resolves by hand. */
+export function createDeferred<T>(): DeferredAnswer<T> {
+  let resolve: (value: T) => void = () => undefined;
+  let reject: (error: unknown) => void = () => undefined;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/** The lease client with one deferred renewal. */
+export interface DeferredRenewal {
+  /** The lease client the runner uses. */
+  readonly port: ProviderRunnerLeasePort;
+  /** Makes the next renewal wait for the answer of the test. */
+  defer(): void;
+  /** The answer of the deferred renewal. */
+  readonly answer: DeferredAnswer<ProviderRunnerLease>;
+  /** True while a renewal waits for the answer of the test. */
+  readonly inFlight: () => boolean;
+}
+
+/**
+ * Defers one renewal of the lease.
+ *
+ * A test uses it to hold a renewal in flight while it stops the runner, ends
+ * the match or takes a new lease, and it answers afterwards.
+ */
+export function deferNextRenewal(port: ProviderRunnerLeasePort): DeferredRenewal {
+  let armed = false;
+  let waiting = false;
+  const answer = createDeferred<ProviderRunnerLease>();
+  return {
+    answer,
+    port: {
+      ...port,
+      runnerId: port.runnerId,
+      async renew(input) {
+        if (!armed) return port.renew(input);
+        armed = false;
+        waiting = true;
+        try {
+          return await answer.promise;
+        } finally {
+          waiting = false;
+        }
+      },
+    },
+    defer() {
+      armed = true;
+    },
+    inFlight() {
+      return waiting;
     },
   };
 }
@@ -722,7 +799,8 @@ export function fakeSnapshot(
     sideToMove: match.result === null ? match.sideToMove : null,
     positionFen: match.positionFen,
     startingFen: FAKE_START_FEN,
-    moves: [],
+    // The accepted moves of the match, in the notation of the game record.
+    moves: match.moves.map((move) => move.san),
     clock: { whiteMs: 60000, blackMs: 60000, incrementMs: 1000 },
     seatControl: match.control,
     seatControlEpoch: match.seatControlEpoch,
