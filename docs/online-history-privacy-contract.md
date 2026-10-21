@@ -266,7 +266,8 @@ Rules the browser must honour:
   the marker of the lifecycle disappears, so the obligation of the next import survives the
   recovery. A recovery that discharged that record would let a later restore without the removal
   ledger sink import an older bundle and destroy the removals without a replay, which is the hole
-  the refusal of such a restore closes.* A **gate is released only when the database holds the removal ledger the gate waits for**. The
+  the refusal of such a restore closes.
+* A **gate is released only when the database holds the removal ledger the gate waits for**. The
   gate names the digest of that ledger, and the digest names the durable evidence of it, so the
   release of a gate is a containment check and not a blanket update. A gate whose removal ledger
   is not applied is **retained**: the service stays closed and the removals it waits for stay

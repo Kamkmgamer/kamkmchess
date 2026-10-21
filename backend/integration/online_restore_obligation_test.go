@@ -11,13 +11,11 @@ package integration
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/backup"
 	"github.com/Kamkmgamer/kamkmchess/backend/privacy"
@@ -137,6 +135,9 @@ func TestPostgresTheRecoveryRecreatesTheEvidenceOfTheLostDirectory(t *testing.T)
 	evidenceFile := filepath.Join(directory, "restore-requirements", "evidence-lost-directory-restore.json")
 	if err = os.Remove(evidenceFile); err != nil {
 		t.Fatalf("remove the durable evidence: %v", err)
+	}
+	if err = os.Remove(filepath.Dir(evidenceFile)); err != nil {
+		t.Fatalf("remove the empty evidence directory: %v", err)
 	}
 	// The recovery that is given the ledger of the restore succeeds.
 	if err = removals.RecoverRestore(ctx, "evidence-lost-directory-restore", live); err != nil {
@@ -308,6 +309,15 @@ func TestPostgresTheRecoverCommandUsesTheEvidenceWithoutTheBundle(t *testing.T) 
 	if err = os.WriteFile(evidenceFile, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The supplied copy must be read by the real CLI. Leaving the original in
+	// place would let the CLI recover without opening --evidence at all.
+	original := filepath.Join(directory, "restore-requirements", "evidence-cli-restore.json")
+	if err = os.Remove(original); err != nil {
+		t.Fatalf("remove the original evidence: %v", err)
+	}
+	if err = os.Remove(filepath.Dir(original)); err != nil {
+		t.Fatalf("remove the empty evidence directory: %v", err)
+	}
 	binary := evidenceCLI(t)
 	dsn := evidenceDSN(t, fixture)
 	// The recovery of the restore with the evidence alone: no bundle and no
@@ -337,8 +347,7 @@ func TestPostgresTheRecoverCommandUsesTheEvidenceWithoutTheBundle(t *testing.T) 
 	// A bundle that is named but never read is not a reason to ask for the
 	// passphrase: the recovery of another restore succeeds with a stale bundle
 	// and without one.
-	second, secondEvidence := evidenceCrashedRestore(t, removals, "evidence-cli-restore-two")
-	_ = second
+	secondEvidence := evidenceCrashedRestore(t, removals, "evidence-cli-restore-two")
 	bundle := evidenceBundle(t, t.TempDir(), nil, nil)
 	output, err = evidenceRunCLI(t, binary, dsn,
 		"recover",
@@ -370,7 +379,7 @@ func TestPostgresTheRecoverCommandUsesTheEvidenceWithoutTheBundle(t *testing.T) 
 // evidenceCrashedRestore leaves a restore behind that crashed after it applied
 // its removals, and it returns the evidence of the restore as the operator
 // restored it from the protected backup.
-func evidenceCrashedRestore(t *testing.T, removals *privacy.Service, restoreID string) (string, string) {
+func evidenceCrashedRestore(t *testing.T, removals *privacy.Service, restoreID string) string {
 	t.Helper()
 	ctx := context.Background()
 	live, err := removals.AppliedRemovalLedger(ctx)
@@ -402,7 +411,7 @@ func evidenceCrashedRestore(t *testing.T, removals *privacy.Service, restoreID s
 	if err = os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return path, path
+	return path
 }
 
 // evidenceCLI returns the command line tool of the backup.
@@ -418,7 +427,7 @@ func evidenceCLI(t *testing.T) string {
 	command := exec.Command("go", "build", "-o", binary, "../backup/cmd/khabackup")
 	command.Dir = "."
 	if output, err := command.CombinedOutput(); err != nil {
-		t.Skipf("the command line tool could not be built: %v\n%s", err, output)
+		t.Fatalf("the command line tool could not be built: %v\n%s", err, output)
 	}
 	return binary
 }
@@ -463,6 +472,3 @@ func removeEnv(environment []string, name string) []string {
 	}
 	return filtered
 }
-
-var _ = errors.Is
-var _ = time.Now
