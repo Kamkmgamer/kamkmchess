@@ -417,8 +417,9 @@ the shared reference of `backend/subject`:
 | --- | --- | --- |
 | the creation of an invitation | the inviter, the named recipient of a challenge | the inviter, the recipient |
 | the acceptance of an invitation | the inviter, the acceptor | the inviter, the acceptor |
+| the **cancellation** of an invitation | the inviter | the inviter |
 | the proposal of a rematch | the two participants of the finished match | the two participants |
-| the acceptance of a rematch | the two participants of the finished match | the two participants |
+| the acceptance of a rematch | the two participants of the finished match, the proposer of the offer | the two participants, the proposer |
 | the credential recovery of an invitation or of a rematch | the owner of the seat | the owner of the seat |
 
 The scope locks are taken before the row lock of the invitation or of the
@@ -428,9 +429,30 @@ one-way reference, so the removal tables are read without the raw identifier
 of a removed subject, and the guest path keeps its bearer capability: an
 anonymous guest is a fresh identity that no removal names.
 
+The recheck has three parts, and each of them closes a hole of its own:
+
+* a participant that carries the **anonymized sentinel** is a removed
+  participant. The privacy sanitation replaces the identifier of a removed
+  subject with that constant, so a row that carries it names nobody any more.
+  Without this part the fence was blind: it locked the scope of
+  `"anonymized"` and asked the removal tables about `"anonymized"`, and no
+  removal ever names that string, so the check always passed;
+* a participant whose account or of whose guest seat a removal was recorded is
+  named by the durable removal records, compared through the one-way
+  reference of the subject;
+* a participant of a match that carries a row in the **removal ledger** was
+  removed from that match. The ledger is the match scoped record of a
+  removal, so it answers the question even when the seat row of an older
+  backup still names the removed subject, and it is the record that survives
+  a restore of an older backup.
+
 The new refusal is `invite.ErrRemoved`, and the HTTP surface answers it with
 `403` and the code `not_authorized`, so the error vocabulary of the surface
 does not change.
+
+An offer that can never be accepted any more is not published. The pending
+read retires it, so a dead offer is not the live offer of the match until it
+expires twelve hours later.
 
 The regressions of the new file
 `backend/integration/online_friends_removal_test.go` prove the order and the
@@ -446,12 +468,44 @@ outcome:
   the removed account)
 * `TestPostgresFriendRemovedAccountCannotAcceptAnInvitation` (the
   invitation is not consumed and no acceptance is recorded)
-* `TestPostgresFriendRemovedParticipantCannotProposeOrAcceptARematch` (no
-  offer and no seat names the removed participant)
 * `TestPostgresFriendRemovedGuestNeverGetsAFreshCredential` (no live
   credential of the removed guest and no revived acceptance)
+* `TestPostgresFriendRemovedParticipantCannotProposeOrAcceptARematch` (the
+  proposal of the surviving participant is refused, because the finished match
+  lost a participant, and no offer is recorded)
+* `TestPostgresFriendRemovedProposerCannotHaveItsOfferAccepted` (the
+  acceptance of a pending offer whose proposer was removed is refused, and no
+  new match seats the anonymized participant)
+* `TestPostgresFriendDeadRematchOfferIsNotPublished` (the dead offer is not
+  published and is retired)
+* `TestPostgresFriendRemovedInviterCannotResumeItsAcceptance` (the sanitized
+  invitation carries the anonymized sentinel and the resume is refused)
+* `TestPostgresFriendRemovedParticipantCannotCancelItsInvitation` (the
+  cancellation of a removed guest is refused and the invitation is not
+  cancelled)
 * `TestPostgresFriendRemovalAndTheInvitationWriteNeverDeadlock` (a pool of
   four connections, the removal and the acceptance race, both finish)
+
+## The findings of the round 5 review
+
+The review is `D:/projects/kamkmchess/.scratch/online-swarm/matching-review-r5.md`.
+
+| Finding | Disposition |
+| --- | --- |
+| **R5-01** the anonymized participant bypasses the rematch fence | **fixed.** A participant that carries the anonymized sentinel is a removed participant, and the removal ledger of the match is the match scoped record of a removal. The proposal, the acceptance and the credential recovery are refused with `invite.ErrRemoved`. |
+| **R5-02** the browser never asks for the rotation of a lost answer | **not ours.** The workspace worker owns the browser half; the service side of the rotation was closed in the round 3 work. |
+| **R5-03** the cancellation is not fenced | **fixed.** The cancellation takes the account scope lock of the inviter before the row lock of the invitation and rechecks the durable removal after the lock. |
+| **R5-04** the self acceptance guard of the browser is volatile | **not ours.** The workspace worker owns the browser half. |
+| **R5-05** the debug logging of the invitation id | **not ours.** The workspace worker owns the production composition. |
+| **R5-06** the rematch regression never exercises a rematch acceptance | **fixed.** The regression now asserts the refusal of the proposal instead of tolerating both outcomes, and three new regressions exercise the acceptance of a pending offer whose proposer was removed, the resume of an acceptance whose inviter was removed, and the cancellation of a removed participant. |
+| **R5-07** the auxiliary sanitation does not run for a removed guest | **not ours.** The privacy worker owns the sanitation of the guest rows. |
+| **R5-08** a dead rematch offer stays published | **fixed.** The proposal of a match whose participant was removed is refused, the acceptance of such an offer is refused, and the pending read retires the dead offer instead of publishing it. |
+| **R5-09** the interface can propose a rematch but never accept one | **not ours.** The workspace worker owns the interface. |
+
+The prior finding **F-1** is upheld as **not a defect**: the acceptance key is
+the bearer capability of a guest acceptance by design, the service stores only
+its hash, and the high entropy of the key is kept. Nothing of that finding was
+changed.
 
 ## The changed wire
 

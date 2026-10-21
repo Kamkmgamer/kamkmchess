@@ -260,6 +260,23 @@ the rows it sanitizes, so the two flows are ordered instead of racing:
 * a removed participant never receives a fresh seat credential, so a
   credential that was issued before the removal is not revived after it.
 
+The recheck knows a removed participant in three ways. A participant that
+carries the **anonymized sentinel** is a removed participant, because the
+privacy sanitation replaces the identifier of a removed subject with that
+constant. A participant whose account or of whose guest seat a removal was
+recorded is named by the durable removal records. A participant of a match
+that carries a row in the **removal ledger** was removed from that match, so a
+restore of an older backup cannot revive it either.
+
+The cancellation of an invitation is a write of the surface as well, so it is
+fenced the same way: the account scope lock of the inviter is taken before
+the row lock of the invitation, and the removal of the inviter is rechecked
+after the lock.
+
+A rematch offer that can never be accepted any more is not published. The
+pending read retires it, so a dead offer is not the live offer of the match
+until it expires.
+
 The refusal is `403` with the code `not_authorized`, the same code as an
 unauthorized caller, so the error vocabulary of the surface does not change.
 
