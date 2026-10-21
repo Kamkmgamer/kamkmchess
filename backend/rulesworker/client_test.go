@@ -233,15 +233,25 @@ func moveRequest(id string) Request {
 	return req
 }
 
+// The cold start of a worker is a one-time cost of the host, and the
+// exchange budget of a request must not carry it.
+//
+// The fixture simulates a host that boots the worker slowly: the readiness
+// probe answers only after the boot delay. The exchange budget is far shorter
+// than that delay, so the request can only succeed when the start has its
+// own budget. The exchange budget still leaves room for the fake worker to
+// answer on a loaded host.
+const (
+	bootDelayFixture = 2 * time.Second
+	exchangeFixture  = 1 * time.Second
+	startFixture     = 10 * time.Second
+)
+
 // TestTheColdStartDoesNotConsumeTheExchangeBudget proves that the boot of
 // the worker is not charged to the exchange budget of the request.
-//
-// The fake worker answers the readiness probe only after the simulated boot
-// delay. The request budget is far shorter than that delay, so the request
-// can only succeed when the start has its own budget.
 func TestTheColdStartDoesNotConsumeTheExchangeBudget(t *testing.T) {
-	entry := testEntryWithBootDelay(t, 400*time.Millisecond)
-	client, err := New(Config{Entry: entry, RequestTimeout: 150 * time.Millisecond, StartTimeout: 10 * time.Second})
+	entry := testEntryWithBootDelay(t, bootDelayFixture)
+	client, err := New(Config{Entry: entry, RequestTimeout: exchangeFixture, StartTimeout: startFixture})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
@@ -259,8 +269,8 @@ func TestTheColdStartDoesNotConsumeTheExchangeBudget(t *testing.T) {
 // that was stopped by a timeout restarts without spending the exchange
 // budget of the next request on the start.
 func TestTheRestartAfterATimeoutKeepsItsOwnStartBudget(t *testing.T) {
-	entry := testEntryWithBootDelay(t, 400*time.Millisecond)
-	client, err := New(Config{Entry: entry, RequestTimeout: 150 * time.Millisecond, StartTimeout: 10 * time.Second})
+	entry := testEntryWithBootDelay(t, bootDelayFixture)
+	client, err := New(Config{Entry: entry, RequestTimeout: exchangeFixture, StartTimeout: startFixture})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
