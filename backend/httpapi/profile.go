@@ -280,12 +280,12 @@ func (a *profileAPI) ownershipProof(w http.ResponseWriter, r *http.Request) {
 // the timestamps. It never carries the account identifier, the sign-in
 // email, the legal name, or a session, a credential, or a hash.
 type publicProfileResponse struct {
-	SchemaVersion int            `json:"schemaVersion"`
-	ProfileID     string         `json:"profileId"`
-	Username      *string        `json:"username"`
-	Avatar        avatarResponse `json:"avatar"`
-	CreatedAt     time.Time      `json:"createdAt"`
-	UpdatedAt     time.Time      `json:"updatedAt"`
+	SchemaVersion int             `json:"schemaVersion"`
+	ProfileID    string          `json:"profileId"`
+	Username     *string         `json:"username"`
+	Avatar       avatarResponse  `json:"avatar"`
+	CreatedAt    time.Time       `json:"createdAt"`
+	UpdatedAt    time.Time       `json:"updatedAt"`
 }
 
 type avatarResponse struct {
@@ -325,10 +325,10 @@ type ownershipProofResponse struct {
 func toPublicProfile(record profile.Profile) publicProfileResponse {
 	response := publicProfileResponse{
 		SchemaVersion: profile.SchemaVersion,
-		ProfileID:     record.ProfileID,
-		Avatar:        avatarResponse{Kind: string(record.Avatar.Kind), Value: record.Avatar.Value},
-		CreatedAt:     record.CreatedAt.UTC(),
-		UpdatedAt:     record.UpdatedAt.UTC(),
+		ProfileID:    record.ProfileID,
+		Avatar:       avatarResponse{Kind: string(record.Avatar.Kind), Value: record.Avatar.Value},
+		CreatedAt:    record.CreatedAt.UTC(),
+		UpdatedAt:    record.UpdatedAt.UTC(),
 	}
 	if record.Username != "" {
 		name := record.Username

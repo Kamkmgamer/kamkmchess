@@ -452,7 +452,7 @@ func TestPostgresExplicitGuestLinkBindsTheSeatAndKeepsTheOriginalActor(t *testin
 
 	// The account links the seat explicitly.
 	linked := onlineHTTPRequest(handler, http.MethodPost, "/v1/account/profile/guest-links", authTestOrigin, "", map[string]string{
-		"Authorization":                   "Bearer " + token,
+		"Authorization":                "Bearer " + token,
 		httpapi.GuestOwnershipProofHeader: proofSecret,
 	}, `{"matchId":"match-link-one","seat":"white"}`)
 	if linked.Code != http.StatusOK {
@@ -498,7 +498,7 @@ func TestPostgresExplicitGuestLinkBindsTheSeatAndKeepsTheOriginalActor(t *testin
 
 	// The proof is spent. The same proof never links a second profile.
 	reused := onlineHTTPRequest(handler, http.MethodPost, "/v1/account/profile/guest-links", authTestOrigin, "", map[string]string{
-		"Authorization":                   "Bearer " + token,
+		"Authorization":                "Bearer " + token,
 		httpapi.GuestOwnershipProofHeader: proofSecret,
 	}, `{"matchId":"match-link-one","seat":"white"}`)
 	if reused.Code != http.StatusUnauthorized {
@@ -542,7 +542,7 @@ func TestPostgresGuestLinkRejectsAnotherSeatAndAnotherOwner(t *testing.T) {
 
 	// A proof for another person's seat never links this one.
 	otherSeat := onlineHTTPRequest(handler, http.MethodPost, "/v1/account/profile/guest-links", authTestOrigin, "", map[string]string{
-		"Authorization":                   "Bearer " + tokenB,
+		"Authorization":                "Bearer " + tokenB,
 		httpapi.GuestOwnershipProofHeader: betaSecret,
 	}, `{"matchId":"match-owner-alpha","seat":"white"}`)
 	if otherSeat.Code != http.StatusUnauthorized {
@@ -551,7 +551,7 @@ func TestPostgresGuestLinkRejectsAnotherSeatAndAnotherOwner(t *testing.T) {
 
 	// The same refusal, seen from the other side.
 	otherProof := onlineHTTPRequest(handler, http.MethodPost, "/v1/account/profile/guest-links", authTestOrigin, "", map[string]string{
-		"Authorization":                   "Bearer " + tokenA,
+		"Authorization":                "Bearer " + tokenA,
 		httpapi.GuestOwnershipProofHeader: betaSecret,
 	}, `{"matchId":"match-owner-alpha","seat":"white"}`)
 	if otherProof.Code != http.StatusUnauthorized {
@@ -560,7 +560,7 @@ func TestPostgresGuestLinkRejectsAnotherSeatAndAnotherOwner(t *testing.T) {
 
 	// A guest seat credential is not an ownership proof.
 	credential := onlineHTTPRequest(handler, http.MethodPost, "/v1/account/profile/guest-links", authTestOrigin, "", map[string]string{
-		"Authorization":                   "Bearer " + tokenA,
+		"Authorization":                "Bearer " + tokenA,
 		httpapi.GuestOwnershipProofHeader: alpha.Credential.Secret,
 	}, `{"matchId":"match-owner-alpha","seat":"white"}`)
 	if credential.Code != http.StatusUnauthorized {
@@ -593,7 +593,7 @@ func TestPostgresGuestLinkRejectsAnotherSeatAndAnotherOwner(t *testing.T) {
 
 	// The owner of the seat can still link it.
 	owner := onlineHTTPRequest(handler, http.MethodPost, "/v1/account/profile/guest-links", authTestOrigin, "", map[string]string{
-		"Authorization":                   "Bearer " + tokenA,
+		"Authorization":                "Bearer " + tokenA,
 		httpapi.GuestOwnershipProofHeader: alphaSecret,
 	}, `{"matchId":"match-owner-alpha","seat":"white"}`)
 	if owner.Code != http.StatusOK {
@@ -608,7 +608,7 @@ func TestPostgresGuestLinkRejectsAnotherSeatAndAnotherOwner(t *testing.T) {
 	}
 	secondSecret, _ := decodeProfile(t, secondProof.Body.Bytes())["secret"].(string)
 	second := onlineHTTPRequest(handler, http.MethodPost, "/v1/account/profile/guest-links", authTestOrigin, "", map[string]string{
-		"Authorization":                   "Bearer " + tokenB,
+		"Authorization":                "Bearer " + tokenB,
 		httpapi.GuestOwnershipProofHeader: secondSecret,
 	}, `{"matchId":"match-owner-alpha","seat":"white"}`)
 	if second.Code != http.StatusConflict || !strings.Contains(second.Body.String(), "seat_already_linked") {
@@ -635,7 +635,7 @@ func TestPostgresGuestLinkRejectsADeadProofAndADeadCredential(t *testing.T) {
 		t.Fatalf("revoke credential: %v", err)
 	}
 	dead := onlineHTTPRequest(handler, http.MethodPost, "/v1/account/profile/guest-links", authTestOrigin, "", map[string]string{
-		"Authorization":                   "Bearer " + token,
+		"Authorization":                "Bearer " + token,
 		httpapi.GuestOwnershipProofHeader: proofSecret,
 	}, `{"matchId":"match-dead-proof","seat":"white"}`)
 	if dead.Code != http.StatusUnauthorized {
@@ -660,7 +660,7 @@ func TestPostgresGuestLinkRejectsARevokedAccountSession(t *testing.T) {
 		t.Fatalf("revoke session: %v", err)
 	}
 	revoked := onlineHTTPRequest(handler, http.MethodPost, "/v1/account/profile/guest-links", authTestOrigin, "", map[string]string{
-		"Authorization":                   "Bearer " + token,
+		"Authorization":                "Bearer " + token,
 		httpapi.GuestOwnershipProofHeader: proofSecret,
 	}, `{"matchId":"match-revoked-session","seat":"white"}`)
 	if revoked.Code != http.StatusUnauthorized {
