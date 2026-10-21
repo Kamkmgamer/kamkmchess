@@ -140,6 +140,11 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
   const reviewing = view !== null && ply !== appliedMoves.length;
   const rows = view ? onlineSeatRows(view, seat) : [];
   const agentRunner = view && seat ? composition.agentRunnerState(view.matchId, seat) : null;
+  // The browser only plays the agent of the owner when the owner chose the
+  // private selection of this seat. Without that choice the seat waits.
+  const ownSeatIsAgent = view !== null && seat !== null
+    && view.seats.find(candidate => candidate.seat === seat)?.control.kind === 'agent';
+  const boundAgentLabel = view && seat ? composition.agentBindingFor(view.matchId, seat) : null;
   const status = view
     ? (focused && focused.status !== 'live' ? onlineConnectionText(focused.status) : onlineStatusText(view, reading))
     : '';
@@ -292,6 +297,10 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       });
       setInvitation(created.invitation);
       setInvitationLink(`${window.location.origin}/invite/${created.invitation.invitationId}`);
+      // The inviter tracks its own invitation. When the invitee accepts, the
+      // inviter claims the seat credential of the created match and follows
+      // it, so it can play its own seat.
+      composition.trackInvitation(created.invitation.invitationId, created.ownerToken);
       setMessage('Invitation created.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The invitation could not be created.');
@@ -533,6 +542,13 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
               <button className="button" type="button" disabled={busy} onClick={() => void composition.agentDecision(view.matchId, seat ?? 'white', 'takeover')}>Take over</button>
             </div>
           </div>}
+        {seat && ownSeatIsAgent && !boundAgentLabel && <div className="online-decisions" role="group" aria-label="Choose your agent">
+          <p>Choose the agent of this seat.</p>
+          <div className="button-row">
+            {composition.agentCatalog.map(entry => <button className="button" type="button" key={entry.label} disabled={busy}
+              onClick={() => composition.bindAgentSeat(view.matchId, seat, entry.label)}>{entry.label}</button>)}
+          </div>
+        </div>}
         {view.result !== null && <div className="button-row">
           <button className="button quiet" type="button" disabled={busy} onClick={() => void proposeRematch()}>Propose rematch</button>
         </div>}

@@ -115,15 +115,16 @@ test('a guest creates a friend link and the other guest joins the game', async (
   }
 });
 
-/** The point of a square on the board of the page. */
-async function point(page: import('@playwright/test').Page, square: string) {
-  const box = await page.locator('cg-board').boundingBox();
+/** The point of a square on the online board of the page. */
+async function point(page: import('@playwright/test').Page, square: string, flipped = false) {
+  const board = page.getByRole('region', { name: 'Online match board' }).locator('cg-board');
+  const box = await board.boundingBox();
   if (!box) throw new Error('The board is missing');
   const file = square.charCodeAt(0) - 97;
   const rank = Number(square[1]) - 1;
   return {
-    x: box.x + file * box.width / 8 + box.width / 16,
-    y: box.y + (7 - rank) * box.height / 8 + box.height / 16,
+    x: box.x + (flipped ? 7 - file : file) * box.width / 8 + box.width / 16,
+    y: box.y + (flipped ? rank : 7 - rank) * box.height / 8 + box.height / 16,
   };
 }
 
@@ -141,6 +142,9 @@ test('the first move and the opening reply are playable in the real service', as
     await inviterPage.getByRole('button', { name: 'Invite a friend' }).click();
     const link = await inviterPage.getByLabel('Invitation link').inputValue();
     const invitationId = link.split('/invite/')[1] ?? '';
+    // The inviter watches its games, so its board is ready when the match
+    // arrives.
+    await inviterPage.getByRole('button', { name: 'Games' }).click();
 
     await inviteePage.goto('/play?online=1');
     await inviteePage.getByRole('button', { name: 'Online play' }).click();
@@ -149,6 +153,8 @@ test('the first move and the opening reply are playable in the real service', as
     await inviteePage.getByRole('button', { name: 'Preview' }).click();
     await inviteePage.getByRole('button', { name: 'Accept' }).click();
     await expect(inviteePage.getByRole('region', { name: 'Online match board' })).toBeVisible();
+    // The inviter claims its own seat and follows the match.
+    await expect(inviterPage.getByRole('region', { name: 'Online match board' })).toBeVisible({ timeout: 20_000 });
 
     // The inviter holds the white seat, so it plays the first move of the
     // match and the invitee answers inside the opening reply window.
@@ -158,9 +164,10 @@ test('the first move and the opening reply are playable in the real service', as
     await inviterPage.mouse.click(to.x, to.y);
     // The accepted move reaches the move list of the inviter.
     await expect(inviterPage.getByRole('table', { name: 'Committed moves' }).getByRole('button')).toHaveText(['e4'], { timeout: 15_000 });
-    // The other side answers the opening reply.
-    const replyFrom = await point(inviteePage, 'e7');
-    const replyTo = await point(inviteePage, 'e5');
+    // The other side answers the opening reply. It holds the black seat, so
+    // its board is flipped.
+    const replyFrom = await point(inviteePage, 'e7', true);
+    const replyTo = await point(inviteePage, 'e5', true);
     await inviteePage.mouse.click(replyFrom.x, replyFrom.y);
     await inviteePage.mouse.click(replyTo.x, replyTo.y);
     await expect(inviteePage.getByRole('table', { name: 'Committed moves' }).getByRole('button')).toHaveText(['e4', 'e5'], { timeout: 15_000 });

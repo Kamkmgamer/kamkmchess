@@ -67,6 +67,7 @@ import { combineOnlineFeatureFlags, parseOnlineFeatureFlags, readLocalOptIn } fr
 import { ONLINE_FEATURES_DISABLED } from './features';
 import type { OnlineFeatureFlags } from './features';
 import { parseOnlineMatchView } from './updates';
+import { onlineSideToMove } from './turn';
 import { ONLINE_CONTRACTS_SCHEMA_VERSION } from './contracts';
 import type { OnlineMatchView } from './updates';
 import type { QueueEntry, Seat, SeatControl, TimeControl } from './contracts';
@@ -79,6 +80,9 @@ export const ONLINE_FEATURES_ROUTE = '/v1/online/features';
 
 /** The local key of the pending queue intent. */
 export const ONLINE_QUEUE_INTENT_KEY = 'kamkmchess.online.queue.intent.v1';
+
+/** The local key of the persisted seat bindings of the own agent. */
+export const ONLINE_AGENT_BINDING_KEY = 'kamkmchess.online.agent-bindings.v1';
 
 /**
  * The intent of one queue entry.
@@ -208,6 +212,12 @@ export interface OnlineComposition {
    * relabelled as a new model.
    */
   setAgentCatalog(entries: readonly { label: string; selection: ModelSelection }[]): void;
+  /** The public labels the owner may choose for a seat. */
+  readonly agentCatalog: readonly { readonly label: string }[];
+  /** The label bound to one seat, or null when the seat has no binding. */
+  agentBindingFor(matchId: string, seat: Seat): string | null;
+  /** Binds the chosen private selection to one seat of one match. */
+  bindAgentSeat(matchId: string, seat: Seat, label: string): void;
   /**
    * Registers the public label of the owner's own agent.
    *
@@ -228,6 +238,13 @@ export interface OnlineComposition {
   registerGuestCredential(credential: GuestOnlineCredential, owner?: 'account' | 'guest'): void;
   /** Creates the browser engine seat of a fallback game. */
   engineSeat(matchId: string, seat: Seat, credential: GuestOnlineCredential): OnlineEngineSeat;
+  /**
+   * Tracks an invitation this browser created.
+   *
+   * When the invitee accepts it, the inviter claims the seat credential
+   * of the created match and follows it.
+   */
+  trackInvitation(invitationId: string, ownerToken: string): void;
   /** The presence client of one seat. */
   presenceClient(matchId: string, seat: Seat, credential?: OnlineCredential): OnlinePresenceClient | null;
   /**
@@ -429,11 +446,57 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    *
    * The binding is per seat of one match, never per public label: two private
    * models can carry the same canonical public label, and a seat must never
-   * be played by another model.
+   * be played by another model. The binding is stored in the browser, so a
+   * reload keeps the exact selection of the seat.
    */
   const agentBindings = new Map<string, { readonly label: string; readonly selection: ModelSelection }>();
   /** The agents the owner may play, by their public label. */
   const agentCatalog = new Map<string, ModelSelection>();
+
+  /** The local key of the persisted seat bindings of one identity. */
+  function agentBindingKey(identity: string): string {
+    return `${ONLINE_AGENT_BINDING_KEY}:${encodeURIComponent(identity)}`;
+  }
+
+  /** Reads the persisted seat bindings of one identity. */
+  function readAgentBindings(identity: string): { readonly matchId: string; readonly seat: Seat; readonly label: string; readonly selection: ModelSelection }[] {
+    try {
+      const raw = storage?.getItem(agentBindingKey(identity));
+      if (!raw) return [];
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const bindings: { matchId: string; seat: Seat; label: string; selection: ModelSelection }[] = [];
+      for (const item of parsed) {
+        if (typeof item !== 'object' || item === null) continue;
+        const record = item as Record<string, unknown>;
+        const matchId = record.matchId;
+        const seat = record.seat;
+        const label = record.label;
+        const selection = record.selection;
+        if (typeof matchId !== 'string' || matchId.length === 0) continue;
+        if (seat !== 'white' && seat !== 'black') continue;
+        if (typeof label !== 'string' || label.length === 0) continue;
+        if (typeof selection !== 'object' || selection === null) continue;
+        bindings.push({ matchId, seat, label, selection: selection as ModelSelection });
+      }
+      return bindings;
+    } catch {
+      return [];
+    }
+  }
+
+  /** Writes the persisted seat bindings of one identity. */
+  function writeAgentBindings(identity: string, bindings: readonly { matchId: string; seat: Seat; label: string; selection: ModelSelection }[]): void {
+    try {
+      if (bindings.length === 0) {
+        storage?.removeItem(agentBindingKey(identity));
+        return;
+      }
+      storage?.setItem(agentBindingKey(identity), JSON.stringify(bindings));
+    } catch {
+      // A browser that refuses the storage keeps the binding in memory only.
+    }
+  }
   /** The presence clients of the attached matches. */
   const presenceClients = new Map<string, OnlinePresenceClient>();
   /** The version the engine seat already played. */
@@ -683,12 +746,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
           // The entry of the intent is tracked, so a later settings change can
           // resolve it instead of abandoning it.
           upsertIntent(intent.key, { ...intent, entryId: created.entryId });
-          // The seat of the entry is the seat of the owner. The private
-          // selection of the owner is bound to it, so the seat is never played
-          // by another model.
-          if (created.control.kind === 'agent') {
-            bindAgentSeat(created.entryId, 'white', created.control.modelLabel ?? agent?.label ?? 'Agent');
-          }
+          // The seat of the entry is the seat of the owner. The binding of
+          // the private selection happens when the match is assigned, because
+          // only the assignment knows the seat of the owner.
           return created;
         } catch (error) {
           // A definitive refusal releases the intent. An unknown answer keeps
@@ -892,6 +952,61 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     },
   };
 
+  /**
+   * The invitations this browser created.
+   *
+   * The inviter holds the owner token of its invitation. When the invitee
+   * accepts, the inviter claims the seat credential of the created match and
+   * follows it, so the inviter can play its own seat.
+   */
+  const createdInvitations = new Map<string, string>();
+  let invitationTimer: unknown = null;
+
+  /** Tracks an invitation this browser created. */
+  function trackInvitation(invitationId: string, ownerToken: string): void {
+    console.log('[track]', invitationId, typeof ownerToken);
+    createdInvitations.set(invitationId, ownerToken);
+    scheduleInvitationWork();
+  }
+
+  /** Polls the tracked invitations and claims the seat of a consumed one. */
+  function scheduleInvitationWork(): void {
+    if (invitationTimer !== null) {
+      timers.clearTimer(invitationTimer);
+      invitationTimer = null;
+    }
+    if (disposed || suspended) return;
+    if (createdInvitations.size === 0) return;
+    invitationTimer = timers.setTimer(() => {
+      console.log('[poll]', createdInvitations.size);
+      invitationTimer = null;
+      for (const [invitationId, ownerToken] of [...createdInvitations]) {
+        void (async () => {
+          try {
+            const invitation = await friends.preview(invitationId);
+            if (invitation.status !== 'consumed' || !invitation.matchId) return;
+            const claimed = await friends.claimSeatCredential(invitationId, ownerToken);
+            if (claimed.guestCredential) {
+              registerGuestCredential(createGuestCredential({
+                guestId: claimed.guestCredential.guestId,
+                matchId: claimed.guestCredential.matchId,
+                seat: claimed.guestCredential.seat,
+                token: claimed.guestCredential.token,
+              }), 'guest');
+              attachAndFocus(claimed.guestCredential.matchId, claimed.guestCredential.seat);
+            }
+            createdInvitations.delete(invitationId);
+            notify();
+          } catch {
+            // The invitation is not consumed yet, or the claim is refused. The
+            // next interval tries again.
+          }
+        })();
+      }
+      scheduleInvitationWork();
+    }, ONLINE_QUEUE_POLL_INTERVAL_MS);
+  }
+
   function registerGuestCredential(credential: GuestOnlineCredential, owner: 'account' | 'guest' = 'guest'): void {
     const key = `${credential.matchId}:${credential.seat}`;
     const previous = seats.get(key);
@@ -987,6 +1102,10 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     const binding: OnlineSeatBinding = { matchId, seat, credential: authority };
     workspace.attach(binding);
     workspace.focus(matchId);
+    // The own agent of the owner is bound to the seat of this match, with the
+    // private selection the owner chose. The binding never uses the entry of
+    // a queue and never guesses from a public label.
+    if (agent) bindAgentSeat(matchId, seat, agent.label);
   }
 
   /**
@@ -1007,9 +1126,8 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       const registered = seats.get(key);
       if (!registered) continue;
       if (engineTurns.get(key) === view.version) continue;
-      const sideToMove = view.positionFen.split(' ')[1] === 'b' ? 'black' : 'white';
-      const replySeat = view.clock.replySeat;
-      const isTurn = replySeat !== null ? replySeat === engineSeat.seat : sideToMove === engineSeat.seat;
+      const sideToMove = onlineSideToMove(view);
+      const isTurn = sideToMove === engineSeat.seat;
       if (!isTurn) continue;
       engineTurns.set(key, view.version);
       let engine = engineSeats.get(key);
@@ -1067,8 +1185,36 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * another model. The binding stays in the browser.
    */
   function bindAgentSeat(matchId: string, seat: Seat, label: string): void {
-    if (!agent) return;
-    agentBindings.set(`${matchId}:${seat}`, { label, selection: agent.selection });
+    // The binding uses the exact private selection of the chosen label. It
+    // never falls back to another model, and a label the owner never
+    // connected binds nothing.
+    const selection = agentCatalog.get(label);
+    if (!selection) return;
+    const key = `${matchId}:${seat}`;
+    agentBindings.set(key, { label, selection });
+    const identity = queueIdentity();
+    const bindings = readAgentBindings(identity)
+      .filter(binding => !(binding.matchId === matchId && binding.seat === seat));
+    bindings.push({ matchId, seat, label, selection });
+    writeAgentBindings(identity, bindings);
+  }
+
+  /**
+   * The private selection bound to one seat.
+   *
+   * The answer is null when the seat has no binding. The interface then asks
+   * the owner to choose the agent of the seat; the browser never guesses.
+   */
+  function agentBindingFor(matchId: string, seat: Seat): { readonly label: string; readonly selection: ModelSelection } | null {
+    const key = `${matchId}:${seat}`;
+    const inMemory = agentBindings.get(key);
+    if (inMemory) return inMemory;
+    const identity = queueIdentity();
+    const persisted = readAgentBindings(identity)
+      .find(binding => binding.matchId === matchId && binding.seat === seat);
+    if (!persisted) return null;
+    agentBindings.set(key, { label: persisted.label, selection: persisted.selection });
+    return { label: persisted.label, selection: persisted.selection };
   }
 
   /**
@@ -1089,13 +1235,13 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       if (!seatView || seatView.control.kind !== 'agent') continue;
       // The browser runs the agent of the owner. The binding is the private
       // selection of this seat, never a guess from the public label: two
-      // private models can carry the same canonical label.
+      // private models can carry the same canonical label. A seat without a
+      // binding waits for the owner to choose the agent of the seat.
       const key = `${view.matchId}:${ownSeat}`;
-      const binding = agentBindings.get(key) ?? (
-        agent ? { label: seatView.control.modelLabel ?? agent.label, selection: agent.selection } : null
-      );
+      const binding = agentBindingFor(view.matchId, ownSeat);
       if (!binding) continue;
       let runner = agentRunners.get(key);
+      let created = false;
       if (!runner) {
         const authority = seatAuthority(view.matchId, ownSeat);
         if (!authority) continue;
@@ -1126,9 +1272,13 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         });
         agentRunners.set(key, runner);
         runner.subscribe(() => notify());
+        created = true;
       }
       runner.applySnapshot(providerRunnerSnapshot(view, ownSeat));
-      void runner.start().catch(() => undefined);
+      // Only a new runner starts on its own. A snapshot never resumes a
+      // runner the owner stopped, and it never resets the phase of an owner
+      // decision.
+      if (created) void runner.start().catch(() => undefined);
     }
   }
 
@@ -1236,6 +1386,17 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       for (const entry of entries) agentCatalog.set(entry.label, entry.selection);
       notify();
     },
+    get agentCatalog() {
+      return [...agentCatalog.keys()].map(label => ({ label }));
+    },
+    agentBindingFor(matchId: string, seat: Seat) {
+      return agentBindingFor(matchId, seat)?.label ?? null;
+    },
+    bindAgentSeat(matchId: string, seat: Seat, label: string) {
+      bindAgentSeat(matchId, seat, label);
+      driveAgentSeats();
+      notify();
+    },
     async enterQueue(request, enterOptions) {
       if (enterOptions?.intent === 'new') {
         // An explicit second game owns its own intent. The intents of the
@@ -1253,6 +1414,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     },
     commandClient,
     registerGuestCredential,
+    trackInvitation,
     presenceClient,
     agentRunnerState(matchId, seat) {
       return agentRunners.get(`${matchId}:${seat}`)?.state ?? null;

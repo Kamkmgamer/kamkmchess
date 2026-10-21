@@ -382,6 +382,45 @@ describe('the online composition wires the product (B-2, B-5, B-7, B-12)', () =>
 });
 
 describe('the agent binding follows the seat, never the public label (B-26)', () => {
+  it('binds the exact private selection of the chosen label and keeps it in the browser', () => {
+    const storage = createStorage();
+    const { composition } = createComposition({ storage });
+    const first = { connectionId: 'c1', modelRoutingId: 'm1', protocol: 'chat-completions', configurationRevision: 'r1', diagnostic: 'passed-current-session' } as unknown as ModelSelection;
+    const second = { connectionId: 'c2', modelRoutingId: 'm2', protocol: 'chat-completions', configurationRevision: 'r2', diagnostic: 'passed-current-session' } as unknown as ModelSelection;
+    composition.setAgentCatalog([{ label: 'My agent', selection: first }, { label: 'Other model', selection: second }]);
+    // A seat without a binding has no agent: the browser never guesses one.
+    expect(composition.agentBindingFor('match-00000001', 'white')).toBeNull();
+    // The owner chooses the agent of the seat.
+    composition.bindAgentSeat('match-00000001', 'white', 'Other model');
+    expect(composition.agentBindingFor('match-00000001', 'white')).toBe('Other model');
+    // The binding is stored in the browser, so a reload keeps it.
+    const reloaded = createComposition({ storage });
+    expect(reloaded.composition.agentBindingFor('match-00000001', 'white')).toBe('Other model');
+    composition.dispose();
+    reloaded.composition.dispose();
+  });
+
+  it('binds the own agent of the owner to the seat of the assigned match', () => {
+    const { composition } = createComposition();
+    const selection = { connectionId: 'c1', modelRoutingId: 'm1' } as unknown as ModelSelection;
+    composition.setAgentCatalog([{ label: 'My agent', selection }]);
+    composition.setAgent({ label: 'My agent', selection });
+    // The assignment knows the match and the seat of the owner. The binding
+    // uses exactly those, never the entry of a queue.
+    composition.attachAndFocus('match-00000042', 'black');
+    expect(composition.agentBindingFor('match-00000042', 'black')).toBe('My agent');
+    expect(composition.agentBindingFor('match-00000042', 'white')).toBeNull();
+    composition.dispose();
+  });
+
+  it('binds nothing for a label the owner never connected', () => {
+    const { composition } = createComposition();
+    composition.setAgentCatalog([{ label: 'My agent', selection: { connectionId: 'c1', modelRoutingId: 'm1' } as unknown as ModelSelection }]);
+    composition.bindAgentSeat('match-00000001', 'white', 'Unknown model');
+    expect(composition.agentBindingFor('match-00000001', 'white')).toBeNull();
+    composition.dispose();
+  });
+
   it('resolves the private selection of a switch and never relabels the old one', async () => {
     const { composition } = createComposition();
     const first = { connectionId: 'c1', modelRoutingId: 'm1', protocol: 'chat-completions', configurationRevision: 'r1', diagnostic: 'passed-current-session' } as unknown as ModelSelection;

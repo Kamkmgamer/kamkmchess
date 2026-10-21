@@ -20,7 +20,7 @@
  * - The credential travels in a request header. It never travels in a URL, a
  *   query string or a body.
  */
-import { createFetchFriendTransport, createFriendClient } from './friends';
+import { createFetchFriendTransport, createFriendClient, isLocallyOwnedInvitation } from './friends';
 import type {
   FriendClient,
   FriendSeatCredential,
@@ -60,11 +60,16 @@ export interface FriendSurface {
   /** Cancels an invitation this browser created. */
   cancel(invitationId: string): Promise<FriendInvitation>;
   /** Claims the seat credential of the inviter of a consumed invitation. */
-  claimSeatCredential(invitationId: string): Promise<FriendSeatCredential>;
+  claimSeatCredential(invitationId: string, ownerToken: string): Promise<FriendSeatCredential>;
   /** Proposes a rematch of a finished match. */
   proposeRematch(matchId: string, request?: { timeControl?: TimeControl; startingFen?: string }): Promise<FriendRematch>;
-  /** Accepts a rematch offer. */
-  acceptRematch(rematchId: string): Promise<FriendRematchAccepted>;
+  /**
+   * Accepts a rematch offer.
+   *
+   * A guest that lost the answer of its acceptance rotates its credential, so
+   * the recovery never depends on the lost answer.
+   */
+  acceptRematch(rematchId: string, request?: { rotateCredential?: boolean }): Promise<FriendRematchAccepted>;
   /** Reads the pending rematch offer of a match. */
   pendingRematch(matchId: string): Promise<FriendRematch | null>;
 }
@@ -90,6 +95,8 @@ export interface FriendSurfaceOptions {
  * matching worker. It adds only the browser owned parts.
  */
 export function createFriendSurface(options: FriendSurfaceOptions): FriendSurface {
+  /** The invitations this browser created. */
+  const ownedInvitations = new Set<string>();
   /**
    * The canonical client of one call.
    *
@@ -111,13 +118,14 @@ export function createFriendSurface(options: FriendSurfaceOptions): FriendSurfac
       // The owner token is the recoverable ownership of the invitation. It
       // stays in the browser.
       options.secrets.rememberOwnerToken(created.invitation.invitationId, created.ownerToken);
+      ownedInvitations.add(created.invitation.invitationId);
       return created;
     },
     async preview(invitationId) {
       return (await clientFor()).readInvitation(invitationId);
     },
     async accept(invitationId, control) {
-      if (options.secrets.ownsInvitation(invitationId)) {
+      if (isLocallyOwnedInvitation(invitationId, ownedInvitations)) {
         // The browser created the invitation. It cannot accept its own
         // invitation, and it does not consume it.
         throw new Error('This browser created the invitation.');
@@ -132,9 +140,7 @@ export function createFriendSurface(options: FriendSurfaceOptions): FriendSurfac
       if (!ownerToken) throw new Error('This browser does not own the invitation.');
       return (await clientFor()).cancelInvitation(invitationId, ownerToken);
     },
-    async claimSeatCredential(invitationId) {
-      const ownerToken = options.secrets.readOwnerToken(invitationId);
-      if (!ownerToken) throw new Error('This browser does not own the invitation.');
+    async claimSeatCredential(invitationId, ownerToken) {
       return (await clientFor()).claimSeatCredential(invitationId, ownerToken);
     },
     async proposeRematch(matchId, request) {
@@ -144,8 +150,10 @@ export function createFriendSurface(options: FriendSurfaceOptions): FriendSurfac
         ...(request?.startingFen ? { startingFen: request.startingFen } : {}),
       });
     },
-    async acceptRematch(rematchId) {
-      return (await clientFor()).acceptRematch(rematchId);
+    async acceptRematch(rematchId, request) {
+      return (await clientFor()).acceptRematch(rematchId, {
+        ...(request?.rotateCredential === undefined ? {} : { rotateCredential: request.rotateCredential }),
+      });
     },
     async pendingRematch(matchId) {
       return (await clientFor()).readPendingRematch(matchId);
