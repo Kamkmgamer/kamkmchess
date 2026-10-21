@@ -214,7 +214,11 @@ func (s *Service) ReconcileDeadlines(ctx context.Context, limit int) (DeadlineSw
 // The abort needs no chess rules, so the decision is taken under a fresh lock
 // and a freshly sampled decision time.
 func (s *Service) settleOpeningExpiry(ctx context.Context, snapshot Match) (DeadlineOutcome, error) {
-	tx, err := s.db.Begin(ctx)
+	// The gate is taken before the match row, so a suspension is ordered
+	// after the settlement and the clock of a match that is about to be
+	// refunded is never settled. The shared gate lock holds until the
+	// transaction ends, so the gate state is stable for the whole write.
+	tx, err := s.beginTrustedMutation(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -286,7 +290,11 @@ func (s *Service) settleClockExpiry(ctx context.Context, snapshot Match) (Deadli
 		return "", err
 	}
 
-	tx, err := s.db.Begin(ctx)
+	// The gate is taken before the match row, so a suspension is ordered
+	// after the settlement and the clock of a match that is about to be
+	// refunded is never settled. The shared gate lock holds until the
+	// transaction ends, so the gate state is stable for the whole write.
+	tx, err := s.beginTrustedMutation(ctx)
 	if err != nil {
 		return "", err
 	}

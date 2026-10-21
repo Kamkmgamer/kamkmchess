@@ -143,10 +143,10 @@ func (s *Service) createMatchInTx(ctx context.Context, tx pgx.Tx, cmd Command, s
 	// orders it against another allocation of the same match. Both locks are
 	// taken before the receipt is read again, so two allocations of one match
 	// wait for each other instead of racing for the insert.
+	//
+	// The order of the shared seams is fixed: the account scopes, then the
+	// gate, then the match scope.
 	if err = LockAccountScopes(ctx, tx, []ParticipantRef{setup.Seats.White.Participant, setup.Seats.Black.Participant}); err != nil {
-		return CommandResult{}, err
-	}
-	if err = locks.LockMatchScope(ctx, tx, cmd.MatchID); err != nil {
 		return CommandResult{}, err
 	}
 	// The shared gate refuses the allocation when the service is suspended,
@@ -154,6 +154,9 @@ func (s *Service) createMatchInTx(ctx context.Context, tx pgx.Tx, cmd Command, s
 	// transaction, so a refused allocation consumes nothing: the invitation
 	// or the queue entry of that transaction is rolled back with it.
 	if err = s.requireGate(ctx, tx); err != nil {
+		return CommandResult{}, err
+	}
+	if err = locks.LockMatchScope(ctx, tx, cmd.MatchID); err != nil {
 		return CommandResult{}, err
 	}
 	// The receipt is read again under the locks. The allocation that waited

@@ -290,7 +290,7 @@ func (s *Service) Heartbeat(ctx context.Context, actor ParticipantRef, matchID s
 	if seat != SeatWhite && seat != SeatBlack {
 		return SeatPresence{}, ErrInvalidArgument
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return SeatPresence{}, err
 	}
@@ -351,7 +351,7 @@ func (s *Service) KeepWaiting(ctx context.Context, actor ParticipantRef, matchID
 	if seat != SeatWhite && seat != SeatBlack {
 		return SeatPresence{}, ErrInvalidArgument
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return SeatPresence{}, err
 	}
@@ -490,7 +490,7 @@ func (s *Service) ClaimAbandonment(ctx context.Context, actor ParticipantRef, cm
 	if err != nil {
 		return CommandResult{}, err
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}

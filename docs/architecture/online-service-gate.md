@@ -44,7 +44,7 @@ presence view reports the recovering state.
 The shared seams take their locks in one fixed order:
 
 ```
-invitation or rematch row (caller) -> account scope locks (ascending) -> match scope lock -> gate lock -> match row locks
+invitation or rematch row (caller) -> account scope locks (ascending) -> gate lock -> match scope lock -> match row locks
 ```
 
 - The account scope lock is the shared `locks.AccountScope` /
@@ -52,12 +52,17 @@ invitation or rematch row (caller) -> account scope locks (ascending) -> match s
   the online writer, the authorization service, the privacy service, the
   profile service and the private store take exactly the same lock. The
   exported API of the `locks` package is unchanged.
+- The gate lock is a PostgreSQL advisory lock. A mutation takes the shared
+  lock and a suspension takes the exclusive one. The gate is taken **before**
+  the match row lock, so a suspension is committed after the mutations that
+  are already running and the gate state stays stable for the whole
+  transaction.
 - The match scope lock orders two allocations of the same match. A match that
   does not exist yet has no row to lock, so the scope lock is what makes two
   allocations of one match wait for each other instead of racing for the
   insert.
-- The gate lock is a PostgreSQL advisory lock. A mutation takes the shared
-  lock and a suspension takes the exclusive one.
+- The trusted deadline sweep takes the gate before the match row as well, so
+  a match whose clock is about to be refunded is never settled by the sweep.
 - A flow that never holds a seat lock must not take one while it holds an
   account scope lock. The privacy flow sanitizes invitations and rematches
   while it holds the account scope, so it must not take an invitation lock

@@ -176,7 +176,7 @@ func (s *Service) AcquireRunnerLease(ctx context.Context, actor ParticipantRef, 
 	if err := req.Validate(); err != nil {
 		return RunnerLease{}, err
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return RunnerLease{}, err
 	}
@@ -275,7 +275,7 @@ func (s *Service) RenewRunnerLease(ctx context.Context, actor ParticipantRef, re
 	if req.LeaseID == "" {
 		return RunnerLease{}, ErrInvalidArgument
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return RunnerLease{}, err
 	}
@@ -384,7 +384,7 @@ func (s *Service) ReleaseRunnerLease(ctx context.Context, actor ParticipantRef, 
 	if req.LeaseID == "" {
 		return RunnerLease{}, ErrInvalidArgument
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return RunnerLease{}, err
 	}
@@ -499,7 +499,7 @@ func (s *Service) writeRunnerRequest(ctx context.Context, actor ParticipantRef, 
 	if err := req.Validate(); err != nil {
 		return RunnerLease{}, err
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return RunnerLease{}, err
 	}

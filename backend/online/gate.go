@@ -172,6 +172,60 @@ func LockAccountScopes(ctx context.Context, tx pgx.Tx, participants []Participan
 	return locks.LockAccountScopes(ctx, tx, scopes)
 }
 
+// beginMutation opens the transaction of a participant mutation and takes the
+// shared locks in the fixed order.
+//
+// The order is the account scope of the actor, then the gate, and the match
+// row lock follows. Every flow that touches the same participant and the same
+// match takes its locks in that order, so an accepted command, a trusted
+// allocation and a removal are ordered instead of deadlocking.
+//
+// The gate is taken before the match row on purpose. The shared gate lock
+// keeps the gate state stable until the transaction ends, so a suspension
+// waits for the running mutation instead of racing it.
+func (s *Service) beginMutation(ctx context.Context, actor ParticipantRef) (pgx.Tx, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.lockActorScope(ctx, tx, actor); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	if err = s.requireGate(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	return tx, nil
+}
+
+// beginTrustedMutation opens the transaction of a trusted mutation and takes
+// the shared gate lock.
+//
+// A trusted mutation has no participant, so it takes no account scope. The
+// trusted allocator takes the account scopes of its participants itself.
+func (s *Service) beginTrustedMutation(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err = s.requireGate(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		return nil, err
+	}
+	return tx, nil
+}
+
+// lockActorScope takes the account scope lock of the actor.
+//
+// A guest has no account scope, so only an account actor takes one.
+func (s *Service) lockActorScope(ctx context.Context, tx pgx.Tx, actor ParticipantRef) error {
+	if actor.Kind != ParticipantAccount {
+		return nil
+	}
+	return locks.LockAccountScope(ctx, tx, locks.AccountScope(string(actor.Kind), actor.ID))
+}
+
 // gateState reads the durable admission state of the service.
 //
 // A read that fails is reported as a closed gate, so a client never sees an

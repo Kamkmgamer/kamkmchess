@@ -690,7 +690,13 @@ func (s *Service) openServiceEpoch(ctx context.Context, conn *pgxpool.Conn, note
 	if err = tx.QueryRow(ctx, `SELECT COALESCE(MAX(epoch),1)+1 FROM online_service_epochs`).Scan(&epoch); err != nil {
 		return 0, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO online_service_epochs(epoch,started_at,note) VALUES($1,clock_timestamp(),$2)`, epoch, note); err != nil {
+	// The epoch starts on the authoritative clock of the writer, so the
+	// completion of the recovery is never before its start.
+	started, err := s.now(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO online_service_epochs(epoch,started_at,note) VALUES($1,$2,$3)`, epoch, started, note); err != nil {
 		return 0, err
 	}
 	if err = tx.Commit(ctx); err != nil {

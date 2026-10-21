@@ -159,7 +159,7 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	s.noteEvaluatorSuccess()
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -173,13 +173,6 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 	if duplicate, err := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
 		return duplicate, nil
 	} else if !errors.Is(err, ErrNotFound) {
-		return CommandResult{}, err
-	}
-	// The shared gate refuses the creation when the service is suspended,
-	// restoring or still recovering. The check runs inside the acceptance
-	// transaction, after the rules process validated the setup, so a
-	// creation that started before a suspension cannot commit after it.
-	if err = s.requireGate(ctx, tx); err != nil {
 		return CommandResult{}, err
 	}
 	var decision time.Time
@@ -375,7 +368,7 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 	if candidate.EvaluatedVersion != cmd.ExpectedVersion || candidate.ControlEpoch != cmd.ControlEpoch {
 		return CommandResult{}, ErrStaleCandidate
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -410,13 +403,6 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 		return CommandResult{}, ErrNotAuthorized
 	}
 	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
-		return CommandResult{}, err
-	}
-	// The shared gate refuses the acceptance when the service is suspended,
-	// restoring or still recovering. The check runs inside the acceptance
-	// transaction, after the rules process answered, so a command that
-	// started before a suspension cannot commit after it.
-	if err = s.requireGate(ctx, tx); err != nil {
 		return CommandResult{}, err
 	}
 	// The decision time is re-sampled after every participant lock is held.
@@ -529,7 +515,7 @@ func (s *Service) executeOffer(ctx context.Context, actor ParticipantRef, cmd Co
 	if err != nil {
 		return CommandResult{}, err
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -556,11 +542,6 @@ func (s *Service) executeOffer(ctx context.Context, actor ParticipantRef, cmd Co
 		return CommandResult{}, ErrNotAuthorized
 	}
 	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
-		return CommandResult{}, err
-	}
-	// The shared gate refuses the mutation when the service is suspended,
-	// restoring or still recovering.
-	if err = s.requireGate(ctx, tx); err != nil {
 		return CommandResult{}, err
 	}
 	if decision, err = s.sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
@@ -675,7 +656,7 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 	if err != nil {
 		return CommandResult{}, err
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -707,11 +688,6 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		return CommandResult{}, ErrNotAuthorized
 	}
 	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
-		return CommandResult{}, err
-	}
-	// The shared gate refuses the mutation when the service is suspended,
-	// restoring or still recovering.
-	if err = s.requireGate(ctx, tx); err != nil {
 		return CommandResult{}, err
 	}
 	// The decision time is re-sampled after every participant lock is held.
@@ -1052,7 +1028,7 @@ func (s *Service) resolveExpiredMatch(ctx context.Context, actor ParticipantRef,
 		return CommandResult{}, err
 	}
 
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -1110,7 +1086,7 @@ func (s *Service) resolveOpeningExpired(ctx context.Context, actor ParticipantRe
 	if snapshot.Clock.ReplySeat == nil {
 		return CommandResult{}, ErrConflict
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
