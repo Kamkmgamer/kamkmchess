@@ -148,38 +148,52 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	if err != nil {
 		return nil, nil, errors.New("database initialization failed")
 	}
-	if err = pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, nil, errors.New("database is unavailable")
-	}
 	// The owned resources are released on every exit, so a failed start
 	// never leaves a rules worker process behind.
 	owned := &closerSet{}
 	closeAll := owned.release
-	evaluator, closeWorker, err := openEvaluator(cfg.Online.RulesWorkerEntry)
-	if err != nil {
+	// Every exit that does not hand the composition over releases the owned
+	// resources and closes the pool. The guard is disarmed when the
+	// composition is handed over, so the release function owns everything
+	// from then on.
+	//
+	// The guard exists because a boot has many exits, and an exit that
+	// forgets the cleanup leaks the rules worker of a service that never
+	// served a request. No exit may skip it, and the history and the queue
+	// exits are no exception: their services fail closed on a broken
+	// dependency, and the worker of the failed boot still has to go.
+	booted := false
+	defer func() {
+		if booted {
+			return
+		}
+		closeAll()
 		pool.Close()
+	}()
+	if err = pool.Ping(ctx); err != nil {
+		return nil, nil, errors.New("database is unavailable")
+	}
+	evaluator, closeWorker, err := openEvaluator(ctx, cfg.Online.RulesWorkerEntry)
+	if closeWorker != nil {
+		// The closer is owned even when the start failed, so the guard
+		// releases the worker of a failed boot.
+		owned.own(closeWorker)
+	}
+	if err != nil {
 		return nil, nil, err
 	}
-	owned.own(closeWorker)
 	// The durable health boundary. A service without a rules process cannot
 	// evaluate online play, so it reports itself unavailable and never
 	// offers an abandonment claim.
 	health := online.NewHealthReporter(pool)
 	if evaluator == nil {
 		if err = health.ReportDependency(ctx, online.DependencyRules, online.HealthUnavailable, "no rules worker is configured"); err != nil {
-			closeAll()
-			pool.Close()
 			return nil, nil, errors.New("online health initialization failed")
 		}
-	} else if err = health.ReportDependency(ctx, online.DependencyRules, online.HealthHealthy, "the rules process is configured"); err != nil {
-		closeAll()
-		pool.Close()
+	} else if err = health.ReportDependency(ctx, online.DependencyRules, online.HealthHealthy, "the rules process answered at boot"); err != nil {
 		return nil, nil, errors.New("online health initialization failed")
 	}
 	if err = health.ReportDependency(ctx, online.DependencyDatabase, online.HealthHealthy, "the shared state is reachable"); err != nil {
-		closeAll()
-		pool.Close()
 		return nil, nil, errors.New("online health initialization failed")
 	}
 	authorizer, err := onlineauth.Open(ctx, pool, verifier, onlineauth.Options{
@@ -188,37 +202,27 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		StreamMaxDuration:  cfg.Online.StreamMaxDuration,
 	})
 	if err != nil {
-		closeAll()
-		pool.Close()
 		return nil, nil, errors.New("online authorization initialization failed")
 	}
 	// The privacy service owns the removal ledger, the restore gate and the
 	// fence of a deleted account.
 	privacyService, err := privacy.Open(ctx, pool, authorizer, privacy.Options{FencePath: cfg.Online.RestoreFencePath})
 	if err != nil {
-		closeAll()
-		pool.Close()
 		return nil, nil, errors.New("privacy service initialization failed")
 	}
 	// The admission check runs before any background work starts, so a
 	// database that may not serve traffic never starts a worker or a sweep.
 	allowed, err := privacyService.ServingAllowed(ctx)
 	if err != nil {
-		closeAll()
-		pool.Close()
 		return nil, nil, errors.New("the removal ledger could not be verified")
 	}
 	if !allowed {
-		closeAll()
-		pool.Close()
 		return nil, nil, errors.New("the restored database has an unreplayed removal ledger")
 	}
 	// The private store consults the account gate inside its write
 	// transactions, so a deleted account cannot write again.
 	store, err := storage.Open(ctx, pool, storage.WithAccountGate(privacyService))
 	if err != nil {
-		closeAll()
-		pool.Close()
 		return nil, nil, errors.New("storage initialization failed")
 	}
 	// The authorization service is the participant authorizer. The writer
@@ -231,8 +235,6 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		online.WithRecoveryGate(),
 	)
 	if err != nil {
-		closeAll()
-		pool.Close()
 		return nil, nil, errors.New("online service initialization failed")
 	}
 	// The canonical recovery runs before the service accepts traffic. The
@@ -245,8 +247,6 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// account and the explicit guest link. It writes only its own tables.
 	profileService, err := profile.Open(ctx, pool, authorizer, profile.Options{})
 	if err != nil {
-		closeAll()
-		pool.Close()
 		return nil, nil, errors.New("public profile initialization failed")
 	}
 	// The history service publishes the allowlisted public replay and the
@@ -254,7 +254,6 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// own tables, and it never writes match state.
 	historyService, err := history.Open(ctx, pool, profileService, history.Options{})
 	if err != nil {
-		pool.Close()
 		return nil, nil, errors.New("public history initialization failed")
 	}
 	root := http.NewServeMux()
@@ -278,8 +277,6 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 			InvitationTTL:      invite.InvitationTTL,
 		})
 		if err != nil {
-			closeAll()
-			pool.Close()
 			return nil, nil, errors.New("friend invitation initialization failed")
 		}
 		friendHandler := httpapi.NewFriends(friendService, onlineService, authorizer, httpapi.FriendsOptions{
@@ -302,7 +299,6 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		// match row itself.
 		allocator, ok := any(onlineService).(queue.MatchAllocator)
 		if !ok {
-			pool.Close()
 			return nil, nil, errors.New("the public queue needs the shared match allocator")
 		}
 		queueService, err = queue.Open(ctx, pool, queue.Options{
@@ -311,7 +307,6 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 			Credentials: onlineauth.NewAllocator(authorizer),
 		})
 		if err != nil {
-			pool.Close()
 			return nil, nil, errors.New("public queue initialization failed")
 		}
 		root.Handle("/v1/online/queue/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders,
@@ -378,11 +373,28 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		closeAll()
 		pool.Close()
 	}
+	// The composition is handed over, so the release function owns the
+	// resources from now on and the guard of a failed boot stands down.
+	booted = true
 	return handler, release, nil
 }
 
-// openEvaluator starts the private rules process when one is configured.
-func openEvaluator(entry string) (online.Evaluator, func(), error) {
+// openEvaluator creates the rules evaluator of the service.
+//
+// The worker is warmed at boot, so the health probe never faces a cold
+// start. A probe that started the worker would hold the slot of the worker
+// for the whole start, and a participant that arrived behind it would run
+// out of its own request budget and report an outage that never happened.
+//
+// A warm that fails stops the boot. The service must never report a
+// dependency it could not prove, and the probe cannot repair the failure
+// afterwards: the probe of a cold worker cannot tell a busy worker from a
+// broken one, so an ignored failure could neither degrade the dependency nor
+// recover it.
+//
+// The closer of the worker is returned even when the warm failed, so the
+// owner of the composition releases the worker of the failed boot.
+func openEvaluator(ctx context.Context, entry string) (online.Evaluator, func(), error) {
 	if entry == "" {
 		return nil, nil, nil
 	}
@@ -395,7 +407,15 @@ func openEvaluator(entry string) (online.Evaluator, func(), error) {
 		_ = client.Close()
 		return nil, nil, errors.New("online rules worker initialization failed")
 	}
-	return evaluator, func() { _ = client.Close() }, nil
+	closeClient := func() { _ = client.Close() }
+	if err = client.Warm(ctx); err != nil {
+		// The boot stops here. The cause is logged for the operator, and the
+		// closer of the worker is returned, so the owner of the composition
+		// closes and reaps the worker of the failed boot.
+		slog.Default().Error("the rules worker did not start at boot", "error", err)
+		return nil, closeClient, errors.New("online rules worker did not start at boot")
+	}
+	return evaluator, closeClient, nil
 }
 
 func csv(value string) []string {
