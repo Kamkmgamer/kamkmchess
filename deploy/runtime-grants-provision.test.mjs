@@ -49,15 +49,16 @@ test('the deployment applies every statement of the reviewed renderer', () => {
 });
 
 test('the deployment grants the sequence of the checkpoints and takes it away first', () => {
+  // The capture keeps the order of the statements, so the order of the
+  // revoke and of the grant is the order the deployment applies them.
+  const ordered = statements.map(canonicalStatement);
   for (const sequence of Object.keys(policy.sequences)) {
-    assert.ok(
-      applied.has(`REVOKE ALL ON SEQUENCE public.${sequence} FROM ${policy.role}`),
-      `the deployment does not take the sequence ${sequence} away from the runtime role`,
-    );
-    assert.ok(
-      applied.has(`GRANT USAGE ON SEQUENCE public.${sequence} TO ${policy.role}`),
-      `the deployment does not grant the usage of the sequence ${sequence}`,
-    );
+    const verbs = [...policy.sequences[sequence]].map((verb) => String(verb).toUpperCase()).sort().join(', ');
+    const revoke = ordered.indexOf(`REVOKE ALL ON SEQUENCE public.${sequence} FROM ${policy.role}`);
+    const grant = ordered.indexOf(`GRANT ${verbs} ON SEQUENCE public.${sequence} TO ${policy.role}`);
+    assert.ok(revoke >= 0, `the deployment does not take the sequence ${sequence} away from the runtime role`);
+    assert.ok(grant >= 0, `the deployment does not grant the usage of the sequence ${sequence}`);
+    assert.ok(revoke < grant, `the deployment grants the sequence ${sequence} before it takes the privileges away`);
   }
 });
 
