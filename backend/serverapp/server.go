@@ -152,34 +152,33 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		pool.Close()
 		return nil, nil, errors.New("database is unavailable")
 	}
+	// The owned resources are released on every exit, so a failed start
+	// never leaves a rules worker process behind.
+	owned := &closerSet{}
+	closeAll := owned.release
 	evaluator, closeWorker, err := openEvaluator(cfg.Online.RulesWorkerEntry)
 	if err != nil {
 		pool.Close()
 		return nil, nil, err
 	}
+	owned.own(closeWorker)
 	// The durable health boundary. A service without a rules process cannot
 	// evaluate online play, so it reports itself unavailable and never
 	// offers an abandonment claim.
 	health := online.NewHealthReporter(pool)
 	if evaluator == nil {
 		if err = health.ReportDependency(ctx, online.DependencyRules, online.HealthUnavailable, "no rules worker is configured"); err != nil {
-			if closeWorker != nil {
-				closeWorker()
-			}
+			closeAll()
 			pool.Close()
 			return nil, nil, errors.New("online health initialization failed")
 		}
 	} else if err = health.ReportDependency(ctx, online.DependencyRules, online.HealthHealthy, "the rules process is configured"); err != nil {
-		if closeWorker != nil {
-			closeWorker()
-		}
+		closeAll()
 		pool.Close()
 		return nil, nil, errors.New("online health initialization failed")
 	}
 	if err = health.ReportDependency(ctx, online.DependencyDatabase, online.HealthHealthy, "the shared state is reachable"); err != nil {
-		if closeWorker != nil {
-			closeWorker()
-		}
+		closeAll()
 		pool.Close()
 		return nil, nil, errors.New("online health initialization failed")
 	}
@@ -189,9 +188,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		StreamMaxDuration:  cfg.Online.StreamMaxDuration,
 	})
 	if err != nil {
-		if closeWorker != nil {
-			closeWorker()
-		}
+		closeAll()
 		pool.Close()
 		return nil, nil, errors.New("online authorization initialization failed")
 	}
@@ -199,9 +196,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// fence of a deleted account.
 	privacyService, err := privacy.Open(ctx, pool, authorizer, privacy.Options{FencePath: cfg.Online.RestoreFencePath})
 	if err != nil {
-		if closeWorker != nil {
-			closeWorker()
-		}
+		closeAll()
 		pool.Close()
 		return nil, nil, errors.New("privacy service initialization failed")
 	}
@@ -209,16 +204,12 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// database that may not serve traffic never starts a worker or a sweep.
 	allowed, err := privacyService.ServingAllowed(ctx)
 	if err != nil {
-		if closeWorker != nil {
-			closeWorker()
-		}
+		closeAll()
 		pool.Close()
 		return nil, nil, errors.New("the removal ledger could not be verified")
 	}
 	if !allowed {
-		if closeWorker != nil {
-			closeWorker()
-		}
+		closeAll()
 		pool.Close()
 		return nil, nil, errors.New("the restored database has an unreplayed removal ledger")
 	}
@@ -226,38 +217,20 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// transactions, so a deleted account cannot write again.
 	store, err := storage.Open(ctx, pool, storage.WithAccountGate(privacyService))
 	if err != nil {
-		if closeWorker != nil {
-			closeWorker()
-		}
+		closeAll()
 		pool.Close()
 		return nil, nil, errors.New("storage initialization failed")
-	}
-	// The rules health probe has its own evaluator. The shared client admits
-	// one request at a time, so a probe on the shared client would queue
-	// behind a healthy request and could report an overload as an outage.
-	probeEvaluator, closeProbe, err := openEvaluator(cfg.Online.RulesWorkerEntry)
-	if err != nil {
-		if closeWorker != nil {
-			closeWorker()
-		}
-		pool.Close()
-		return nil, nil, err
 	}
 	// The authorization service is the participant authorizer. The writer
 	// re-checks it inside every acceptance transaction.
 	onlineService, err := online.Open(ctx, pool, evaluator,
 		online.WithSeatAuthorizer(authorizer),
 		online.WithHealthReporter(health),
-		online.WithProbeEvaluator(probeEvaluator),
+		online.WithCancellationClassifier(rulesCancellation),
 		online.WithRecoveryGate(),
 	)
 	if err != nil {
-		if closeWorker != nil {
-			closeWorker()
-		}
-		if closeProbe != nil {
-			closeProbe()
-		}
+		closeAll()
 		pool.Close()
 		return nil, nil, errors.New("online service initialization failed")
 	}
@@ -271,9 +244,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// account and the explicit guest link. It writes only its own tables.
 	profileService, err := profile.Open(ctx, pool, authorizer, profile.Options{})
 	if err != nil {
-		if closeWorker != nil {
-			closeWorker()
-		}
+		closeAll()
 		pool.Close()
 		return nil, nil, errors.New("public profile initialization failed")
 	}
@@ -306,9 +277,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 			InvitationTTL:      invite.InvitationTTL,
 		})
 		if err != nil {
-			if closeWorker != nil {
-				closeWorker()
-			}
+			closeAll()
 			pool.Close()
 			return nil, nil, errors.New("friend invitation initialization failed")
 		}
@@ -405,9 +374,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		stopHealth()
 		stopQueue()
 		stopPublishing()
-		if closeWorker != nil {
-			closeWorker()
-		}
+		closeAll()
 		pool.Close()
 	}
 	return handler, release, nil

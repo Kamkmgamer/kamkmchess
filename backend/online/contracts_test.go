@@ -12,22 +12,23 @@ import (
 )
 
 type contractFixture struct {
-	SchemaVersion         int              `json:"schemaVersion"`
-	Command               json.RawMessage  `json:"command"`
-	CancelCommand         json.RawMessage  `json:"cancelCommand"`
-	OfferDrawCommand      json.RawMessage  `json:"offerDrawCommand"`
-	AcceptDrawCommand     json.RawMessage  `json:"acceptDrawCommand"`
-	OfferTakebackCommand  json.RawMessage  `json:"offerTakebackCommand"`
-	AcceptTakebackCommand json.RawMessage  `json:"acceptTakebackCommand"`
-	RecoveryAttemptCmd    json.RawMessage  `json:"recoveryAttemptCommand"`
-	OfferEvent            Event            `json:"offerEvent"`
-	Candidate             Candidate        `json:"candidate"`
-	TimeoutFacts          TimeoutFacts     `json:"timeoutFacts"`
-	Receipt               Receipt          `json:"receipt"`
-	PublicProjection      PublicProjection `json:"publicProjection"`
-	QueueEntry            QueueEntry       `json:"queueEntry"`
-	RunnerLease           RunnerLease      `json:"runnerLease"`
-	DeletionMarker        DeletionMarker   `json:"deletionMarker"`
+	SchemaVersion         int                   `json:"schemaVersion"`
+	Command               json.RawMessage       `json:"command"`
+	CancelCommand         json.RawMessage       `json:"cancelCommand"`
+	OfferDrawCommand      json.RawMessage       `json:"offerDrawCommand"`
+	AcceptDrawCommand     json.RawMessage       `json:"acceptDrawCommand"`
+	OfferTakebackCommand  json.RawMessage       `json:"offerTakebackCommand"`
+	AcceptTakebackCommand json.RawMessage       `json:"acceptTakebackCommand"`
+	RecoveryAttemptCmd    json.RawMessage       `json:"recoveryAttemptCommand"`
+	OfferEvent            Event                 `json:"offerEvent"`
+	Candidate             Candidate             `json:"candidate"`
+	TimeoutFacts          TimeoutFacts          `json:"timeoutFacts"`
+	Receipt               Receipt               `json:"receipt"`
+	PublicProjection      PublicProjection      `json:"publicProjection"`
+	QueueEntry            QueueEntry            `json:"queueEntry"`
+	RunnerLease           RunnerLease           `json:"runnerLease"`
+	RunnerRequest         RunnerRequestEnvelope `json:"runnerRequest"`
+	DeletionMarker        DeletionMarker        `json:"deletionMarker"`
 }
 
 func loadFixture(t *testing.T) contractFixture {
@@ -560,6 +561,7 @@ func TestNormalizeFixtureObjects(t *testing.T) {
 		"publicProjection": fixture.PublicProjection,
 		"queueEntry":       fixture.QueueEntry,
 		"runnerLease":      fixture.RunnerLease,
+		"runnerRequest":    fixture.RunnerRequest,
 		"deletionMarker":   fixture.DeletionMarker,
 	} {
 		encoded, err := json.Marshal(value)

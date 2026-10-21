@@ -317,13 +317,28 @@ func WithHealthReporter(reporter *HealthReporter) Option {
 	return func(s *Service) { s.health = reporter }
 }
 
-// WithProbeEvaluator installs the evaluator of the rules health probe.
+// WithCancellationClassifier installs the classifier of a cancelled
+// evaluation.
 //
-// The probe has its own evaluator, so it never queues behind a request of
-// the shared client. A failed probe is then a failed dependency and not an
-// overload of a healthy one.
-func WithProbeEvaluator(evaluator Evaluator) Option {
-	return func(s *Service) { s.probeEvaluator = evaluator }
+// A caller that goes away is not a broken dependency. The classifier tells
+// the writer that an evaluation was cancelled by its caller, so the durable
+// health of the rules dependency is not downgraded by a departing client.
+func WithCancellationClassifier(classify func(error) bool) Option {
+	return func(s *Service) { s.cancellation = classify }
+}
+
+// cancelled reports whether an evaluation was cancelled by its caller.
+func (s *Service) cancelled(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	if s.cancellation != nil {
+		return s.cancellation(err)
+	}
+	return false
 }
 
 // Health returns the current health of the online service.
@@ -360,38 +375,73 @@ func (s *Service) healthState(ctx context.Context) HealthState {
 	return local
 }
 
+// ProbeBudget is the time the rules health probe may take.
+//
+// The probe has no budget of its own: it uses the bound of the rules client
+// itself, so the probe never cancels an exchange that the client would have
+// answered. A caller that goes away still cancels the probe, and a client
+// that reports itself busy is not a broken dependency.
+const ProbeBudget = 0
+
+// ErrRulesBusy reports that the rules process is occupied by a running
+// request.
+//
+// A busy process is not a broken dependency, so a probe that finds the
+// process occupied leaves the durable health alone and records no
+// interruption.
+//
+// The rules client reports its taxonomy in three classes:
+//
+//   - the caller cancelled or the caller deadline passed: the context error.
+//     The caller went away, so the dependency is untouched.
+//   - the slot was occupied: ErrRulesBusy. The process is healthy and busy.
+//   - the exchange exceeded the internal bound of the worker: the error of
+//     the worker. That is an outage of the dependency.
+var ErrRulesBusy = errors.New("online: the rules process is busy")
+
 // ProbeRules checks that the private rules process answers.
 //
-// The probe is the active health signal of the rules dependency. A probe
-// fails while the process is down, even when no move is submitted, so a
-// rules outage never masquerades as an absent opponent.
+// The probe evaluates the primary rules process, so its answer is evidence
+// about the process that serves the traffic. A probe that answers can recover
+// an interruption of that process, and a probe that fails never does.
 //
-// The probe uses its own evaluator when the composition provides one. The
-// shared client admits one request at a time, so a probe on the shared
-// client would queue behind a healthy request and could report an overload
-// as an outage. A dedicated probe never queues, so a failed probe is a
-// failed dependency.
+// The probe uses the bound of the rules client, so a hung process ends in the
+// client's own timeout and stays an outage. A process that is busy with a
+// request reports ErrRulesBusy, and a caller that goes away cancels the
+// probe. Neither of them is a broken dependency.
 func (s *Service) ProbeRules(ctx context.Context) error {
-	evaluator := s.probeEvaluator
-	if evaluator == nil {
-		evaluator = s.evaluator
-	}
-	if evaluator == nil {
-		s.noteEvaluatorFailure()
+	if s.evaluator == nil {
+		s.noteEvaluatorFailure(nil)
 		return ErrUnavailable
 	}
+	probeCtx := ctx
+	if ProbeBudget > 0 {
+		var cancel context.CancelFunc
+		probeCtx, cancel = context.WithTimeout(ctx, ProbeBudget)
+		defer cancel()
+	}
 	input := probeRulesInput()
-	if err := evaluator.ValidateSetup(ctx, input); err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			// A cancelled probe says nothing about the dependency. The
-			// caller went away, not the rules process.
+	if err := s.evaluator.ValidateSetup(probeCtx, input); err != nil {
+		if s.busy(err) {
+			// The process is occupied by a running request. That is not a
+			// broken dependency.
 			return err
 		}
-		s.noteEvaluatorFailure()
+		if s.cancelled(err) {
+			// The caller went away. That is not a broken dependency
+			// either.
+			return err
+		}
+		s.noteEvaluatorFailure(err)
 		return err
 	}
 	s.noteEvaluatorSuccess()
 	return nil
+}
+
+// busy reports whether an evaluation found the rules process occupied.
+func (s *Service) busy(err error) bool {
+	return err != nil && errors.Is(err, ErrRulesBusy)
 }
 
 // probeRulesInput is the fixed, versioned input of the rules probe.
@@ -420,8 +470,13 @@ func probeRulesInput() RulesInput {
 // A failing rules service is a service outage, not an absent opponent, so
 // the failure downgrades the rules dependency and the claim option disappears
 // until a real evaluation succeeds again.
-func (s *Service) noteEvaluatorFailure() {
+func (s *Service) noteEvaluatorFailure(err error) {
 	if s.health == nil {
+		return
+	}
+	// A cancelled evaluation is a departing caller, not a broken
+	// dependency. The durable health of the rules dependency stays.
+	if s.cancelled(err) {
 		return
 	}
 	_ = s.health.ReportDependency(context.Background(), DependencyRules, HealthDegraded, "the rules process did not answer")

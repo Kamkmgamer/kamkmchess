@@ -171,6 +171,16 @@
     "createdAt": "2026-10-20T09:59:59Z",
     "updatedAt": "2026-10-20T10:00:00Z"
   },
+  "runnerRequest": {
+    "schemaVersion": 2,
+    "action": "begin",
+    "seat": "white",
+    "runnerId": "runner-tab-01",
+    "leaseId": "lease-contract-01",
+    "requestId": "request-contract-01",
+    "controlEpoch": 2,
+    "turnVersion": 4
+  },
   "runnerLease": {
     "schemaVersion": 2,
     "leaseId": "lease-contract-01",

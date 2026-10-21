@@ -335,6 +335,104 @@ export interface QueueEntry {
   updatedAt: string;
 }
 
+/**
+ * The one-way reference of a removed subject.
+ *
+ * The removal tables carry the reference instead of the identifier, and the
+ * allocation of a redacted participant is refused.
+ */
+export const ANONYMIZED_PARTICIPANT_ID = 'anonymized';
+
+/**
+ * The wire envelope of the provider request record.
+ *
+ * The envelope is the shared contract of the browser runner and the service.
+ * The service decodes it strictly, so an unknown field is refused there and
+ * here. The rules are the rules of the service: the same schema version, the
+ * same identity shape, the same bounds.
+ */
+export interface RunnerRequestEnvelope {
+  readonly schemaVersion: number;
+  readonly action: 'begin' | 'clear';
+  readonly seat: Seat;
+  readonly runnerId: string;
+  readonly leaseId: string;
+  readonly requestId: string;
+  readonly controlEpoch: number;
+  readonly turnVersion: number;
+}
+
+/** The input of the provider request envelope. */
+export interface RunnerRequestInput {
+  readonly action: 'begin' | 'clear';
+  readonly seat: Seat;
+  readonly runnerId: string;
+  readonly leaseId: string;
+  readonly requestId: string;
+  readonly controlEpoch: number;
+  readonly turnVersion: number;
+}
+
+/**
+ * Builds the provider request envelope.
+ *
+ * The browser sends exactly these fields, so the service reads the body it
+ * expects and the shared fixture describes the same shape.
+ */
+export function buildRunnerRequestEnvelope(input: RunnerRequestInput): RunnerRequestEnvelope {
+  const envelope: RunnerRequestEnvelope = {
+    schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
+    action: input.action,
+    seat: input.seat,
+    runnerId: input.runnerId,
+    leaseId: input.leaseId,
+    requestId: input.requestId,
+    controlEpoch: input.controlEpoch,
+    turnVersion: input.turnVersion,
+  };
+  // The builder refuses the same bodies the service refuses.
+  parseRunnerRequestEnvelope(envelope);
+  return envelope;
+}
+
+export function parseRunnerRequestEnvelope(value: unknown): RunnerRequestEnvelope {
+  const path = 'runnerRequestEnvelope';
+  const objectValue = object(value, path);
+  onlyKeys(objectValue, ['schemaVersion', 'action', 'seat', 'runnerId', 'leaseId', 'requestId', 'controlEpoch', 'turnVersion'], path);
+  requiredKeys(objectValue, ['schemaVersion', 'action', 'seat', 'runnerId', 'leaseId', 'requestId', 'controlEpoch', 'turnVersion'], path);
+  if (integerValue(objectValue.schemaVersion, `${path}.schemaVersion`) !== ONLINE_CONTRACTS_SCHEMA_VERSION) {
+    throw new OnlineContractError('unsupported schema version', `${path}.schemaVersion`);
+  }
+  const action = stringValue(objectValue.action, `${path}.action`);
+  if (action !== 'begin' && action !== 'clear') {
+    throw new OnlineContractError('invalid runner request action', `${path}.action`);
+  }
+  return {
+    schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
+    action,
+    seat: seatValue(objectValue.seat, `${path}.seat`),
+    runnerId: runnerIdentity(objectValue.runnerId, `${path}.runnerId`),
+    leaseId: idValue(objectValue.leaseId, `${path}.leaseId`),
+    requestId: runnerIdentity(objectValue.requestId, `${path}.requestId`),
+    controlEpoch: positiveInteger(objectValue.controlEpoch, `${path}.controlEpoch`),
+    turnVersion: nonNegativeInteger(objectValue.turnVersion, `${path}.turnVersion`),
+  };
+}
+
+/**
+ * The identity of a runner or of a provider request.
+ *
+ * The service accepts an opaque identity: it is not empty, it is bounded,
+ * and it carries no control character.
+ */
+function runnerIdentity(value: unknown, path: string): string {
+  const text = stringValue(value, path);
+  if (text.length < 1 || text.length > 128 || hasControlCharacter(text)) {
+    throw new OnlineContractError('invalid runner identity', path);
+  }
+  return text;
+}
+
 export interface RunnerLease {
   schemaVersion: number;
   leaseId: string;

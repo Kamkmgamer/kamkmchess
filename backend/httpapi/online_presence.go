@@ -68,18 +68,6 @@ type runnerLeaseRequestBody struct {
 	ControlEpoch  int64       `json:"controlEpoch"`
 }
 
-// runnerRequestBody is the body of an uncertain provider request.
-type runnerRequestBody struct {
-	SchemaVersion int         `json:"schemaVersion"`
-	Action        string      `json:"action"`
-	Seat          online.Seat `json:"seat"`
-	RunnerID      string      `json:"runnerId"`
-	LeaseID       string      `json:"leaseId"`
-	RequestID     string      `json:"requestId"`
-	TurnVersion   int64       `json:"turnVersion,omitempty"`
-	ControlEpoch  int64       `json:"controlEpoch"`
-}
-
 // presenceView returns the presence of both seats and the claim option of
 // the calling participant.
 func (a *onlineAPI) presenceView(w http.ResponseWriter, r *http.Request) {
@@ -298,31 +286,32 @@ func (a *onlineAPI) runnerRequest(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var body runnerRequestBody
-	if err := decodeOnlineBody(raw, &body); err != nil {
+	// The shared envelope is the contract of the browser runner and the
+	// service. It is decoded strictly, so an unknown field is refused.
+	envelope, err := online.ParseRunnerRequestEnvelope(raw)
+	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	if !a.seatAllowed(principal, body.Seat) {
+	if !a.seatAllowed(principal, envelope.Seat) {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
 	ctx := onlineauth.WithPrincipal(r.Context(), principal)
 	req := online.RunnerRequestRequest{
-		SchemaVersion: body.SchemaVersion,
+		SchemaVersion: envelope.SchemaVersion,
 		MatchID:       r.PathValue("matchID"),
-		Seat:          body.Seat,
-		RunnerID:      body.RunnerID,
-		LeaseID:       body.LeaseID,
-		RequestID:     body.RequestID,
-		TurnVersion:   body.TurnVersion,
-		ControlEpoch:  body.ControlEpoch,
+		Seat:          envelope.Seat,
+		RunnerID:      envelope.RunnerID,
+		LeaseID:       envelope.LeaseID,
+		RequestID:     envelope.RequestID,
+		TurnVersion:   envelope.TurnVersion,
+		ControlEpoch:  envelope.ControlEpoch,
 	}
 	var (
 		lease online.RunnerLease
-		err   error
 	)
-	switch body.Action {
+	switch envelope.Action {
 	case "begin":
 		lease, err = a.presence.BeginRunnerRequest(ctx, principal.Participant, req)
 	case "clear":

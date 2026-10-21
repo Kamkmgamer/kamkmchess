@@ -25,10 +25,9 @@ type Service struct {
 	// clock reads the authoritative time of the writer. It is the database
 	// clock in production and a movable source in the deterministic fixtures.
 	clock ClockSource
-	// probeEvaluator is the evaluator of the rules health probe. It is
-	// separate from the shared one, so a probe never queues behind a
-	// request.
-	probeEvaluator Evaluator
+	// cancellation tells whether an evaluation was cancelled by its
+	// caller rather than failed by the dependency.
+	cancellation func(error) bool
 	// recoveryRequired closes the mutation path until the canonical
 	// recovery has published the adjusted state.
 	recoveryRequired atomic.Bool
@@ -159,7 +158,7 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 		if errors.Is(err, ErrInvalidContract) || errors.Is(err, ErrActionNotAllowed) {
 			return CommandResult{}, err
 		}
-		s.noteEvaluatorFailure()
+		s.noteEvaluatorFailure(err)
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	s.noteEvaluatorSuccess()
@@ -305,7 +304,7 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 		if errors.Is(err, ErrActionNotAllowed) || errors.Is(err, ErrStaleCandidate) || errors.Is(err, ErrInvalidContract) {
 			return CommandResult{}, err
 		}
-		s.noteEvaluatorFailure()
+		s.noteEvaluatorFailure(err)
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	if err = candidate.Validate(); err != nil {
@@ -728,16 +727,10 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeAccepted, Version: nextVersion, ControlEpoch: match.ControlEpoch, DecidedAt: decision}
 	switch cmd.Action.Kind {
 	case ActionResign:
-		// A resignation of an agent seat is the agent's own action, so it
-		// needs the lease of its runner. The owner takes the seat over
-		// first when the owner wants to end the game as a human.
-		seat, ok := match.Seat(cmd.Seat)
-		if !ok {
-			return CommandResult{}, ErrNotAuthorized
-		}
-		if seat.Control.Kind != ControlHuman && cmd.LeaseID == "" {
-			return CommandResult{}, ErrNotAuthorized
-		}
+		// A resignation is the owner's own decision. The owner's manual
+		// resign never presents a runner lease, so it is never fenced by a
+		// missing lease. A runner that resigns presents its lease, and a
+		// stale lease is refused like every other stale action.
 		other, _ := cmd.Seat.Other()
 		result := &Result{Kind: ResultWin, Winner: &other, Reason: ReasonResignation}
 		match.Status = MatchCompleted

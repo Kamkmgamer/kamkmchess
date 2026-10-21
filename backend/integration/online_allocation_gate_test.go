@@ -176,6 +176,38 @@ func TestOnlineRunnerFencesTheTerminalActionsOfAStaleRunner(t *testing.T) {
 	}
 }
 
+// TestOnlineOwnerResignsItsAgentSeatWithoutALease covers the owner path.
+//
+// The owner's manual resignation of its own agent seat never presents a
+// runner lease, so it stays usable. A runner that resigns presents its lease,
+// and a stale lease is refused.
+func TestOnlineOwnerResignsItsAgentSeatWithoutALease(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	const matchID = "match-owner-resign"
+	createRunnerMatch(t, fixture.service, matchID, 20*60*1000)
+	version := acceptMovesWithLeases(t, fixture.service, matchID)
+	resign := online.Command{
+		SchemaVersion:   online.ContractsSchemaVersion,
+		MatchID:         matchID,
+		OperationID:     "op-owner-resign-agent",
+		ExpectedVersion: version,
+		Seat:            online.SeatBlack,
+		ControlEpoch:    1,
+		Action:          online.Action{Kind: online.ActionResign},
+	}
+	if _, err := fixture.service.Execute(ctx, presenceBob().ref, resign); err != nil {
+		t.Fatalf("the owner resign of its agent seat: %v", err)
+	}
+	match, err := fixture.service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if match.Result == nil || match.Result.Reason != online.ReasonResignation {
+		t.Fatalf("the result of the owner resignation = %+v, want a resignation", match.Result)
+	}
+}
+
 // TestOnlineRunnerLeaseEndsWithItsMatch covers the end of a lease.
 //
 // A lease of a finished match is not renewed, so a runner cannot hold the

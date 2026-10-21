@@ -39,6 +39,34 @@ The reads never change. The live clocks, the live views, the update stream
 and the public replay keep working while the gate is closed, and the
 presence view reports the recovering state.
 
+## The rules health probe and the dependency taxonomy
+
+The probe evaluates the **primary** rules process, so its answer is evidence
+about the process that serves the traffic. A probe that answers can recover an
+interruption of that process, and a probe that fails never does. There is no
+second rules process: one client, one process, one liveness signal.
+
+The probe has **no budget of its own**. It uses the internal bound of the
+rules client, so a hung process ends in the client's own timeout and stays an
+outage. A shorter caller budget would cancel a healthy exchange and could
+never tell a busy process from a hung one.
+
+The client answers in three classes, and the service reads them apart:
+
+| Class | Signal | Meaning | Effect |
+| --- | --- | --- | --- |
+| The caller left | the context error (`context.Canceled`, `context.DeadlineExceeded`) | the caller went away | the dependency is untouched |
+| The slot was occupied | `online.ErrRulesBusy` | the process is healthy and busy | the dependency is untouched, no interruption |
+| The internal bound elapsed | the worker's own timeout error | the process is hung | the dependency is degraded and an interruption is planned |
+
+The rules client owns the first and the third class; it maps the second one
+to `online.ErrRulesBusy`. The parent must keep those three apart, because a
+caller deadline that inherits the internal deadline cannot tell them apart.
+
+The recovery never reports the health of the dependency. The dependency is
+healthy when the rules process answered, and the answer is the evidence of the
+probe or of a real evaluation, never of the recovery itself.
+
 ## The lock order
 
 The shared seams take their locks in one fixed order:

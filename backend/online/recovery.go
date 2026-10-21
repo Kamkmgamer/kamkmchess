@@ -384,14 +384,10 @@ func (s *Service) applyBoundary(ctx context.Context, conn *pgxpool.Conn, boundar
 		return RecoveryPlan{}, err
 	}
 	s.recovered.Store(true)
-	// The recovery is a durable health observation. The next restart derives
-	// its interval from this checkpoint, so a restart never re-adjusts the
-	// same interruption.
-	if s.health != nil {
-		if err = s.health.ReportDependency(ctx, DependencyRules, HealthHealthy, "the rules process answered"); err != nil {
-			return RecoveryPlan{}, err
-		}
-	}
+	// The recovery does not report the health of the rules dependency. The
+	// dependency is healthy when the rules process answered, and the answer
+	// is the evidence of the probe or of a real evaluation, never of the
+	// recovery itself.
 	return plan, nil
 }
 

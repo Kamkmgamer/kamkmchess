@@ -2,11 +2,13 @@ package serverapp
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
+	"github.com/Kamkmgamer/kamkmchess/backend/rulesworker"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -70,6 +72,31 @@ func StartHealthMonitor(ctx context.Context, pool *pgxpool.Pool, reporter *onlin
 	}
 }
 
+// rulesCancellation reports whether an evaluation of the rules process was
+// cancelled by its caller.
+//
+// A departing client is not a broken dependency. The rules client reports a
+// cancelled request with its own error, so the classifier knows that error and
+// the context errors.
+func rulesCancellation(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	return errors.Is(err, rulesworker.ErrCanceled)
+}
+
+// rulesBusy reports whether the rules process was occupied by a running
+// request.
+//
+// An occupied process is not a broken dependency, so the service keeps
+// serving and no interruption is recorded.
+func rulesBusy(err error) bool {
+	return err != nil && errors.Is(err, online.ErrRulesBusy)
+}
+
 // checkHealth runs one health check.
 //
 // The check reports the database dependency and probes the rules dependency.
@@ -92,6 +119,16 @@ func checkHealth(ctx context.Context, pool *pgxpool.Pool, reporter *online.Healt
 		return
 	}
 	if err := prober.ProbeRules(ctx); err != nil {
+		if rulesBusy(err) || rulesCancellation(err) {
+			// The rules process is occupied by a running request, or the
+			// probe was cancelled by its caller. Neither is a broken
+			// dependency, so the service keeps serving and no
+			// interruption is recorded.
+			if onError != nil {
+				onError(err)
+			}
+			return
+		}
 		// The rules process is down. The interruption is recorded as a
 		// durable boundary, so the gate closes and the clock of the
 		// unfinished matches is refunded when the dependency comes back.

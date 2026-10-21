@@ -242,3 +242,33 @@ func TestOnlinePresenceHTTPRefusesAnInvalidCredential(t *testing.T) {
 		t.Fatalf("the presence view of an absent match status=%d body=%s", response.Code, response.Body.String())
 	}
 }
+
+// TestOnlinePresenceHTTPRefusesAnUnknownRunnerRequestField covers the shared
+// provider request envelope over HTTP.
+//
+// The envelope is decoded strictly, so an unknown field never reaches the
+// service and the lease of the seat is never touched.
+func TestOnlinePresenceHTTPRefusesAnUnknownRunnerRequestField(t *testing.T) {
+	fixture := newOnlineAuthFixture(t, moveEvaluator{})
+	handler := presenceHTTPFixture(t, fixture)
+	ctx := accountContext("user_a", "session-alice")
+	const matchID = "match-presence-http-runner-request"
+	if _, err := fixture.service.Execute(ctx, alice, createOnlineCommand(matchID, "op-create-"+matchID)); err != nil {
+		t.Fatalf("create the match: %v", err)
+	}
+	token := signSession(t, fixture.key, "user_a", "session-alice", time.Now().Add(time.Hour))
+	headers := map[string]string{"Authorization": "Bearer " + token}
+	envelope := `{"schemaVersion":2,"action":"begin","seat":"white","runnerId":"runner-http-01","leaseId":"lease-http-01","requestId":"request-http-01","controlEpoch":1,"turnVersion":1}`
+	// The envelope of the shared contract is accepted by the reader, and the
+	// request is refused because the seat has no runner.
+	response := onlineHTTPRequest(handler, http.MethodPost, "/v1/online/matches/"+matchID+"/runner/request", authTestOrigin, "", headers, envelope)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("the provider request of a seat without a lease status=%d body=%s", response.Code, response.Body.String())
+	}
+	// An unknown field is refused before the service is reached.
+	unknown := `{"schemaVersion":2,"action":"begin","seat":"white","runnerId":"runner-http-01","leaseId":"lease-http-01","requestId":"request-http-01","controlEpoch":1,"turnVersion":1,"extra":true}`
+	response = onlineHTTPRequest(handler, http.MethodPost, "/v1/online/matches/"+matchID+"/runner/request", authTestOrigin, "", headers, unknown)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("the provider request with an unknown field status=%d body=%s", response.Code, response.Body.String())
+	}
+}
