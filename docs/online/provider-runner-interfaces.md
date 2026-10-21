@@ -91,6 +91,13 @@ the control changes and the spent recovery attempts.
   command proves the control change: its outcome is `accepted` and the detail
   names what the settlement had to leave out. A retry stays `unknown` in that
   case, because the decision of the owner was to let the runner play again.
+- The envelope retained after a refused settlement is the one that decision
+  captured. It is retained only while that decision still owns the action
+  and no other command waits for acknowledgement. A superseded decision,
+  Stop or Dispose installs no record and writes no phase after the refusal.
+  The tracked runner cases cover an older failed settlement alongside a newer
+  pending switch, and recovery of the accepted switch when no newer decision
+  exists.
 - The authorization of the owner is recorded only when the settlement reached
   its end while the decision was still the decision of the owner. A superseded
   decision leaves no authorization behind and sends no command, so the next
