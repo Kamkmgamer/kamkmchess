@@ -233,6 +233,29 @@ func (h *HealthReporter) SharedState(ctx context.Context) (HealthState, error) {
 //
 // The row never grows, so the liveness of a long-running service costs one
 // row and one update per check.
+// RefreshLiveness refreshes the durable liveness of the service.
+//
+// The liveness record is the evidence that the service was alive, so a
+// restart of a healthy service is not read as an interruption: the recovery
+// derives an unexpected interruption out of a liveness that is older than the
+// TTL.
+//
+// The refresh happens only while every dependency is healthy. A service that
+// cannot serve keeps the stale liveness, because that stale record is how the
+// recovery locates the interruption.
+//
+// The refresh writes the one liveness row, so a healthy service does not grow
+// a checkpoint row.
+func (h *HealthReporter) RefreshLiveness(ctx context.Context) error {
+	if h == nil || h.db == nil {
+		return nil
+	}
+	if !h.OverallHealthy() {
+		return nil
+	}
+	return h.refreshLiveness(ctx, time.Now().UTC())
+}
+
 func (h *HealthReporter) refreshLiveness(ctx context.Context, at time.Time) error {
 	_, err := h.db.Exec(ctx, `INSERT INTO online_service_liveness(singleton,last_seen_at,updated_at) VALUES(true,$1,$1)
 ON CONFLICT (singleton) DO UPDATE SET last_seen_at=EXCLUDED.last_seen_at,updated_at=EXCLUDED.updated_at`, at.UTC())

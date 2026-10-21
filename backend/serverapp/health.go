@@ -143,6 +143,18 @@ func checkHealth(ctx context.Context, pool *pgxpool.Pool, reporter *online.Healt
 		return
 	}
 	checkRulesHealth(ctx, prober, onError)
+	// A healthy service refreshes its durable liveness.
+	//
+	// The liveness record is the evidence that the service was alive, so a
+	// restart of a healthy service is not read as an interruption. The
+	// refresh happens only while every dependency is healthy: a service
+	// that cannot serve keeps the stale liveness, because that record is
+	// how the recovery locates the interruption.
+	if reporter.OverallHealthy() {
+		if err := reporter.RefreshLiveness(ctx); err != nil && onError != nil {
+			onError(err)
+		}
+	}
 }
 
 // checkRulesHealth checks or repairs the rules dependency.
