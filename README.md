@@ -60,7 +60,7 @@ Browser files are in `dist/`. The build includes the application license and pro
 | `pnpm test:browser` | Run Chromium playthroughs against the built app with an offline provider fixture. Run `pnpm build` first and install Chromium with `pnpm exec playwright install chromium`. |
 | `node --test scripts/release/readiness-audit.test.mjs` | Verify the offline release audit and synthetic secret scanner. |
 | `node scripts/release/readiness-audit.mjs` | Inspect the actual distribution and hosting files for release blockers. |
-| `node --test deploy/runtime-grants.test.mjs scripts/online/online-ops.test.mjs` | Verify the online operations tooling. |
+| `node --test deploy/runtime-grants.test.mjs deploy/runtime-grants-sequence.test.mjs scripts/online/online-ops.test.mjs` | Verify the online operations tooling. |
 | `pnpm run grants:check` | Compare the least-privilege runtime grant policy with the migrations and the writer's statements. |
 | `pnpm run grants:probe` | Execute the runtime role grants against a real local PostgreSQL and probe what the role can do. |
 | `pnpm run online:wiring` | Prove the server, not the browser, owns the online feature switches. |

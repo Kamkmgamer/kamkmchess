@@ -20,7 +20,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Verify the operations tooling
-        run: node --test deploy/runtime-grants.test.mjs scripts/online/online-ops.test.mjs
+        run: node --test deploy/runtime-grants.test.mjs deploy/runtime-grants-sequence.test.mjs scripts/online/online-ops.test.mjs
       - name: Verify the local fixture
         run: go test -tags onlinefixture -count=1 ./tools/onlinefixture
       - name: Audit the least-privilege runtime grants
