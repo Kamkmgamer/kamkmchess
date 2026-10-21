@@ -221,6 +221,18 @@ certificate sync first, then the backup, and appends results to `operations.log`
 chain and hostname, and reloads PostgreSQL after an AutoSSL renewal. The API's
 public certificate is managed directly by cPanel.
 
+The backup also copies the **durable evidence** of the removals a restore
+owed into `/backups/restore-evidence`, next to the bundles. The evidence
+lives next to the marker of the restore lifecycle, and the import of a
+restore destroys the removals it names, so the copy is the artefact that
+survives the loss of the evidence directory. The copy is made under the lock
+of the lifecycle and as the user that owns it, by
+`copy-restore-evidence.sh`, and it is inside the mounted directory of the
+bundles, so the backup that the operator copies off the server carries it.
+`check-restore-id.sh` reads the identifier of a restore out of the marker of
+the lifecycle and refuses everything the production rule refuses; both
+programs are mounted into the database container read-only.
+
 The backup passphrase is in the server's private `backup.env`. An operator
 recovery copy and encrypted bundles are kept outside the server under
 `~/.config/kamkmchess/`. Keep that recovery directory private. The local copy is

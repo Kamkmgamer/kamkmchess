@@ -22,6 +22,14 @@ services:
       - ./bin:/opt/kamkmchess:ro
       - ./backups:/backups
       - ./backup.env:/run/secrets/backup.env:ro
+      # The operator programs of the deployment. The first one reads the
+      # identifier of a restore out of the marker of the lifecycle and
+      # refuses everything the production rule refuses; the second one copies
+      # the durable evidence of the owed removal ledgers into the protected
+      # backup, under the lock of the lifecycle and as the user that owns it.
+      # They are mounted read-only, so the container cannot change them.
+      - ./check-restore-id.sh:/opt/kamkmchess-operator/check-restore-id.sh:ro
+      - ./copy-restore-evidence.sh:/opt/kamkmchess-operator/copy-restore-evidence.sh:ro
       # The durable restore fence. The restore command writes the marker
       # directory of the fence here and clears it when the restore is done,
       # and the API observes the same marker directory from the same volume.

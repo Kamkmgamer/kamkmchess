@@ -26,14 +26,14 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
 
 /**
  * @param {string[]} args
- * @param {{cwd?: string}} [options]
+ * @param {{cwd?: string, stdin?: string}} [options]
  * @returns {Promise<{code: number, stdout: string, stderr: string}>}
  */
 function run(command, args, options = {}) {
@@ -45,7 +45,11 @@ function run(command, args, options = {}) {
     child.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
     child.on('error', (error) => resolvePromise({ code: -1, stdout, stderr: String(error) }));
     child.on('close', (code) => resolvePromise({ code: code ?? -1, stdout, stderr }));
-    child.stdin.end();
+    if (options.stdin !== undefined) {
+      child.stdin.end(options.stdin);
+    } else {
+      child.stdin.end();
+    }
   });
 }
 
@@ -128,6 +132,123 @@ async function measureSecret(root, directory, project) {
 }
 
 /**
+ * Measures the durable path of the protected copy of the durable evidence.
+ *
+ * The copy of the evidence of a restore has to survive the loss of the
+ * evidence directory, so it is written onto a mounted path and it is covered
+ * by the backup of the deployment. The measurement runs inside the real
+ * service container with the real program of the repository, and it reads the
+ * outcome from the host as well: a file that is visible outside the container
+ * is on a mounted path, and a file that is not is in the writable layer of the
+ * container and dies with it.
+ *
+ * The lock of the lifecycle is measured as well, because a copy that is made
+ * while a restore is running can be a half written record.
+ * @param {string} root
+ * @param {string} directory
+ * @param {string} project
+ * @returns {Promise<{staged: string, copied: string, directory: string, record: string, lock: string, host: string, refused: string, held: string}>}
+ */
+async function measureDurableEvidence(root, directory, project) {
+  const compose = ['compose', '--project-name', project, '-f', join(directory, 'postgres.compose.yml')];
+  const fence = '/var/lib/kamkmchess/restore-fence';
+  const destination = '/backups/restore-evidence';
+  const record = 'restore-proof-000000';
+  const exec = async (script, options = {}) => {
+    const result = await run('docker', [...compose, 'exec', '-T', ...(options.user ? ['--user', options.user] : []), 'postgres', 'sh', '-c', script], { cwd: root });
+    return { code: result.code, text: `${result.stdout}${result.stderr}`.trim() };
+  };
+  // The record of the owed ledger is staged by the user that owns the
+  // lifecycle, the way the restore writes it.
+  const staged = await exec(
+    `install -d -m 700 ${fence}/restore-requirements && install -m 600 /dev/null ${fence}/restore-requirements/${record}.json`,
+    { user: '65532:65532' },
+  );
+  const copied = await exec(`sh /opt/kamkmchess-operator/copy-restore-evidence.sh ${destination}`);
+  const modes = await exec(`stat -c '%a %u' ${destination} ${destination}/${record}.json ${fence}/restore-fence.lock`);
+  // The outcome on the host: the file is on the mounted path of the backup
+  // directory, so it survives the recreation of the container.
+  let host;
+  try {
+    const listed = await readdir(join(directory, 'backups', 'restore-evidence'));
+    host = listed.join(' ');
+  } catch (error) {
+    host = `unreadable: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  // The negative control: while a restore holds the lock of the lifecycle,
+  // the copy is refused.
+  const holder = await run('docker', [...compose, 'exec', '-d', '-T', '--user', '65532:65532', 'postgres', 'sh', '-c', `exec 9>"${fence}/restore-fence.lock"; flock 9; sleep 60`], { cwd: root });
+  let held = '';
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const probe = await exec(`flock -n ${fence}/restore-fence.lock true`, { user: '65532:65532' });
+    if (probe.code !== 0) {
+      held = 'the lock of the lifecycle is held';
+      break;
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+  }
+  const refused = await exec(`sh /opt/kamkmchess-operator/copy-restore-evidence.sh ${destination}`);
+  // The failure that is not a running restore: the destination cannot be
+  // created, so the copy fails with its own reason and its own exit code.
+  const failed = await exec(`sh /opt/kamkmchess-operator/copy-restore-evidence.sh /proc/restore-evidence`);
+  // The lock itself cannot be opened: the file of the lock is a directory.
+  // That is a failure of the lock and never a running restore.
+  const brokenFence = await exec('mkdir -p /tmp/fence-broken/restore-fence.lock');
+  const lockFailed = await run('docker', [
+    ...compose, 'exec', '-T', '-e', 'ONLINE_RESTORE_FENCE_PATH=/tmp/fence-broken',
+    'postgres', 'sh', '/opt/kamkmchess-operator/copy-restore-evidence.sh', destination,
+  ], { cwd: root });
+  return {
+    staged: `${staged.code}:${staged.text}`,
+    copied: `${copied.code}:${copied.text}`,
+    directory: modes.text.split('\n')[0] ?? '',
+    record: modes.text.split('\n')[1] ?? '',
+    lock: modes.text.split('\n')[2] ?? '',
+    host,
+    refused: `${refused.code}:${refused.text}`,
+    failed: `${failed.code}:${failed.text}`,
+    lockFailed: `${brokenFence.code === 0 ? lockFailed.code : -1}:${`${lockFailed.stdout}${lockFailed.stderr}`.trim()}`,
+    held: held || holder.stderr.trim(),
+  };
+}
+
+/**
+ * Measures the procedure that reads the identifier of the restore.
+ *
+ * The identifier becomes the name of a file, so the procedure that reads it
+ * has to refuse everything the production rule refuses. The measurement runs
+ * the real program of the repository inside the real service container.
+ * @param {string} root
+ * @param {string} directory
+ * @param {string} project
+ * @returns {Promise<{accepted: string, refused: string}>}
+ */
+async function measureRestoreIdentifier(root, directory, project) {
+  const compose = ['compose', '--project-name', project, '-f', join(directory, 'postgres.compose.yml')];
+  const exec = async (script) => {
+    const result = await run('docker', [...compose, 'exec', '-T', 'postgres', 'sh', '-c', script], { cwd: root });
+    return { code: result.code, text: `${result.stdout}${result.stderr}`.trim() };
+  };
+  const write = async (name, content) => exec(`printf '%s' '${content}' > /tmp/${name}`);
+  const check = async (name) => exec(`sh /opt/kamkmchess-operator/check-restore-id.sh /tmp/${name}`);
+  const accepted = 'restore-20261021T165057Z-2e2840f3d33b';
+  await write('marker-accepted.json', `{"restoreId":"${accepted}","expectedLedgerDigest":"${'0'.repeat(64)}"}`);
+  await write('marker-dot.json', '{"restoreId":".hidden-restore-name"}');
+  await write('marker-short.json', '{"restoreId":"short12"}');
+  await write('marker-long.json', `{"restoreId":"${'a'.repeat(129)}"}`);
+  await write('marker-separator.json', '{"restoreId":"restore/../../etc/passwd"}');
+  const good = await check('marker-accepted.json');
+  const refusals = [];
+  for (const name of ['marker-dot.json', 'marker-short.json', 'marker-long.json', 'marker-separator.json']) {
+    refusals.push(await check(name));
+  }
+  return {
+    accepted: `${good.code}:${good.text}`,
+    refused: refusals.map((entry) => `${entry.code}:${entry.text}`).join(' | '),
+  };
+}
+
+/**
  * Starts a compose project and reads the settings of the running server.
  *
  * The start happens inside the guarded section, so a project that fails
@@ -139,7 +260,7 @@ async function measureSecret(root, directory, project) {
  */
 async function readServerSettings(root, directory, project) {
   /** @type {{code: number, settings: Record<string, string>, output: string, ready: boolean, cleanup: string}} */
-  const result = { code: 0, settings: {}, output: '', ready: false, cleanup: '', secret: null };
+  const result = { code: 0, settings: {}, output: '', ready: false, cleanup: '', secret: null, durable: null, identifier: null };
   const compose = ['compose', '--project-name', project, '-f', join(directory, 'postgres.compose.yml')];
   try {
     const up = await run('docker', [...compose, 'up', '--detach'], { cwd: root });
@@ -189,6 +310,10 @@ async function readServerSettings(root, directory, project) {
     }
     // The private secret of the restore is measured while the service runs.
     result.secret = await measureSecret(root, directory, project);
+    // The durable path of the protected copy of the evidence, and the
+    // procedure that reads the identifier of the restore.
+    result.durable = await measureDurableEvidence(root, directory, project);
+    result.identifier = await measureRestoreIdentifier(root, directory, project);
     return result;
   } finally {
     result.cleanup = await cleanupProject(root, directory, project);
@@ -241,6 +366,11 @@ async function buildHelper(root) {
 async function prepare(root, directory, broken, helperImage) {
   await cp(join(root, 'deploy', 'postgres.compose.yml'), join(directory, 'postgres.compose.yml'));
   await cp(join(root, 'deploy', 'pg_hba.conf'), join(directory, 'pg_hba.conf'));
+  // The operator programs of the deployment are measured inside the real
+  // service container, so the throwaway deployment carries the very files of
+  // the repository. The compose file mounts them into the container.
+  await cp(join(root, 'deploy', 'check-restore-id.sh'), join(directory, 'check-restore-id.sh'));
+  await cp(join(root, 'deploy', 'copy-restore-evidence.sh'), join(directory, 'copy-restore-evidence.sh'));
   // The compose file reads its secrets from a file that only exists on the
   // server. The rendering needs a placeholder, never a real credential.
   await writeFile(join(directory, 'postgres.env'), 'POSTGRES_USER=postgres\nPOSTGRES_PASSWORD=fixture-only\nPOSTGRES_DB=kamkmchess\n', 'utf8');
@@ -364,6 +494,81 @@ export async function verifyComposeConfig(root) {
       id: 'the-throwaway-resources-are-removed',
       passed: current.cleanup === '',
       detail: current.cleanup === '' ? 'the containers, the volumes and the network of the project are gone' : current.cleanup,
+    });
+
+    // The durable path of the protected copy of the evidence of a restore.
+    const durable = current.durable;
+    const staged = durable?.staged ?? '';
+    const copiedEvidence = durable?.copied ?? '';
+    const directoryMode = durable?.directory ?? '';
+    const recordMode = durable?.record ?? '';
+    const lockMode = durable?.lock ?? '';
+    const host = durable?.host ?? '';
+    const refusedCopy = durable?.refused ?? '';
+    const held = durable?.held ?? '';
+    steps.push({
+      id: 'the-evidence-of-a-restore-is-copied-onto-a-mounted-path',
+      passed: staged.startsWith('0:') && copiedEvidence.startsWith('0:') && host.includes('restore-proof-000000.json'),
+      detail: staged.startsWith('0:') && copiedEvidence.startsWith('0:') && host.includes('restore-proof-000000.json')
+        ? `the record of the owed ledger was copied into the backup directory of the deployment and the copy is visible outside the container: ${host}`
+        : `the evidence was not copied onto a mounted path: staged ${staged}, copied ${copiedEvidence}, host ${host}`,
+    });
+    steps.push({
+      id: 'the-copy-of-the-evidence-is-private',
+      passed: /^700 65532$/.test(directoryMode) && /^600 65532$/.test(recordMode),
+      detail: /^700 65532$/.test(directoryMode) && /^600 65532$/.test(recordMode)
+        ? `the protected copy is private to the user that restores it: the directory is ${directoryMode} and the record is ${recordMode}`
+        : `the protected copy is not private: the directory is ${directoryMode || 'unknown'} and the record is ${recordMode || 'unknown'}`,
+    });
+    steps.push({
+      id: 'the-lock-of-the-lifecycle-belongs-to-the-restore-user',
+      passed: /^600 65532$/.test(lockMode),
+      detail: /^600 65532$/.test(lockMode)
+        ? `the lock of the lifecycle was created by the user that owns it (${lockMode}), so the restore can open it`
+        : `the lock of the lifecycle carries ${lockMode || 'an unknown mode and owner'} and the restore may not be able to open it`,
+    });
+    steps.push({
+      id: 'the-copy-is-refused-while-a-restore-holds-the-lifecycle',
+      passed: held.includes('the lock of the lifecycle is held') && /^75:/.test(refusedCopy) && /holds the lifecycle/i.test(refusedCopy),
+      detail: held.includes('the lock of the lifecycle is held') && /^75:/.test(refusedCopy) && /holds the lifecycle/i.test(refusedCopy)
+        ? 'a restore holds the lock of the lifecycle and the copy of the evidence is refused with the documented exit code 75, so the copy is never a half written record'
+        : `the copy was not refused while the lifecycle was held: ${held || 'the lock was never held'}, ${refusedCopy}`,
+    });
+    const failedCopy = durable?.failed ?? '';
+    steps.push({
+      id: 'the-failure-of-the-copy-is-not-reported-as-a-running-restore',
+      passed: /^1:/.test(failedCopy) && !/holds the lifecycle/i.test(failedCopy),
+      detail: /^1:/.test(failedCopy) && !/holds the lifecycle/i.test(failedCopy)
+        ? `a copy that fails for another reason keeps its own reason and its own exit code, so the backup procedure can tell it from a restore that holds the lifecycle: ${failedCopy}`
+        : `the failure of the copy was not told apart from a running restore: ${failedCopy}`,
+    });
+    const lockFailed = durable?.lockFailed ?? '';
+    steps.push({
+      id: 'the-failure-of-the-lock-is-not-reported-as-a-running-restore',
+      passed: !/^0:/.test(lockFailed) && !/holds the lifecycle/i.test(lockFailed) && lockFailed.length > 0,
+      detail: !/^0:/.test(lockFailed) && !/holds the lifecycle/i.test(lockFailed) && lockFailed.length > 0
+        ? `a lock that cannot be opened fails with its own status and its own message, and it is never reported as a restore that holds the lifecycle: ${lockFailed}`
+        : `the failure of the lock was not told apart from a running restore: ${lockFailed}`,
+    });
+    // The procedure that reads the identifier of the restore.
+    const identifier = current.identifier;
+    const accepted = identifier?.accepted ?? '';
+    const refusedIdentifiers = identifier?.refused ?? '';
+    steps.push({
+      id: 'the-identifier-of-the-restore-is-read-by-the-production-rule',
+      passed: accepted.startsWith('0:') && accepted.includes('restore-20261021T165057Z-2e2840f3d33b'),
+      detail: accepted.startsWith('0:') && accepted.includes('restore-20261021T165057Z-2e2840f3d33b')
+        ? 'the procedure reads the identifier of the restore out of the marker of the lifecycle'
+        : `the procedure did not read the identifier: ${accepted}`,
+    });
+    steps.push({
+      id: 'the-identifier-procedure-refuses-an-unusable-identifier',
+      passed: refusedIdentifiers.split(' | ').length === 4
+        && refusedIdentifiers.split(' | ').every((entry) => entry.startsWith('1:')),
+      detail: refusedIdentifiers.split(' | ').length === 4
+        && refusedIdentifiers.split(' | ').every((entry) => entry.startsWith('1:'))
+        ? 'the procedure refuses an identifier with a leading dot, one that is too short, one that is too long and one that carries a path separator'
+        : `the procedure did not refuse every unusable identifier: ${refusedIdentifiers}`,
     });
 
     // The proof has to be able to fail: the entrypoint of the round-five

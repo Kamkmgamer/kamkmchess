@@ -231,26 +231,36 @@ owed. The file of one restore can also be restored on its own, and the
 recovery then proves the ledger it owes against the digest the marker names
 (`--evidence`).
 
+The copy is made by `deploy/copy-restore-evidence.sh`, and the backup
+procedure of the deployment runs the very same program, so the copy is in the
+backup of the deployment with the bundles. The destination is
+`/backups/restore-evidence`: `/backups` is the bind mount of the deployment
+that holds the encrypted bundles, so the copy survives the recreation of the
+container and it is covered by the backup that the operator copies off the
+server. A path outside a mounted directory would be lost with the container
+it lives in, and the artefact whose whole purpose is to survive the loss of
+the evidence directory may not be such a path.
+
 ### The identifier of the restore
 
 The identifier of a restore is the one the marker of the lifecycle names. The
-command line of the restore cannot name it, so the operator reads it from
-`<parent>/restore-fence/owner` and **validates it before it is used in a
+command line of the restore cannot name it, so the operator reads it with
+`deploy/check-restore-id.sh`, which **validates it before it is used in a
 path**: the identifier becomes the name of a file, so a name that carries a
 path separator is refused.
 
-```sh
-# The marker of the lifecycle names the restore that crashed.
-RESTORE_ID=$(docker compose -f postgres.compose.yml -f api.compose.yml \
-  exec -T postgres sh -c 'cat /var/lib/kamkmchess/restore-fence/restore-fence/owner' \
-  | sed -n 's/.*"restoreId":"\([^"]*\)".*/\1/p')
+The rule of the program is the rule of the production code: an alphanumeric
+first character and eight to one hundred and twenty eight characters in
+total (`^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$`). The program is the one the
+proofs exercise, so the rule of the procedure and the rule of the code cannot
+drift apart.
 
-# The identifier is a name and not a path, and it is checked before it is
-# used to build one.
-case "$RESTORE_ID" in
-  ''|*[!A-Za-z0-9._-]*) echo "the marker of the lifecycle names no usable restore" >&2; exit 1 ;;
-esac
-[ "${#RESTORE_ID}" -ge 8 ] || { echo "the identifier of the restore is too short" >&2; exit 1; }
+```sh
+# The marker of the lifecycle names the restore that crashed, and the
+# identifier is checked against the rule of the production code.
+RESTORE_ID=$(docker compose -f postgres.compose.yml -f api.compose.yml \
+  exec -T postgres sh /opt/kamkmchess-operator/check-restore-id.sh \
+  /var/lib/kamkmchess/restore-fence/restore-fence/owner)
 ```
 
 The identifier is handed to the container as a **positional argument** of the
@@ -261,40 +271,44 @@ the identifier from its own argument.
 
 ### The protected copy of the evidence
 
-The copy of a record is made **while the lock of the lifecycle is held**.
-Stopping the API stops the service, not a restore: the restore is a separate
-process of the database container and it writes the evidence directory
-itself. The lock of the lifecycle (`<parent>/restore-fence.lock`) is held by
-a running restore for the whole lifecycle of the restore and is released by
-the operating system when the restore dies, so it is the proof that no
-restore is running.
+The copy of the records is made **while the lock of the lifecycle is held**,
+by the user that owns the lifecycle. Stopping the API stops the service, not
+a restore: the restore is a separate process of the database container and
+it writes the evidence directory itself. The lock of the lifecycle
+(`<parent>/restore-fence.lock`) is held by a running restore for the whole
+lifecycle of the restore and is released by the operating system when the
+restore dies, so it is the proof that no restore is running.
 
 ```sh
 # The API is stopped and drained, so the service admits nothing while the
 # copy is made.
 docker compose -f postgres.compose.yml -f api.compose.yml stop api
 
-# The copy is made under the lock of the lifecycle, and the destination is
-# private to the restore user and is **outside** the fence parent, so the
-# loss of the evidence directory never takes the copy with it.
-docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
-  set -eu
-  FENCE=/var/lib/kamkmchess/restore-fence
-  DEST=/var/lib/kamkmchess/restore-evidence
-  ID="$1"
-  exec 9>"$FENCE/restore-fence.lock"
-  if ! flock -n 9; then
-    echo "a restore holds the lifecycle; the copy is not made" >&2
-    exit 1
-  fi
-  install -d -m 700 -o 65532 -g 65532 "$DEST"
-  install -m 600 -o 65532 -g 65532 \
-    "$FENCE/restore-requirements/$ID.json" "$DEST/$ID.json"
-' khabackup "$RESTORE_ID"
+# The copy is made by the program of the deployment, under the lock of the
+# lifecycle and as the user that owns it. The destination is inside the
+# directory of the bundles, which is the bind mount of the deployment and the
+# directory the backup procedure owns.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres \
+  sh /opt/kamkmchess-operator/copy-restore-evidence.sh /backups/restore-evidence
 
 # The protected copy is in the backup of the deployment, with the bundles,
 # and it is restored to the same private path before a recovery that needs it.
 ```
+
+The lock of the lifecycle is taken **as the user that owns it**, so the file
+of the lock is created by that user with the mode the production code opens
+it with (`0600`, owned by `65532`). A lock file that the operator created as
+root would be refused by the restore later, and the deployment could neither
+restore nor recover.
+
+The exit codes of the copy program are the ones the caller needs: `0` when
+the evidence was copied or when there was nothing to copy, `75` when a
+restore holds the lock of the lifecycle (the copy is deferred to the next
+run), and `1` when the copy failed for any other reason. The backup
+procedure of the deployment tells the two apart: the deferral is written to
+the log and the backup continues, and every other failure **fails the
+backup**, because the protected backup of the evidence is then incomplete
+and must never be reported as complete.
 
 ### The recovery of a restore that crashed
 
@@ -337,7 +351,7 @@ docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c
     --evidence "$2" \
     --fence /var/lib/kamkmchess/restore-fence \
     --database-url-env DATABASE_URL' \
-  khabackup "$RESTORE_ID" "/var/lib/kamkmchess/restore-evidence/$RESTORE_ID.json"
+  khabackup "$RESTORE_ID" "/backups/restore-evidence/$RESTORE_ID.json"
 
 # The take-over of a restore that crashed before the evidence was written: it
 # re-imports the bundle and replays the removal ledger again.

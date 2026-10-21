@@ -17,7 +17,7 @@ import { percentiles } from './load-suite.mjs';
 import { auditServiceWiring, switchDefaultState } from './service-wiring.mjs';
 import { composeFencePaths, completeReport as fenceCompleteReport, documentedFencePath, fencePathAgreement, fenceVolumeAgreement, fenceVolumeControl, holderDatabaseUrl, ownedSchemaName, planCleanup as planFenceCleanup, proofExitCode as fenceExitCode, readmeFencePath, REQUIRED_STEPS as FENCE_REQUIRED_STEPS, resolveTarget, RUN_SCHEMA, targetFromEnvironment, verifyFenceAccess } from '../../deploy/verify-fence-access.mjs';
 import { completeReport, createAndMigrate, insideDatabaseUrl, planCleanup as planRestoreCleanup, redactReport, reportFailure, REQUIRED_STEPS, RUN_SCHEMA as RESTORE_RUN_SCHEMA } from './restore-proof.mjs';
-import { barrierScript, injectionScript, proofCases, REQUIRED_STEPS as INTERRUPTION_REQUIRED_STEPS, restoreIdIsUsable } from './restore-interruption-proof.mjs';
+import { barrierScript, injectionScript, proofCases, REQUIRED_STEPS as INTERRUPTION_REQUIRED_STEPS, RESTORE_ID_PATTERN, restoreIdIsUsable } from './restore-interruption-proof.mjs';
 import { buildProbes, evaluateProbe } from '../../deploy/runtime-grants-probe.mjs';
 import { auditGrants, parseMigrationFunctions, parseMigrationGrants, parseMigrationReads, parseMigrationTables, parseMigrationWrites, parsePolicy, scanGoUsage } from '../../deploy/runtime-grants.mjs';
 
@@ -976,6 +976,58 @@ test('the native proof reaches the database of the target with a parsed url', ()
   const withSecret = insideDatabaseUrl('postgres://proof:secret@127.0.0.1:55467/kamkmchess_online_test?sslmode=require', 'kamkmchess_proof_target_x');
   assert.match(withSecret, /proof:secret@host\.docker\.internal:55467/);
   assert.match(withSecret, /sslmode=require/);
+});
+
+test('the evidence only recovery of the runbook reads no bundle and no passphrase', async () => {
+  // The recovery of a restore whose evidence directory was lost is given the
+  // protected copy of the record alone. A command that still carries the
+  // bundle or the passphrase is not the evidence only recovery, and the
+  // parent rejected it in the round thirty.
+  const runbook = await readFile(join('docs', 'implementation', 'MVP-operations.md'), 'utf8');
+  const blocks = [...runbook.matchAll(/```sh\r?\n([\s\S]*?)```/g)].map((match) => match[1]);
+  // Every documented command is a segment of its own.
+  const commands = blocks
+    .flatMap((block) => block.split(/(?=docker compose)/g))
+    .filter((part) => part.includes('khabackup recover'));
+  const evidenceOnly = commands.filter((part) => part.includes('--evidence'));
+  assert.ok(evidenceOnly.length > 0, 'the runbook documents the evidence only recovery');
+  for (const command of evidenceOnly) {
+    assert.equal(/--file[= ]/.test(command), false, 'the evidence only recovery carries a bundle');
+    assert.equal(/--passphrase-env[= ]/.test(command), false, 'the evidence only recovery carries a passphrase');
+    assert.match(command, /unset KHA_BACKUP_PASSPHRASE/);
+  }
+  // The recovery with the bundle still carries the bundle and the
+  // passphrase, so the guard above does not empty the runbook.
+  assert.ok(commands.some((command) => command.includes('--file') && command.includes('--passphrase-env')));
+});
+
+test('the backup procedure copies the durable evidence of the restores', async () => {
+  // The copy of the evidence is only durable when the backup procedure makes
+  // it, and the program that makes it is the program the proofs measure.
+  const backup = await readFile(join('deploy', 'backup.sh'), 'utf8');
+  assert.match(backup, /copy-restore-evidence\.sh/);
+  assert.match(backup, /\/backups\/restore-evidence/);
+  const compose = await readFile(join('deploy', 'postgres.compose.yml'), 'utf8');
+  // The programs of the deployment are mounted into the container, so the
+  // operator and the backup run the very same files.
+  assert.match(compose, /check-restore-id\.sh:\/opt\/kamkmchess-operator\/check-restore-id\.sh:ro/);
+  assert.match(compose, /copy-restore-evidence\.sh:\/opt\/kamkmchess-operator\/copy-restore-evidence\.sh:ro/);
+  // The destination of the copy is inside the mounted directory of the
+  // bundles, and not in the writable layer of the container.
+  assert.match(compose, /\.\/backups:\/backups/);
+});
+
+test('the identifier of a restore is checked by the rule of the production code', async () => {
+  // The program that reads the identifier out of the marker of the lifecycle
+  // is the one the proofs exercise, and its rule is the rule of the
+  // production code.
+  const program = await readFile(join('deploy', 'check-restore-id.sh'), 'utf8');
+  assert.match(program, /\[!A-Za-z0-9\._-\]/);
+  assert.match(program, /\[A-Za-z0-9\]\*/);
+  assert.match(program, /-lt 8/);
+  assert.match(program, /-gt 128/);
+  // The rule of the program and the rule of the proof are the same one.
+  assert.equal(RESTORE_ID_PATTERN.source, '^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$');
 });
 
 test('no operator-facing file ships the restore command that cannot read its secret', async () => {
