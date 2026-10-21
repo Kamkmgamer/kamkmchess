@@ -1,10 +1,10 @@
 {
   "scenarioId": "MAT-12",
-  "status": "passed",
+  "status": "partial",
   "kind": "local",
-  "commit": "9c6bc799253c68f5ef4ca92ee1cd07a9c9dc9411",
-  "command": "pnpm exec playwright test tests/e2e/online-clients.spec.ts (ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1)",
+  "commit": "1e08868d71e3105288ba59af24f55ea3df310593",
+  "command": "pnpm exec playwright test tests/e2e/account-online.spec.ts tests/e2e/online-ui.spec.ts tests/e2e/online-requests.spec.ts tests/e2e/online-clients.spec.ts --project=chromium --reporter=json; ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1, ONLINE_FIXTURE_UI_INVITE_PATH=/invite/{invitationId}, KAMKM_E2E_PORT=5397",
   "expected": "Later replies, claims, rematch/practice or reconnect cannot overwrite a final result.",
-  "actual": "The browser cases passed against the real service: a consumed invitation cannot be accepted twice and a guest without a credential is refused.",
-  "notes": "Local browser evidence. It does not certify a native assistive-technology run, a live host or a released cohort."
+  "actual": "Mapped browser cases: a consumed invitation cannot be accepted twice and a guest without a credential is refused=passed.",
+  "notes": "browser source 1e08868d71e3105288ba59af24f55ea3df310593. These named tests cover parts of the approved scenario; their passing does not close the whole scenario. See docs/evidence/online/assembled-verification.md for package results, earlier failed attempts and limits. The earlier record set cited author-worktree commits e283d271 and 9c6bc799, which were not ancestors of the assembled branch. Native accessibility, deployed-host capacity, cohorts and release approval remain unverified."
 }

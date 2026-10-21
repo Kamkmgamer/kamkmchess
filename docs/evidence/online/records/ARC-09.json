@@ -1,10 +1,10 @@
 {
   "scenarioId": "ARC-09",
-  "status": "passed",
+  "status": "partial",
   "kind": "local",
-  "commit": "e283d271952e6014d0f502a5926455716b0f4314",
-  "command": "go test ./backend/integration -count=1 -json (KHA41_TEST_DATABASE_URL=<local fixture>, KHA66_WORKER_ENTRY=build/rules-worker/worker.mjs)",
+  "commit": "ab0dba56eaa837d1db3aaea0df2ed3d2773d65d1",
+  "command": "go test -race -timeout=60m -json -count=1 ./backend/... ./cmd/...; required PostgreSQL and pinned rules worker in Linux, DAC_OVERRIDE and DAC_READ_SEARCH dropped",
   "expected": "Runner loss during an uncertain billable request prompts explicit retry/switch/takeover rather than blindly reissuing.",
-  "actual": "TestPostgresOnlineAcceptedSetupRetrySurvivesUnavailableWorker passed against postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable with the pinned rules worker bundle.",
-  "notes": "Local evidence only. It does not certify a native run, a live host or a released cohort."
+  "actual": "Mapped database tests: TestPostgresOnlineAcceptedSetupRetrySurvivesUnavailableWorker=pass.",
+  "notes": "Database source ab0dba56eaa837d1db3aaea0df2ed3d2773d65d1. These named tests cover parts of the approved scenario; their passing does not close the whole scenario. See docs/evidence/online/assembled-verification.md for package results, earlier failed attempts and limits. The earlier record set cited author-worktree commits e283d271 and 9c6bc799, which were not ancestors of the assembled branch. Native accessibility, deployed-host capacity, cohorts and release approval remain unverified."
 }

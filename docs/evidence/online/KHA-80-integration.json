@@ -1,23 +1,686 @@
 {
-  "tool": "scripts/online/integration-suite.mjs",
-  "generatedAt": "2026-10-21T01:35:12.082Z",
-  "commit": "e283d271952e6014d0f502a5926455716b0f4314",
-  "versions": {
-    "go": "go version go1.26.5 windows/amd64",
-    "node": "v24.22.0",
-    "rulesWorkerBundle": "C:\\Users\\Lenovo\\.t3\\worktrees\\kamkmchess\\t3-0b2f50f8\\build\\rules-worker\\worker.mjs"
-  },
-  "database": "postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable",
-  "goTestExitCode": 1,
+  "tool": "Assembled log import using scripts/online/integration-suite.mjs parseGoTestJson and mapScenarios; no new integration-suite invocation is claimed",
+  "generatedAt": "2026-10-21T20:14:42.588Z",
+  "commit": "ab0dba56eaa837d1db3aaea0df2ed3d2773d65d1",
+  "command": "go test -race -timeout=60m -json -count=1 ./backend/... ./cmd/...; required PostgreSQL and pinned rules worker in Linux, DAC_OVERRIDE and DAC_READ_SEARCH dropped",
+  "goTestExitCode": 0,
   "packages": [
     {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/auth",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/history",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/httpapi",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/backup/cmd/khabackup",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/invite",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/online",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/onlineauth",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/privacy",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/profile",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/serverapp",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/storage",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/backup",
+      "action": "pass"
+    },
+    {
+      "package": "github.com/Kamkmgamer/kamkmchess/backend/rulesworker",
+      "action": "pass"
+    },
+    {
       "package": "github.com/Kamkmgamer/kamkmchess/backend/integration",
-      "action": "fail"
+      "action": "pass"
     }
   ],
   "tests": [
     {
+      "test": "TestClerkSessionVerificationAcceptsClerkClaimExtras",
+      "action": "pass"
+    },
+    {
+      "test": "TestClerkSessionVerificationRejectsWrongIdentityAndDuplicateClaims/wrong_party",
+      "action": "pass"
+    },
+    {
+      "test": "TestClerkSessionVerificationRejectsWrongIdentityAndDuplicateClaims/pending_session",
+      "action": "pass"
+    },
+    {
+      "test": "TestClerkSessionVerificationRejectsWrongIdentityAndDuplicateClaims/no_session_id",
+      "action": "pass"
+    },
+    {
+      "test": "TestClerkSessionVerificationRejectsWrongIdentityAndDuplicateClaims/duplicate_subject",
+      "action": "pass"
+    },
+    {
+      "test": "TestClerkSessionVerificationRejectsWrongIdentityAndDuplicateClaims/uppercase_issuer",
+      "action": "pass"
+    },
+    {
+      "test": "TestClerkSessionVerificationRejectsWrongIdentityAndDuplicateClaims",
+      "action": "pass"
+    },
+    {
+      "test": "TestUnknownJWKIDRefreshIsRateLimited",
+      "action": "pass"
+    },
+    {
+      "test": "TestUnavailableJWKSRefreshIsRateLimited",
+      "action": "pass"
+    },
+    {
+      "test": "TestSealOpenRoundTrip",
+      "action": "pass"
+    },
+    {
+      "test": "TestSealRejectsWeakPassphraseAndEmptyPayload",
+      "action": "pass"
+    },
+    {
+      "test": "TestOpenRejectsWrongPassphraseAndTampering",
+      "action": "pass"
+    },
+    {
+      "test": "TestNormalizePublicLabelRefusesSecretBearingLabels",
+      "action": "pass"
+    },
+    {
+      "test": "TestReplayValidateRefusesAVerifiedAttribution",
+      "action": "pass"
+    },
+    {
+      "test": "TestControlAtDoesNotRelabelEarlierMoves",
+      "action": "pass"
+    },
+    {
+      "test": "TestDeclaredControlNeverPublishesAnUnverifiedLabel",
+      "action": "pass"
+    },
+    {
+      "test": "TestTerminalKindNamesTheAction",
+      "action": "pass"
+    },
+    {
+      "test": "TestParticipantOutcomeLabelsAnAbortAsUnscored",
+      "action": "pass"
+    },
+    {
+      "test": "TestVerifyAndInspectCommandsOffline",
+      "action": "pass"
+    },
+    {
+      "test": "TestCreateVerifyAndExportRoundTrip",
+      "action": "pass"
+    },
+    {
+      "test": "TestCreateRejectsOversizedExport",
+      "action": "pass"
+    },
+    {
+      "test": "TestCreatePropagatesDumperFailureWithoutWriting",
+      "action": "pass"
+    },
+    {
+      "test": "TestEncodeExportRejectsTamperedSQLLength",
+      "action": "pass"
+    },
+    {
+      "test": "TestVerifyCommandFailsClosedOnAWrongPassphrase",
+      "action": "pass"
+    },
+    {
+      "test": "TestVerifyRejectsRewrittenLedgerDigest",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheFailedCancellationReleasesTheOwnershipAndIsReported",
+      "action": "pass"
+    },
+    {
+      "test": "TestMergeLedgersKeepsTheLaterDeletion",
+      "action": "pass"
+    },
+    {
+      "test": "TestMergeLedgersBreaksTiesWithTheHigherEpoch",
+      "action": "pass"
+    },
+    {
+      "test": "TestMergeLedgersRejectsContradictoryRecords",
+      "action": "pass"
+    },
+    {
+      "test": "TestPlanDeletionRecoveryAppliesNewerDeletionsToAnOlderRestore",
+      "action": "pass"
+    },
+    {
+      "test": "TestPlanDeletionRecoveryRefreshesAnOlderLiveDeletion",
+      "action": "pass"
+    },
+    {
+      "test": "TestPlanDeletionRecoveryIsOrderIndependent",
+      "action": "pass"
+    },
+    {
+      "test": "TestEncodeLedgerIsCanonical",
+      "action": "pass"
+    },
+    {
+      "test": "TestParseLabelAcceptsOnlyRotationLabels",
+      "action": "pass"
+    },
+    {
+      "test": "TestDailyAndWeeklyLabels",
+      "action": "pass"
+    },
+    {
+      "test": "TestPlanRotationKeepsSevenDailyAndFourWeekly",
+      "action": "pass"
+    },
+    {
+      "test": "TestPlanRotationIsDeterministic",
+      "action": "pass"
+    },
+    {
+      "test": "TestPlanRotationRejectsAmbiguousRetention",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthenticatedHandlerRejectsMalformedAndSecretBodies/duplicate_fields",
+      "action": "pass"
+    },
+    {
+      "test": "TestPlanRotationProtectsAndKeepsUnprovableCopies",
+      "action": "pass"
+    },
+    {
+      "test": "TestMergeRemovalLedgersKeepsTwoSubjectsOfOneMatch",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthenticatedHandlerRejectsMalformedAndSecretBodies/unknown_API_secret",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthenticatedHandlerRejectsMalformedAndSecretBodies/case_variant",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthenticatedHandlerRejectsMalformedAndSecretBodies/nested_duplicate",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthenticatedHandlerRejectsMalformedAndSecretBodies",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthenticatedHandlerRejectsRequestsWithoutVerifiedSessionOrAllowedOrigin/foreign_origin",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthenticatedHandlerRejectsRequestsWithoutVerifiedSessionOrAllowedOrigin/no_token",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthenticatedHandlerRejectsRequestsWithoutVerifiedSessionOrAllowedOrigin/malformed_token",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthenticatedHandlerRejectsRequestsWithoutVerifiedSessionOrAllowedOrigin",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthenticatedHandlerRejectsMalformedCompleteArchiveBatchBeforeStore",
+      "action": "pass"
+    },
+    {
+      "test": "TestBrowserLeaseBodiesDecodeStrictly",
+      "action": "pass"
+    },
+    {
+      "test": "TestBrowserRequestBodiesDecodeStrictly",
+      "action": "pass"
+    },
+    {
+      "test": "TestBrowserUnknownFieldIsRefused",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePublicReplayIsReadableWithoutASession",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePublicReplayRefusesWithoutTheHistoryService",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineLiveStateRequiresAParticipantAndRedactsAuthorizationIdentities",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineLiveStateExposesTheOfferIdentity",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRejectsAnAcceptanceWithoutTheOfferIdentity",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRequiresAnExplicitOriginOnMutations",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineResolvesASameOriginReadWithoutAnOriginHeader",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRejectsACrossSiteReadWithoutAnOriginHeader",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRejectsAReadForAHostOutsideTheAllowedOrigins",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRejectsForeignOriginAndUnknownCredentials",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRejectsAmbiguousCredentials",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineHasNoPublicMatchCreationRoute",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRejectsCreateMatchCommands",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRejectsCommandsForAnotherSeat",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineCommandUsesTheAuthenticatedActorAndReturnsTheStoredReceipt",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineMapsServiceFailuresWithoutLeakingDetails",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRejectsMalformedCommandBodies/duplicate_fields",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRejectsMalformedCommandBodies/unknown_field",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRejectsMalformedCommandBodies/wrong_match",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRejectsMalformedCommandBodies",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRequestHeadersIncludeTheGuestCredentialOnly",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesSharedWireContract",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesJSONPollReturnsTheCanonicalEnvelope",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/negative",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/decimal",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/exponent",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/two_values",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/out_of_range",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/leading_space",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/empty",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/blank",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/letters",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/hex",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/signed",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor/beyond_int64",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRejectsAMalformedCursor",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesAcceptsAStaleFutureOrGapCursor/future",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesAcceptsAStaleFutureOrGapCursor/gap",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesAcceptsAStaleFutureOrGapCursor/zero",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesAcceptsAStaleFutureOrGapCursor/exact",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesAcceptsAStaleFutureOrGapCursor/stale",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesAcceptsAStaleFutureOrGapCursor",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesStreamBeginsWithTheCanonicalSnapshot",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesStreamSendsTheNextVersion",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesStreamNeverRegressesTheCursor",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesStreamWritesHeartbeatComments",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesStreamClosesAtTheWindow",
+      "action": "pass"
+    },
+    {
+      "test": "TestCollectRemovalLedgersReadsTheNewerBundles",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesStreamClosesAtTheCredentialExpiry",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesCutsOffABlockedReadAtTheWindow",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesCapsABlockedWriteAtTheWindow",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesEnvelopeUsesListsAndNotNull",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRefusesACursorBeyondTheSafeRange",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesWritesHeartbeatsOnABusyMatch",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesKeepsTheHeartbeatWhileAReadIsTooSlow",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesWorkWithAServiceWithoutTheVersionReader",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesRequiresAParticipant",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesNegotiatesTheRepresentation/absent",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesNegotiatesTheRepresentation/refused",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesNegotiatesTheRepresentation/stream_refused",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesNegotiatesTheRepresentation/explicit_stream",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesNegotiatesTheRepresentation/explicit_json",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesNegotiatesTheRepresentation/wildcard",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesNegotiatesTheRepresentation",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesFailsClosedOnABlockedConsumer",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineUpdatesStreamEndsWhenTheCredentialIsRefused",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineFeaturesAnswerCarriesExactlyTwoSwitches",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueRefusesGuestsAndUnauthenticatedCallers/no_credential",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueRefusesGuestsAndUnauthenticatedCallers/guest_credential",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueRefusesGuestsAndUnauthenticatedCallers/account",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueRefusesGuestsAndUnauthenticatedCallers",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueMutationNeedsAnOrigin",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueEntryAnswerIsAllowlisted",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueCreationReplayAnswersTheSameEntry",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueMatchWithoutCandidateAnswersNotFound",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueAssignmentAnswerCarriesTheEngineCredential",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueFallbackReadsTheCredentialRecovery",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueForeignEntryIsNotFound",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueRefusesAnInvalidRequest",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueConflictIsAConflict",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineQueueUnavailableIsTemporary",
+      "action": "pass"
+    },
+    {
+      "test": "TestRestoreReplaysTheNewerRemovalLedgers",
+      "action": "pass"
+    },
+    {
+      "test": "TestRestoreWithoutAnAdmissionFenceIsRefused",
+      "action": "pass"
+    },
+    {
+      "test": "TestRestoreWithoutRemovalsClosesItsFence",
+      "action": "pass"
+    },
+    {
+      "test": "TestRestoreThatFailsLeavesItsFenceOpen",
+      "action": "pass"
+    },
+    {
+      "test": "TestRemovalLedgerContainsUsesTheStrongestDuplicateMatchRow",
+      "action": "pass"
+    },
+    {
+      "test": "TestRotatePlansBeforeItDeletes",
+      "action": "pass"
+    },
+    {
+      "test": "TestRestoreRefusesWithoutApply",
+      "action": "pass"
+    },
+    {
+      "test": "TestUnknownCommandAndHelp",
+      "action": "pass"
+    },
+    {
+      "test": "TestPendingRestoreEvidenceDoesNotRequireTheImportedDatabase",
+      "action": "pass"
+    },
+    {
+      "test": "TestDsnEnvKeepsTheConnectionStringOutOfArguments",
+      "action": "pass"
+    },
+    {
+      "test": "TestDsnEnvRefusesAmbiguousConfiguration",
+      "action": "pass"
+    },
+    {
+      "test": "TestDsnEnvSupportsASearchPath",
+      "action": "pass"
+    },
+    {
+      "test": "TestChildEnvironmentIsMinimalAndSorted",
+      "action": "pass"
+    },
+    {
+      "test": "TestRunToolReportsMissingBinaryWithoutLeakingConfiguration",
+      "action": "pass"
+    },
+    {
       "test": "TestPostgresPrivateSavePreservesAgreedDraw",
+      "action": "pass"
+    },
+    {
+      "test": "TestRestoreReplaysTheRemovalsTheCrashedRestoreOwed",
+      "action": "pass"
+    },
+    {
+      "test": "TestMergeRemovalLedgersKeepsTheLaterRemoval",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheAcceptanceKeyShape",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheFriendSeatControlHasNoEngineSeat",
+      "action": "pass"
+    },
+    {
+      "test": "TestThePublicLabelRejectsAnEmailOrAnEndpoint",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheAcceptanceKeyIsStoredOnlyAsAHash",
       "action": "pass"
     },
     {
@@ -25,7 +688,255 @@
       "action": "pass"
     },
     {
+      "test": "TestExportCarriesTheRemovalLedger",
+      "action": "pass"
+    },
+    {
       "test": "TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt/terminal_match",
+      "action": "pass"
+    },
+    {
+      "test": "TestRestoreReplaysTheRemovalLedger",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheAllocatedMatchIdentifierSeparatesTheOwners",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheAllocationCommandBindsTheCreatorSeat",
+      "action": "pass"
+    },
+    {
+      "test": "TestGoldenContractFixtureRoundTrips",
+      "action": "pass"
+    },
+    {
+      "test": "TestActionAndCommandRejectUnknownOrChangedPayloads",
+      "action": "pass"
+    },
+    {
+      "test": "TestCommandFingerprintIsStableAndActorBound",
+      "action": "pass"
+    },
+    {
+      "test": "TestCommandFingerprintCoversTheAcceptedOffer",
+      "action": "pass"
+    },
+    {
+      "test": "TestResultValidation",
+      "action": "pass"
+    },
+    {
+      "test": "TestTimeoutFactsNeverAwardTheFlaggedSeat",
+      "action": "pass"
+    },
+    {
+      "test": "TestCandidateMustLeaveOpponentToMoveAndCannotMisdeclareOutcome",
+      "action": "pass"
+    },
+    {
+      "test": "TestPublicProjectionContainsNoPrivateIdentity",
+      "action": "pass"
+    },
+    {
+      "test": "TestBuildPublicProjectionRequiresTerminalResult",
+      "action": "pass"
+    },
+    {
+      "test": "TestRulesInputHashCoversVersionControlAndPosition",
+      "action": "pass"
+    },
+    {
+      "test": "TestApplyAcceptedMoveUsesDecisionTimeAndArmsOpponent",
+      "action": "pass"
+    },
+    {
+      "test": "TestOpeningPhaseRunsNoMainBankBeforeTheFirstMove",
+      "action": "pass"
+    },
+    {
+      "test": "TestClockExpiryUsesAuthoritativeTime",
+      "action": "pass"
+    },
+    {
+      "test": "TestCommandResultHashStability",
+      "action": "pass"
+    },
+    {
+      "test": "TestNormalizeFixtureObjects",
+      "action": "pass"
+    },
+    {
+      "test": "TestEpisodeKeepsTheIdentityOfItsEarliestObservation",
+      "action": "pass"
+    },
+    {
+      "test": "TestEpisodeSurvivesAStaleSuccess",
+      "action": "pass"
+    },
+    {
+      "test": "TestEpisodeIsNotReopenedByADeferredFailure",
+      "action": "pass"
+    },
+    {
+      "test": "TestEpisodeOrdersADeferredFailureAgainstASuccess",
+      "action": "pass"
+    },
+    {
+      "test": "TestEpisodeOrdersADeferredSuccessAgainstAFailure",
+      "action": "pass"
+    },
+    {
+      "test": "TestEpisodeIgnoresABusyOrCancelledObservation",
+      "action": "pass"
+    },
+    {
+      "test": "TestFlushKeepsTheNewestObservation",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthReporterServesConcurrentReportsOfOneDependency",
+      "action": "pass"
+    },
+    {
+      "test": "TestEpisodeKeepsAKnownIdentityWhenTheEpochIsUnreadable",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthIgnoresACancelledEvaluation",
+      "action": "pass"
+    },
+    {
+      "test": "TestProbeNeverRecoversARealOutage",
+      "action": "pass"
+    },
+    {
+      "test": "TestProbeDoesNotMistakeABusyPrimaryForAnOutage",
+      "action": "pass"
+    },
+    {
+      "test": "TestProbeTreatsAHungPrimaryAsAnOutage",
+      "action": "pass"
+    },
+    {
+      "test": "TestRepairRulesReplacesTheWorkerInsteadOfProbingIt",
+      "action": "pass"
+    },
+    {
+      "test": "TestRepairRulesFailsOnAFailedRepair",
+      "action": "pass"
+    },
+    {
+      "test": "TestRepairRulesLeavesTheHealthAloneOnABusyRepair",
+      "action": "pass"
+    },
+    {
+      "test": "TestRepairRulesFallsBackToTheCheckWithoutTheRepairSeam",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthStateFailsClosedOnAnUnreadableSharedState",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthStateIsUnavailableWhileADependencyIsDown",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthLivenessIsOnlyRefreshedWhileTheServiceIsHealthy",
+      "action": "pass"
+    },
+    {
+      "test": "TestRecoveryRefundNeverChargesTheInterruptionToAPlayer",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateClaimConnectedOpponentIsNeverClaimable",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateClaimBoundaries",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateClaimRefusals/a_finished_match_stays_final",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateClaimRefusals/a_service_outage_is_not_an_absent_opponent",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateClaimRefusals/a_degraded_service_is_not_an_absent_opponent",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateClaimRefusals/the_claim_never_bypasses_the_opening_reply",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateClaimRefusals/the_claim_needs_both_sides_to_have_moved",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateClaimRefusals/an_opponent_that_never_reported_in_is_not_claimable",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateClaimRefusals",
+      "action": "pass"
+    },
+    {
+      "test": "TestParseClaimCommandRejectsUnknownFields",
+      "action": "pass"
+    },
+    {
+      "test": "TestRunnerLeaseRequestValidation",
+      "action": "pass"
+    },
+    {
+      "test": "TestRecoveryOverlapRefundsTheWholeInterruption",
+      "action": "pass"
+    },
+    {
+      "test": "TestSuspensionBoundaryIdentityIsStable",
+      "action": "pass"
+    },
+    {
+      "test": "TestParseRunnerRequestEnvelopeIsStrict",
+      "action": "pass"
+    },
+    {
+      "test": "TestRunnerRequestEnvelopeFixtureMatchesTheContract",
+      "action": "pass"
+    },
+    {
+      "test": "TestGuestSecretsAreOpaqueUniqueAndDomainSeparated",
+      "action": "pass"
+    },
+    {
+      "test": "TestIssuedCredentialsRedactTheirSecret",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthorizationServiceCannotIssueCredentials",
+      "action": "pass"
+    },
+    {
+      "test": "TestPrincipalContextRoundTrip",
+      "action": "pass"
+    },
+    {
+      "test": "TestAdvisoryLocksAreStableAndSeparateNamespaces",
+      "action": "pass"
+    },
+    {
+      "test": "TestAuthorizeSeatFailsClosedWithoutAPresentedPrincipal",
+      "action": "pass"
+    },
+    {
+      "test": "TestRestoreReportsTheRemovalsItCannotApply",
       "action": "pass"
     },
     {
@@ -37,11 +948,47 @@
       "action": "pass"
     },
     {
+      "test": "TestRestoreReplaysTheNewerRemovalLedgersOfAnOlderBundle",
+      "action": "pass"
+    },
+    {
       "test": "TestPostgresOnlineSetupRejectsInvalidAndTerminalPositions/invalid_board",
       "action": "pass"
     },
     {
       "test": "TestPostgresOnlineSetupRejectsInvalidAndTerminalPositions/invalid_counter",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheCancelledTakeoverPreservesTheCrashedRestore",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheServiceRulesMatchTheSharedShapeContract",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheIssuedIdentifiersMatchTheSharedShapeContract",
+      "action": "pass"
+    },
+    {
+      "test": "TestNormalizeUsernameKeepsTheChosenSpellingAndComparesCaseInsensitively",
+      "action": "pass"
+    },
+    {
+      "test": "TestNormalizeUsernameRefusesReservedAndUnsafeNames",
+      "action": "pass"
+    },
+    {
+      "test": "TestUsernameKeyRejectsANameTheServiceWouldNotAccept",
+      "action": "pass"
+    },
+    {
+      "test": "TestNormalizeAvatarAcceptsOnlyTheBoundedCatalog",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheCancelledTakeoverOfAnUnreadableMarkerRestoresIt",
       "action": "pass"
     },
     {
@@ -65,7 +1012,99 @@
       "action": "pass"
     },
     {
+      "test": "TestRestoreLoadsTheExportThenReappliesTheLedger",
+      "action": "pass"
+    },
+    {
+      "test": "TestRestoreRefusesToTouchTheDatabaseWhenAuthenticationFails",
+      "action": "pass"
+    },
+    {
       "test": "TestPostgresOnlineReplayRemovalOperationIDsAreMatchScoped",
+      "action": "pass"
+    },
+    {
+      "test": "TestRestoreDoesNotApplyTombstonesWhenTheLoadFails",
+      "action": "pass"
+    },
+    {
+      "test": "TestCloserSetReleasesEveryOwnedResource",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthMonitorRepairsAClosedGateInsteadOfProbingIt",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthMonitorNeverRecoversOnAFailedRepair",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthMonitorChecksAnOpenGate",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthMonitorSuspendsTheDependencyWhenTheCheckFails",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthMonitorDoesNotSuspendOnABusyCheck/the_translated_busy_class",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthMonitorDoesNotSuspendOnABusyCheck/the_raw_busy_class",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthMonitorDoesNotSuspendOnABusyCheck",
+      "action": "pass"
+    },
+    {
+      "test": "TestHealthMonitorDoesNotSuspendOnACancelledCheck",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueReconcilerReportsTheSweepResult",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueReconcilerReportsAFailedPass",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueReconcilerStopsWithTheContext",
+      "action": "pass"
+    },
+    {
+      "test": "TestLoadFailsClosedAndDoesNotEchoValues",
+      "action": "pass"
+    },
+    {
+      "test": "TestLoadNormalizesOriginLists",
+      "action": "pass"
+    },
+    {
+      "test": "TestLoadReadsTheDeadlineSweepSettings",
+      "action": "pass"
+    },
+    {
+      "test": "TestLoadKeepsTheOnlineSurfacesClosedByDefault",
+      "action": "pass"
+    },
+    {
+      "test": "TestStartDeadlineReconcilerRunsAndStopsOnRelease",
+      "action": "pass"
+    },
+    {
+      "test": "TestStartDeadlineReconcilerStopsWithTheContext",
+      "action": "pass"
+    },
+    {
+      "test": "TestStartDeadlineReconcilerWithoutAReconcilerStartsNothing",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheColdStartDoesNotConsumeTheExchangeBudget",
       "action": "pass"
     },
     {
@@ -73,11 +1112,127 @@
       "action": "pass"
     },
     {
+      "test": "TestPlanRestoreWritesNothing",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/opaque_versioned_state",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/fractional_version",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/nested_provider_key",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/nested_authorization",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/credentials_in_undo_state",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/empty_legacy_state",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/missing_data",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/extra_section_field",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/invalid_version",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/string_version",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/null_extensions",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions/secret_section_name",
+      "action": "pass"
+    },
+    {
+      "test": "TestCurrentBrowserCheckpointExtensions",
+      "action": "pass"
+    },
+    {
+      "test": "TestHistoryBindingIsCompleteOrLocal",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheRestartAfterATimeoutKeepsItsOwnStartBudget",
+      "action": "pass"
+    },
+    {
       "test": "TestPostgresOnlineTerminalClockChargesElapsedTime/resign",
       "action": "pass"
     },
     {
+      "test": "TestTheCrashOfTheFirstExchangeIsNotReplacedByTheTimeoutOfTheRetry",
+      "action": "pass"
+    },
+    {
+      "test": "TestACanceledCallerKeepsItsCancellation",
+      "action": "pass"
+    },
+    {
+      "test": "TestALateRejectionIsNotAContractOutcome",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheRealBundleAnswersAColdRequest",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheCallerDeadlineIsCarriedDuringTheReadiness",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheCallerDeadlineIsCarriedInAWarmedExchange",
+      "action": "pass"
+    },
+    {
+      "test": "TestAnInternalTimeoutCarriesNoCause",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheEqualBoundaryBelongsToTheInternalBudget",
+      "action": "pass"
+    },
+    {
+      "test": "TestACanceledCallReapsTheWorker",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheCancellationCarriesTheCauseOfTheCaller",
+      "action": "pass"
+    },
+    {
       "test": "TestPostgresOnlineTerminalClockChargesElapsedTime/cancel",
+      "action": "pass"
+    },
+    {
+      "test": "TestCollectLedgersMergesTheWholeRotation",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheCrashSurvivesAFailedStartOfTheReplacement",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheCancellationWinsOverAnEarlierCrash",
       "action": "pass"
     },
     {
@@ -89,7 +1244,351 @@
       "action": "pass"
     },
     {
+      "test": "TestRestoreRecordsItsLineage",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineAllocationIsIdempotentUnderCompetingOwners",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineAllocationRefusesAMatchThatAlreadyExists",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheLifecycleOfOneClientIsBusyColdAndHung",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheRepairBringsADependencyBack",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineAllocationIsOrderedAgainstTheRemovalOfItsParticipant",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheProbeDetectsAWorkerThatHungAfterItsReadiness",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheProbeDetectsAWorkerThatExitedAfterItsReadiness",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheProbeKeepsTheClassOfAnEarlierCallerDeadline",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRunnerFencesTheTerminalActionsOfAStaleRunner",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheProbeReportsTheInternalBoundAsABareTimeout",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheProbeReportsABusyWorkerWithoutWaiting",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheProbeOfAReadyWorkerSucceeds",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineOwnerResignsItsAgentSeatWithoutALease",
+      "action": "pass"
+    },
+    {
+      "test": "TestTheEvaluatorReportsTheBusySignal",
+      "action": "pass"
+    },
+    {
+      "test": "TestAnExpiredInternalBudgetIsNotTheDeadlineOfTheCaller",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateReturnsValidatedMoveCandidate",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateReturnsTimeoutWinnerWithoutCandidate",
+      "action": "pass"
+    },
+    {
+      "test": "TestEvaluateSurfacesRejectionWithoutKillingTheWorker",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/stale-fingerprint",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/missing-candidate",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/timeout-no-winner",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/malformed-facts",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRunnerLeaseEndsWithItsMatch",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/bad-candidate-fen",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/extra-field",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/stale-request",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/stale-match",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/stale-policy",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/history-drift",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/timeout-side-drift",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/stale-engine",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/stale-fen",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate/candidate-on-evaluate",
+      "action": "pass"
+    },
+    {
+      "test": "TestRejectedOrMismatchedOutputCannotReturnACandidate",
+      "action": "pass"
+    },
+    {
+      "test": "TestTimeoutKillsTheWorkerAndTheNextRequestRestartsIt",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRunnerRecordsNoProviderRequestForAFinishedMatch",
+      "action": "pass"
+    },
+    {
+      "test": "TestCancellationKillsTheWorker",
+      "action": "pass"
+    },
+    {
+      "test": "TestCanceledRequestDoesNotAttemptToStartWorker",
+      "action": "pass"
+    },
+    {
+      "test": "TestCrashAndMalformedOutputAreBoundedAndRecoverable",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/long_fen",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/empty_history",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/newline_history",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/unsafe_version",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/stale_history",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/bad_intent",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/mixed_timeout",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/zero_version",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/large_history",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/bad_promotion",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/empty_id",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/space_id",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/newline_fen",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/long_history",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker/bad_squares",
+      "action": "pass"
+    },
+    {
+      "test": "TestInvalidRequestsNeverStartTheWorker",
+      "action": "pass"
+    },
+    {
+      "test": "TestConcurrentEvaluationsAreSerialized",
+      "action": "pass"
+    },
+    {
+      "test": "TestSemanticInputFingerprintMatchesTheWorkerCanonicalJSON/evaluate_only",
+      "action": "pass"
+    },
+    {
+      "test": "TestSemanticInputFingerprintMatchesTheWorkerCanonicalJSON/move_intent_without_promotion",
+      "action": "pass"
+    },
+    {
+      "test": "TestSemanticInputFingerprintMatchesTheWorkerCanonicalJSON/move_intent_with_promotion_over_an_ordered_history",
+      "action": "pass"
+    },
+    {
+      "test": "TestSemanticInputFingerprintMatchesTheWorkerCanonicalJSON/timeout_intent_names_the_expired_side",
+      "action": "pass"
+    },
+    {
+      "test": "TestSemanticInputFingerprintMatchesTheWorkerCanonicalJSON/policy_override",
+      "action": "pass"
+    },
+    {
+      "test": "TestSemanticInputFingerprintMatchesTheWorkerCanonicalJSON",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueuedRequestHonoursItsOwnDeadline",
+      "action": "pass"
+    },
+    {
       "test": "TestPostgresTheAllocatedEngineSeatTakesOneScopedGuestCredential",
+      "action": "pass"
+    },
+    {
+      "test": "TestCancelingAQueuedRequestLeavesTheActiveRequestAlone",
+      "action": "pass"
+    },
+    {
+      "test": "TestCloseRejectsFurtherRequests",
+      "action": "pass"
+    },
+    {
+      "test": "TestWorkerEnvironmentIsNarrow",
+      "action": "pass"
+    },
+    {
+      "test": "TestBuiltWorkerIntegration",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineEvaluatorMapsWorkerCandidate",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineEvaluatorRejectsInconsistentInputWithoutStartingTheWorker/schema_version",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineEvaluatorRejectsInconsistentInputWithoutStartingTheWorker/rules_policy",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineEvaluatorRejectsInconsistentInputWithoutStartingTheWorker/tampered_hash",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineEvaluatorRejectsInconsistentInputWithoutStartingTheWorker/empty_proposal",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineEvaluatorRejectsInconsistentInputWithoutStartingTheWorker/bad_proposal",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineEvaluatorRejectsInconsistentInputWithoutStartingTheWorker/active_seat",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineEvaluatorRejectsInconsistentInputWithoutStartingTheWorker/position_not_last",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineEvaluatorRejectsInconsistentInputWithoutStartingTheWorker/out_of_order_moves",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineEvaluatorRejectsInconsistentInputWithoutStartingTheWorker",
+      "action": "pass"
+    },
+    {
+      "test": "TestResultForMapsPolicyEndings/hundred-halfmoves",
+      "action": "pass"
+    },
+    {
+      "test": "TestResultForMapsPolicyEndings/checkmate",
+      "action": "pass"
+    },
+    {
+      "test": "TestResultForMapsPolicyEndings/stalemate",
+      "action": "pass"
+    },
+    {
+      "test": "TestResultForMapsPolicyEndings/insufficient-material",
+      "action": "pass"
+    },
+    {
+      "test": "TestResultForMapsPolicyEndings/threefold-repetition",
+      "action": "pass"
+    },
+    {
+      "test": "TestResultForMapsPolicyEndings",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineEvaluatorWithBuiltWorker",
+      "action": "pass"
+    },
+    {
+      "test": "TestTranslateRejectionSeparatesRefusalsFromInternalDisagreement",
       "action": "pass"
     },
     {
@@ -150,7 +1649,7 @@
     },
     {
       "test": "TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight",
-      "action": "fail"
+      "action": "pass"
     },
     {
       "test": "TestPostgresOnlinePendingSessionRevocationRejectsTheWaitingCreateReplay",
@@ -217,6 +1716,38 @@
       "action": "pass"
     },
     {
+      "test": "TestPostgresTheQueueAllocationGuardAcceptsOnlyTheSanitizedColumns",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheFriendAgentRecordsAreSanitized",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresAccountDeletionSanitizesTheFriendAndQueueRecords",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheSubjectLedgerReplaysTheAuxiliarySanitation",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineComposedRulesBusyWorkerIsNotAnOutage",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineComposedRulesRawBusyAnswerIsNotAnOutage",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineComposedRulesClosedGateRecoversWithTheSameClient",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineComposedRulesColdStartContentionIsNotAnOutage",
+      "action": "pass"
+    },
+    {
       "test": "TestPostgresOnlineTrustedReconciliationSettlesAnExpiredMainClockWithoutAParticipantCommand",
       "action": "pass"
     },
@@ -269,6 +1800,66 @@
       "action": "pass"
     },
     {
+      "test": "TestPostgresTheFenceHasOneOwner",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTwoRestoresCannotOwnTheFenceAtTheSameTime",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheTakeoverNeverRemovesTheMarker",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRemovalLedgerDigestIsOrderIndependent",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheMergeRefusesTwoIdentifiersOfOneRemoval",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheContainmentNeedsTheStrongerRemoval",
+      "action": "pass"
+    },
+    {
+      "test": "TestFenceHelperProcess",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresALiveRestoreHoldsTheFenceAgainstEveryOtherProcess",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresACrashedRestoreIsRecoveredAfterItsProcessDied",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoveryOfACrashedRestoreNeverReleasesADatabaseThatLostItsRemovals",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoveryOfARestoreWithAReleasedGateStillBlocksTheService",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheFenceFailsClosedForEveryUnexpectedState",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheFenceOfAnotherRestoreIsAConflict",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheServiceRefusesEveryRequestWhileTheRestoreFenceIsOpen",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheScopeOfTheFenceIsTheAdmissionAndNotTheDatabase",
+      "action": "pass"
+    },
+    {
       "test": "TestPostgresFriendHTTPRoutesAndAnswers",
       "action": "pass"
     },
@@ -278,6 +1869,138 @@
     },
     {
       "test": "TestPostgresFriendInvitationTTLIsTwelveHours",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendNeverPublishesAPrivateRoutingIdentity",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendKeepsARegisteredPublicModelLabel",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendAcceptanceCommitsTheMatchAndTheCredentialTogether",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendExpiredInvitationReportsItsState",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendNamedChallengeIsInvisibleToAStranger",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendGuestRematchLostAnswerRecoversTheCredential",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendGuestRematchRetryAnswersTheLiveView",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRematchAcceptanceCommitsTheOfferAndTheMatchTogether",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendConcurrentAcceptanceAndCancellationHaveOneWinner",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendConcurrentRematchAcceptanceCreatesOneMatch",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendCreationWaitsForTheAccountScopeLock",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendAcceptanceWaitsForTheAccountScopeLock",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRemovedAccountCannotCreateAnInvitation",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRemovedAccountCannotAcceptAnInvitation",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRemovedParticipantCannotProposeOrAcceptARematch",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRemovedInviterDoesNotTakeTheAcceptorSeatAway",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRemovedProposerCannotHaveItsOfferAccepted",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendDeadRematchOfferIsNotPublished",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendSurvivingGuestKeepsItsOwnSeatCredential",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendSurvivingGuestRecoversItsAcceptanceCredential",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRestoredSeatIdentityIsRefused",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendLegacyAcceptingOfferIsReadWithoutAnError",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendAnonymousBearerResumeRecoversTheSurvivorSeat",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendAnonymousRetryOfAnUncommittedAcceptanceResumesTheStoredAcceptor",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRemovalIsOrderedAgainstTheCredentialRotationOfTheAcceptor",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendAnAccountNeverResumesTheAcceptanceOfAGuest",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendTheSurvivorOfARematchRecoversItsOwnNewSeatCredential",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendARemovedAcceptorOfARematchIsStillDenied",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRemovedParticipantCannotCancelItsInvitation",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRemovedGuestNeverGetsAFreshCredential",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRematchAcceptanceWaitsForTheAccountScopeLock",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFriendRemovalAndTheInvitationWriteNeverDeadlock",
       "action": "pass"
     },
     {
@@ -341,138 +2064,1491 @@
       "action": "pass"
     },
     {
+      "test": "TestOnlineGateRefusesTheAcceptanceOfASuspensionDuringEvaluation",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineGateRefusesTheAllocationWhileItIsClosed",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineGateRefusesPresenceAndLeaseWorkWhileUnrecovered",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineGateOrdersASuspensionAfterTheRunningMutations",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineGateKeepsAHealthyPeerJoinOpen",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineGateReopensAfterTheRecovery",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineGateRefusesAnAllocationOfARemovedParticipant",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineGateRefusesAMoveWithoutUsingTheWorker",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineGateRefusesACreateWithoutUsingTheWorker",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheGuestAuxiliaryRecordsAreSanitized",
+      "action": "pass"
+    },
+    {
       "test": "TestPostgresPublicReplayIsAllowlistedAndReadableWithoutSigningIn",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresProjectionIsIdempotentAndCountsEachResultOnce",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresAbortIsPublishedAsUnscored",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPrivateModelLabelNeverReachesTheSharedTables",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOwnerChosenPublicLabelIsPublished",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresMixedControlAttributesEveryMoveAndTheTerminalAction",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresControlChangeAnswersWithThePublishableLabel",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPublicHistoryExcludesPrivateLocalSaves",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFallbackGameIsNamedAfterTheBrowserEngine",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresLegacyReplayRouteServesTheAllowlistedReplay",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineHealthyMonitorRefreshesTheDurableLiveness",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineFailedRequestKeepsTheEpochBeforeItsEvaluation",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineAStalePlanOfAFailedRequestFindsTheBoundaryOfTheOutage",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineALegalMoveDoesNotWaitForTheDurableHealth",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheSharedHealthRecoversWhenAHealthyPeerAnswers",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineAFailedHealthReportIsRetriedByTheNextSuccess",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineMonitorPlansOneInterruptionForOneOutage",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRemovalOfAnAccountWithoutAMatchSurvivesARestore",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoveryOfACrashedRestoreIsIdentityBound",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRemovalOfAnAcceptedRematchOfferKeepsTheShape",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRemovalOfAnAcceptingRematchOfferKeepsTheShape",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackConsentIsBoundToTheExactOffer",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackConsentRefusesAConsumedOrUnknownOffer",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineDrawConsentIsBoundToTheExactOffer",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineOfferAdvancesTheVersionAndRecordsAnEvent",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackRemovesTheDiscardedIncrement",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackIsRefusedDuringTheOpeningExchange",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackIsRefusedDuringTheBlackStartOpening",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackDoesNotReopenTheOpeningPhase",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineAcceptanceRetryReturnsTheStoredReceipt",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineAcceptanceFingerprintCoversTheOfferIdentity",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineOpeningClockRunsNoMainBankBeforeTheFirstMove",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineOpeningClockAppliesToBlackToMovePositions",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUnansweredOpeningReplyAbortsTheMatch",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineRejectedIntentsDoNotAdvanceStateOrMintIncrements",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineIllegalMoveIsRefusedByTheRulesProcess",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineCancellationAbortsBeforeTheFirstMoveAndResignsAfter",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineCancellationAfterATakebackStillResigns",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineDrawOfferNeedsMutualConsent",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackRestoresThePositionWithoutRefunding",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineStaleTakebackOfferCannotRewindLaterPlay",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackOfferRejectsAPositionOutsideTheLine",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineRecoveryBudgetsSurviveControlChangesAndTakebacks",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineFourthIllegalAttemptLosesTheMatch",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineControlChangeKeepsTheClockRunning",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineClockKeepsRunningWhileNoIntentArrives",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineAcceptedMoveWithdrawsAPendingDrawOffer",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineFinishedMatchHasNoPendingOffer",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineExpiredClockSettlesEvenWhenTheIntentIsRefused",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineCancellationIsRecordedAsItsOwnEvent",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineFinalResultCannotBeOverwritten",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineLateRulesCandidateCannotChangeThePositionAfterATakeback",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineOfferReceiptsAreIdempotent",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlinePendingOffersAreVisibleToBothParticipants",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceHTTPAuthorizesTheAccountParticipant",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceHTTPAuthorizesTheGuestParticipant",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceHTTPRefusesAnInvalidCredential",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceHTTPRefusesAnUnknownRunnerRequestField",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceConnectedOpponentNeverOffersClaim",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceLeaseExpiryMarksTheSeatOffline",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceClaimBoundaryAtSixtySeconds",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceKeepWaitingPreservesTheOption",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceReconnectClearsTheClaim",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceClaimFirstStaysFinal",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceServiceUnavailableSuppressesTheClaim",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceClaimCannotBypassTheOpeningAbort",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePresenceClaimIsSerializedWithTheClockExpiry",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresRemovalWaitsForTheAccountScopeLock",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresConcurrentFirstProjectionAndRemovalNeverRepublishes",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresDeletionDoesNotLetTheProfilePublishANameAgain",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresAccountDeletionAnonymizesTheSharedGameInBothHistories",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresExplicitRemovalErasesTheReplayFromBothHistories",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresGuestRemovalUsesTheRetainedSeatCredential",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresRemovalLedgerReplaysAfterAnOlderRestore",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPrivacyRoutesSeparateDeletionFromRemoval",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPublicReadsAreRefusedWhileTheRestoreGateIsClosed",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresRestoreFenceSurvivesAFailedReplay",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresServingIsBlockedUntilTheRemovalLedgerIsReplayed",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresAFencedAccountCannotDeleteItsGame",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresAccountDeletionRemovesThePrivateOwnerData",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresRemovalLedgerReplaysThePrivateOwnerData",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPublicProfileIsPublishedWithoutTheAccountIdentity",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPublicUsernameLookupIsCaseInsensitive",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPublicUsernameUniquenessIsCaseInsensitiveAndRaceSafe",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPublicProfileNameCanBeRemoved",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPublicProfileEditsAreOwnershipChecked",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPublicAvatarIsABoundedChoice",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresExplicitGuestLinkBindsTheSeatAndKeepsTheOriginalActor",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresGuestLinkRejectsAnotherSeatAndAnotherOwner",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresGuestLinkRejectsADeadProofAndADeadCredential",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresGuestLinkRejectsARevokedAccountSession",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresProfileLinkLedgerRefusesAForeignSeat",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresProfileUpdateRacesAreSerialized",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresProfileUsernameRulesRejectReservedAndUnsafeNames",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresProfileTablesHoldNoPrivateIdentity",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRecoveryHealthyJoinDoesNotOpenAnEpoch",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRecoveryAdjustsTheDeadlineOfAnUnfinishedMatch",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRecoveryReplaysABoundaryOnlyOnce",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRecoveryPreservesTerminalResults",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRecoveryRefundsAnOutageThatCrossedTheDeadline",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRecoveryRefundsThePresenceLease",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPerMatchReplayRemovalRemovesThePublicReplay",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTwoRemovalsInOneMatchAreSealed",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRestoreFenceIsBoundToItsRestore",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRemovalRequestCannotBeWithdrawn",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheAssignedAgentEntryOfARemovedAccountIsRedacted",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheAllocationLosesTheModelLabelOfTheRemovedParticipant",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheSubjectReplayNeverGuessesTheRequestIdentifier",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheSubjectReplayOfAProductionRemovalIsIdempotent",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresPrivateWriteWaitsForTheAccountScopeLock",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOlderBackupKeepsTheRemovedSubjectRemoved",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheServiceAndTheRestoreShareTheRestoreFence",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheOrderMigrationPreservesExistingOrdersAndSequence/uncalled",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheOrderMigrationPreservesExistingOrdersAndSequence/called",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheOrderMigrationPreservesExistingOrdersAndSequence",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheLastCheckpointFollowsTheObservationOrder",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheFlushLogsSafelyAndRetriesThePendingObservation",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheReporterWritesThePendingObservationsOnce",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheMigrationBackfillsTheOrderOfTheExistingCheckpoints",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheSharedStateFollowsTheOrderAndNotTheClock",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineAHealthySnapshotCannotBorrowTheNewFailureRevision",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineAnOldFlushCannotOverwriteANewerObservation/the_older_flush_is_healthy",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineAnOldFlushCannotOverwriteANewerObservation/the_older_flush_is_degraded",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineAnOldFlushCannotOverwriteANewerObservation",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineALegalMoveDoesNotWaitForTheDurableWriteOfTheMonitor",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheNewerObservationSurvivesABlockedFlush",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheReporterServesConcurrentObservationsOfOneDependency",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoveryOfACrashedRestoreNamesTheRemovalLedgerItBound",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheOwedRemovalsAreReplayedByTheNextRestore",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheSubjectRemovalOfAnAccountWithoutAMatchIsReplayed",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRepeatedTakeoverKeepsTheOwedRemovals",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheGateOfALostRemovalIsRetainedUntilItIsApplied",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheSecondRestoreWithTheNewerLedgerAppliesTheOwedRemoval",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRestoreWithoutARemovalServesAgain",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheFinishOfAnUnboundFenceIsRefused",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheFinishOfAFenceWithoutAnOwnerIsRefused",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheBlockingGateOfALongRestoreIdentifierIsRecorded",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheCloseKeepsTheOwnershipWhileTheEvidenceIsDischarged",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheGateOfAMissingEvidenceIsRetained",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheEvidenceOfTheNextRestoreSurvivesTheClose",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRestoreWithoutARemovalSinkIsRefusedWhileRemovalsAreOwed",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheGateOfAMissingEvidenceIsReleasedByTheRecovery",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRestoreFenceHasOneOwner",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRestoreFenceSurvivesARestart",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRestoreIsRefusedBeforeTheImport",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRefusedRestoreKeepsTheServingState",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRefusedTakeOverKeepsTheMarkerOfTheCrashedRestore",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheFailedImportKeepsTheFenceClosed",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoveryMakesTheObligationDurableBeforeTheRelease",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresThePublicProofReleaseIsBoundToTheRestore",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoverCommandRefusesAConflictingEvidence",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRestoreWithoutASinkRunsWithoutAnObligation",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRefusedTakeOverKeepsTheCrashedRestoreRecoverable",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoveryKeepsTheObligationOfTheNextImport",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoveryRecreatesTheEvidenceOfTheLostDirectory",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheSubjectReplayNamesTheRequestThatIsThere",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoverCommandUsesTheEvidenceWithoutTheBundle",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoveryOfALiveRestoreReleasesNothing",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoveryOfAnotherRestoreReleasesNothing",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoveryReleasesNothingWhileTheErasureIsMissing",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRecoveryReleasesNothingOnStaleContainmentFacts",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheSuppliedEvidenceIsValidated",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheRestoreWithoutASinkIsRefusedAfterASuccessfulRestore",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresTheProofReleaseRefusesALiveRestore",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineSweepDoesNotSettleATerminalResultWhileTheGateIsClosed",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineCommandAndRemovalShareTheLockOrder",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTerminalTransitionRevokesTheLeaseOfTheMatch",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineGateRefusesTheCommandOfARemovedParticipantKeepsItsScope",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTerminalPathsRevokeTheLeaseOfTheMatch/timeout",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTerminalPathsRevokeTheLeaseOfTheMatch/opening_abort",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTerminalPathsRevokeTheLeaseOfTheMatch/draw",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTerminalPathsRevokeTheLeaseOfTheMatch/checkmate",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTerminalPathsRevokeTheLeaseOfTheMatch",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineHealthMonitorRecoversOnlyWithPrimaryEvidence",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineHealthMonitorDoesNotMistakeABusyPrimaryForAnOutage",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRunnerLeaseDuplicateTabIsRefused",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRunnerLeaseIsPerSeatAndPerGame",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRunnerLeaseExpiryFencesMoves",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRunnerControlChangeRevokesTheLease",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRunnerUncertainRequestSurvivesTheLeaseChange",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRunnerLeaseIsBoundToTheTurn",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRunnerLeaseReadIsLimitedToItsSeat",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheRuntimeRoleCanWriteACheckpointWithTheOrderOfTheSequence",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheProvisionedRuntimeRoleCanWriteACheckpoint/fresh",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheProvisionedRuntimeRoleCanWriteACheckpoint/stale",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheProvisionedRuntimeRoleCanWriteACheckpoint",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTheLiveAuditOfTheSequenceReadsTheEffectiveRights",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePlanDoesNotAddASecondPendingBoundaryForOneOutage",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineTwoInstancesPlanOneInterruptionForOneOutage",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlinePlanOfAPendingBoundaryDoesNotNeedASecondConnection",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineStaleObservationIsNotPlannedAgain",
+      "action": "pass"
+    },
+    {
+      "test": "TestOnlineRecoveryOfABoundaryThatStartsInTheFutureIsClamped",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackRestoresTheSpentRecoveryBudget",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineRecoveryAttemptRetryDoesNotSpendTwice",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackRestoresTheFormattingAllowance",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackDeadlineUsesTheBankAfterDiscardedIncrements",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTakebackCannotEraseTheCurrentTurnsSpentBudget",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineMigrationTablesTriggersAndIsolation",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineLostAcknowledgementAndPayloadMismatch",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineCompetingVersionedWriters",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineAbortAndControlEpoch",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineLockWaitCrossesClockExpiry",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineWorkerMoveSideMustMatchPosition",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineWorkerCandidateFencing",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTimeoutFailsClosedWithoutPolicy",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTimeoutWithInsufficientMaterialIsDraw",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineTimeoutFactsAreFencedByRelock",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUnauthorizedActorCannotTriggerTimeout",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineGetMatchReturnsConsistentSnapshot",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineParticipantReadsHideNonMembers",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineAnonymizationAndReplayRedaction",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlinePublicProjectionAndReplayRemoval",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineQueueAndLeaseFoundation",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineDecisionTimeNeverPrecedesAcceptedState",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesRecoverAfterAPIReplacement",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesPollReturnsTheCanonicalEnvelope",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesStreamDeliversTheCanonicalSnapshotAndTheNextVersion",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesConvergesAfterMissedEvents",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesStreamEndsWhenTheCredentialIsRevoked",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesStreamEndsBeforeTheCredentialExpiry",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesIdleStreamHoldsNoDatabaseConnection",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesDuplicateAcknowledgementDoesNotAdvanceTheCursor",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesHeartbeatIsObservableOnTheWire",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesHeartbeatGapStaysBounded",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesCursorValidation",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesKeepsForeignParticipantsOut",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineUpdatesRefusalCarriesNoDetail",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineWorkerCheckmateAwardsTheMatingSide",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineWorkerFailureLeavesMatchUnchanged/malformed",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineWorkerFailureLeavesMatchUnchanged/crash",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineWorkerFailureLeavesMatchUnchanged/timeout",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineWorkerFailureLeavesMatchUnchanged",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineWorkerTimeoutUsesMatingMaterial/mating_material_wins",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineWorkerTimeoutUsesMatingMaterial/bare_king_draws",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOnlineWorkerTimeoutUsesMatingMaterial",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresAuthenticatedArchiveBatchExactRoundTripAndValidation",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresCheckpointAcceptsRetainedAndDiscardedModelHistory",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOwnerIsolationAndAuthenticatedHTTP/unauthenticated",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOwnerIsolationAndAuthenticatedHTTP/foreign_owner",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOwnerIsolationAndAuthenticatedHTTP/actual_owner",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresOwnerIsolationAndAuthenticatedHTTP",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresRevisionEpochCASAndConcurrentTakeover",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresIdempotentRetryLookupAndOperationIDReuse",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresFinalResultImmutableAndDeleteTombstone",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresInvalidArchiveRollsBackCheckpointAndReceipt",
+      "action": "pass"
+    },
+    {
+      "test": "TestPostgresArchiveReadPreservesExactChunkDTOBytes",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueHTTPRoutesRunAgainstTheRealQueue",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueHTTPFallbackCarriesTheEngineCredential",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueAllocationRacesAreSerialized",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueSweepAndOwnerRaceOnTheSameAllocation",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueEngineCredentialLifecycle",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueCanonicalLabels",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueReadinessLeaseIsEnforced",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueFallbackPendingEntryExpires",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueRealEngineCredentialIsScopedAndRefusedByTheQueue",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueRemovedAccountCannotWriteQueueState",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueRemovedAccountIsNeverPaired",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueRemovalOrdersTheQueueWrites",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueSweepSkipsARemovedAccount",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueRemovedAccountAnswersUnauthorized",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueRefusesGuestsAndConsumesAnEntryOnce",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueMatchIdentifiersNeverCollideAcrossOwners",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueMatchesOnlyDifferentOwnersWithAnAgentSeat",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueOwnerHoldsUnlimitedConcurrentEntries",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueCreationIsIdempotentPerOwner",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueWindowStartsAtTheReadyAcceptance",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueUnresponsiveEntryExpiresAndNeedsAnExplicitRejoin",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueResponsiveBackgroundEntryStaysEligible",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueSelectionStaysFixedAndOtherEntriesSurvive",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueCutoffEqualityWinsAndLaterCandidatesDoNot",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueCompetingMatchersProduceOneGame",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueCancelAndAssignmentRaceHasOneOutcome",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueCommittedOpponentIsNeverReplaced",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueFallbackEngineSeatIsASeparateParticipant",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueUsesTheStandardPositionAndRandomColors",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueDelayedWorkerResolvesTheOriginalCutoff",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueLateWorkerDoesNotMatchPostCutoffCandidates",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueKeepSearchingRemovesTheAutomaticCutoff",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueOperationIdentifierIsExactlyOnce",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueEntryOfAnotherOwnerIsNotFound",
+      "action": "pass"
+    },
+    {
+      "test": "TestQueueCommittedAllocationIsNeverResolvedAgain",
+      "action": "pass"
+    },
+    {
+      "test": "TestServerAppBootOwnsAndClosesTheRulesWorkerProcess",
+      "action": "pass"
+    },
+    {
+      "test": "TestServerAppFailedBootClosesTheRulesWorkerProcess/the_durable_health_cannot_be_written",
+      "action": "pass"
+    },
+    {
+      "test": "TestServerAppFailedBootClosesTheRulesWorkerProcess/the_removal_ledger_cannot_be_verified",
+      "action": "pass"
+    },
+    {
+      "test": "TestServerAppFailedBootClosesTheRulesWorkerProcess/the_restored_database_has_an_unreplayed_removal_ledger",
+      "action": "pass"
+    },
+    {
+      "test": "TestServerAppFailedBootClosesTheRulesWorkerProcess",
+      "action": "pass"
+    },
+    {
+      "test": "TestServerAppWarmFailureFailsTheBoot",
       "action": "pass"
     }
   ],
   "coverage": [
     {
       "scenarioId": "MAT-03",
-      "status": "passed",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt",
         "TestPostgresOnlineNonMemberCannotReadOrCommand"
       ],
-      "detail": "TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt, TestPostgresOnlineNonMemberCannotReadOrCommand passed"
+      "detail": "TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt, TestPostgresOnlineNonMemberCannotReadOrCommand passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "MAT-04",
-      "status": "passed",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineCommandThatWaitsPastTheMainDeadlineTimesOut",
         "TestPostgresOnlineCommandThatWaitsPastTheReplyDeadlineAborts"
       ],
-      "detail": "TestPostgresOnlineCommandThatWaitsPastTheMainDeadlineTimesOut, TestPostgresOnlineCommandThatWaitsPastTheReplyDeadlineAborts passed"
+      "detail": "TestPostgresOnlineCommandThatWaitsPastTheMainDeadlineTimesOut, TestPostgresOnlineCommandThatWaitsPastTheReplyDeadlineAborts passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "MAT-11",
-      "status": "not_run",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineDrawConsentIsBoundToTheExactOffer",
         "TestPostgresOnlineTakebackConsentIsBoundToTheExactOffer"
       ],
-      "detail": "TestPostgresOnlineDrawConsentIsBoundToTheExactOffer, TestPostgresOnlineTakebackConsentIsBoundToTheExactOffer did not run"
+      "detail": "TestPostgresOnlineDrawConsentIsBoundToTheExactOffer, TestPostgresOnlineTakebackConsentIsBoundToTheExactOffer passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "ARC-02",
-      "status": "passed",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineAcceptedSetupRetrySurvivesUnavailableWorker",
         "TestPostgresOnlineHTTPCannotInvokeTheTrustedDeadlineReconciliation"
       ],
-      "detail": "TestPostgresOnlineAcceptedSetupRetrySurvivesUnavailableWorker, TestPostgresOnlineHTTPCannotInvokeTheTrustedDeadlineReconciliation passed"
+      "detail": "TestPostgresOnlineAcceptedSetupRetrySurvivesUnavailableWorker, TestPostgresOnlineHTTPCannotInvokeTheTrustedDeadlineReconciliation passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "ARC-03",
-      "status": "passed",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineExpiredCredentialIsRejectedAfterTheLockWait",
         "TestPostgresOnlineRevocationDuringRulesEvaluationRejectsTheCommand"
       ],
-      "detail": "TestPostgresOnlineExpiredCredentialIsRejectedAfterTheLockWait, TestPostgresOnlineRevocationDuringRulesEvaluationRejectsTheCommand passed"
+      "detail": "TestPostgresOnlineExpiredCredentialIsRejectedAfterTheLockWait, TestPostgresOnlineRevocationDuringRulesEvaluationRejectsTheCommand passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "ARC-04",
-      "status": "not_run",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt",
         "TestPostgresOnlineAcceptanceRetryReturnsTheStoredReceipt",
         "TestPostgresOnlineExpiredCredentialCannotReplayAnAcceptedOperation"
       ],
-      "detail": "TestPostgresOnlineAcceptanceRetryReturnsTheStoredReceipt did not run"
+      "detail": "TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt, TestPostgresOnlineAcceptanceRetryReturnsTheStoredReceipt, TestPostgresOnlineExpiredCredentialCannotReplayAnAcceptedOperation passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "ARC-05",
-      "status": "passed",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineNonMemberCannotReadOrCommand",
         "TestPostgresOnlineAccountSessionRevocationRejectsBeforeTokenExpiry",
         "TestPostgresOnlineRevokedGuestCredentialStopsEveryAccess"
       ],
-      "detail": "TestPostgresOnlineNonMemberCannotReadOrCommand, TestPostgresOnlineAccountSessionRevocationRejectsBeforeTokenExpiry, TestPostgresOnlineRevokedGuestCredentialStopsEveryAccess passed"
+      "detail": "TestPostgresOnlineNonMemberCannotReadOrCommand, TestPostgresOnlineAccountSessionRevocationRejectsBeforeTokenExpiry, TestPostgresOnlineRevokedGuestCredentialStopsEveryAccess passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "ARC-06",
-      "status": "passed",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineGuestCredentialAuthorizesItsSeatAndReconnects",
         "TestPostgresGuestSeatKeepsOneLiveCredentialAndOneOwner"
       ],
-      "detail": "TestPostgresOnlineGuestCredentialAuthorizesItsSeatAndReconnects, TestPostgresGuestSeatKeepsOneLiveCredentialAndOneOwner passed"
+      "detail": "TestPostgresOnlineGuestCredentialAuthorizesItsSeatAndReconnects, TestPostgresGuestSeatKeepsOneLiveCredentialAndOneOwner passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "ARC-08",
-      "status": "failed",
+      "status": "partial",
       "tests": [
         "TestPostgresGuestSeatKeepsOneLiveCredentialAndOneOwner",
         "TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight"
       ],
-      "detail": "TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight failed"
+      "detail": "TestPostgresGuestSeatKeepsOneLiveCredentialAndOneOwner, TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "ARC-09",
-      "status": "passed",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineAcceptedSetupRetrySurvivesUnavailableWorker"
       ],
-      "detail": "TestPostgresOnlineAcceptedSetupRetrySurvivesUnavailableWorker passed"
+      "detail": "TestPostgresOnlineAcceptedSetupRetrySurvivesUnavailableWorker passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "ARC-10",
-      "status": "passed",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineDueDeadlineScanIsBoundedAndReturnsIdentifiers",
         "TestPostgresOnlineTrustedReconciliationIsIdempotentUnderConcurrentSweeps"
       ],
-      "detail": "TestPostgresOnlineDueDeadlineScanIsBoundedAndReturnsIdentifiers, TestPostgresOnlineTrustedReconciliationIsIdempotentUnderConcurrentSweeps passed"
+      "detail": "TestPostgresOnlineDueDeadlineScanIsBoundedAndReturnsIdentifiers, TestPostgresOnlineTrustedReconciliationIsIdempotentUnderConcurrentSweeps passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "ARC-11",
-      "status": "passed",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineTrustedReconciliationKeepsAnExpiredClockPendingWhileTheRulesServiceIsUnavailable",
         "TestPostgresOnlineServerLifecycleSettlesADueMatchAndStopsOnRelease"
       ],
-      "detail": "TestPostgresOnlineTrustedReconciliationKeepsAnExpiredClockPendingWhileTheRulesServiceIsUnavailable, TestPostgresOnlineServerLifecycleSettlesADueMatchAndStopsOnRelease passed"
+      "detail": "TestPostgresOnlineTrustedReconciliationKeepsAnExpiredClockPendingWhileTheRulesServiceIsUnavailable, TestPostgresOnlineServerLifecycleSettlesADueMatchAndStopsOnRelease passed",
+      "mappedTestsStatus": "passed"
     },
     {
       "scenarioId": "HIS-10",
-      "status": "passed",
+      "status": "partial",
       "tests": [
         "TestPostgresOnlineStoredStateNeverContainsTheCredentialSecret",
         "TestPostgresOnlinePublicReplayIsPublicAndLiveStateIsNot"
       ],
-      "detail": "TestPostgresOnlineStoredStateNeverContainsTheCredentialSecret, TestPostgresOnlinePublicReplayIsPublicAndLiveStateIsNot passed"
+      "detail": "TestPostgresOnlineStoredStateNeverContainsTheCredentialSecret, TestPostgresOnlinePublicReplayIsPublicAndLiveStateIsNot passed",
+      "mappedTestsStatus": "passed"
     }
   ],
   "browser": {
-    "status": "failed",
-    "exitCode": 1,
-    "output": "\n      328 |\n      329 |     await ownerContext.close();\n    > 330 |     await guestContext.close();\n          |     ^\n      331 |   });\n      332 |\n      333 |   test('a consumed invitation cannot be accepted twice and a guest without a credential is refused', async ({ browser }) => {\n        at C:\\Users\\Lenovo\\.t3\\worktrees\\kamkmchess\\t3-0b2f50f8\\tests\\e2e\\online-clients.spec.ts:330:5\n\n    Test timeout of 45000ms exceeded.\n\n    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────\n    test-results\\online-clients-online-clie-080f4-erve-the-same-accepted-move-chromium\\test-failed-1.png\n    ────────────────────────────────────────────────────────────────────────────────────────────────\n\n    attachment #2: screenshot (image/png) ──────────────────────────────────────────────────────────\n    test-results\\online-clients-online-clie-080f4-erve-the-same-accepted-move-chromium\\test-failed-2.png\n    ────────────────────────────────────────────────────────────────────────────────────────────────\n\n    Error Context: test-results\\online-clients-online-clie-080f4-erve-the-same-accepted-move-chromium\\error-context.md\n\n\n[3/5] [chromium] › tests\\e2e\\online-clients.spec.ts:333:3 › online clients against the local fixture › a consumed invitation cannot be accepted twice and a guest without a credential is refused\n[4/5] [chromium] › tests\\e2e\\online-clients.spec.ts:392:3 › online clients against the local fixture › the production interface renders the invitation link\n[5/5] [chromium] › tests\\e2e\\online-clients.spec.ts:429:3 › online clients against the local fixture › the rendered workspace reflects the real service state\n  1 failed\n    [chromium] › tests\\e2e\\online-clients.spec.ts:133:3 › online clients against the local fixture › a guest accepts a friend invitation and both browser clients observe the same accepted move \n  1 skipped\n  3 passed (2.8m)"
+    "commit": "1e08868d71e3105288ba59af24f55ea3df310593",
+    "status": "passed",
+    "stats": {
+      "startTime": "2026-10-21T20:05:29.818Z",
+      "duration": 231977.106,
+      "expected": 21,
+      "skipped": 0,
+      "unexpected": 0,
+      "flaky": 0
+    },
+    "tests": [
+      {
+        "title": "the built account app reaches the fixture of the run",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "a signed-in browser enters the queue and the cutoff commits the browser engine",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "two explicit entries of one signed-in browser are visible at the same time",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "the account change hides the games of the first account and restores the registry of the next",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "the first account gets its game back when it signs in again",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "a waiting entry survives a reload without committing the browser engine",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "a late seat change never writes into the next account",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "the owner switches the own agent while the provider request is running",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "the owner switches the own agent between two private models and the provider answers",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "the feature switch route reports exactly the two switches",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "a guest accepts a friend invitation and both browser clients observe the same accepted move",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "a consumed invitation cannot be accepted twice and a guest without a credential is refused",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "the production interface renders the invitation link",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "the rendered workspace reflects the real service state",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "the invitation of a published link is previewed and the screen stays usable",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "two clicks in the same tick start one request",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "a guest opens the published invitation link and previews the exact invitation",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "a guest creates a friend link and the other guest joins the game",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "the review cursor holds an earlier position while the live game moves on",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "the first move and the opening reply are playable in the real service",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      },
+      {
+        "title": "the queue asks a signed-out browser to sign in and keeps friend play",
+        "status": "expected",
+        "outcomes": [
+          "passed"
+        ]
+      }
+    ]
   },
   "limits": [
-    "This run proves local behaviour against a real database and the pinned rules worker.",
-    "It proves nothing about native assistive technology, a live host or a released cohort.",
-    "A scenario without a mapped test is reported as not_run and stays not_run in the ledger."
+    "Named automated cases are partial evidence for the broader acceptance scenarios.",
+    "The approved acceptance contract remains unchanged and both rollout gates remain off.",
+    "Earlier failed and incomplete attempts are described in assembled-verification.md."
   ]
 }
