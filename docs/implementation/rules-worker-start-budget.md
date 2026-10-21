@@ -269,9 +269,11 @@ A **failed** repair is a failure of the check: the monitor reports it and
 retries it on the next tick. A repair that only logs leaves the gate closed
 and the dependency down, which is the deadlock the composed proof measured.
 
-The boot warm of the composition stays what it is: it is the healthy boot
-path, and a failure of it does not stop the service. The dependency still
-comes back, through the repair of a closed gate.
+The boot warm of the composition is the healthy boot path, and a failure of
+it stops the boot: the service must never report a dependency it could not
+prove, and the worker of the failed boot is closed and reaped by the
+ownership of the composition. The repair of a closed gate is the recovery of
+a runtime outage, not a second way to boot.
 
 The setup validation of a match creation keeps its waiting behaviour: a
 creation waits for the worker instead of refusing the match. Only a probe

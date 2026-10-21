@@ -153,6 +153,24 @@ matches is refunded when the dependency answers again. The recovery runs
 before the service reports itself healthy, so the canonical state is
 published before resumed actions are accepted.
 
+A check never starts a worker, so a worker that is gone answers the busy
+class. The recovery of a closed gate is therefore a **repair**: the
+replacement of the same client is started and proven. The monitor owns the
+decision — a pending durable suspension means the gate is closed, so the
+dependency is repaired and the interruption is recovered after the
+replacement answered; an open gate is only checked, so the cold start of the
+worker stays with the traffic. A failed repair is a failure of the check: the
+gate stays closed, the failure is reported, and the next tick repairs again.
+The interruption is never recovered on a failed repair, because the recovery
+would publish a dependency that was never proven.
+
+The refused traffic does not use the worker. The authoritative gate check
+stays inside the acceptance transaction of a mutation, so a command that
+raced a suspension is still refused there. The check before the evaluation
+keeps the refused traffic away from the worker: a closed gate must not start
+a cold worker, and it must not hold the slot that the repair of the closed
+gate needs.
+
 The health boundary fails closed. A shared health state that cannot be read
 is an unavailable service, never a healthy one, so a service that cannot
 confirm its own health never hands out a win.
