@@ -255,7 +255,11 @@ Rules the browser must honour:
 * The **removals of a crashed restore are not forgotten**. The next restore merges the durable
   evidence of the restores that did not finish into the removal ledger it has to apply, so the
   removals they owed are replayed. A removal that is still owed keeps its evidence, and the
-  evidence is discharged when the database holds the ledger it names.
+  evidence is discharged when the database holds the ledger it names. The **close of a restore is
+  the one exception**: it keeps the evidence of the restore that holds the fence, although the
+  database holds that ledger, because the close is the moment the database and the evidence are
+  in step. The next restore discharges that record with the removals it applies, so the evidence
+  directory is never empty right after a successful restore and never has to be cleaned by hand.
 * A **gate is released only when the database holds the removal ledger the gate waits for**. The
   gate names the digest of that ledger, and the digest names the durable evidence of it, so the
   release of a gate is a containment check and not a blanket update. A gate whose removal ledger
@@ -268,6 +272,23 @@ Rules the browser must honour:
   so it is retained and the service stays closed: the release may never open the service for a
   database whose removal ledger rows are gone. The gates of the version before the evidence store
   existed have no evidence to look for, and they keep the release they always had.
+* The **supported recovery of a gate whose evidence is gone** is a supplied removal ledger that
+  proves the commitment of the gate. The digest the gate names is one way, so the only proof is a
+  removal ledger whose own digest is exactly the one the gate names: a newer or larger ledger is
+  not the same commitment and never proves one. The proof releases the gate only when the applied
+  removal ledger holds the supplied ledger, so the removals the gate waits for are really applied.
+  The operator supplies that ledger with `khabackup recover --evidence <file>`, where the file is
+  the durable evidence of the restore, restored from the **protected backup of the evidence
+  directory**. When no supplied ledger proves a gate, the gate is **retained**: the service stays
+  closed, the removals stay owed, and the operator has to restore the evidence of the restore from
+  that protected backup. The gate table is never edited by hand, and the immutable guards of the
+  table are never weakened.
+* A **restore that has a fence and no removal ledger sink** is refused while removals are owed.
+  The fence owns the durable evidence of the removals, so the fence itself says whether any are
+  owed, and the refusal happens under the ownership of the lifecycle and before the import: the
+  database is not touched, the evidence stays pending, and the service keeps the state it had. A
+  restore that carries no removals and has no pending obligation is not affected, so the tooling
+  of the private single-owner backup keeps working.
 * The **durability** of the fence is explicit: the owner marker is flushed before the directory
   that holds it, and the marker directory is flushed in the parent that holds it, and a failure
   of the flush aborts the restore before it imports anything. Windows offers no flush of a
