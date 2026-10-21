@@ -375,6 +375,16 @@ export interface OnlineComposition {
   resume(): void;
   /** Releases every resource. */
   dispose(): void;
+  /**
+   * Disposes the composition and waits for the cleanup of its engine seats.
+   *
+   * The disposal itself is synchronous: the composition stops acting at once.
+   * An engine seat releases the lease of its turn when the turn ends, so the
+   * promise settles when the seats released their leases. A caller that owns
+   * the lifetime of the composition awaits it, so a page that navigates away
+   * does not lose the release of a lease.
+   */
+  disposeAsync(): Promise<void>;
 }
 
 
@@ -1173,6 +1183,8 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   let activeQueueId: string | null = null;
   /** The entries whose engine credential is being recovered right now. */
   const recoveringEntries = new Set<string>();
+  /** The cleanup of the engine seats, awaited by `disposeAsync()`. */
+  let engineCleanup: Promise<void> = Promise.resolve();
 
   function createQueueRecord(): QueueRecord {
     const id = `queue-${queueRecords.size + 1}`;
@@ -2051,6 +2063,45 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   // the seat of a consumed invitation.
   restoreTrackedInvitations();
 
+  /**
+   * Disposes the composition.
+   *
+   * The disposal is synchronous in its effect: the composition stops acting
+   * at once. An engine seat releases the lease of its turn when the turn
+   * ends, so the cleanup of the seats is awaited by `disposeAsync()` and the
+   * requester and the session of a seat go away with it.
+   */
+  function disposeComposition(): void {
+    if (disposed) return;
+    disposed = true;
+    unsubscribeAccount?.();
+    unsubscribeAccount = null;
+    if (heartbeatTimer !== null) timers.clearTimer(heartbeatTimer);
+    for (const record of queueRecords.values()) {
+      if (record.pollTimer !== null) timers.clearTimer(record.pollTimer);
+      record.pollTimer = null;
+    }
+    heartbeatTimer = null;
+    workspace.dispose();
+    queue.dispose();
+    accountParticipant?.dispose();
+    accountParticipant = null;
+    accountRequesterInstance?.dispose();
+    accountRequesterInstance = null;
+    const engines = [...engineSeats.values()];
+    engineSeats.clear();
+    engineCleanup = Promise.all(engines.map(engine => engine.dispose().catch(() => undefined)))
+      .then(() => undefined)
+      .catch(() => undefined);
+    for (const requester of guestRequesters.values()) requester.dispose();
+    for (const session of guestSessions.values()) session.dispose();
+    guestRequesters.clear();
+    guestSessions.clear();
+    seats.clear();
+    presenceClients.clear();
+    engineTurns.clear();
+    listeners.clear();
+  }
   return {
     get features() {
       return features;
@@ -2395,32 +2446,11 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       driveEngineSeats();
     },
     dispose() {
-      if (disposed) return;
-      disposed = true;
-      unsubscribeAccount?.();
-      unsubscribeAccount = null;
-      if (heartbeatTimer !== null) timers.clearTimer(heartbeatTimer);
-      for (const record of queueRecords.values()) {
-        if (record.pollTimer !== null) timers.clearTimer(record.pollTimer);
-        record.pollTimer = null;
-      }
-      heartbeatTimer = null;
-      workspace.dispose();
-      queue.dispose();
-      accountParticipant?.dispose();
-      accountParticipant = null;
-      accountRequesterInstance?.dispose();
-      accountRequesterInstance = null;
-      for (const engine of engineSeats.values()) engine.dispose();
-      engineSeats.clear();
-      for (const requester of guestRequesters.values()) requester.dispose();
-      for (const session of guestSessions.values()) session.dispose();
-      guestRequesters.clear();
-      guestSessions.clear();
-      seats.clear();
-      presenceClients.clear();
-      engineTurns.clear();
-      listeners.clear();
+      disposeComposition();
+    },
+    async disposeAsync() {
+      disposeComposition();
+      await engineCleanup;
     },
   };
 }

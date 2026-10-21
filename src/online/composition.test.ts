@@ -669,6 +669,58 @@ describe('the engine credential recovery only touches a committed engine game (R
   });
 });
 
+describe('the disposal of a composition waits for its engine seats', () => {
+  it('settles the promise of the disposal after the seats released their leases', async () => {
+    // The disposal is synchronous in its effect, and the promise settles when
+    // the engine seats released their leases.
+    const { fetcher } = createFetchDouble({
+      updates: {
+        snapshot: matchView({
+          clock: { ...matchView().clock, activeSeat: 'black', activeSince: '2026-10-21T10:00:00.000Z' },
+        }),
+      },
+    });
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let released = false;
+    let created = false;
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage: createStorage(),
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      createEngineSeat: () => {
+        created = true;
+        return {
+          seat: 'black',
+          stopped: false,
+          play: () => new Promise(() => undefined),
+          dispose: async () => { await gate; released = true; },
+        };
+      },
+    });
+    composition.registerGuestCredential(createGuestCredential({
+      guestId: 'guest-engine',
+      matchId: 'match-00000001',
+      seat: 'black',
+      token: 'engine-token',
+    }), 'account');
+    composition.attachAndFocus('match-00000001', 'white');
+    await vi.waitFor(() => { expect(created).toBe(true); });
+    const disposal = composition.disposeAsync();
+    let settled = false;
+    void disposal.then(() => { settled = true; });
+    await settle();
+    // The engine seat still holds its lease.
+    expect(settled).toBe(false);
+    expect(released).toBe(false);
+    release?.();
+    await disposal;
+    expect(released).toBe(true);
+  });
+});
+
 describe('the agent binding follows the seat, never the public label (B-26)', () => {
   it('binds the exact private selection of the chosen label and keeps it in the browser', () => {
     const storage = createStorage();
