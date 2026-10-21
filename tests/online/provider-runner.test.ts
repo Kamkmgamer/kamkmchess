@@ -28,7 +28,11 @@ import type {
   ProviderRunnerCommandPort,
   ProviderRunnerLeasePort,
 } from '../../src/online/provider-runner';
-import { OnlineAuthError } from '../../src/online/auth';
+import { OnlineAuthError, createGuestCredential } from '../../src/online/auth';
+import type { Receipt } from '../../src/online/contracts';
+import { createOnlineMatchCommandClient } from '../../src/online/match-client';
+import { createAuthorizedRequester } from '../../src/online/request';
+import { createParticipantSession } from '../../src/online/session';
 import type { OnlineMatchView } from '../../src/online/updates';
 import {
   createFakeOnlineService,
@@ -50,6 +54,38 @@ async function until(condition: () => boolean, label: string): Promise<void> {
     if (Date.now() > deadline) throw new Error(`The condition (${label}) was not reached.`);
     await new Promise((resolve) => { setTimeout(resolve, 1); });
   }
+}
+
+/**
+ * The command client whose acknowledgement is lost.
+ *
+ * The command reaches the service and is applied there, but the browser never
+ * learns its receipt: the three attempts of the runner lose their
+ * acknowledgement. A later attempt of the same operation is answered with the
+ * receipt of the service, like the replay of the owner.
+ */
+function losingAcknowledgement(
+  base: ProviderRunnerCommandPort,
+): ProviderRunnerCommandPort & { readonly receipts: Receipt[] } {
+  const receipts: Receipt[] = [];
+  const attempts = new Map<string, number>();
+  const port: ProviderRunnerCommandPort & { readonly receipts: Receipt[] } = {
+    receipts,
+    async submit(action, options) {
+      const operationId = options?.operationId ?? '';
+      const count = (attempts.get(operationId) ?? 0) + 1;
+      attempts.set(operationId, count);
+      const receipt = await base.submit(action, options);
+      receipts.push(receipt);
+      if (count <= 3) {
+        throw new ProviderRunnerServiceError('transport', 'The acknowledgement was lost.', 0);
+      }
+      return receipt;
+    },
+    ...(base.setControlEpoch === undefined ? {} : { setControlEpoch: base.setControlEpoch.bind(base) }),
+    ...(base.setVersion === undefined ? {} : { setVersion: base.setVersion.bind(base) }),
+  };
+  return port;
 }
 
 interface Harness {
@@ -2113,7 +2149,15 @@ describe('the competing owner actions of the runner', () => {
     const switches = service.recordedCommands.filter((command) =>
       command.action.kind === 'set_control' &&
       command.action.control.modelLabel === 'Test Agent');
-    expect(switches).toHaveLength(1);
+    // The replay carries the envelope of the original command first. The
+    // service refuses it, because the version of the match moved on while the
+    // acknowledgement was missing, so the runner sends the command again with
+    // the facts it knows now. Both sends are the same operation.
+    expect(switches.length).toBeGreaterThan(0);
+    expect(new Set(switches.map((command) => command.operationId)).size).toBe(1);
+    // The service applied the switch exactly once: the older switch and the
+    // newer one moved the control epoch of the match to three.
+    expect(service.match.controlEpoch).toBe(3);
   });
 
   it('ends the takeover when the match ends while the lease is released', async () => {
@@ -2423,6 +2467,231 @@ describe('the competing owner actions of the runner', () => {
     );
     expect(service.recordedCommands.find((command) => command.action.kind === 'submit_move')?.action)
       .toEqual({ kind: 'submit_move', move: 'e2e4' });
+  });
+});
+
+describe('the envelope of a replayed command', () => {
+  it('replays an applied command with its original envelope after the version, the epoch and the lease moved on', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = losingAcknowledgement(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => runner.state.phase === 'uncertain', 'the runner asks the owner');
+
+    // The service applied the move and the browser never learned it.
+    expect(service.match.moves.map((move) => move.uci)).toEqual(['e2e4']);
+    const lease = runner.state.leaseId;
+    expect(lease).not.toBeNull();
+
+    // Another tab of the owner changes the control of the seat. The version of
+    // the match, its control epoch and the lease of the seat move on, and the
+    // browser learns the new state of the match.
+    service.commands.submit(
+      { kind: 'set_control', control: { kind: 'agent', modelLabel: 'Second Agent' } },
+      { expectedVersion: service.match.version },
+    );
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => runner.state.version === 3, 'the runner knows the new version');
+    expect(runner.state.controlEpoch).toBe(2);
+    expect(service.lease?.status).not.toBe('active');
+
+    // The owner retries the lost move. The replay carries the envelope of the
+    // original command, so the service recognises it as the same operation and
+    // answers with the original receipt instead of refusing a changed payload.
+    const retried = await runner.retry();
+    expect(retried.kind).toBe('accepted');
+
+    // The service applied the move exactly once and the replay changed no
+    // state of the match.
+    expect(service.match.moves.map((move) => move.uci)).toEqual(['e2e4']);
+    expect(service.match.version).toBe(3);
+
+    // The replay carried the envelope of the original command: the version,
+    // the epoch and the lease it was sent with.
+    const replay = service.recordedCommands[service.recordedCommands.length - 1];
+    expect(replay?.expectedVersion).toBe(1);
+    expect(replay?.controlEpoch).toBe(1);
+    expect(replay?.leaseId).toBe(lease);
+    // The receipt of the replay is the original receipt of the move.
+    expect(commands.receipts[commands.receipts.length - 1]?.version).toBe(2);
+  });
+
+  it('keeps the envelope and the bookkeeping of a newer command while the replay of an older command waits', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = createHoldableCommandPort(losingAcknowledgement(service.commands));
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: commands.port,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => runner.state.phase === 'uncertain', 'the runner asks the owner');
+    expect(service.match.moves.map((move) => move.uci)).toEqual(['e2e4']);
+
+    // The owner retries the lost move. The command of the retry waits for the
+    // service.
+    commands.arm();
+    const retrying = runner.retry();
+    await until(() => commands.held.length === 1, 'the command of the retry is in flight');
+
+    // The replay carries the envelope of the original command and not the
+    // facts the runner knows in the meantime.
+    const held = commands.held[0];
+    expect(held?.options?.expectedVersion).toBe(1);
+    expect(held?.options?.controlEpoch).toBe(1);
+    expect(held?.options?.leaseId).toBe(runner.state.leaseId);
+
+    // The opponent of the seat moves on and the browser learns the new version
+    // of the match.
+    service.opponentMove('e7e5');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => runner.state.version === 3, 'the runner knows the new version');
+
+    // The owner switches the model while the replay waits. The switch is a
+    // newer command and it carries the facts the runner knows now.
+    const switched = await runner.switchModel('Second Agent');
+    expect(switched.kind).toBe('unknown');
+    const switches = service.recordedCommands.filter((command) => command.action.kind === 'set_control');
+    expect(switches.length).toBeGreaterThan(0);
+    expect(switches[switches.length - 1]?.expectedVersion).toBe(3);
+    expect(switches[switches.length - 1]?.leaseId).toBeUndefined();
+
+    // The command of the older replay answers now. It is stale and it may not
+    // clear the bookkeeping of the newer command.
+    await commands.release(0);
+    await retrying;
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    // The owner retries again. The newer command is replayed with its own
+    // envelope, so the service applies the switch and no second move.
+    const retried = await runner.retry();
+    expect(retried.kind).toBe('accepted');
+    expect(service.match.control.modelLabel).toBe('Second Agent');
+    // The seat moved once and the opponent of the seat moved once.
+    expect(service.match.moves.filter((move) => move.seat === service.match.seat).map((move) => move.uci))
+      .toEqual(['e2e4']);
+    // The service applied the switch of the seat exactly once.
+    expect(service.match.controlEpoch).toBe(2);
+  });
+
+  it('sends the envelope of a replayed command through the real command client', async () => {
+    const matchId = 'match-00000001';
+    const service = createFakeOnlineService({ matchId });
+    const provider = createFakeProvider();
+    const session = createParticipantSession();
+    session.selectGuest(createGuestCredential({
+      guestId: 'guest-1',
+      matchId,
+      seat: 'white',
+      token: 'seat-token',
+    }));
+    const bodies: Array<Record<string, unknown>> = [];
+    const receipts = new Map<string, { readonly body: string; readonly receipt: unknown }>();
+    let lost = 3;
+    // The service of the test speaks the wire of the real one: it stores the
+    // receipt of an accepted operation with the body of the command and
+    // answers a replay of the same operation with that receipt. A replay whose
+    // body moved on is a changed payload under an accepted operation
+    // identifier, and the service refuses it.
+    const fetcher = async (_input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const body = String(init?.body);
+      const parsed = JSON.parse(body) as Record<string, unknown>;
+      bodies.push(parsed);
+      const operationId = String(parsed.operationId);
+      const stored = receipts.get(operationId);
+      let status = 200;
+      let payload: unknown;
+      if (stored === undefined) {
+        payload = {
+          schemaVersion: 2,
+          matchId,
+          operationId,
+          outcome: 'accepted',
+          version: 2,
+          controlEpoch: 1,
+          decidedAt: '2026-10-21T10:00:00.000Z',
+        };
+        receipts.set(operationId, { body, receipt: payload });
+      } else if (stored.body !== body) {
+        status = 409;
+        payload = {};
+      } else {
+        payload = stored.receipt;
+      }
+      if (lost > 0) {
+        // The command reached the service and was applied there, but the
+        // browser never learned the receipt.
+        lost -= 1;
+        throw new TypeError('The network failed.');
+      }
+      return new Response(JSON.stringify(payload), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    };
+    const requester = createAuthorizedRequester({
+      session,
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher as unknown as typeof fetch,
+    });
+    const client = createOnlineMatchCommandClient({ requester, session, matchId, seat: 'white' });
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: client,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => bodies.length === 3, 'the three attempts of the move are sent');
+    await until(() => runner.state.phase === 'uncertain', 'the runner asks the owner');
+
+    // The body carries the envelope of the command: the version, the control
+    // epoch and the lease of the seat.
+    expect(bodies[0]).toMatchObject({
+      expectedVersion: 1,
+      controlEpoch: 1,
+      seat: 'white',
+      leaseId: service.lease?.leaseId,
+    });
+
+    // The canonical state of the match moves on while the acknowledgement of
+    // the command is missing.
+    runner.applySnapshot(fakeSnapshot(service.match, { version: 2 }));
+    await until(() => runner.state.version === 2, 'the runner knows the new version');
+
+    // The owner retries the lost move. The replay travels through the real
+    // client and carries the very same body, so the service recognises it as
+    // the same operation and answers with the original receipt.
+    const retried = await runner.retry();
+    expect(retried.kind).toBe('accepted');
+    expect(bodies.length).toBe(4);
+    expect(bodies[3]).toEqual(bodies[0]);
   });
 });
 

@@ -80,6 +80,37 @@ describe('the participant command client', () => {
     expect(body.expectedVersion).toBe(6);
   });
 
+  it('carries the control epoch of the command', async () => {
+    const { client, fetcher } = createClient(() => ({ status: 200, ok: true, data: receiptBody() }));
+    client.setControlEpoch(5);
+    await client.move('e2e4', { controlEpoch: 7 });
+    const body = JSON.parse(String(fetcher.mock.calls[0]![1]?.body)) as Record<string, unknown>;
+    expect(body.controlEpoch).toBe(7);
+    // The epoch of the client is the epoch of the commands that name none. A
+    // command that names its own epoch never changes it.
+    await client.move('e2e4');
+    const second = JSON.parse(String(fetcher.mock.calls[1]![1]?.body)) as Record<string, unknown>;
+    expect(second.controlEpoch).toBe(5);
+  });
+
+  it('sends the whole envelope of a replayed command', async () => {
+    const { client, fetcher } = createClient(() => ({ status: 200, ok: true, data: receiptBody() }));
+    // The replay of an operation carries the version, the epoch and the lease
+    // the command was sent with, so the service recognises it as the same
+    // operation.
+    await client.move('e2e4', {
+      operationId: 'operation-replay',
+      expectedVersion: 3,
+      controlEpoch: 2,
+      leaseId: 'lease-0001',
+    });
+    const body = JSON.parse(String(fetcher.mock.calls[0]![1]?.body)) as Record<string, unknown>;
+    expect(body.operationId).toBe('operation-replay');
+    expect(body.expectedVersion).toBe(3);
+    expect(body.controlEpoch).toBe(2);
+    expect(body.leaseId).toBe('lease-0001');
+  });
+
   it('adopts the version of an accepted receipt', async () => {
     const { client } = createClient(() => ({ status: 200, ok: true, data: receiptBody({ version: 9 }) }));
     await client.move('e2e4');

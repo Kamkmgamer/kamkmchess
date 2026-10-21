@@ -91,6 +91,19 @@ the control changes and the spent recovery attempts.
   command stays retriable. The version and the control epoch of a receipt are
   facts of the service: they move on even when the receipt arrives late,
   because the next command of the runner has to carry them.
+- The bookkeeping of a command keeps the whole envelope of the command. The
+  service hashes the expected version, the control epoch, the lease and the
+  action of a command into the fingerprint of its operation identifier, and it
+  hands the stored receipt out again only when the replay carries the very
+  same command. A replay therefore sends the expected version, the control
+  epoch and the lease the command was sent with, never the facts the runner
+  knows in the meantime. A command that presents no lease presents none
+  again: the lease of the original command is part of its fingerprint.
+- A command the service refused is a command the service never applied. The
+  runner sends it again with the facts it knows now, exactly like the handoff
+  of the seat does, and the operation identifier stays the same. The service
+  never applies the command twice: a command the service did apply is
+  answered with its stored receipt.
 - A command whose acknowledgement is lost is an uncertainty, whoever sent it.
   The runner keeps the operation identifier of the command, the phase is
   `uncertain`, and the owner may send the command again with the same
@@ -253,8 +266,25 @@ export interface ProviderRunnerCommandPort {
 ```
 
 The participant command client of the online workspace satisfies this shape.
-The runner always sends the lease identifier, the expected version and the
-operation identifier of the command.
+The runner always sends the lease identifier, the expected version, the
+control epoch and the operation identifier of the command.
+
+The control epoch of a command may be named by the caller:
+
+```ts
+export interface ProviderRunnerCommandOptions {
+  operationId?: string;
+  expectedVersion?: number;
+  controlEpoch?: number;
+  leaseId?: string;
+}
+```
+
+The epoch of a command that names one is the epoch of that command, and the
+epoch of the client is only the fallback for the commands that name none. The
+runner therefore never changes the epoch of the client around a command that
+waits: a newer command of another decision would otherwise ride the epoch of
+the older one.
 
 ### The provider client
 

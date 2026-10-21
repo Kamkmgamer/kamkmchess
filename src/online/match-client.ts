@@ -16,6 +16,9 @@
  *   operation answers with the same receipt instead of acting twice.
  * - The expected version is the version the browser last saw. A stale command
  *   is refused by the service, never silently applied.
+ * - A command may name its own control epoch. The service hashes the version,
+ *   the epoch and the lease of a command into the fingerprint of its
+ *   operation, so the replay of an operation has to carry the same facts.
  * - The answer is parsed with the shared receipt parser. A receipt of another
  *   match is refused.
  */
@@ -70,6 +73,16 @@ export interface OnlineCommandSubmitOptions {
   readonly operationId?: string;
   /** The version the command expects. */
   readonly expectedVersion?: number;
+  /**
+   * The control epoch the command carries.
+   *
+   * The service hashes the epoch of a command into the fingerprint of its
+   * operation identifier, so a replay of an operation has to carry the very
+   * same epoch. A command that names an epoch therefore keeps it, whatever the
+   * client learns afterwards, and the epoch of the client stays the epoch of
+   * the commands that name none.
+   */
+  readonly controlEpoch?: number;
   /**
    * The runner lease of an agent or engine seat.
    *
@@ -136,13 +149,17 @@ export function createOnlineMatchCommandClient(options: OnlineMatchCommandOption
     submitOptions: OnlineCommandSubmitOptions = {},
   ): Promise<Receipt> {
     const version = submitOptions.expectedVersion ?? expectedVersion;
+    // The epoch of a command that names one is the epoch of that command. The
+    // epoch of the client is only the fallback, so a replay keeps the epoch it
+    // was sent with and a newer command is never corrupted by an older one.
+    const epoch = submitOptions.controlEpoch ?? controlEpoch;
     const command = {
       schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
       matchId,
       operationId: submitOptions.operationId ?? createOperationId(),
       expectedVersion: version,
       seat,
-      controlEpoch,
+      controlEpoch: epoch,
       // The lease is only carried when the seat holds one. The field is
       // optional, so a human seat keeps the exact command shape.
       ...(submitOptions.leaseId ? { leaseId: submitOptions.leaseId } : {}),

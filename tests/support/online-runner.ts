@@ -12,6 +12,9 @@
  * - a new lease carries the pending request of the previous lease,
  * - every command that presents a lease needs a live lease of the turn,
  * - a command without a lease is the owner acting for the seat,
+ * - a replay of an accepted operation is answered with the original receipt
+ *   only when it carries the very same command; a changed payload under an
+ *   accepted operation identifier is refused,
  * - the move and the spent recovery attempt of an agent seat need the lease,
  * - the fourth illegal attempt ends the match and the fourth formatting
  *   correction is refused.
@@ -98,6 +101,7 @@ export interface RecordedCommand {
   readonly action: OnlineAction;
   readonly operationId: string | undefined;
   readonly expectedVersion: number | undefined;
+  readonly controlEpoch: number | undefined;
   readonly leaseId: string | undefined;
 }
 
@@ -178,6 +182,35 @@ function otherSeat(seat: Seat): Seat {
   return seat === 'white' ? 'black' : 'white';
 }
 
+/**
+ * The fingerprint of one command.
+ *
+ * The service hashes the schema version, the match, the operation identifier,
+ * the expected version, the seat, the control epoch, the lease and the action
+ * of a command. A lease that the command does not present is absent from the
+ * hash, exactly like the omitted field of the shared contract.
+ */
+export function fakeCommandFingerprint(command: {
+  readonly matchId: string;
+  readonly seat: Seat;
+  readonly operationId: string;
+  readonly expectedVersion: number;
+  readonly controlEpoch: number;
+  readonly leaseId: string | undefined;
+  readonly action: OnlineAction;
+}): string {
+  return JSON.stringify({
+    schemaVersion: 2,
+    matchId: command.matchId,
+    operationId: command.operationId,
+    expectedVersion: command.expectedVersion,
+    seat: command.seat,
+    controlEpoch: command.controlEpoch,
+    ...(command.leaseId === undefined ? {} : { leaseId: command.leaseId }),
+    action: command.action,
+  });
+}
+
 function parseUci(uci: string): CoordinateMove {
   const from = uci.slice(0, 2) as Square;
   const to = uci.slice(2, 4) as Square;
@@ -234,6 +267,16 @@ export function createFakeOnlineService(options: {
   const recordedLeaseBodies: RunnerLeaseRequestBody[] = [];
   const recordedRequestBodies: RunnerRequestRequestBody[] = [];
   const receipts = new Map<string, Receipt>();
+  /**
+   * The fingerprint of every accepted command.
+   *
+   * The service hashes the command into the fingerprint of its operation
+   * identifier and hands the stored receipt out again only when the replay
+   * carries the very same command. A replay whose payload moved on is a
+   * changed payload under an accepted operation identifier, and the service
+   * refuses it.
+   */
+  const fingerprints = new Map<string, string>();
   let lease: FakeLease | null = null;
   let leaseCounter = 0;
   let operationCounter = 0;
@@ -379,15 +422,36 @@ export function createFakeOnlineService(options: {
     async submit(action, submitOptions) {
       operationCounter += 1;
       const operationId = submitOptions?.operationId ?? `operation-${operationCounter}`;
+      const expectedVersion = submitOptions?.expectedVersion ?? 0;
+      const controlEpoch = submitOptions?.controlEpoch ?? match.controlEpoch;
+      const leaseId = submitOptions?.leaseId;
       recordedCommands.push({
         action,
         operationId: submitOptions?.operationId,
         expectedVersion: submitOptions?.expectedVersion,
+        controlEpoch: submitOptions?.controlEpoch,
         leaseId: submitOptions?.leaseId,
       });
+      const fingerprint = fakeCommandFingerprint({
+        matchId: match.matchId,
+        seat: match.seat,
+        operationId,
+        expectedVersion,
+        controlEpoch,
+        leaseId,
+        action,
+      });
       const stored = receipts.get(operationId);
-      if (stored !== undefined) return stored;
-      const leaseId = submitOptions?.leaseId;
+      if (stored !== undefined) {
+        // The service answers a replay of an accepted operation with the
+        // stored receipt, but only when the replay is the very same command.
+        // A changed payload under an accepted operation identifier is
+        // refused.
+        if (fingerprints.get(operationId) !== fingerprint) {
+          throw conflict('The operation identifier was reused with a changed payload.');
+        }
+        return stored;
+      }
       const presented = leaseId !== undefined;
       revokeFinishedLease();
       // The service fences every command that presents a lease: the lease
@@ -431,7 +495,6 @@ export function createFakeOnlineService(options: {
         // the lease of the seat.
         throw notFound('The seat needs the lease of its runner.');
       }
-      const expectedVersion = submitOptions?.expectedVersion ?? 0;
       if (expectedVersion !== match.version) throw conflict('The expected version moved on.');
       if (match.result !== null) throw conflict('The match has ended.');
       const outcome: Receipt['outcome'] = 'accepted';
@@ -515,6 +578,7 @@ export function createFakeOnlineService(options: {
         ...(match.result === null ? {} : { result: match.result }),
       };
       receipts.set(operationId, receipt);
+      fingerprints.set(operationId, fingerprint);
       if (loseAcknowledgement) {
         loseAcknowledgement = false;
         throw new ProviderRunnerServiceError('transport', 'The acknowledgement was lost.', 0);

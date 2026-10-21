@@ -33,6 +33,12 @@
  *   identifier. A lost acknowledgement is retried with the same identifier, so
  *   the service answers with the original receipt instead of accepting a
  *   second move.
+ * - **A replay is the very same command.** The service hashes the expected
+ *   version, the control epoch, the lease and the action of a command into the
+ *   fingerprint of its operation identifier. The runner therefore keeps the
+ *   whole envelope of a command whose acknowledgement is missing and sends
+ *   that envelope again, never the facts it knows in the meantime. A command
+ *   that presents no lease presents none again.
  * - **Nothing private is shared.** The credential, the provider route and the
  *   model conversation stay in the browser. A shared command carries only a
  *   public model label, a move or another action, the epochs and the lease
@@ -321,6 +327,15 @@ export interface ProviderRunnerCommandOptions {
   readonly operationId?: string;
   /** The match version the command expects. */
   readonly expectedVersion?: number;
+  /**
+   * The control epoch the command carries.
+   *
+   * The service hashes the epoch of a command into the fingerprint of its
+   * operation identifier, so a replay of an operation has to carry the very
+   * same epoch. The runner sends the epoch of the command it builds and never
+   * the epoch it happens to know while the command waits.
+   */
+  readonly controlEpoch?: number;
   /** The runner lease of an agent seat. */
   readonly leaseId?: string;
 }
@@ -1337,12 +1352,17 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   let activeController: AbortController | null = null;
   let abortReason: 'stale' | 'lease-lost' | 'stopped' | null = null;
   let activeRequestId: string | null = null;
-  let pendingSubmission: {
-    action: OnlineAction;
-    operationId: string;
-    /** Whether the command presents the lease of the runner. */
-    presentLease: boolean;
-  } | null = null;
+  /**
+   * The command whose acknowledgement is missing.
+   *
+   * The record holds the whole envelope of the command, not only its action
+   * and its operation identifier. The service hashes the expected version, the
+   * control epoch and the lease of a command into the fingerprint of its
+   * operation, so a replay of the operation has to carry exactly the same
+   * envelope. The record is therefore immutable: a replay never rebuilds it
+   * from the facts the runner knows in the meantime.
+   */
+  let pendingSubmission: CommandEnvelope | null = null;
   let rejectedMoves: { move: string; reason: string }[] = [];
   let operationCounter = 0;
   let operationToken: string | null = null;
@@ -2036,14 +2056,50 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     // lease, so a lease that the service considers dead can never make the
     // owner powerless. Every other command presents the lease of the runner.
     const lease = options?.presentLease === false ? null : leaseId;
+    // The envelope of the command is captured once, here, and never rebuilt.
+    // The service hashes the expected version, the control epoch and the lease
+    // of a command into the fingerprint of its operation identifier, so every
+    // attempt of the command and every later replay of the operation has to
+    // carry exactly these facts.
+    const envelope: CommandEnvelope = {
+      action,
+      operationId,
+      expectedVersion: version,
+      controlEpoch,
+      leaseId: lease,
+    };
     // The operation identifier stays with the action while the acknowledgement
     // is missing, so a retry is the same operation and never a second move.
     // The bookkeeping belongs to the command that is in flight: a command of a
     // decision that was superseded never overwrites the bookkeeping of a newer
     // command that is still waiting for its acknowledgement.
     if (fence === undefined || submitFenceIsCurrent(fence)) {
-      pendingSubmission = { action, operationId, presentLease: lease !== null };
+      pendingSubmission = envelope;
     }
+    return sendEnvelope(envelope, fence);
+  }
+
+  /**
+   * Sends one envelope and reports what the service answered.
+   *
+   * The envelope is never rebuilt here. Every attempt of the command and
+   * every replay of the operation carries the facts the command was built
+   * with, so the service recognises the replay as the same operation instead
+   * of a changed payload. The fence of the command is checked before every
+   * send and after every await, so a command of a superseded decision is
+   * never sent again.
+   */
+  async function sendEnvelope(
+    envelope: CommandEnvelope,
+    fence?: SubmitFence,
+  ): Promise<
+    | { kind: 'accepted'; receipt: Receipt }
+    | {
+      readonly kind: 'fenced' | 'refused' | 'unauthorized' | 'unacknowledged' | 'superseded';
+      readonly detail: string;
+    }
+  > {
+    const { action, operationId } = envelope;
     for (let attempt = 0; attempt < maxSubmissionAttempts; attempt += 1) {
       if (fence !== undefined && !submitFenceIsCurrent(fence)) {
         // The decision of the owner was superseded, the runner was stopped or
@@ -2054,8 +2110,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       try {
         const receipt = await commands.submit(action, {
           operationId,
-          expectedVersion: version,
-          ...(lease === null ? {} : { leaseId: lease }),
+          expectedVersion: envelope.expectedVersion,
+          controlEpoch: envelope.controlEpoch,
+          ...(envelope.leaseId === null ? {} : { leaseId: envelope.leaseId }),
         });
         // The receipt is a fact of the service: the version and the control
         // epoch of the match move on even when the command was sent by a
@@ -2090,7 +2147,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           clearPendingSubmission(operationId);
           return { kind: 'unauthorized', detail: 'The credential of the seat was refused.' };
         }
-        if (kind === 'not-found' && lease !== null) {
+        if (kind === 'not-found' && envelope.leaseId !== null) {
           // The service answers a fenced lease with a missing resource. The
           // lease was revoked, expired or belongs to another turn, so the
           // command was never a rules refusal.
@@ -2106,6 +2163,61 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
     }
     return { kind: 'unacknowledged', detail: 'The command was sent but never acknowledged.' };
+  }
+
+  /**
+   * The envelope of a command that the runner sends again.
+   *
+   * The service refused the envelope, so the command was never applied and the
+   * runner may send it again with the facts it knows now. The operation
+   * identifier stays the same, so the service never applies the command
+   * twice. A command that presented no lease presents none again: the handoff
+   * of the seat is the authority of the owner and needs no lease.
+   */
+  function currentEnvelope(envelope: CommandEnvelope): CommandEnvelope {
+    return {
+      ...envelope,
+      expectedVersion: version,
+      controlEpoch,
+      leaseId: envelope.leaseId === null ? null : leaseId,
+    };
+  }
+
+  /**
+   * Sends the envelope of a command the owner replays.
+   *
+   * A command the service already applied is answered with the original
+   * receipt, because the replay carries the very same envelope. A command the
+   * service never applied is refused, because the version or the epoch of the
+   * match moved on while the acknowledgement was missing. The runner sends it
+   * again with the facts it knows now, exactly like the handoff of the seat
+   * does, and the operation identifier stays the same.
+   */
+  async function replayEnvelope(
+    envelope: CommandEnvelope,
+    fence: SubmitFence,
+  ): Promise<
+    | { kind: 'accepted'; receipt: Receipt }
+    | {
+      readonly kind: 'fenced' | 'refused' | 'unauthorized' | 'unacknowledged' | 'superseded';
+      readonly detail: string;
+    }
+  > {
+    const outcome = await sendEnvelope(envelope, fence);
+    if (outcome.kind !== 'fenced') return outcome;
+    if (!submitFenceIsCurrent(fence)) {
+      return { kind: 'superseded', detail: 'A newer decision of the owner ended the command.' };
+    }
+    // The service refused the envelope of the command, so the command was
+    // never applied. The runner sends it again with the facts it knows now.
+    const fresh = currentEnvelope(envelope);
+    // The bookkeeping names the command that may have been applied, so it
+    // follows the envelope of the last attempt of that command. A newer
+    // command that waits for its acknowledgement keeps its own record.
+    if (pendingSubmission !== null && pendingSubmission.operationId === envelope.operationId) {
+      pendingSubmission = fresh;
+    }
+    return sendEnvelope(fresh, fence);
   }
 
   async function reportRecoveryAttempt(
@@ -2637,6 +2749,35 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   }
 
   /**
+   * The envelope of one command.
+   *
+   * The service hashes the expected version, the control epoch, the lease and
+   * the action of a command into the fingerprint of its operation identifier,
+   * and a stored receipt is only handed out again when the fingerprint of the
+   * replay is the fingerprint of the accepted command. A replay is therefore
+   * the very same command: it carries the envelope it was sent with, never the
+   * facts the runner knows in the meantime.
+   */
+  interface CommandEnvelope {
+    /** The action the command proposes. */
+    readonly action: OnlineAction;
+    /** The idempotency identifier of the operation. */
+    readonly operationId: string;
+    /** The match version the command expected. */
+    readonly expectedVersion: number;
+    /** The control epoch the command carried. */
+    readonly controlEpoch: number;
+    /**
+     * The lease the command presented.
+     *
+     * `null` is the lease of a command that presented none, like the handoff
+     * of the seat. It is not the same as an absent lease of the options: the
+     * lease of the original command is part of its fingerprint.
+     */
+    readonly leaseId: string | null;
+  }
+
+  /**
    * Reports whether a command may still be sent.
    *
    * The token orders the decisions of the owner, and the generation of the
@@ -2842,14 +2983,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
       setPhase('idle');
       if (operation !== null) {
-        // The operation identifier stays the same, so the service answers with
-        // the original receipt instead of accepting a second move. The command
-        // is only sent while the decision of the owner is the newest one.
-        const outcome = await submitAction(
-          operation.action,
-          operation.operationId,
+        // The operation identifier and the envelope stay the same, so the
+        // service answers with the original receipt instead of accepting a
+        // second move. The command is only sent while the decision of the
+        // owner is the newest one. The bookkeeping of the command is not
+        // rewritten here: a newer command that waits for its acknowledgement
+        // keeps its own record.
+        const outcome = await replayEnvelope(
+          operation,
           { token: owner.token, generation: owner.generation },
-          { presentLease: operation.presentLease },
         );
         if (!ownerActionIsCurrent(owner.token, owner.generation)) {
           return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
