@@ -280,6 +280,12 @@ observations, which is never removed: the acknowledgement of a flush removes
 the pending observation, and an acknowledged observation must be protected as
 well.
 
+The healthy observations of a flush are captured with the revision they were
+made in, after the pending observations were written. A snapshot that is
+published later carries its own revision, so it never borrows the revision of
+a newer observation. A refresh that names a state the instance did not
+observe publishes nothing.
+
 The durable report of a dependency is a database write, and it is **not** on
 the request path. The observations of the request paths (the participant
 commands, the trusted allocation and the timeout settlement) update the local

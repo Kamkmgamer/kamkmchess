@@ -27,6 +27,11 @@ import process from 'node:process';
 const WRITE_VERBS = ['INSERT', 'UPDATE', 'DELETE'];
 const ALL_VERBS = ['SELECT', ...WRITE_VERBS];
 
+// The privileges a sequence grant may name. The order of the checkpoints
+// comes from the default of the column, so the usage of the sequence is what the
+// role that writes the health needs.
+const SEQUENCE_VERBS = ['USAGE', 'SELECT', 'UPDATE'];
+
 /**
  * @typedef {'blocker'|'warning'|'info'} Severity
  * @typedef {{ severity: Severity, code: string, message: string, remediation: string|null }} Finding
@@ -447,17 +452,39 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
         'blocker',
         'sequence-missing-grant',
         `The migration creates the sequence ${sequence}, which the policy does not grant.`,
-        `Grant USAGE, SELECT and UPDATE on the sequence ${sequence} in the policy, or remove the sequence.`,
+        `Grant USAGE on the sequence ${sequence} in the policy, or remove the sequence.`,
       ));
       continue;
     }
-    const missing = ['USAGE', 'SELECT', 'UPDATE'].filter((verb) => !granted.includes(verb));
-    if (missing.length > 0) {
+    const verbs = Array.isArray(granted) ? granted.map((verb) => String(verb).toUpperCase()) : [];
+    if (!verbs.includes('USAGE')) {
       findings.push(finding(
         'blocker',
         'sequence-missing-privilege',
-        `The policy grants the sequence ${sequence} without ${missing.join(', ')}.`,
-        `Grant USAGE, SELECT and UPDATE on the sequence ${sequence} in the policy.`,
+        `The policy grants the sequence ${sequence} without USAGE, and the order of the checkpoints comes from the default of its column.`,
+        `Grant USAGE on the sequence ${sequence} in the policy.`,
+      ));
+    }
+  }
+
+  for (const [sequence, verbs] of Object.entries(policy.sequences ?? {}).sort()) {
+    if (!sequences.includes(sequence)) {
+      findings.push(finding(
+        'blocker',
+        'sequence-unknown-entry',
+        `The policy grants the sequence ${sequence}, which no migration creates.`,
+        'Remove the entry from the policy, or create the sequence in a migration.',
+      ));
+      continue;
+    }
+    const granted = Array.isArray(verbs) ? verbs : [];
+    const unknown = granted.filter((verb) => !SEQUENCE_VERBS.includes(String(verb).toUpperCase()));
+    if (unknown.length > 0) {
+      findings.push(finding(
+        'blocker',
+        'sequence-unknown-privilege',
+        `The policy grants the sequence ${sequence} with the unknown privilege ${unknown.join(', ')}.`,
+        `Grant only USAGE, SELECT or UPDATE on the sequence ${sequence}.`,
       ));
     }
   }
@@ -628,8 +655,16 @@ export function renderGrantSql(policy, options = {}) {
     lines.push(`REVOKE ALL ON TABLE ${policy.schema}.${table} FROM ${policy.role};`);
     lines.push(`GRANT ${granted.join(', ')} ON TABLE ${policy.schema}.${table} TO ${policy.role};`);
   }
-  const functionNames = Object.keys(policy.functions ?? {}).sort();
-  if (functionNames.length > 0) {
+  // A sequence is granted explicitly as well. The health checkpoints take
+  // their order from the default of the column, so the role needs the usage
+  // of the sequence and nothing else. The rules process holds no SQL
+  // privilege at all, so it never receives the usage.
+  for (const [sequence, verbs] of Object.entries(policy.sequences ?? {}).sort()) {
+    const granted = [...verbs].map((verb) => String(verb).toUpperCase()).sort();
+    lines.push(`REVOKE ALL ON SEQUENCE ${policy.schema}.${sequence} FROM PUBLIC;`);
+    lines.push(`GRANT ${granted.join(', ')} ON SEQUENCE ${policy.schema}.${sequence} TO ${policy.role};`);
+  }
+  const functionNames = Object.keys(policy.functions ?? {}).sort();  if (functionNames.length > 0) {
     const list = functionNames.map((name) => `'${name}'`).join(', ');
     lines.push('-- A function that is not a trigger function can be called directly. PostgreSQL');
     lines.push('-- grants EXECUTE on it to PUBLIC, so the deployment takes it away again.');

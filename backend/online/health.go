@@ -153,6 +153,18 @@ type pendingReport struct {
 	revision uint64
 }
 
+// observationSnapshot is one observation with the revision it was made in.
+//
+// The state and the revision belong together: a writer that publishes a
+// snapshot publishes the revision of that observation, never the revision of a
+// newer one.
+type observationSnapshot struct {
+	dependency string
+	state      HealthState
+	detail     string
+	revision   uint64
+}
+
 // NewHealthReporter binds a reporter to a pool.
 func NewHealthReporter(db *pgxpool.Pool) *HealthReporter {
 	return &HealthReporter{
@@ -210,13 +222,16 @@ func (h *HealthReporter) Flush(ctx context.Context) {
 	}
 	h.mu.Unlock()
 	for dependency, report := range pending {
-		if err := h.writeCheckpointIfChanged(ctx, dependency, report.state, report.detail, report.revision); err != nil {
+		persisted, err := h.writeCheckpointIfChanged(ctx, dependency, report.state, report.detail, report.revision)
+		if err != nil {
 			// The observation stays pending, so the next flush writes it
 			// again.
 			continue
 		}
 		h.mu.Lock()
-		h.written[dependency] = report.state
+		if persisted {
+			h.written[dependency] = report.state
+		}
 		current, known := h.pending[dependency]
 		if known && current.revision == report.revision {
 			// The observation was not replaced while the write ran, so
@@ -225,16 +240,27 @@ func (h *HealthReporter) Flush(ctx context.Context) {
 		}
 		h.mu.Unlock()
 	}
+	// The healthy observations of the instance are captured with the revision
+	// they were made in, after the pending observations were written. A
+	// snapshot that is published later carries its own revision, so it never
+	// borrows the revision of a newer observation.
 	h.mu.RLock()
-	healthy := make([]string, 0, len(h.order))
+	healthy := make([]observationSnapshot, 0, len(h.order))
 	for _, dependency := range h.order {
-		if h.dependencies[dependency].State == HealthHealthy {
-			healthy = append(healthy, dependency)
+		observation := h.dependencies[dependency]
+		if observation.State != HealthHealthy {
+			continue
 		}
+		healthy = append(healthy, observationSnapshot{
+			dependency: dependency,
+			state:      observation.State,
+			detail:     observation.Detail,
+			revision:   h.revision[dependency],
+		})
 	}
 	h.mu.RUnlock()
-	for _, dependency := range healthy {
-		_ = h.RefreshDependency(ctx, dependency, HealthHealthy, "the rules process answered")
+	for _, snapshot := range healthy {
+		_, _ = h.writeCheckpointIfChanged(ctx, snapshot.dependency, snapshot.state, snapshot.detail, snapshot.revision)
 	}
 }
 
@@ -264,7 +290,8 @@ func (h *HealthReporter) ReportDependency(ctx context.Context, dependency string
 		detail = detail[:200]
 	}
 	revision := h.Record(dependency, state, detail)
-	return h.writeCheckpointIfChanged(ctx, dependency, state, detail, revision)
+	_, err := h.writeCheckpointIfChanged(ctx, dependency, state, detail, revision)
+	return err
 }
 
 // writeCheckpointIfChanged writes the checkpoint of a dependency when the
@@ -282,12 +309,12 @@ func (h *HealthReporter) ReportDependency(ctx context.Context, dependency string
 //
 // The revision of the observation forbids a stale write: an observation that
 // was replaced while the writer waited for the lock is not written.
-func (h *HealthReporter) writeCheckpointIfChanged(ctx context.Context, dependency string, state HealthState, detail string, revision uint64) error {
+func (h *HealthReporter) writeCheckpointIfChanged(ctx context.Context, dependency string, state HealthState, detail string, revision uint64) (bool, error) {
 	if h == nil {
-		return ErrInvalidArgument
+		return false, ErrInvalidArgument
 	}
 	if dependency == "" || !state.Valid() {
-		return ErrInvalidArgument
+		return false, ErrInvalidArgument
 	}
 	if len(detail) > 200 {
 		detail = detail[:200]
@@ -298,17 +325,17 @@ func (h *HealthReporter) writeCheckpointIfChanged(ctx context.Context, dependenc
 		h.mu.Lock()
 		h.written[dependency] = state
 		h.mu.Unlock()
-		return nil
+		return true, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, ReportBudget)
 	defer cancel()
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
 	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('online_service_health'), hashtext($1))`, dependency); err != nil {
-		return err
+		return false, err
 	}
 	// The observation must still be the newest one of the instance: a newer
 	// observation replaced it while the writer waited for the lock.
@@ -317,7 +344,8 @@ func (h *HealthReporter) writeCheckpointIfChanged(ctx context.Context, dependenc
 	// removed, so an observation that was acknowledged in the meantime is
 	// not overwritten either.
 	if h.latestRevision(dependency) > revision {
-		return nil
+		// A newer observation exists, so this one is stale.
+		return false, nil
 	}
 	// The shared state is the newest persisted observation of the dependency.
 	var shared string
@@ -326,25 +354,25 @@ func (h *HealthReporter) writeCheckpointIfChanged(ctx context.Context, dependenc
 	case err == nil && HealthState(shared) == state:
 		// The newest persisted observation is this one already.
 		if err = tx.Commit(ctx); err != nil {
-			return err
+			return false, err
 		}
 		h.mu.Lock()
 		h.written[dependency] = state
 		h.mu.Unlock()
-		return nil
+		return true, nil
 	case err != nil && !errors.Is(err, pgx.ErrNoRows):
-		return err
+		return false, err
 	}
 	var now time.Time
 	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
-		return err
+		return false, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO online_service_health(checkpoint_id,dependency,state,detail,recorded_at) VALUES($1,$2,$3,$4,$5)`,
 		healthCheckpointID(dependency, state, now.UTC()), dependency, string(state), detail, now.UTC()); err != nil {
-		return err
+		return false, err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return err
+		return false, err
 	}
 	h.mu.Lock()
 	h.written[dependency] = state
@@ -353,9 +381,9 @@ func (h *HealthReporter) writeCheckpointIfChanged(ctx context.Context, dependenc
 		// The service is not healthy, so it is not alive. The liveness
 		// record keeps its last value, and the recovery locates the
 		// interruption from it.
-		return nil
+		return true, nil
 	}
-	return h.refreshLiveness(ctx, now.UTC())
+	return true, h.refreshLiveness(ctx, now.UTC())
 }
 
 // latestRevision returns the revision of the newest observation of a
@@ -381,13 +409,35 @@ func (h *HealthReporter) latestRevision(dependency string) uint64 {
 // The refresh is not a claim that every instance is healthy. The instance
 // whose worker is broken keeps its own state and its own claim path closed;
 // the refresh only says that this instance answered.
+//
+// The revision is captured with the state: a caller that holds an old state
+// may not be labelled with the revision of a newer observation, so the
+// refresh is only published when the local observation of the dependency is
+// still that state.
 func (h *HealthReporter) RefreshDependency(ctx context.Context, dependency string, state HealthState, detail string) error {
 	if h == nil || h.db == nil {
 		return nil
 	}
-	// The revision of the current observation is captured here, so the
-	// stale guard of the write applies to the refresh as well.
-	return h.writeCheckpointIfChanged(ctx, dependency, state, detail, h.latestRevision(dependency))
+	revision, current := h.revisionOfState(dependency, state)
+	if !current {
+		// The local observation of the dependency is another state, so the
+		// caller's state is stale and it is not published.
+		return nil
+	}
+	_, err := h.writeCheckpointIfChanged(ctx, dependency, state, detail, revision)
+	return err
+}
+
+// revisionOfState returns the revision of the local observation of a
+// dependency when that observation is the given state.
+func (h *HealthReporter) revisionOfState(dependency string, state HealthState) (uint64, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	observation, known := h.dependencies[dependency]
+	if !known || observation.State != state {
+		return 0, false
+	}
+	return h.revision[dependency], true
 }
 
 // OverallHealthy reports whether every observed dependency is healthy.
@@ -873,7 +923,7 @@ func (s *Service) writeRulesDegraded(ctx context.Context, durable bool, revision
 	if s.health == nil || !durable {
 		return
 	}
-	_ = s.health.writeCheckpointIfChanged(ctx, DependencyRules, HealthDegraded, "the rules process did not answer", revision)
+	_, _ = s.health.writeCheckpointIfChanged(ctx, DependencyRules, HealthDegraded, "the rules process did not answer", revision)
 }
 
 // writeRulesHealthy writes the checkpoint of a healthy dependency.
@@ -891,7 +941,7 @@ func (s *Service) writeRulesHealthy(ctx context.Context, durable bool, revision 
 	if s.health == nil || !durable {
 		return
 	}
-	_ = s.health.writeCheckpointIfChanged(ctx, DependencyRules, HealthHealthy, "the rules process answered", revision)
+	_, _ = s.health.writeCheckpointIfChanged(ctx, DependencyRules, HealthHealthy, "the rules process answered", revision)
 }
 
 // RepairRules replaces the rules process and proves that the replacement

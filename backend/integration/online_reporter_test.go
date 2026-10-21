@@ -159,6 +159,9 @@ func TestOnlineTheSharedStateFollowsTheOrderAndNotTheClock(t *testing.T) {
 	// The refresh decision uses the same order: the shared state is worse
 	// than a healthy observation, so a healthy observation is written.
 	reporter := online.NewHealthReporter(fixture.pool)
+	// The refresh publishes the observation of the instance, so the
+	// instance has to have observed the dependency.
+	reporter.Record(online.DependencyRules, online.HealthHealthy, "the rules process answered")
 	if err = reporter.RefreshDependency(ctx, online.DependencyRules, online.HealthHealthy, "the rules process answered"); err != nil {
 		t.Fatalf("refresh the shared state: %v", err)
 	}
@@ -217,6 +220,59 @@ func barrierPool(t *testing.T, schema string) (*pgxpool.Pool, chan struct{}) {
 	}
 	t.Cleanup(pool.Close)
 	return pool, release
+}
+
+// TestOnlineAHealthySnapshotCannotBorrowTheNewFailureRevision covers the
+// healthy snapshot of a flush.
+//
+// The flush captures the healthy observations of the instance, and the
+// capture happens while a refresh of another dependency waits for the pool. A
+// failure of the dependency arrives in the meantime, and the refresh of the
+// captured snapshot must not publish the healthy state with the revision of
+// that failure.
+func TestOnlineAHealthySnapshotCannotBorrowTheNewFailureRevision(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	var schema string
+	if err := fixture.pool.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	pool, release := barrierPool(t, schema)
+	reporter := online.NewHealthReporter(pool)
+
+	// The healthy observations of both dependencies are flushed and
+	// acknowledged.
+	reporter.Record(online.DependencyDatabase, online.HealthHealthy, "the database answered")
+	reporter.Record(online.DependencyRules, online.HealthHealthy, "the rules process answered")
+	reporter.Flush(ctx)
+
+	// The old flush captures the healthy observations and waits for the pool
+	// with the first refresh.
+	oldFlush := make(chan struct{})
+	blocked := context.WithValue(ctx, blockedMarker{}, "old flush")
+	go func() {
+		defer close(oldFlush)
+		reporter.Flush(blocked)
+	}()
+
+	// The failure of the rules dependency arrives and is flushed.
+	reporter.Record(online.DependencyRules, online.HealthDegraded, "the rules process did not answer")
+	reporter.Flush(ctx)
+	close(release)
+	<-oldFlush
+	reporter.Flush(ctx)
+
+	shared, err := reporter.SharedState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shared != online.HealthDegraded {
+		t.Fatalf("the shared state = %q, want the failure of the rules dependency %q", shared, online.HealthDegraded)
+	}
+	local := reporter.Current()
+	if local.Rules.State != online.HealthDegraded {
+		t.Fatalf("the local state of the rules dependency = %q, want %q", local.Rules.State, online.HealthDegraded)
+	}
 }
 
 // TestOnlineAnOldFlushCannotOverwriteANewerObservation covers the reversed

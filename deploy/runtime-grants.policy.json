@@ -4,7 +4,7 @@
   "schema": "public",
   "unusedRoles": ["kamkm_online_api", "kamkm_online_rules"],
   "sequences": {
-    "online_service_health_order": ["USAGE", "SELECT", "UPDATE"]
+    "online_service_health_order": ["USAGE"]
   },
   "functions": {
     "online_resolve_public_model_label": ["EXECUTE"],
