@@ -67,7 +67,10 @@ func friendGuestHandler(t *testing.T, fixture *friendFixture) (http.Handler, *on
 	t.Helper()
 	authorizer := friendAuthorizer(t, fixture.pool)
 	authenticator := &friendGuestAuthenticator{
-		accounts:   map[string]onlineauth.Principal{},
+		accounts: map[string]onlineauth.Principal{
+			"user_inviter":   accountPrincipal("user_inviter", "session_inviter"),
+			"user_recipient": accountPrincipal("user_recipient", "session_recipient"),
+		},
 		authorizer: authorizer,
 	}
 	handler := httpapi.NewFriends(fixture.friends, fixture.service, authenticator, httpapi.FriendsOptions{

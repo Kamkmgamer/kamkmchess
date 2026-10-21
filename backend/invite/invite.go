@@ -453,8 +453,15 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Created, e
 	if err != nil {
 		return Created{}, err
 	}
+	// The declared model control of the inviter is resolved before it is
+	// stored and before it is published, so a private routing identity never
+	// reaches the durable row or the public preview of the link.
+	inviterControl, err := resolvePublicModelLabel(ctx, s.db, inviterParticipant, request.Control)
+	if err != nil {
+		return Created{}, err
+	}
 	startingFEN := strings.TrimSpace(request.StartingFEN)
-	if err := s.validatePosition(ctx, startingFEN, request.TimeControl, inviterParticipant, inviterLabel, request.Control); err != nil {
+	if err := s.validatePosition(ctx, startingFEN, request.TimeControl, inviterParticipant, inviterLabel, inviterControl); err != nil {
 		return Created{}, err
 	}
 	invitationID, err := s.options.Identifier("inv_", 40)
@@ -468,11 +475,11 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Created, e
 	now := s.now()
 	expiresAt := now.Add(s.options.InvitationTTL)
 	var modelLabel any
-	if request.Control.ModelLabel != nil {
-		modelLabel = *request.Control.ModelLabel
+	if inviterControl.ModelLabel != nil {
+		modelLabel = *inviterControl.ModelLabel
 	}
 	_, err = s.db.Exec(ctx, `INSERT INTO online_friend_invitations(invitation_id,kind,status,version,inviter_kind,inviter_id,inviter_public_label,inviter_control_kind,inviter_model_label,inviter_seat,starting_time_ms,increment_ms,starting_fen,recipient_account_id,owner_token_hash,created_at,expires_at) VALUES($1,$2,$3,1,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
-		invitationID, string(kind), string(StatusOpen), string(inviterParticipant.Kind), inviterParticipant.ID, inviterLabel, string(request.Control.Kind), modelLabel, string(request.Seat),
+		invitationID, string(kind), string(StatusOpen), string(inviterParticipant.Kind), inviterParticipant.ID, inviterLabel, string(inviterControl.Kind), modelLabel, string(request.Seat),
 		request.TimeControl.StartingTimeMs, request.TimeControl.IncrementMs, nullableString(startingFEN), nullableString(recipient), hashOwnerToken(ownerToken), now, expiresAt)
 	if err != nil {
 		return Created{}, err
@@ -483,7 +490,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Created, e
 		Status:         StatusOpen,
 		InviterLabel:   inviterLabel,
 		InviterSeat:    request.Seat,
-		InviterControl: request.Control,
+		InviterControl: inviterControl,
 		TimeControl:    request.TimeControl,
 		StartingFEN:    startingFEN,
 		ExpiresAt:      expiresAt,
@@ -492,6 +499,38 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Created, e
 		inviterID:      inviterParticipant.ID,
 	}
 	return Created{Invitation: invitation, OwnerToken: ownerToken}, nil
+}
+
+// resolvePublicModelLabel resolves a declared model control to the control
+// that may be published.
+//
+// The resolution is the canonical one of the service. The database function
+// `online_resolve_public_model_label` is the single source of that policy,
+// so a private routing identity, a secret bearing alias or a connection
+// nickname never reaches a durable row or a public answer. A known public
+// model name and a public label the owner registered for their own account
+// are kept, and everything else becomes the neutral label.
+//
+// The resolution is idempotent for one owner, so a value that was resolved
+// once stays the same value.
+//
+// A human control keeps no model label and is returned unchanged.
+func resolvePublicModelLabel(ctx context.Context, q online.Querier, owner online.ParticipantRef, control online.SeatControl) (online.SeatControl, error) {
+	if control.Kind == online.ControlHuman {
+		return control, nil
+	}
+	if control.ModelLabel == nil {
+		return online.SeatControl{}, fmt.Errorf("%w: the declared model label", online.ErrInvalidContract)
+	}
+	var resolved *string
+	if err := q.QueryRow(ctx, `SELECT online_resolve_public_model_label($1,$2,$3,$4)`, string(owner.Kind), owner.ID, string(control.Kind), *control.ModelLabel).Scan(&resolved); err != nil {
+		return online.SeatControl{}, err
+	}
+	if resolved == nil || *resolved == "" {
+		return online.SeatControl{}, fmt.Errorf("%w: the declared model label", online.ErrInvalidContract)
+	}
+	control.ModelLabel = resolved
+	return control, nil
 }
 
 // validatePosition checks the starting position of a friend game.
@@ -753,16 +792,23 @@ func (s *Service) claim(ctx context.Context, tx pgx.Tx, request AcceptRequest, i
 	if other, ok := seat.Other(); ok {
 		seat = other
 	}
-	var modelLabel any
-	if request.Control.ModelLabel != nil {
-		modelLabel = *request.Control.ModelLabel
-	}
 	guestID := ""
 	if acceptorKind == string(online.ParticipantGuest) {
 		guestID = acceptorID
 	}
+	// The declared model control of the acceptor is resolved before it is
+	// stored, so the acceptance record and the seat of the created match
+	// carry the publishable label and never a private routing identity.
+	acceptorControl, err := resolvePublicModelLabel(ctx, tx, online.ParticipantRef{Kind: online.ParticipantKind(acceptorKind), ID: acceptorID}, request.Control)
+	if err != nil {
+		return acceptance{}, err
+	}
+	var modelLabel any
+	if acceptorControl.ModelLabel != nil {
+		modelLabel = *acceptorControl.ModelLabel
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO online_invitation_acceptances(acceptance_id,invitation_id,acceptance_key_hash,acceptor_kind,acceptor_id,acceptor_public_label,seat,control_kind,model_label,guest_id,status,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending',$11,$11)`,
-		acceptanceID, request.InvitationID, keyHash, acceptorKind, acceptorID, acceptorLabel, string(seat), string(request.Control.Kind), modelLabel, nullableString(guestID), now)
+		acceptanceID, request.InvitationID, keyHash, acceptorKind, acceptorID, acceptorLabel, string(seat), string(acceptorControl.Kind), modelLabel, nullableString(guestID), now)
 	if err != nil {
 		return acceptance{}, err
 	}
@@ -774,8 +820,8 @@ func (s *Service) claim(ctx context.Context, tx pgx.Tx, request AcceptRequest, i
 		AcceptorLabel: acceptorLabel,
 		GuestID:       guestID,
 		Seat:          seat,
-		ControlKind:   string(request.Control.Kind),
-		ModelLabel:    request.Control.ModelLabel,
+		ControlKind:   string(acceptorControl.Kind),
+		ModelLabel:    acceptorControl.ModelLabel,
 		Status:        "pending",
 	}, nil
 }
