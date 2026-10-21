@@ -20,7 +20,7 @@ service and the pinned private rules worker bundle
 | Why | every recorded scenario cites a commit that is not an ancestor of the tested tree, or its case failed in the newest run, so the ledger refuses to count it as a pass |
 | Go integration package | fails under load; a different timing-sensitive test failed in each of three runs |
 | Browser suite (strict, real Chromium, real service) | 4 passed, 1 skipped in isolation; the suite run that produced the newest report failed |
-| Grant probe against a real PostgreSQL | the privilege probes pass; the behavioural scenarios pass, including the seeded control timeline write |
+| Grant probe against a real PostgreSQL | 219 probes, 0 failures, including the seeded control timeline write |
 | Deployment image verification | 9 checks, 0 failures |
 
 The ledger now enforces two rules that make a stale pass impossible:
