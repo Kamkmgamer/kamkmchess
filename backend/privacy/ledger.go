@@ -83,7 +83,7 @@ func (s *Service) applySubjectRemoval(ctx context.Context, record backup.Subject
 	}
 	// The private data of the subject is removed again, and the subject is
 	// fenced again.
-	owners, err := s.privateOwners(ctx, record.SubjectRef)
+	owners, err := s.subjectOwnerIDs(ctx, s.db, record.SubjectRef)
 	if err != nil {
 		return err
 	}
@@ -92,6 +92,11 @@ func (s *Service) applySubjectRemoval(ctx context.Context, record backup.Subject
 			return err
 		}
 		if err = s.fenceAccount(ctx, tx, owner, revocationReason(record.Scope)); err != nil {
+			return err
+		}
+		// The friend and the queue records of the subject are sanitized
+		// again: an unused invitation preview must not name a removed owner.
+		if err = s.removeAuxiliaryPersonalData(ctx, tx, record.SubjectKind, owner); err != nil {
 			return err
 		}
 	}

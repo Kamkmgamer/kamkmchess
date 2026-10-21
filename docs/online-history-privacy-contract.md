@@ -213,6 +213,33 @@ The flows that act on the same participant take the same locks, in the same orde
   revokes or anonymizes the published payload.
 * The account scope lock always precedes the match row lock, so the two paths cannot deadlock.
 
+## The auxiliary personal data of a removed subject
+
+The friend surface and the queue surface keep their own records of the people they belong to.
+A removed subject must not stay identifiable in any of them, so the removal sanitizes them as
+well:
+
+* an **unused invitation** of the removed account is deleted, so its preview can never name the
+  removed owner;
+* a challenge **addressed to** the removed account keeps its row (it belongs to the inviter) and
+  loses its recipient;
+* an invitation that already produced a match keeps its row (the match refers to it) and loses
+  the identity of the inviter;
+* an **acceptance** that never produced a match is deleted, and the acceptance of a match loses the
+  identity of the acceptor;
+* a **rematch offer** keeps its row and loses the identity of the proposer and of the acceptor;
+* a **waiting queue entry** is deleted, and an entry that already produced a match keeps its row
+  and loses the owner identifier; the allocation of that entry loses the public label of the
+  removed participant and keeps the label of the other one.
+
+The records of the other participants are never touched, the per match removal of a public replay
+is not one of these removals (it removes the replay of one match and keeps the participant), and
+the aggregate result totals of the opponent are untouched.
+
+The redaction of the queue tables is a narrow path that migration `0018` opens: the owner
+identifier of an entry and the public label of an allocation change only when a removal request of
+that account exists. Everything else about an entry, an allocation and a match stays immutable.
+
 ## Known limitations
 
 * The rows that predate a removal (the seat, the public profile row, the session revocation, the

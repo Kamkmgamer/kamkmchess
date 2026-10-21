@@ -470,6 +470,11 @@ func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, subject
 					return err
 				}
 			}
+			// The friend and the queue records of the account are sanitized as
+			// well: an unused invitation preview must not name a removed owner.
+			if err := s.removeAuxiliaryPersonalData(ctx, tx, subjectKind, rawID); err != nil {
+				return err
+			}
 		}
 		return nil
 	}

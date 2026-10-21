@@ -74,7 +74,7 @@ func (s *Service) applyPrivateRemovals(ctx context.Context) error {
 		return err
 	}
 	for _, reference := range references {
-		owners, err := s.privateOwners(ctx, reference)
+		owners, err := s.subjectOwnerIDs(ctx, s.db, reference)
 		if err != nil {
 			return err
 		}
@@ -89,6 +89,12 @@ func (s *Service) applyPrivateRemovals(ctx context.Context) error {
 				return err
 			}
 			if err = s.fenceAccount(ctx, tx, owner, "account_deletion"); err != nil {
+				_ = tx.Rollback(ctx)
+				return err
+			}
+			// The friend and the queue records of the account are sanitized
+			// again.
+			if err = s.removeAuxiliaryPersonalData(ctx, tx, "account", owner); err != nil {
 				_ = tx.Rollback(ctx)
 				return err
 			}
@@ -128,6 +134,112 @@ func (s *Service) privateOwners(ctx context.Context, reference string) ([]string
 		owners = append(owners, owner)
 	}
 	return owners, rows.Err()
+}
+
+// subjectOwnerIDs returns the identifiers of a removed subject.
+//
+// The identifiers are read from the rows that still name the subject: the
+// seats of its matches and the private games it owned. The removal tables
+// never store them.
+func (s *Service) subjectOwnerIDs(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, reference string) ([]string, error) {
+	owners := make([]string, 0)
+	seen := map[string]bool{}
+	collect := func(owner string) {
+		if owner == "" || owner == "anonymized" || seen[owner] {
+			return
+		}
+		seen[owner] = true
+		owners = append(owners, owner)
+	}
+	present, err := auxiliaryTablesPresent(ctx, q, "online_seats")
+	if err != nil {
+		return nil, err
+	}
+	if present {
+		rows, err := q.Query(ctx, `SELECT DISTINCT owner_id FROM online_seats WHERE `+subject.SQLReference("owner_id")+` = $1`, reference)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var owner string
+			if err = rows.Scan(&owner); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			collect(owner)
+		}
+		rows.Close()
+		if err = rows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	privateOwners, err := s.privateOwners(ctx, reference)
+	if err != nil {
+		return nil, err
+	}
+	for _, owner := range privateOwners {
+		collect(owner)
+	}
+	// The friend and the queue records of the subject name it as well. A
+	// subject that played no match and owned no private game is only named
+	// there, and its removal still has to reach those records.
+	auxiliary, err := s.auxiliaryOwnerIDs(ctx, q, reference)
+	if err != nil {
+		return nil, err
+	}
+	for _, owner := range auxiliary {
+		collect(owner)
+	}
+	return owners, nil
+}
+
+// auxiliaryOwnerIDs returns the identifiers of a removed subject that the
+// friend and the queue records name.
+//
+// The records are read before they are sanitized, so a restored database
+// still yields the identifier of the subject it has to remove.
+func (s *Service) auxiliaryOwnerIDs(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, reference string) ([]string, error) {
+	owners := make([]string, 0)
+	read := func(table, column string) error {
+		present, err := auxiliaryTablesPresent(ctx, q, table)
+		if err != nil {
+			return err
+		}
+		if !present {
+			return nil
+		}
+		rows, err := q.Query(ctx, `SELECT DISTINCT `+column+` FROM `+table+` WHERE `+subject.SQLReference(column)+` = $1`, reference)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var owner string
+			if err = rows.Scan(&owner); err != nil {
+				return err
+			}
+			owners = append(owners, owner)
+		}
+		return rows.Err()
+	}
+	for _, source := range []struct{ table, column string }{
+		{"online_friend_invitations", "inviter_id"},
+		{"online_friend_invitations", "recipient_account_id"},
+		{"online_invitation_acceptances", "acceptor_id"},
+		{"online_rematch_offers", "proposer_id"},
+		{"online_queue_entries", "owner_id"},
+	} {
+		if err := read(source.table, source.column); err != nil {
+			return nil, err
+		}
+	}
+	return owners, nil
 }
 
 // AccountMayUseStore reports whether the account may still use the private
