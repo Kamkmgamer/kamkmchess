@@ -1,7 +1,9 @@
 package integration
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -85,6 +87,38 @@ func TestOnlineTheLastCheckpointFollowsTheObservationOrder(t *testing.T) {
 	}
 	if last.State != online.HealthHealthy || last.Detail != "second" {
 		t.Fatalf("last checkpoint = %s/%s, want healthy/second", last.State, last.Detail)
+	}
+}
+
+func TestOnlineTheFlushLogsSafelyAndRetriesThePendingObservation(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	const secret = "private-database-credential"
+	if _, err := fixture.pool.Exec(ctx, `CREATE FUNCTION fail_health_flush() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'private-database-credential'; END $$;
+CREATE TRIGGER fail_health_flush BEFORE INSERT ON online_service_health FOR EACH ROW EXECUTE FUNCTION fail_health_flush()`); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	reporter := online.NewHealthReporter(fixture.pool)
+	reporter.Record(online.DependencyRules, online.HealthDegraded, "the rules process did not answer")
+	reporter.Flush(ctx)
+	if !strings.Contains(output.String(), "online health checkpoint flush failed") || !strings.Contains(output.String(), "P0001") {
+		t.Errorf("flush failure log = %q, want a safe message and SQLSTATE", output.String())
+	}
+	if strings.Contains(output.String(), secret) {
+		t.Fatal("flush logged the raw database error")
+	}
+	if _, err := fixture.pool.Exec(ctx, `DROP TRIGGER fail_health_flush ON online_service_health`); err != nil {
+		t.Fatal(err)
+	}
+	// Retry without another Record: a failed flush must keep its observation.
+	reporter.Flush(ctx)
+	shared, err := reporter.SharedState(ctx)
+	if err != nil || shared != online.HealthDegraded {
+		t.Fatalf("retried shared state = %s, %v, want degraded", shared, err)
 	}
 }
 

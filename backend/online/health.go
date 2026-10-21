@@ -5,10 +5,12 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -218,6 +220,7 @@ func (h *HealthReporter) Flush(ctx context.Context) {
 		if err != nil {
 			// The observation stays pending, so the next flush writes it
 			// again.
+			logHealthFlushError(ctx, dependency, err)
 			continue
 		}
 		h.mu.Lock()
@@ -249,8 +252,24 @@ func (h *HealthReporter) Flush(ctx context.Context) {
 	}
 	h.mu.RUnlock()
 	for _, snapshot := range healthy {
-		_, _ = h.writeCheckpointIfChanged(ctx, snapshot.dependency, snapshot.state, snapshot.detail, snapshot.revision)
+		if _, err := h.writeCheckpointIfChanged(ctx, snapshot.dependency, snapshot.state, snapshot.detail, snapshot.revision); err != nil {
+			logHealthFlushError(ctx, snapshot.dependency, err)
+		}
 	}
+}
+
+// logHealthFlushError omits raw errors and observation details, which may
+// contain credentials. SQLSTATE identifies database failures without their text.
+func logHealthFlushError(ctx context.Context, dependency string, err error) {
+	if dependency != DependencyDatabase && dependency != DependencyRules {
+		dependency = "unknown"
+	}
+	code := ""
+	var databaseError *pgconn.PgError
+	if errors.As(err, &databaseError) {
+		code = databaseError.Code
+	}
+	slog.Default().ErrorContext(ctx, "online health checkpoint flush failed", "dependency", dependency, "sqlstate", code)
 }
 
 // ReportBudget bounds the durable report of a dependency.
