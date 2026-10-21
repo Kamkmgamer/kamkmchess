@@ -1766,6 +1766,27 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   }
 
   /**
+   * Settles the pending records of the uncertain work.
+   *
+   * The decision of the owner accepts that the uncertain work may be paid
+   * twice, so the honest record of the previous request is closed: the
+   * pending record of the browser and the pending record of the service are
+   * cleared. Without that, the decision of the owner would be swallowed by the
+   * guard that keeps the runner from asking the provider again.
+   */
+  async function settleUncertainWork(): Promise<void> {
+    const durable = pendingStore.read(matchId, seat);
+    const serviceRequest = leaseRecord?.pendingRequestId ?? null;
+    if (leaseId !== null) {
+      if (durable !== null) await clearPendingRequest(durable.requestId);
+      if (serviceRequest !== null && serviceRequest !== durable?.requestId) {
+        await clearPendingRequest(serviceRequest);
+      }
+    }
+    pendingStore.clear(matchId, seat);
+  }
+
+  /**
    * Reports whether the runner may act on the current state of the match.
    *
    * The seat control epoch is the canonical answer to the question which
@@ -1920,17 +1941,21 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     return { kind: 'unacknowledged', detail: 'The command was sent but never acknowledged.' };
   }
 
-  async function reportRecoveryAttempt(attempt: 'illegal_move' | 'formatting_correction'): Promise<boolean> {
+  async function reportRecoveryAttempt(
+    attempt: 'illegal_move' | 'formatting_correction',
+    lifecycle: number,
+  ): Promise<boolean> {
     const outcome = await submitAction({ kind: 'record_recovery_attempt', attempt }, nextOperationId('recovery'));
     if (outcome.kind === 'accepted') return true;
+    if (lifecycle !== lifecycleGeneration) return false;
     if (outcome.kind === 'unauthorized') {
       await releaseLease();
-      setPhase('stopped', outcome.detail);
+      if (mayChangePhase(lifecycle)) setPhase('stopped', outcome.detail);
       return false;
     }
     if (outcome.kind === 'fenced') {
       dropLease();
-      if (mayChangePhase()) setPhase('idle', outcome.detail);
+      if (mayChangePhase(lifecycle)) setPhase('idle', outcome.detail);
       return false;
     }
     return false;
@@ -1949,10 +1974,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           // and waits for the caller to bind a new agent.
           superseded = true;
           await releaseLease();
-          setPhase('idle', 'Another controller took the seat.');
+          if (mayChangePhase(lifecycle)) setPhase('idle', 'Another controller took the seat.');
           return;
         }
-        setPhase('idle');
+        if (mayChangePhase(lifecycle)) setPhase('idle');
         return;
       }
       const leased = await ensureLease();
@@ -2004,17 +2029,21 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
       const position = positionOf(current);
       if (position === null) {
-        setPhase('failed', 'The position of the match could not be read.');
+        if (mayChangePhase(lifecycle)) setPhase('failed', 'The position of the match could not be read.');
         return;
       }
       // An open uncertainty or a pending record of an earlier request means
       // that billable work may still be running. The runner never asks the
-      // provider for another answer by itself.
+      // provider for another answer by itself. The decision of the owner is
+      // the one exception: it settles the pending record and lets the runner
+      // ask the provider again.
       if (uncertainty !== null) return;
-      const openRequest = pendingStore.read(matchId, seat);
-      if (openRequest !== null) {
-        enterUncertainty(pendingUncertainty('A request of this browser may still be running.'));
-        return;
+      if (!ownerDecided) {
+        const openRequest = pendingStore.read(matchId, seat);
+        if (openRequest !== null) {
+          enterUncertainty(pendingUncertainty('A request of this browser may still be running.'));
+          return;
+        }
       }
       const requestId = idFactory();
       const controller = new AbortController();
@@ -2047,7 +2076,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
             continue;
           }
           if (kind === 'unauthorized') {
-            setPhase('stopped', 'The credential of the seat was refused.');
+            if (mayChangePhase(lifecycle)) setPhase('stopped', 'The credential of the seat was refused.');
             return;
           }
           // The request was not recorded, so it is not sent. A billable
@@ -2094,15 +2123,19 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       } catch {
         activeController = null;
         activeRequestId = null;
+        // The owner decided while the request was in flight. The decision is
+        // newer than this answer, so the answer writes no phase and it does
+        // not swallow the uncertainty of the owner.
+        if (lifecycle !== lifecycleGeneration) return;
         if (controller.signal.aborted && abortReason === 'stale') {
-          setPhase('idle', 'The answer of a superseded turn was dropped.');
+          if (mayChangePhase(lifecycle)) setPhase('idle', 'The answer of a superseded turn was dropped.');
           return;
         }
         if (controller.signal.aborted && abortReason === 'stopped') {
           // The owner stopped the runner. An uncertainty that is already open
           // is never swallowed, because the uncertain work has to stay
           // recoverable.
-          if (uncertainty === null) setPhase('stopped');
+          if (uncertainty === null && mayChangePhase(lifecycle)) setPhase('stopped');
           return;
         }
         // The request may have reached the provider and been billed. The
@@ -2121,7 +2154,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       activeRequestId = null;
       if (aborted) {
         if (abortReason === 'stale') {
-          setPhase('idle', 'The answer of a superseded turn was dropped.');
+          if (mayChangePhase(lifecycle)) setPhase('idle', 'The answer of a superseded turn was dropped.');
           return;
         }
         if (abortReason === 'lease-lost') {
@@ -2136,7 +2169,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         }
         // The owner stopped the runner. An uncertainty that is already open is
         // never swallowed, because the uncertain work has to stay recoverable.
-        if (uncertainty === null) setPhase('stopped');
+        if (uncertainty === null && mayChangePhase(lifecycle)) setPhase('stopped');
         return;
       }
       if (answer.uncertain) {
@@ -2150,14 +2183,16 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         return;
       }
       if (answer.terminal === 'aborted') {
-        setPhase('stopped');
+        if (mayChangePhase(lifecycle)) setPhase('stopped');
         return;
       }
       if (answer.terminal === 'failed') {
         // A provider failure never concedes. The seat keeps its turn and the
-        // owner recovers.
+        // owner recovers: the phase `failed` waits for the decision of the
+        // owner, so the runner never asks the provider again by itself.
         await settleRequest(requestId);
-        setPhase('failed', 'The provider request failed.');
+        if (lifecycle !== lifecycleGeneration) return;
+        if (mayChangePhase(lifecycle)) setPhase('failed', 'The provider request failed.');
         return;
       }
       await settleRequest(requestId);
@@ -2207,7 +2242,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           formatSpent = 0;
           rejectedMoves = [];
           await releaseLease();
-          if (mayChangePhase()) setPhase('idle');
+          if (mayChangePhase(lifecycle)) setPhase('idle');
           return;
         }
         if (outcome.kind === 'unacknowledged') {
@@ -2222,21 +2257,21 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         }
         if (outcome.kind === 'unauthorized') {
           await releaseLease();
-          setPhase('stopped', outcome.detail);
+          if (mayChangePhase(lifecycle)) setPhase('stopped', outcome.detail);
           return;
         }
         if (outcome.kind === 'fenced') {
           // The lease fenced the command. The state moved on, so the runner
           // waits for the next snapshot instead of spending an attempt.
           dropLease();
-          if (mayChangePhase()) setPhase('idle', outcome.detail);
+          if (mayChangePhase(lifecycle)) setPhase('idle', outcome.detail);
           return;
         }
         // The service refused a move the browser believed to be legal. The
         // state moved on, so the runner waits for the next snapshot instead of
         // spending an attempt.
         await releaseLease();
-        if (mayChangePhase()) setPhase('idle', outcome.detail);
+        if (mayChangePhase(lifecycle)) setPhase('idle', outcome.detail);
         return;
       }
       if (decision.kind === 'model-resignation') {
@@ -2244,7 +2279,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         const outcome = await submitAction({ kind: 'resign' }, nextOperationId('resign'));
         if (outcome.kind === 'accepted') {
           await releaseLease();
-          if (mayChangePhase()) setPhase('idle');
+          if (mayChangePhase(lifecycle)) setPhase('idle');
           return;
         }
         if (outcome.kind === 'unacknowledged') {
@@ -2259,23 +2294,23 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         }
         if (outcome.kind === 'unauthorized') {
           await releaseLease();
-          setPhase('stopped', outcome.detail);
+          if (mayChangePhase(lifecycle)) setPhase('stopped', outcome.detail);
           return;
         }
         if (outcome.kind === 'fenced') {
           dropLease();
-          if (mayChangePhase()) setPhase('idle', outcome.detail);
+          if (mayChangePhase(lifecycle)) setPhase('idle', outcome.detail);
           return;
         }
         await releaseLease();
-        if (mayChangePhase()) setPhase('idle', outcome.detail);
+        if (mayChangePhase(lifecycle)) setPhase('idle', outcome.detail);
         return;
       }
       if (decision.kind === 'illegal-attempt') {
         const uci = coordinateMoveToUci(decision.record.move);
-        const reported = await reportRecoveryAttempt('illegal_move');
+        const reported = await reportRecoveryAttempt('illegal_move', lifecycle);
         if (!reported) {
-          if (phase === 'generating' && mayChangePhase()) setPhase('idle', 'The spent attempt was not accepted.');
+          if (phase === 'generating' && mayChangePhase(lifecycle)) setPhase('idle', 'The spent attempt was not accepted.');
           return;
         }
         // The service counts the attempt. The runner adopts the count only
@@ -2288,7 +2323,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           // The fourth illegal attempt ends the match. The service decides the
           // result, so the runner only stops.
           await releaseLease();
-          setPhase('idle', 'The fourth illegal attempt was recorded.');
+          if (mayChangePhase(lifecycle)) setPhase('idle', 'The fourth illegal attempt was recorded.');
           return;
         }
         continue;
@@ -2302,12 +2337,12 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         // correction beyond its budget.
         appendConversation('user', decision.correction);
         await releaseLease();
-        setPhase('paused', 'The formatting correction budget is spent.');
+        if (mayChangePhase(lifecycle)) setPhase('paused', 'The formatting correction budget is spent.');
         return;
       }
-      const reported = await reportRecoveryAttempt('formatting_correction');
+      const reported = await reportRecoveryAttempt('formatting_correction', lifecycle);
       if (!reported) {
-        if (phase === 'generating' && mayChangePhase()) setPhase('idle', 'The spent correction was not accepted.');
+        if (phase === 'generating' && mayChangePhase(lifecycle)) setPhase('idle', 'The spent correction was not accepted.');
         return;
       }
       formatSpent = decision.budgets.formatCorrections;
@@ -2332,9 +2367,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     pendingStore.clear(matchId, seat);
   }
 
-  /** Reports whether the runner waits for an explicit owner decision. */
+  /**
+   * Reports whether the runner waits for an explicit owner decision.
+   *
+   * The phase `failed` waits as well: a provider failure is answered by the
+   * owner with `retry`, `switch-model` or `takeover`, and the runner never
+   * asks the provider again by itself.
+   */
   function waitsForOwner(): boolean {
-    return phase === 'uncertain' || phase === 'paused' || phase === 'stopped';
+    return phase === 'uncertain' || phase === 'paused' || phase === 'failed' || phase === 'stopped';
   }
 
   /**
@@ -2495,12 +2536,13 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       if (phase !== 'uncertain' && phase !== 'paused' && phase !== 'failed' && phase !== 'stopped') return;
       const operation = pendingSubmission;
       uncertainty = null;
-      // The owner decided. The uncertain work may be paid twice, and the
-      // pending record of the service is settled with the new lease. The
-      // generation of the lifecycle moves, so an answer of the old request
-      // cannot write a phase.
+      // The owner decided. The uncertain work may be paid twice, so the pending
+      // records of the browser and of the service are settled and the runner
+      // may ask the provider again. The generation of the lifecycle moves, so
+      // an answer of the old request cannot write a phase.
       ownerDecided = true;
       advanceLifecycle();
+      await settleUncertainWork();
       setPhase('idle');
       if (operation !== null) {
         // The operation identifier stays the same, so the service answers with
@@ -2553,8 +2595,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       uncertainty = null;
       ownerDecided = true;
       // The control of the seat changed, so the work of the old turn is
-      // fenced and the generation of the lifecycle moves.
+      // fenced and the generation of the lifecycle moves. The decision of the
+      // owner settles the pending records, so the new agent may ask the
+      // provider again.
       advanceLifecycle();
+      await settleUncertainWork();
       await releaseLease();
       setPhase('idle');
       schedule();

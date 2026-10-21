@@ -1133,6 +1133,79 @@ describe('the windows of a turn that the owner interrupts', () => {
   });
 });
 
+describe('the recovery of the owner', () => {
+  it('asks the provider again after the owner retried an uncertain request', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+
+    // The provider request fails. The runner opens an uncertainty and offers
+    // the decision of the owner.
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+    expect(runner.state.uncertainty).not.toBeNull();
+    expect(runner.state.decisions).toContain('retry');
+    expect(provider.prompts).toHaveLength(1);
+
+    // The owner decides: retry. The decision settles the pending record and
+    // the provider is asked again.
+    await runner.retry();
+    await until(() => provider.prompts.length > 1, 'the provider is asked again');
+    expect(runner.state.phase).not.toBe('uncertain');
+  });
+
+  it('keeps the decision of the owner when the aborted request answers late', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+
+    // The owner stops the runner while the provider request runs.
+    await runner.stop();
+    expect(runner.state.phase).toBe('uncertain');
+    expect(runner.state.uncertainty).not.toBeNull();
+
+    // The owner decides immediately: retry. The abort of the request arrives
+    // after that decision and may not swallow it.
+    await runner.retry();
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    expect(runner.state.phase).not.toBe('stopped');
+    await until(() => provider.prompts.length > 1, 'the provider is asked again');
+  });
+
+  it('never asks the provider again after a provider that answered with a failure', async () => {
+    const service = createFakeOnlineService();
+    const prompts: unknown[] = [];
+    // A provider that answers with a failure, the way the protocol adapter
+    // answers a provider that returns an error.
+    const provider = {
+      async run(prompt: unknown): Promise<{ answerText: string; terminal: 'failed'; uncertain: boolean }> {
+        prompts.push(prompt);
+        return { answerText: '', terminal: 'failed', uncertain: false };
+      },
+    };
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => runner.state.phase === 'failed', 'the provider failed');
+    expect(prompts).toHaveLength(1);
+    expect(runner.state.decisions).toContain('retry');
+
+    // A later snapshot does not ask the provider again: the phase waits for
+    // the decision of the owner.
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    expect(prompts).toHaveLength(1);
+    expect(runner.state.phase).toBe('failed');
+  });
+});
+
 describe('the published model binding of the runner', () => {
   it('converts the canonical match view into the state of the runner', () => {
     const view: OnlineMatchView = {

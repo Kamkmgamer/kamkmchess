@@ -44,9 +44,14 @@ the control changes and the spent recovery attempts.
   disposed, and every answer of a request that was still in flight belongs to
   the generation it was sent in. A late answer therefore writes no phase,
   starts no work and asks the provider for no second answer.
+- The decision of the owner settles the uncertain work. `retry()` and
+  `switchModel()` close the pending record of the browser and the pending
+  record of the service, so the decision is effective: the provider is asked
+  again. Without that, the guard that keeps the runner from asking the
+  provider again would swallow the decision of the owner.
 - While an uncertainty is open the runner never asks the provider again. The
   browser-local pending record is checked before every request of a turn, not
-  only when a lease is taken.
+  only when a lease is taken, and the check honours the decision of the owner.
 - Uncertain billable work is never repeated by itself. The runner leaves the
   request identifier behind in the service lease and in the browser-local
   pending record, and it offers Retry, switch or takeover.
@@ -261,7 +266,9 @@ control epoch of the seat cancels the pending answer.
 
 The `uncertain`, `paused`, `failed` and `stopped` phases offer the decisions
 `retry`, `switch-model` and `takeover`. The runner never leaves one of them by
-itself, and `start()` and `resume()` start a stopped runner again.
+itself, and `start()` and `resume()` start a stopped runner again. A provider
+that answers with an error leaves the phase `failed`, so the next snapshot of
+the match does not ask the provider again without a decision of the owner.
 
 The state of the runner also carries `publicModelLabel`, the label the service
 publishes for the agent, `boundSeatControlEpoch`, the control epoch of the seat
@@ -410,6 +417,9 @@ seat with an accepted move, exactly like the service does.
 | — | A stop inside the acquisition, the record of the request, the settlement or the renewal before the submit keeps the phase of the runner |
 | — | A finished match keeps no lease and no heartbeat when the acquisition answers late |
 | — | The provider is not asked again while the uncertainty of a stopped request is open |
+| — | The explicit retry of the owner asks the provider again and is not swallowed by the late answer of the aborted request |
+| — | A provider that answers with an error waits for the owner instead of being retried by the next snapshot |
+| — | The Go answer of the service is read by the parser of the runner and by the shared parser |
 | — | The budget of the browser follows the canonical counts of the turn |
 | — | The heartbeat of the lease survives a transient failure and fails closed near the lease expiry |
 | — | No renewal is ever armed behind the life of the lease |
