@@ -45,36 +45,35 @@ async function loadDescriptor(): Promise<Descriptor | null> {
 test.beforeAll(async () => {
   const loaded = await loadDescriptor();
   if (!loaded) {
-    const message = 'no online fixture descriptor: the rendered online cases did not run';
+    // The run needs the real online service. A missing descriptor is a
+    // failure of the run, not a silent pass.
+    const message = 'no online fixture descriptor: the rendered online cases need the real service';
     if (strict) throw new Error(message);
-    test.skip(true, message);
+    throw new Error(message);
   }
 });
 
-test('the built app points at the online fixture of the run', async ({ page }) => {
+test('a guest opens the published invitation link and previews the exact invitation', async ({ page }) => {
   const loaded = await loadDescriptor();
   expect(loaded).not.toBeNull();
-  await page.goto('/play?online=1');
-  const configured = await page.evaluate(() => {
-    const element = document.querySelector('meta[name="kamkm-api-base-url"]');
-    return element?.getAttribute('content') ?? null;
-  });
-  // The build may expose the origin in a meta tag or in the module config.
-  // Either way the surface has to reach the fixture, so the run asks the
-  // fixture directly and compares the answer.
-  const answer = await page.evaluate(async (baseUrl) => {
-    try {
-      const response = await fetch(`${baseUrl}/v1/online/features`, { headers: { Accept: 'application/json' } });
-      return { status: response.status, body: await response.text() };
-    } catch (error) {
-      return { status: 0, body: String(error) };
-    }
-  }, loaded!.baseUrl);
-  expect(answer.status).toBe(200);
-  const flags = JSON.parse(answer.body) as { friends?: boolean; queue?: boolean };
-  expect(typeof flags.friends).toBe('boolean');
-  expect(typeof flags.queue).toBe('boolean');
-  expect(configured === null || configured === loaded!.baseUrl).toBe(true);
+  // The inviter creates a link.
+  const inviter = await page.context().newPage();
+  await inviter.goto('/play?online=1');
+  await inviter.getByRole('button', { name: 'Online play' }).click();
+  await inviter.getByRole('button', { name: 'New play' }).click();
+  await inviter.getByRole('button', { name: 'Invite a friend' }).click();
+  const link = await inviter.getByLabel('Invitation link').inputValue();
+  const invitationId = link.split('/invite/')[1] ?? '';
+  expect(invitationId.length).toBeGreaterThan(7);
+
+  // The published link opens the online screen with that exact invitation.
+  const guest = await page.context().newPage();
+  await guest.goto(`/invite/${invitationId}`);
+  await expect(guest.getByRole('region', { name: 'Online play' })).toBeVisible();
+  await expect(guest.getByLabel('Invitation code')).toHaveValue(invitationId);
+  // The preview shows the inviter of that invitation.
+  await expect(guest.getByRole('status').filter({ hasText: 'Guest' })).toBeVisible();
+  await expect(guest.getByRole('button', { name: 'Accept' })).toBeEnabled();
 });
 
 test('a guest creates a friend link and the other guest joins the game', async ({ browser }) => {

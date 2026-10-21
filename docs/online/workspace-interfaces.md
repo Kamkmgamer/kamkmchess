@@ -31,9 +31,9 @@ workspace never sends a credential in a URL, a query string or a body.
 The browser sends and receives the shared contracts of
 `src/online/contracts.ts` (`QueueEntry`, `SeatControl`, `TimeControl`). The
 routes and their answers are published by the queue worker in
-`docs/online/queue-contract.md`, and the browser calls them through its typed
-client `src/online/queue.ts`. The queue worker owns the HTTP adapter
-`src/online/queue-client.ts`; the workspace does not use a second client.
+`docs/online/queue-contract.md`, and the browser calls them through the typed
+client `src/online/queue.ts` of that worker. The workspace uses no second
+queue client.
 
 | Route | Method | Request body | Answer |
 | --- | --- | --- | --- |
@@ -63,7 +63,7 @@ created match, so it can attach the match without a second lookup:
 | --- | --- | --- |
 | `src/online/workspace.ts` | workspace | concurrent live games, focus, reconnect status, results |
 | `src/online/match-client.ts` | workspace | participant command client over the existing command route |
-| `src/online/queue-client.ts` | workspace | HTTP adapter for the queue routes above |
+| `src/online/queue.ts` | queue | the typed queue client of the queue worker |
 | `src/online/readiness.ts` | workspace | own-agent readiness, search window, cutoff fallback state machine |
 | `src/online/engine-seat.ts` | workspace | browser Stockfish 19 Lite seat for a fallback game |
 | `src/online/runner-lease.ts` | workspace | runner lease and runner request client |

@@ -218,13 +218,13 @@ export interface OnlineComposition {
    * the private selection of the new label, so an old selection is never
    * relabelled as a new model.
    */
-  setAgentCatalog(entries: readonly { label: string; selection: ModelSelection }[]): void;
+  setAgentCatalog(entries: readonly { id: string; label: string; selection: ModelSelection }[]): void;
   /** The public labels the owner may choose for a seat. */
-  readonly agentCatalog: readonly { readonly label: string }[];
+  readonly agentCatalog: readonly { readonly id: string; readonly label: string }[];
   /** The label bound to one seat, or null when the seat has no binding. */
   agentBindingFor(matchId: string, seat: Seat): string | null;
   /** Binds the chosen private selection to one seat of one match. */
-  bindAgentSeat(matchId: string, seat: Seat, label: string): void;
+  bindAgentSeat(matchId: string, seat: Seat, choice: string): void;
   /**
    * Registers the public label of the owner's own agent.
    *
@@ -251,7 +251,7 @@ export interface OnlineComposition {
    * When the invitee accepts it, the inviter claims the seat credential
    * of the created match and follows it.
    */
-  trackInvitation(invitationId: string, ownerToken: string): void;
+  trackInvitation(invitationId: string, ownerToken: string, selection?: ModelSelection | null): void;
   /** The presence client of one seat. */
   presenceClient(matchId: string, seat: Seat, credential?: OnlineCredential): OnlinePresenceClient | null;
   /**
@@ -266,13 +266,13 @@ export interface OnlineComposition {
    * The decision is never automatic: the runner never leaves an uncertain,
    * paused or failed phase by itself.
    */
-  agentDecision(matchId: string, seat: Seat, decision: 'retry' | 'switch-model' | 'takeover', publicModelLabel?: string): Promise<void>;
+  agentDecision(matchId: string, seat: Seat, decision: 'retry' | 'switch-model' | 'takeover', choice?: string): Promise<void>;
   /**
    * Attaches a match and shows it.
    *
    * The credential authorizes the seat. A committed assignment uses it.
    */
-  attachAndFocus(matchId: string, seat: Seat, credential?: OnlineCredential): void;
+  attachAndFocus(matchId: string, seat: Seat, credential?: OnlineCredential, selection?: ModelSelection | null): void;
   /**
    * Resumes the durable matches of the current identity.
    *
@@ -402,24 +402,37 @@ function createIntentId(): string {
 /**
  * Reads a persisted model selection.
  *
- * The record has to look like a selection. A record of another shape is
- * dropped, so a damaged storage never binds a wrong model to a seat.
+ * The record has to be a real selection: the kind, the provider, the
+ * connection, the numeric configuration revision, the routing identifier, the
+ * protocol and the diagnostic all have to be the values the shared contract
+ * declares. A record of another shape is dropped, so a damaged storage never
+ * binds a wrong model to a seat.
  */
 function parseModelSelection(value: unknown): ModelSelection | null {
   if (typeof value !== 'object' || value === null) return null;
   const record = value as Record<string, unknown>;
+  if (record.kind !== 'model') return null;
+  const providerId = record.providerId;
   const connectionId = record.connectionId;
   const modelRoutingId = record.modelRoutingId;
+  const configurationRevision = record.configurationRevision;
   const protocol = record.protocol;
+  const diagnostic = record.diagnostic;
+  if (typeof providerId !== 'string' || providerId.length === 0) return null;
   if (typeof connectionId !== 'string' || connectionId.length === 0) return null;
   if (typeof modelRoutingId !== 'string' || modelRoutingId.length === 0) return null;
-  if (typeof protocol !== 'string' || protocol.length === 0) return null;
+  if (typeof configurationRevision !== 'number' || !Number.isSafeInteger(configurationRevision)) return null;
+  if (protocol !== 'chat-completions' && protocol !== 'responses' && protocol !== 'messages' && protocol !== 'custom') return null;
+  if (diagnostic !== 'not-run' && diagnostic !== 'passed-current-session' && diagnostic !== 'failed' && diagnostic !== 'unknown') return null;
   return {
-    ...(record as unknown as ModelSelection),
+    kind: 'model',
+    providerId,
     connectionId,
+    configurationRevision,
     modelRoutingId,
     protocol,
-  } as ModelSelection;
+    diagnostic,
+  };
 }
 
 /**
@@ -485,8 +498,15 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * reload keeps the exact selection of the seat.
    */
   const agentBindings = new Map<string, { readonly label: string; readonly selection: ModelSelection }>();
-  /** The agents the owner may play, by their public label. */
-  const agentCatalog = new Map<string, ModelSelection>();
+  /**
+   * The agents the owner may play.
+   *
+   * The key is the stable private identity of the selection, never the
+   * public label: two private models can carry the same display name.
+   */
+  const agentCatalog = new Map<string, { readonly label: string; readonly selection: ModelSelection }>();
+  /** The private selection captured for a seat, before the service was asked. */
+  const capturedSelections = new Map<string, ModelSelection>();
 
   /** The local key of the persisted seat bindings of one identity. */
   function agentBindingKey(identity: string): string {
@@ -613,19 +633,20 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       const previousKey = accountKey;
       accountKey = nextKey;
       if (previousKey !== null) revokedIdentities.add(previousKey);
+      // An identity that becomes active again is usable again. Its seat
+      // credentials are issued again, and its private model bindings are
+      // restored from the device.
+      if (nextKey !== null) revokedIdentities.delete(nextKey);
       // The secrets of the friend surface follow the identity. The records of
       // the previous identity never reach the new one.
       friendSecrets.setIdentity(queueIdentity());
-      // The durable matches of the new identity are restored, and the ones of
-      // the previous identity are gone.
-      revokedIdentities.add(previousKey ?? '');
-      for (const [key, registered] of [...seats]) {
-        if (registered.identityKey === previousKey) seats.delete(key);
-      }
-      agentBindings.clear();
-      writeAgentBindings(previousKey ?? '', []);
+      // The seat authority of the previous identity is fenced, and its
+      // private bindings leave the memory. The persisted records of that
+      // identity stay on the device, so the identity finds them again when it
+      // returns.
       queue.reset();
       fenceAccountSeats();
+      agentBindings.clear();
       restorePersistedMatches();
       notify();
     });
@@ -966,9 +987,13 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
             if (intent.recordId === id) removeIntent(intent.key);
           }
         }
-        // A committed assignment is attached and shown.
+        // A committed assignment is attached and shown. The seat keeps the
+        // private selection the entry was created with.
         if (state.phase === 'matched' && state.assignment) {
-          attachAndFocus(state.assignment.matchId, state.assignment.seat);
+          const intent = readIntents(storage, queueIdentity())
+            .filter(candidate => candidate.recordId === id)
+            .slice(-1)[0] ?? null;
+          attachAndFocus(state.assignment.matchId, state.assignment.seat, undefined, intent?.selection ?? null);
         }
         notify();
         scheduleQueueWork(record);
@@ -1028,12 +1053,18 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * accepts, the inviter claims the seat credential of the created match and
    * follows it, so the inviter can play its own seat.
    */
-  const createdInvitations = new Map<string, string>();
+  const createdInvitations = new Map<string, { ownerToken: string; selection: ModelSelection | null }>();
   let invitationTimer: unknown = null;
 
-  /** Tracks an invitation this browser created. */
-  function trackInvitation(invitationId: string, ownerToken: string): void {
-    createdInvitations.set(invitationId, ownerToken);
+  /**
+   * Tracks an invitation this browser created.
+   *
+   * The private selection of the agent is captured with the invitation, so
+   * the seat of the created match keeps the model the owner chose when the
+   * invitation was made.
+   */
+  function trackInvitation(invitationId: string, ownerToken: string, selection: ModelSelection | null = null): void {
+    createdInvitations.set(invitationId, { ownerToken, selection });
     scheduleInvitationWork();
   }
 
@@ -1047,12 +1078,12 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     if (createdInvitations.size === 0) return;
     invitationTimer = timers.setTimer(() => {
       invitationTimer = null;
-      for (const [invitationId, ownerToken] of [...createdInvitations]) {
+      for (const [invitationId, tracked] of [...createdInvitations]) {
         void (async () => {
           try {
             const invitation = await friends.preview(invitationId);
             if (invitation.status !== 'consumed' || !invitation.matchId) return;
-            const claimed = await friends.claimSeatCredential(invitationId, ownerToken);
+            const claimed = await friends.claimSeatCredential(invitationId, tracked.ownerToken);
             if (claimed.guestCredential) {
               registerGuestCredential(createGuestCredential({
                 guestId: claimed.guestCredential.guestId,
@@ -1060,7 +1091,12 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
                 seat: claimed.guestCredential.seat,
                 token: claimed.guestCredential.token,
               }), 'guest');
-              attachAndFocus(claimed.guestCredential.matchId, claimed.guestCredential.seat);
+              attachAndFocus(
+                claimed.guestCredential.matchId,
+                claimed.guestCredential.seat,
+                undefined,
+                tracked.selection,
+              );
             }
             createdInvitations.delete(invitationId);
             notify();
@@ -1178,16 +1214,16 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     });
   }
 
-  function attachAndFocus(matchId: string, seat: Seat, credential?: OnlineCredential): void {
+  function attachAndFocus(matchId: string, seat: Seat, credential?: OnlineCredential, selection?: ModelSelection | null): void {
     const authority = credential ?? credentialFor(matchId, seat);
     if (!authority) return;
     const binding: OnlineSeatBinding = { matchId, seat, credential: authority };
     workspace.attach(binding);
     workspace.focus(matchId);
-    // The own agent of the owner is bound to the seat of this match, with the
-    // private selection the owner chose. The binding never uses the entry of
-    // a queue and never guesses from a public label.
-    if (agent) bindAgentSeat(matchId, seat, agent.label);
+    // The seat keeps the private selection that was captured when the entry
+    // or the invitation was created. A seat without a captured selection stays
+    // unbound, and the interface asks the owner to choose.
+    if (selection) bindCapturedAgentSeat(matchId, seat, selection, agent?.label ?? 'Agent');
   }
 
   /**
@@ -1266,18 +1302,79 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * canonical public label never share it, and a seat is never played by
    * another model. The binding stays in the browser.
    */
-  function bindAgentSeat(matchId: string, seat: Seat, label: string): void {
-    // The binding uses the exact private selection of the chosen label. It
-    // never falls back to another model, and a label the owner never
-    // connected binds nothing.
-    const selection = agentCatalog.get(label);
-    if (!selection) return;
+  /**
+   * Resolves one choice of the owner.
+   *
+   * The choice is the stable private identity of a catalog entry. A label is
+   * accepted as well, so both sides of the interface work while they are
+   * integrated, and an ambiguous label resolves to nothing.
+   */
+  function resolveChoice(choice: string): { readonly label: string; readonly selection: ModelSelection } | null {
+    const byId = agentCatalog.get(choice);
+    if (byId) return byId;
+    const byLabel = [...agentCatalog.values()].filter(entry => entry.label === choice);
+    return byLabel.length === 1 ? byLabel[0]! : null;
+  }
+
+  /**
+   * Binds the private selection of the owner to one seat of one match.
+   *
+   * The selection is the one the owner chose for this seat. It is never
+   * inferred from a public label, because two private models can carry the
+   * same canonical label.
+   */
+  function bindAgentSeat(matchId: string, seat: Seat, choice: string): void {
+    const resolved = resolveChoice(choice);
+    // A choice the owner never connected binds nothing, and a seat without a
+    // selection stays unbound: the browser then asks the owner to choose.
+    if (!resolved) return;
     const key = `${matchId}:${seat}`;
-    agentBindings.set(key, { label, selection });
+    agentBindings.set(key, { label: resolved.label, selection: resolved.selection });
     const identity = queueIdentity();
     const bindings = readAgentBindings(identity)
       .filter(binding => !(binding.matchId === matchId && binding.seat === seat));
-    bindings.push({ matchId, seat, label, selection });
+    bindings.push({ matchId, seat, label: resolved.label, selection: resolved.selection });
+    writeAgentBindings(identity, bindings);
+  }
+
+  /**
+   * Binds the selection that was captured for a seat before the service was
+   * asked.
+   *
+   * A queue entry and a friend invitation capture the private selection of
+   * the agent when they are created, so a model the owner picks later never
+   * replaces the agent of a waiting entry.
+   */
+  /** The local display label of a captured selection, when the catalog knows it. */
+  function catalogLabelOf(selection: ModelSelection): string | null {
+    for (const entry of agentCatalog.values()) {
+      if (
+        entry.selection.modelRoutingId === selection.modelRoutingId
+        && entry.selection.connectionId === selection.connectionId
+      ) {
+        return entry.label;
+      }
+    }
+    return null;
+  }
+
+  function bindCapturedAgentSeat(
+    matchId: string,
+    seat: Seat,
+    selection: ModelSelection | null,
+    label: string,
+  ): void {
+    if (!selection) return;
+    const key = `${matchId}:${seat}`;
+    capturedSelections.set(key, selection);
+    // The local display label of the captured selection wins over the label of
+    // the agent the owner happens to have selected now.
+    const display = catalogLabelOf(selection) ?? label;
+    agentBindings.set(key, { label: display, selection });
+    const identity = queueIdentity();
+    const bindings = readAgentBindings(identity)
+      .filter(binding => !(binding.matchId === matchId && binding.seat === seat));
+    bindings.push({ matchId, seat, label: display, selection });
     writeAgentBindings(identity, bindings);
   }
 
@@ -1462,22 +1559,36 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     },
     setAgent(next) {
       agent = next;
-      if (next) agentCatalog.set(next.label, next.selection);
+      // The current agent lives outside the catalog. The catalog is keyed by
+      // the stable private identity of a selection, and the public label of
+      // the current agent never overwrites an entry of the catalog.
       notify();
     },
     setAgentCatalog(entries) {
       agentCatalog.clear();
-      for (const entry of entries) agentCatalog.set(entry.label, entry.selection);
+      for (const entry of entries) {
+        agentCatalog.set(entry.id, { label: entry.label, selection: entry.selection });
+      }
+      // A seat that was attached before the catalog knew its selection gets
+      // its captured selection now, so the runner of the seat starts.
+      for (const [key, captured] of capturedSelections) {
+        const separator = key.lastIndexOf(':');
+        const matchId = key.slice(0, separator);
+        const seat = key.slice(separator + 1) as Seat;
+        if (agentBindings.has(key)) continue;
+        bindCapturedAgentSeat(matchId, seat, captured, agent?.label ?? 'Agent');
+      }
+      driveAgentSeats();
       notify();
     },
     get agentCatalog() {
-      return [...agentCatalog.keys()].map(label => ({ label }));
+      return [...agentCatalog.entries()].map(([id, entry]) => ({ id, label: entry.label }));
     },
     agentBindingFor(matchId: string, seat: Seat) {
       return agentBindingFor(matchId, seat)?.label ?? null;
     },
-    bindAgentSeat(matchId: string, seat: Seat, label: string) {
-      bindAgentSeat(matchId, seat, label);
+    bindAgentSeat(matchId: string, seat: Seat, choice: string) {
+      bindAgentSeat(matchId, seat, choice);
       driveAgentSeats();
       notify();
     },
@@ -1503,24 +1614,24 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     agentRunnerState(matchId, seat) {
       return agentRunners.get(`${matchId}:${seat}`)?.state ?? null;
     },
-    async agentDecision(matchId, seat, decision, publicModelLabel) {
+    async agentDecision(matchId, seat, decision, choice) {
       const key = `${matchId}:${seat}`;
       if (decision === 'switch-model') {
         // A switch changes the private selection of the seat. The old
         // selection is never relabelled as the new model, and the runner is
         // rebuilt with the destination of the new selection.
-        const label = publicModelLabel ?? agent?.label ?? '';
-        const selection = agentCatalog.get(label);
-        if (!selection) {
+        const resolved = choice ? resolveChoice(choice) : null;
+        if (!resolved) {
           throw new Error('That agent is not connected.');
         }
         const runner = agentRunners.get(key);
         if (!runner) {
-          agentBindings.set(key, { label, selection });
+          bindAgentSeat(matchId, seat, choice ?? resolved.label);
+          driveAgentSeats();
           return;
         }
-        await runner.switchModel(label);
-        agentBindings.set(key, { label, selection });
+        await runner.switchModel(resolved.label);
+        bindAgentSeat(matchId, seat, choice ?? resolved.label);
         await runner.stop().catch(() => undefined);
         agentRunners.delete(key);
         // The canonical snapshot is fed again, so the new runner plays the seat.

@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './ui/App.js';
+import { OnlineWorkspace } from './ui/online-workspace.js';
 import { MatchComposition } from './ui/match-composition.js';
 import { createOnlineComposition } from './online/composition.js';
 import { createAgentReadinessCheck } from './online/agent-readiness.js';
@@ -39,6 +40,21 @@ const online = onlineOrigin
 // once, without a credential, and keeps the answer for the page lifetime.
 void online?.loadFeatures();
 const rootView = createRoot(root);
+/**
+ * The published invitation link opens the online screen.
+ *
+ * The link carries the exact invitation, so the owner reads its preview and
+ * accepts that invitation. The offline game stays untouched underneath.
+ */
+function linkedInvitationId(): string | null {
+  const linked = new URLSearchParams(window.location.search).get('invite');
+  if (linked) return linked;
+  const segments = window.location.pathname.split('/').filter(Boolean);
+  const index = segments.indexOf('invite');
+  return index >= 0 ? segments[index + 1] ?? null : null;
+}
+const linkedInvitation = linkedInvitationId();
+
 void composition.openActiveGame().then(async (session) => {
   const snapshot = await session.controller.initialize();
   if (publicConfig.accountsEnabled) {
@@ -49,6 +65,7 @@ void composition.openActiveGame().then(async (session) => {
   rootView.render(
     <StrictMode>
       <App composition={composition} initialSession={session} initialSnapshot={snapshot} online={online} />
+      {online && linkedInvitation && <OnlineWorkspace composition={online} onClose={() => { window.location.href = '/play'; }} initialTab="new" />}
     </StrictMode>,
   );
 }).catch((error: unknown) => {

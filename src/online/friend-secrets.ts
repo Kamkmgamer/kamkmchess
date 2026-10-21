@@ -51,6 +51,13 @@ export interface FriendSecretStore {
   readOwnerToken(invitationId: string): string | null;
   /** True when this browser created the invitation. */
   ownsInvitation(invitationId: string): boolean;
+  /**
+   * The invitations this browser created.
+   *
+   * The list survives a reload, so the inviter can still claim its seat
+   * credential after the browser restarted.
+   */
+  listOwnedInvitations(): readonly string[];
 }
 
 export interface FriendSecretStoreOptions {
@@ -81,6 +88,10 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
 
   const keyOf = (kind: string, id: string): string =>
     `${prefix}:${encodeURIComponent(identity)}:${kind}:${encodeURIComponent(id)}`;
+
+  /** The key of the list of the invitations of one identity. */
+  const listKey = (owner: string): string =>
+    `${prefix}:${encodeURIComponent(owner)}:owned`;
 
   function read(kind: string, id: string): string | null {
     const key = keyOf(kind, id);
@@ -142,6 +153,21 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
     },
     ownsInvitation(invitationId) {
       return read('owner', invitationId) !== null;
+    },
+    listOwnedInvitations() {
+      const owned: string[] = [];
+      try {
+        const raw = storage?.getItem(listKey(identity));
+        if (!raw) return owned;
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return owned;
+        for (const item of parsed) {
+          if (typeof item === 'string' && item.length > 0) owned.push(item);
+        }
+      } catch {
+        return owned;
+      }
+      return owned;
     },
   };
 }

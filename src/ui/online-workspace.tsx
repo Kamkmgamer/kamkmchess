@@ -33,7 +33,7 @@ import type { OnlineClockReading } from '../online/clock.js';
 import { onlineSideToMove } from '../online/turn.js';
 import type { OnlineComposition } from '../online/composition.js';
 import type { Seat, SeatControl, TimeControl } from '../online/contracts.js';
-import type { FriendInvitation } from '../online/friend-routes.js';
+import type { FriendInvitation, FriendRematch } from '../online/friend-routes.js';
 import type { OnlineProfileHistory } from '../online/history.js';
 import {
   onlineAppliedMoves,
@@ -105,8 +105,35 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
   const [invitationCode, setInvitationCode] = useState('');
   const [history, setHistory] = useState<OnlineProfileHistory | null>(null);
   const [historyProfile, setHistoryProfile] = useState('');
+  // A published invitation link opens the online screen with the exact
+  // invitation of the link.
+  const [linkedInvitation] = useState(() => {
+    if (typeof window === 'undefined') return null;
+    const linked = new URLSearchParams(window.location.search).get('invite');
+    if (linked) return linked;
+    const segments = window.location.pathname.split('/').filter(Boolean);
+    const index = segments.indexOf('invite');
+    return index >= 0 ? segments[index + 1] ?? null : null;
+  });
+  const [invitationPreviewed, setInvitationPreviewed] = useState(false);
+  const [rematchOffer, setRematchOffer] = useState<FriendRematch | null>(null);
 
   useEffect(() => composition.subscribe(() => setRevision(value => value + 1)), [composition]);
+  useEffect(() => {
+    // The invitation of a published link is read once, so the owner sees the
+    // exact invitation before it accepts it.
+    if (!linkedInvitation || invitationPreviewed) return;
+    void (async () => {
+      setInvitationCode(linkedInvitation);
+      setInvitationPreviewed(true);
+      try {
+        setInvitation(await composition.friends.preview(linkedInvitation));
+        setTab('new');
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : 'The invitation could not be read.');
+      }
+    })();
+  }, [composition, invitationPreviewed, linkedInvitation]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 500);
     return () => window.clearInterval(timer);
@@ -249,19 +276,6 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     }
   }
 
-  async function eraseGuestReplays(): Promise<void> {
-    if (!privacy || !focusedId) return;
-    setBusy(true);
-    try {
-      await privacy.removePublicReplay(focusedId, 'erasure_request');
-      setMessage('Shared replays erased.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'The replays were not erased.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function enterQueue(control: SeatControl, intent: 'reuse' | 'new' = 'reuse'): Promise<void> {
     setBusy(true);
     try {
@@ -289,6 +303,9 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     setBusy(true);
     try {
       const choice = CLOCK_CHOICES[clockIndex] ?? CLOCK_CHOICES[1]!;
+      // The private selection of the agent is captured before the service is
+      // asked, so the seat of the created match keeps this model.
+      const selection = composition.agent?.selection ?? null;
       const created = await composition.friends.create({
         kind: 'link',
         seat: 'white',
@@ -300,7 +317,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       // The inviter tracks its own invitation. When the invitee accepts, the
       // inviter claims the seat credential of the created match and follows
       // it, so it can play its own seat.
-      composition.trackInvitation(created.invitation.invitationId, created.ownerToken);
+      composition.trackInvitation(created.invitation.invitationId, created.ownerToken, selection);
       setMessage('Invitation created.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The invitation could not be created.');
@@ -357,9 +374,88 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     setBusy(true);
     try {
       const rematch = await composition.friends.proposeRematch(focusedId);
+      setRematchOffer(rematch);
       setMessage(`Rematch proposed: ${rematch.status}.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The rematch could not be proposed.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Accepts a rematch offer and shows the created match. */
+  async function acceptRematch(): Promise<void> {
+    const offer = rematchOffer;
+    if (!offer) return;
+    setBusy(true);
+    try {
+      const accepted = await composition.friends.acceptRematch(offer.rematchId, { rotateCredential: true });
+      if (accepted.guestCredential) {
+        composition.registerGuestCredential(createGuestCredential({
+          guestId: accepted.guestCredential.guestId,
+          matchId: accepted.guestCredential.matchId,
+          seat: accepted.guestCredential.seat,
+          token: accepted.guestCredential.token,
+        }), 'guest');
+      }
+      composition.attachAndFocus(accepted.match.matchId, accepted.seat);
+      setRematchOffer(null);
+      setMessage('Rematch accepted.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The rematch could not be accepted.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Reads the pending rematch offer of the focused match. */
+  async function readRematchOffer(): Promise<void> {
+    if (!focusedId) return;
+    try {
+      const offer = await composition.friends.pendingRematch(focusedId);
+      setRematchOffer(offer);
+    } catch {
+      // A match without a pending offer shows nothing.
+    }
+  }
+
+  /**
+   * Erases every shared replay of the signed-in account.
+   *
+   * The scope is the whole account, and the label says so. The removal of one
+   * match is the participant command of that match.
+   */
+  async function eraseEverySharedReplay(): Promise<void> {
+    setBusy(true);
+    try {
+      await composition.privacy.removeAccount();
+      setMessage('Every shared replay of this account was erased.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The replays were not erased.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Erases the shared replays of the guest seat of this browser.
+   *
+   * The scope is the guest seat, never the account of a signed-in browser.
+   */
+  async function eraseGuestReplays(): Promise<void> {
+    if (!focusedId || !seat) return;
+    setBusy(true);
+    try {
+      if (privacy) {
+        // The privacy owner of the workspace removes the shared replays of the
+        // guest seat.
+        await privacy.removePublicReplay(focusedId, 'erasure_request');
+      } else {
+        await composition.privacy.removeGuest(focusedId, seat);
+      }
+      setMessage('The shared replays of this guest seat were erased.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The replays were not erased.');
     } finally {
       setBusy(false);
     }
@@ -378,19 +474,6 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       setMessage('History loaded.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The history could not be read.');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /** Erases the shared replays of the whole account. The scope is explicit. */
-  async function eraseEverySharedReplay(): Promise<void> {
-    setBusy(true);
-    try {
-      await composition.privacy.removeAccount();
-      setMessage('Every shared replay of this account was erased.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'The replays were not erased.');
     } finally {
       setBusy(false);
     }
@@ -483,12 +566,12 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       <div className="button-row">
         <button className="button quiet" type="button" disabled={busy} onClick={() => void readHistory()}>Public history</button>
         <button className="button quiet" type="button" disabled={busy} onClick={() => void eraseEverySharedReplay()}>Erase every shared replay of this account</button>
+        <button className="button quiet" type="button" disabled={busy} onClick={() => void eraseGuestReplays()}>Erase the shared replays of this guest seat</button>
       </div>
       {history && <p role="status">{history.totals.wins} wins · {history.totals.draws} draws · {history.totals.losses} losses</p>}
       {view && view.result !== null && <div className="button-row">
         <a className="button quiet" href={`/v1/public/matches/${encodeURIComponent(view.matchId)}/replay`} target="_blank" rel="noreferrer">Public replay</a>
         <IconButton icon="close" label="Remove public replay" disabled={busy} onClick={() => void removeReplay()} />
-        {privacy && <button className="button quiet" type="button" disabled={busy} onClick={() => void eraseGuestReplays()}>Erase shared replays</button>}
       </div>}
     </section>}
 
@@ -538,19 +621,24 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
             <p>{agentRunner.phase === 'uncertain' ? 'The agent turn is uncertain.' : agentRunner.phase === 'paused' ? 'The agent turn waits for you.' : 'The agent turn failed.'}</p>
             <div className="button-row">
               <button className="button" type="button" disabled={busy} onClick={() => void composition.agentDecision(view.matchId, seat ?? 'white', 'retry')}>Retry</button>
-              <button className="button" type="button" disabled={busy} onClick={() => void composition.agentDecision(view.matchId, seat ?? 'white', 'switch-model')}>Switch model</button>
               <button className="button" type="button" disabled={busy} onClick={() => void composition.agentDecision(view.matchId, seat ?? 'white', 'takeover')}>Take over</button>
+            </div>
+            <div className="button-row" aria-label="Switch model">
+              {composition.agentCatalog.map(entry => <button className="button" type="button" key={entry.id} disabled={busy}
+                onClick={() => void composition.agentDecision(view.matchId, seat ?? 'white', 'switch-model', entry.id)}>{entry.label}</button>)}
             </div>
           </div>}
         {seat && ownSeatIsAgent && !boundAgentLabel && <div className="online-decisions" role="group" aria-label="Choose your agent">
           <p>Choose the agent of this seat.</p>
           <div className="button-row">
-            {composition.agentCatalog.map(entry => <button className="button" type="button" key={entry.label} disabled={busy}
-              onClick={() => composition.bindAgentSeat(view.matchId, seat, entry.label)}>{entry.label}</button>)}
+            {composition.agentCatalog.map(entry => <button className="button" type="button" key={entry.id} disabled={busy}
+              onClick={() => composition.bindAgentSeat(view.matchId, seat, entry.id)}>{entry.label}</button>)}
           </div>
         </div>}
         {view.result !== null && <div className="button-row">
           <button className="button quiet" type="button" disabled={busy} onClick={() => void proposeRematch()}>Propose rematch</button>
+          <button className="button quiet" type="button" disabled={busy} onClick={() => void readRematchOffer()}>Check for a rematch</button>
+          {rematchOffer && <button className="button" type="button" disabled={busy} onClick={() => void acceptRematch()}>Accept rematch</button>}
         </div>}
         <div className="match-status" role="status">
           <h2 className="status-heading">{status}</h2>

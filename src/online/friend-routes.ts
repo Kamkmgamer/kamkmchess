@@ -97,6 +97,8 @@ export interface FriendSurfaceOptions {
 export function createFriendSurface(options: FriendSurfaceOptions): FriendSurface {
   /** The invitations this browser created. */
   const ownedInvitations = new Set<string>();
+  /** The invitations this browser already accepted. */
+  const acceptedInvitations = new Set<string>();
   /**
    * The canonical client of one call.
    *
@@ -125,15 +127,21 @@ export function createFriendSurface(options: FriendSurfaceOptions): FriendSurfac
       return (await clientFor()).readInvitation(invitationId);
     },
     async accept(invitationId, control) {
-      if (isLocallyOwnedInvitation(invitationId, ownedInvitations)) {
+      if (isLocallyOwnedInvitation(invitationId, ownedInvitations) || options.secrets.ownsInvitation(invitationId)) {
         // The browser created the invitation. It cannot accept its own
-        // invitation, and it does not consume it.
+        // invitation, and it does not consume it. The check also consults the
+        // persisted secrets, so a reload still refuses it.
         throw new Error('This browser created the invitation.');
       }
       // The key is stored before the acceptance is sent, so a lost answer
       // replays the same key and a reload finds it again.
       const acceptanceKey = options.secrets.acceptanceKey(invitationId);
-      return (await clientFor()).acceptInvitation(invitationId, { control, acceptanceKey });
+      // A first acceptance never rotates a credential. A retry of the same
+      // accept intent asks for the explicit recovery once, because the
+      // invitation was already consumed by this browser.
+      const rotateCredential = acceptedInvitations.has(invitationId);
+      acceptedInvitations.add(invitationId);
+      return (await clientFor()).acceptInvitation(invitationId, { control, acceptanceKey, rotateCredential });
     },
     async cancel(invitationId) {
       const ownerToken = options.secrets.readOwnerToken(invitationId);
