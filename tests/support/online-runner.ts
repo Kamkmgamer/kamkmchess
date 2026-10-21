@@ -685,6 +685,90 @@ export function deferNextRenewal(port: ProviderRunnerLeasePort): DeferredRenewal
   };
 }
 
+/** One held answer of the lease client. */
+export interface HeldLeaseAnswer {
+  readonly promise: Promise<ProviderRunnerLease>;
+  resolve(value: ProviderRunnerLease): void;
+}
+
+/** The lease client that can hold one request of each kind in flight. */
+export interface HoldableLeasePort {
+  /** The lease client the runner uses. */
+  readonly port: ProviderRunnerLeasePort;
+  /** Holds the next acquisition. */
+  holdAcquire(): void;
+  /** Holds the next renewal. */
+  holdRenew(): void;
+  /** Holds the next clearing of a request record. */
+  holdClear(): void;
+  /** Holds the next record of a request. */
+  holdBegin(): void;
+  readonly acquires: readonly HeldLeaseAnswer[];
+  readonly renews: readonly HeldLeaseAnswer[];
+  readonly clears: readonly HeldLeaseAnswer[];
+  readonly begins: readonly HeldLeaseAnswer[];
+}
+
+/**
+ * Holds one request of the lease client in flight.
+ *
+ * A test uses it to stop the runner, to end the match or to take a new lease
+ * while a request of the lease client waits, and it answers afterwards.
+ */
+export function createHoldableLeasePort(base: ProviderRunnerLeasePort): HoldableLeasePort {
+  const acquires: HeldLeaseAnswer[] = [];
+  const renews: HeldLeaseAnswer[] = [];
+  const clears: HeldLeaseAnswer[] = [];
+  const begins: HeldLeaseAnswer[] = [];
+  let holdAcquire = false;
+  let holdRenew = false;
+  let holdClear = false;
+  let holdBegin = false;
+
+  function hold(list: HeldLeaseAnswer[]): Promise<ProviderRunnerLease> {
+    let resolve!: (value: ProviderRunnerLease) => void;
+    const promise = new Promise<ProviderRunnerLease>((res) => { resolve = res; });
+    list.push({ promise, resolve });
+    return promise;
+  }
+
+  return {
+    acquires,
+    renews,
+    clears,
+    begins,
+    holdAcquire() { holdAcquire = true; },
+    holdRenew() { holdRenew = true; },
+    holdClear() { holdClear = true; },
+    holdBegin() { holdBegin = true; },
+    port: {
+      runnerId: base.runnerId,
+      async acquire(input) {
+        if (!holdAcquire) return base.acquire(input);
+        holdAcquire = false;
+        return hold(acquires);
+      },
+      async renew(input) {
+        if (!holdRenew) return base.renew(input);
+        holdRenew = false;
+        return hold(renews);
+      },
+      async release(input) { return base.release(input); },
+      async beginRequest(input) {
+        if (!holdBegin) return base.beginRequest(input);
+        holdBegin = false;
+        return hold(begins);
+      },
+      async clearRequest(input) {
+        if (!holdClear) return base.clearRequest(input);
+        holdClear = false;
+        return hold(clears);
+      },
+      async read() { return base.read(); },
+    },
+  };
+}
+
 /** Creates the in-memory pending record of a seat. */
 export function createMemoryPendingStore(): ProviderRunnerPendingStore {
   const records = new Map<string, ProviderRunnerPendingRecord>();

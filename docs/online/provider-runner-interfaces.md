@@ -38,6 +38,15 @@ the control changes and the spent recovery attempts.
   label the owner declared. The runner adopts it from the receipt of a control
   change and from the seat view of the snapshot.
 - A provider failure never concedes. It produces an explicit owner decision.
+- The phase of a runner may only be left by an explicit owner decision. The
+  generation of the lifecycle moves when the owner stops the runner, when the
+  match ends, when another controller takes the seat and when the runner is
+  disposed, and every answer of a request that was still in flight belongs to
+  the generation it was sent in. A late answer therefore writes no phase,
+  starts no work and asks the provider for no second answer.
+- While an uncertainty is open the runner never asks the provider again. The
+  browser-local pending record is checked before every request of a turn, not
+  only when a lease is taken.
 - Uncertain billable work is never repeated by itself. The runner leaves the
   request identifier behind in the service lease and in the browser-local
   pending record, and it offers Retry, switch or takeover.
@@ -319,14 +328,16 @@ A lease that was revoked or that expired is given up and taken again, at most
 a few times per turn.
 
 The answers of the lease requests are fenced by the generation of the lease.
-The generation moves whenever the lease is taken, given back or dropped, and
-the identifier of the lease names the answer. An answer of a request that is
-still in flight therefore never resurrects a lease the runner does not hold,
-never overwrites the lease it holds now and never arms a heartbeat for it. A
-stopped or a disposed runner holds no lease at all, so every answer that
-arrives after it changes nothing. The durable pending record of an uncertain
-request is never dropped by this fence: the uncertainty of a lost runner stays
-recoverable.
+The generation moves on every path that gives the lease back, also when no
+lease is held and when the lease is lost, and the identifier of the lease
+names the answer. An answer of a request that is still in flight therefore
+never resurrects a lease the runner does not hold, never overwrites the lease
+it holds now and never arms a heartbeat for it. A lease answer never installs
+a lease of a match that is already over, so a finished match keeps no lease
+and no heartbeat. A stopped or a disposed runner holds no lease at all, so
+every answer that arrives after it changes nothing. The durable pending record
+of an uncertain request is never dropped by this fence: the uncertainty of a
+lost runner stays recoverable.
 
 ## The uncertainty of a lost runner
 
@@ -396,6 +407,9 @@ seat with an accepted move, exactly like the service does.
 | — | The provider reads the moves of the match in the notation of the game record |
 | — | The corrections of an earlier turn are not sent again, the corrections of the same turn are |
 | — | A lease answer that arrives after a release, after the end of the match or after a new lease changes nothing |
+| — | A stop inside the acquisition, the record of the request, the settlement or the renewal before the submit keeps the phase of the runner |
+| — | A finished match keeps no lease and no heartbeat when the acquisition answers late |
+| — | The provider is not asked again while the uncertainty of a stopped request is open |
 | — | The budget of the browser follows the canonical counts of the turn |
 | — | The heartbeat of the lease survives a transient failure and fails closed near the lease expiry |
 | — | No renewal is ever armed behind the life of the lease |

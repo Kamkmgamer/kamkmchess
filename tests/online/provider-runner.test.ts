@@ -34,6 +34,7 @@ import {
   createFakeOnlineService,
   createFakeProvider,
   createFakeTimers,
+  createHoldableLeasePort,
   createMemoryPendingStore,
   deferNextRenewal,
   fakeLeaseAnswer,
@@ -717,6 +718,418 @@ describe('the answers of a lease request in flight', () => {
     expect(timers.arms).toBe(armsBefore);
     expect(timers.armed.length).toBeLessThanOrEqual(1);
     expect(provider.prompts).toHaveLength(2);
+  });
+  it('keeps a stopped runner stopped when a late answer arrives', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const timers = createFakeTimers();
+    const base = service.leasePort('runner-a');
+    const renewal = deferNextRenewal(base);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: renewal.port,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+      timers,
+      renewIntervalMs: 5000,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+
+    // The renewal before the submission waits for the answer of the test.
+    renewal.defer();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => renewal.inFlight(), 'the renewal is in flight');
+
+    // The owner stops the runner while the renewal is in flight.
+    await runner.stop();
+    expect(runner.state.phase).toBe('stopped');
+
+    // The renewal answers now. It may not start the runner again.
+    const answered = fakeLeaseAnswer(service.lease);
+    renewal.answer.resolve(answered ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-unknown',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(runner.state.phase).toBe('stopped');
+
+    // A later snapshot does not start the stopped runner, and no provider
+    // request is issued.
+    const promptsBefore = provider.prompts.length;
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    expect(runner.state.phase).toBe('stopped');
+    expect(provider.prompts).toHaveLength(promptsBefore);
+  });
+});
+
+describe('the windows of a turn that the owner interrupts', () => {
+  it('keeps a stopped runner stopped when the renewal before the submit answers late', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const timers = createFakeTimers();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+      timers,
+      renewIntervalMs: 5000,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+
+    // The renewal that runs before the answer is submitted waits.
+    held.holdRenew();
+    const leaseAnswer = fakeLeaseAnswer(service.lease);
+    provider.answer('{"move":"e2e4"}');
+    await until(() => held.renews.length === 1, 'the renewal is in flight');
+
+    // The owner stops the runner while the renewal waits.
+    await runner.stop();
+    expect(runner.state.phase).toBe('stopped');
+
+    // The renewal answers now. It belongs to a lease the runner gave back.
+    held.renews[0]?.resolve(leaseAnswer ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-late',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // The answer changes nothing: the phase, the move and the provider.
+    expect(runner.state.phase).toBe('stopped');
+    expect(service.recordedCommands.some((command) => command.action.kind === 'submit_move')).toBe(false);
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(provider.prompts).toHaveLength(1);
+    expect(runner.state.phase).toBe('stopped');
+  });
+
+  it('keeps a stopped runner stopped when the acquisition of the lease answers late', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const timers = createFakeTimers();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+      timers,
+      renewIntervalMs: 5000,
+    });
+
+    held.holdAcquire();
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => held.acquires.length === 1, 'the acquisition is in flight');
+
+    // The owner stops the runner while the acquisition waits.
+    await runner.stop();
+    expect(runner.state.phase).toBe('stopped');
+
+    // The acquisition answers now.
+    held.acquires[0]?.resolve(fakeLeaseAnswer({
+      leaseId: 'lease-late',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    }) as never);
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // The answer installs no lease and changes no phase.
+    expect(runner.state.phase).toBe('stopped');
+    expect(runner.state.leaseId).toBeNull();
+    expect(timers.armed).toHaveLength(0);
+
+    // A later snapshot does not start the stopped runner.
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(provider.prompts).toHaveLength(0);
+    expect(runner.state.phase).toBe('stopped');
+  });
+
+  it('keeps no lease and no heartbeat of a finished match when the acquisition answers late', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const timers = createFakeTimers();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+      timers,
+      renewIntervalMs: 5000,
+    });
+
+    held.holdAcquire();
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => held.acquires.length === 1, 'the acquisition is in flight');
+
+    // The match ends while the acquisition waits.
+    service.match.result = { kind: 'win', winner: 'black', reason: 'timeout' };
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(runner.state.phase).toBe('idle');
+
+    // The acquisition answers now. A finished match keeps no lease and no
+    // heartbeat.
+    held.acquires[0]?.resolve(fakeLeaseAnswer({
+      leaseId: 'lease-late',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    }) as never);
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    expect(runner.state.leaseId).toBeNull();
+    expect(timers.armed).toHaveLength(0);
+    expect(timers.arms).toBe(0);
+  });
+
+  it('keeps a stopped runner stopped when the settlement of the request answers late', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const timers = createFakeTimers();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+      timers,
+      renewIntervalMs: 5000,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+
+    // The settlement of the request record waits.
+    held.holdClear();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => held.clears.length === 1, 'the settlement is in flight');
+
+    // The owner stops the runner while the settlement waits.
+    await runner.stop();
+    expect(runner.state.phase).toBe('stopped');
+
+    held.clears[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-late',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // The answer was answered and dropped on purpose, so there is nothing
+    // uncertain about it: the runner stays stopped.
+    expect(runner.state.phase).toBe('stopped');
+    expect(runner.state.uncertainty).toBeNull();
+    expect(service.recordedCommands.some((command) => command.action.kind === 'submit_move')).toBe(false);
+  });
+
+  it('keeps the uncertainty of a stop while the record of the request answers late', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const timers = createFakeTimers();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const pending = createMemoryPendingStore();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending,
+      timers,
+      renewIntervalMs: 5000,
+    });
+
+    // The record of the request waits for the answer of the test.
+    held.holdBegin();
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => held.begins.length === 1, 'the record is in flight');
+    // The owner stops the runner while the record waits. The runner opens an
+    // uncertainty, because the request may still be running.
+    await runner.stop();
+    expect(runner.state.phase).toBe('uncertain');
+    expect(runner.state.uncertainty).not.toBeNull();
+    // The provider was never asked: the request is sent after the record.
+    expect(provider.prompts).toHaveLength(0);
+
+    // The record answers now. It may not start the provider again and it may
+    // not close the uncertainty of the stop.
+    held.begins[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-late',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    expect(runner.state.phase).toBe('uncertain');
+    expect(runner.state.uncertainty).not.toBeNull();
+    expect(provider.prompts).toHaveLength(0);
+
+    // A later snapshot does not ask the provider while the uncertainty is
+    // open.
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(provider.prompts).toHaveLength(0);
+    expect(runner.state.phase).toBe('uncertain');
+  });
+
+  it('does not install a lease again when the lease was lost while a renewal was in flight', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const timers = createFakeTimers();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+      timers,
+      renewIntervalMs: 5000,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+
+    // The heartbeat of the lease waits.
+    held.holdRenew();
+    timers.fire();
+    await until(() => held.renews.length === 1, 'the renewal is in flight');
+
+    // The lease of the seat is lost while the renewal waits.
+    service.revokeLease('recovery');
+    held.renews[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-late',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // The lease of the seat is gone and the runner does not hold it again.
+    expect(runner.state.leaseId).not.toBe('lease-late');
+    expect(runner.state.phase).not.toBe('idle');
   });
 });
 

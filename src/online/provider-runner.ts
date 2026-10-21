@@ -1294,6 +1294,16 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
    * does not hold any more.
    */
   let leaseGeneration = 0;
+  /**
+   * The generation of the lifecycle of the runner.
+   *
+   * The generation moves whenever the owner stops the runner, the match ends,
+   * another controller takes the seat or the runner is disposed. Every answer
+   * of a request that is still in flight belongs to the generation it was
+   * sent in, so it may not write a phase, may not start work and may not ask
+   * the provider for another answer.
+   */
+  let lifecycleGeneration = 0;
   let leaseId: string | null = null;
   let turnVersion: number | null = null;
   let version = 0;
@@ -1483,6 +1493,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       return;
     }
     clearRenewal();
+    // The generation of the lease moves, so a renewal that is still in flight
+    // cannot install the lease again after the runner gave it up.
+    leaseGeneration += 1;
     leaseRecord = null;
     leaseId = null;
     const durable = pendingStore.read(matchId, seat);
@@ -1507,10 +1520,21 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
 
   function enterUncertainty(next: ProviderRunnerUncertainty): void {
     uncertainty = next;
+    if (disposed) return;
+    if (phase === 'stopped') {
+      // The owner stopped the runner. The uncertainty is still reported, and
+      // the decisions of a stopped runner still offer the recovery, but the
+      // phase of the runner stays the one the owner chose.
+      publish();
+      return;
+    }
     setPhase('uncertain', next.detail);
   }
 
-  async function acquireLease(): Promise<{ ok: true } | { ok: false; detail: string }> {
+  async function acquireLease(): Promise<
+    | { ok: true }
+    | { ok: false; detail: string; stale: boolean }
+  > {
     // The answer of the acquisition belongs to the lease the runner holds now.
     // A lease that is given back, replaced or dropped while the acquisition is
     // in flight may not be resurrected by the answer.
@@ -1518,7 +1542,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     try {
       const lease = await leases.acquire({ controlEpoch, turnVersion: version > 0 ? version : null });
       if (leaseResponseIsStale(generation, null, lease.leaseId)) {
-        return { ok: false, detail: 'The lease of the seat was taken back.' };
+        // The answer belongs to a lease the runner does not hold any more. It
+        // may not install a lease, arm a heartbeat or change the phase.
+        return { ok: false, detail: 'The lease of the seat was taken back.', stale: true };
       }
       leaseGeneration += 1;
       leaseRecord = lease;
@@ -1533,13 +1559,13 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         // The credential may not act any more. The runner stops instead of
         // asking for a lease on every snapshot.
         setPhase('stopped', 'The credential of the seat was refused.');
-        return { ok: false, detail: 'The credential of the seat was refused.' };
+        return { ok: false, detail: 'The credential of the seat was refused.', stale: false };
       }
       const detail = kind === 'conflict'
         ? 'Another runner holds the seat.'
         : 'The service refused the runner lease.';
       lastError = detail;
-      return { ok: false, detail };
+      return { ok: false, detail, stale: false };
     }
   }
 
@@ -1635,16 +1661,19 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     if (requestedLeaseId !== null && answeredLeaseId !== null && requestedLeaseId !== answeredLeaseId) {
       return true;
     }
+    // A lease of a match that is over is never taken and never kept.
+    if (snapshot !== null && snapshot.status !== 'active') return true;
     return phase === 'stopped' && leaseRecord === null;
   }
 
   async function releaseLease(): Promise<void> {
     clearRenewal();
+    // The generation of the lease moves on every path that gives the lease
+    // back, also when no lease is held. An answer of a request that is still
+    // in flight may not install a lease.
+    leaseGeneration += 1;
     if (leaseRecord === null || leaseId === null) return;
     const current = leaseId;
-    // The generation of the lease moves, so an answer of a renewal that is
-    // still in flight cannot resurrect the lease.
-    leaseGeneration += 1;
     leaseRecord = null;
     leaseId = null;
     turnVersion = null;
@@ -1674,7 +1703,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
    * lease is taken without the pending check and the pending record of the
    * service is settled.
    */
-  async function ensureLease(allowPending = false): Promise<{ ok: true } | { ok: false; detail: string }> {
+  async function ensureLease(
+    allowPending = false,
+  ): Promise<{ ok: true } | { ok: false; detail: string; stale: boolean }> {
     if (leaseRecord === null || leaseId === null) {
       const acquired = await acquireLease();
       if (!acquired.ok) return acquired;
@@ -1689,7 +1720,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
             startedAt: now(),
             detail: 'A previous runner may still have started billable work.',
           });
-          return { ok: false, detail: 'A previous runner may still have started billable work.' };
+          return { ok: false, detail: 'A previous runner may still have started billable work.', stale: false };
         }
         await clearPendingRequest(leaseRecord.pendingRequestId);
       }
@@ -1697,7 +1728,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       if (durable) {
         if (!decided) {
           enterUncertainty(pendingUncertainty('A previous request of this browser may still be running.'));
-          return { ok: false, detail: 'A previous request of this browser may still be running.' };
+          return { ok: false, detail: 'A previous request of this browser may still be running.', stale: false };
         }
         pendingStore.clear(matchId, seat);
       }
@@ -1709,11 +1740,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         if (renewed.state === 'stale') {
           // The lease moved on while the renewal was in flight. The runner
           // takes a new lease on the next turn.
-          return { ok: false, detail: 'The lease of the seat was taken back.' };
+          return { ok: false, detail: 'The lease of the seat was taken back.', stale: true };
         }
         const detail = 'The lease of the seat is no longer current.';
         lastError = detail;
-        return { ok: false, detail };
+        return { ok: false, detail, stale: false };
       }
     }
     return { ok: true };
@@ -1899,7 +1930,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     }
     if (outcome.kind === 'fenced') {
       dropLease();
-      setPhase('idle', outcome.detail);
+      if (mayChangePhase()) setPhase('idle', outcome.detail);
       return false;
     }
     return false;
@@ -1907,6 +1938,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
 
   async function playTurn(): Promise<void> {
     for (;;) {
+      // The generation of the lifecycle fences every answer of a request that
+      // is still in flight. The owner may stop the runner, the match may end
+      // or another controller may take the seat while the runner waits.
+      const lifecycle = lifecycleGeneration;
       const current = snapshot;
       if (current === null || !shouldAct(current)) {
         if (current !== null && isSuperseded(current)) {
@@ -1921,14 +1956,21 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         return;
       }
       const leased = await ensureLease();
+      if (lifecycle !== lifecycleGeneration) return;
       if (!leased.ok) {
-        if (phase !== 'uncertain') setPhase('waiting-lease', leased.detail);
+        if (leased.stale) {
+          // The answer belongs to a lease the runner does not hold any more.
+          // It changes nothing.
+          return;
+        }
+        if (phase !== 'uncertain' && mayChangePhase(lifecycle)) setPhase('waiting-lease', leased.detail);
         return;
       }
       // The lease is bound to the control epoch of the seat. The epoch is the
       // canonical answer to the question which controller plays the seat.
       bindSeatControlEpoch(current);
       const renewed = await renewLease();
+      if (lifecycle !== lifecycleGeneration) return;
       if (!renewed.ok) {
         if (renewed.state === 'stale') {
           // The lease moved on while the renewal was in flight. The runner
@@ -1938,7 +1980,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         if (renewed.state === 'unusable') {
           // The runner fails closed. It never asks for a lease in a loop.
           dropLease();
-          setPhase('waiting-lease', 'The lease of the seat could not be kept alive.');
+          if (mayChangePhase(lifecycle)) setPhase('waiting-lease', 'The lease of the seat could not be kept alive.');
           return;
         }
         if (renewed.state === 'lease-gone') {
@@ -1947,12 +1989,14 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           dropLease();
           leaseLosses += 1;
           if (leaseLosses > MAX_LEASE_TAKEOVERS) {
-            setPhase('waiting-lease', 'The lease of the seat was lost again.');
+            if (mayChangePhase(lifecycle)) setPhase('waiting-lease', 'The lease of the seat was lost again.');
             return;
           }
           const reacquired = await ensureLease();
+          if (lifecycle !== lifecycleGeneration) return;
           if (!reacquired.ok) {
-            if (phase !== 'uncertain') setPhase('waiting-lease', reacquired.detail);
+            if (reacquired.stale) return;
+            if (phase !== 'uncertain' && mayChangePhase(lifecycle)) setPhase('waiting-lease', reacquired.detail);
             return;
           }
           bindSeatControlEpoch(current);
@@ -1961,6 +2005,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       const position = positionOf(current);
       if (position === null) {
         setPhase('failed', 'The position of the match could not be read.');
+        return;
+      }
+      // An open uncertainty or a pending record of an earlier request means
+      // that billable work may still be running. The runner never asks the
+      // provider for another answer by itself.
+      if (uncertainty !== null) return;
+      const openRequest = pendingStore.read(matchId, seat);
+      if (openRequest !== null) {
+        enterUncertainty(pendingUncertainty('A request of this browser may still be running.'));
         return;
       }
       const requestId = idFactory();
@@ -1980,13 +2033,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           const kind = classifyProviderRunnerError(error);
           activeController = null;
           activeRequestId = null;
+          if (lifecycle !== lifecycleGeneration) return;
           if (kind === 'conflict') {
             // The request never started, so it was never billed. The runner
             // gives the lease up and takes a new one.
             dropLease();
             const reacquired = await ensureLease();
             if (!reacquired.ok) {
-              if (phase !== 'uncertain') setPhase('waiting-lease', reacquired.detail);
+              if (reacquired.stale) return;
+              if (phase !== 'uncertain' && mayChangePhase(lifecycle)) setPhase('waiting-lease', reacquired.detail);
               return;
             }
             continue;
@@ -1998,9 +2053,17 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           // The request was not recorded, so it is not sent. A billable
           // request without a record would hide the uncertainty of a lost
           // runner from the next runner of the seat.
-          setPhase('failed', 'The service could not record the provider request.');
+          if (mayChangePhase(lifecycle)) setPhase('failed', 'The service could not record the provider request.');
           return;
         }
+      }
+      if (lifecycle !== lifecycleGeneration || controller.signal.aborted) {
+        // The owner stopped the runner while the record of the service was in
+        // flight. The request is never sent, and the phase of the runner stays
+        // the one the owner chose.
+        activeController = null;
+        activeRequestId = null;
+        return;
       }
       // The pending record is written after the service recorded the request,
       // so a crash between the two leaves the honest record of the service.
@@ -2012,7 +2075,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         controlEpoch,
         startedAt: now(),
       });
-      setPhase('generating');
+      if (mayChangePhase(lifecycle)) setPhase('generating');
       let answer: ProviderRunnerAnswer;
       try {
         answer = await provider.run({
@@ -2098,20 +2161,23 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         return;
       }
       await settleRequest(requestId);
+      if (lifecycle !== lifecycleGeneration) return;
       const latest = snapshot;
       if (latest === null || !sameTurn(current, latest)) {
-        setPhase('idle', 'The answer of a superseded turn was dropped.');
+        if (mayChangePhase(lifecycle)) setPhase('idle', 'The answer of a superseded turn was dropped.');
         return;
       }
       // The lease is renewed before the answer is submitted. A lease that was
       // revoked or that expired while the request ran cannot accept the move,
       // and the billable work of this turn is then uncertain.
       const submitted = await renewLease();
+      if (lifecycle !== lifecycleGeneration) return;
       if (!submitted.ok && submitted.state === 'stale') {
         // The lease moved on while the renewal was in flight. The answer of
         // the provider belongs to a turn the runner does not hold any more, so
-        // it is not submitted.
-        setPhase('idle', 'The answer of a superseded turn was dropped.');
+        // it is not submitted. A runner that the owner stopped or that waits
+        // for the owner keeps its phase: a late answer never starts it again.
+        if (mayChangePhase(lifecycle)) setPhase('idle', 'The answer of a superseded turn was dropped.');
         return;
       }
       if (!submitted.ok && submitted.state !== 'transient') {
@@ -2141,7 +2207,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           formatSpent = 0;
           rejectedMoves = [];
           await releaseLease();
-          setPhase('idle');
+          if (mayChangePhase()) setPhase('idle');
           return;
         }
         if (outcome.kind === 'unacknowledged') {
@@ -2163,14 +2229,14 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           // The lease fenced the command. The state moved on, so the runner
           // waits for the next snapshot instead of spending an attempt.
           dropLease();
-          setPhase('idle', outcome.detail);
+          if (mayChangePhase()) setPhase('idle', outcome.detail);
           return;
         }
         // The service refused a move the browser believed to be legal. The
         // state moved on, so the runner waits for the next snapshot instead of
         // spending an attempt.
         await releaseLease();
-        setPhase('idle', outcome.detail);
+        if (mayChangePhase()) setPhase('idle', outcome.detail);
         return;
       }
       if (decision.kind === 'model-resignation') {
@@ -2178,7 +2244,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         const outcome = await submitAction({ kind: 'resign' }, nextOperationId('resign'));
         if (outcome.kind === 'accepted') {
           await releaseLease();
-          setPhase('idle');
+          if (mayChangePhase()) setPhase('idle');
           return;
         }
         if (outcome.kind === 'unacknowledged') {
@@ -2198,18 +2264,18 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         }
         if (outcome.kind === 'fenced') {
           dropLease();
-          setPhase('idle', outcome.detail);
+          if (mayChangePhase()) setPhase('idle', outcome.detail);
           return;
         }
         await releaseLease();
-        setPhase('idle', outcome.detail);
+        if (mayChangePhase()) setPhase('idle', outcome.detail);
         return;
       }
       if (decision.kind === 'illegal-attempt') {
         const uci = coordinateMoveToUci(decision.record.move);
         const reported = await reportRecoveryAttempt('illegal_move');
         if (!reported) {
-          if (phase === 'generating') setPhase('idle', 'The spent attempt was not accepted.');
+          if (phase === 'generating' && mayChangePhase()) setPhase('idle', 'The spent attempt was not accepted.');
           return;
         }
         // The service counts the attempt. The runner adopts the count only
@@ -2241,7 +2307,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
       const reported = await reportRecoveryAttempt('formatting_correction');
       if (!reported) {
-        if (phase === 'generating') setPhase('idle', 'The spent correction was not accepted.');
+        if (phase === 'generating' && mayChangePhase()) setPhase('idle', 'The spent correction was not accepted.');
         return;
       }
       formatSpent = decision.budgets.formatCorrections;
@@ -2269,6 +2335,26 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   /** Reports whether the runner waits for an explicit owner decision. */
   function waitsForOwner(): boolean {
     return phase === 'uncertain' || phase === 'paused' || phase === 'stopped';
+  }
+
+  /**
+   * Reports whether the runner may still write its own phase.
+   *
+   * The phase of a runner that waits for the owner may only be left by an
+   * explicit owner decision, and a disposed runner is finished. A lifecycle
+   * generation that moved means that the owner stopped the runner, that the
+   * match ended or that another controller took the seat, so the answer of a
+   * request that was still in flight changes nothing.
+   */
+  function mayChangePhase(lifecycle: number = lifecycleGeneration): boolean {
+    if (disposed) return false;
+    if (lifecycle !== lifecycleGeneration) return false;
+    return !waitsForOwner();
+  }
+
+  /** Moves the generation of the lifecycle of the runner. */
+  function advanceLifecycle(): void {
+    lifecycleGeneration += 1;
   }
 
   /** Starts the turn without waiting for the provider answer. */
@@ -2347,7 +2433,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       if (next.status !== 'active') {
         // The match is over. The pending answer is useless, the lease of the
         // seat is given back and the heartbeat stops, so a finished match
-        // keeps no lease.
+        // keeps no lease. The generation of the lifecycle moves, so an answer
+        // of a request that is still in flight may not install a lease of the
+        // finished match.
+        advanceLifecycle();
         cancelPending('stale');
         void releaseLease();
         setPhase('idle', 'The match is over.');
@@ -2364,16 +2453,26 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       if (disposed) return;
       // A stopped runner is resumable. The owner may stop an agent and start
       // it again without losing the seat.
-      if (phase === 'stopped' && uncertainty === null) setPhase('idle');
+      if (phase === 'stopped' && uncertainty === null) {
+        advanceLifecycle();
+        setPhase('idle');
+      }
       schedule();
     },
     async resume() {
       if (disposed) return;
-      if (phase === 'stopped' && uncertainty === null) setPhase('idle');
+      if (phase === 'stopped' && uncertainty === null) {
+        advanceLifecycle();
+        setPhase('idle');
+      }
       schedule();
     },
     async stop() {
       if (disposed) return;
+      // The generation of the lifecycle moves, so an answer of a request that
+      // is still in flight may not write a phase, start work or ask the
+      // provider for another answer.
+      advanceLifecycle();
       if (activeController !== null) {
         const requestId = activeRequestId;
         cancelPending('stopped');
@@ -2397,8 +2496,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       const operation = pendingSubmission;
       uncertainty = null;
       // The owner decided. The uncertain work may be paid twice, and the
-      // pending record of the service is settled with the new lease.
+      // pending record of the service is settled with the new lease. The
+      // generation of the lifecycle moves, so an answer of the old request
+      // cannot write a phase.
       ownerDecided = true;
+      advanceLifecycle();
       setPhase('idle');
       if (operation !== null) {
         // The operation identifier stays the same, so the service answers with
@@ -2450,6 +2552,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       superseded = false;
       uncertainty = null;
       ownerDecided = true;
+      // The control of the seat changed, so the work of the old turn is
+      // fenced and the generation of the lifecycle moves.
+      advanceLifecycle();
       await releaseLease();
       setPhase('idle');
       schedule();
@@ -2472,12 +2577,18 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       boundSeatControlEpoch = outcome.receipt.controlEpoch;
       uncertainty = null;
       ownerDecided = true;
+      // The seat belongs to the human owner now, so the work of the agent is
+      // fenced and the generation of the lifecycle moves.
+      advanceLifecycle();
       await releaseLease();
       setPhase('stopped', 'The seat belongs to the human owner now.');
     },
     async dispose() {
       if (disposed) return;
       disposed = true;
+      // The generation of the lifecycle moves, so an answer of a request that
+      // is still in flight changes nothing.
+      advanceLifecycle();
       clearRenewal();
       if (activeController !== null) {
         cancelPending('stopped');
