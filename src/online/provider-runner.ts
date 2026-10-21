@@ -533,7 +533,26 @@ export type ProviderRunnerActionOutcome =
    * caller never has to guess why a decision was applied without the lease
    * of the runner.
    */
-  | { readonly kind: 'accepted'; readonly publicModelLabel: string; readonly detail?: string }
+  | {
+      readonly kind: 'accepted';
+      readonly publicModelLabel: string;
+      readonly detail?: string;
+      /**
+       * The control of the seat that the accepted command proved.
+       *
+       * It is set only when the accepted command was a control change and the
+       * receipt of the service proves it: `agent` for the browser, `human` for
+       * the owner. The caller uses it to bind the private selection of a
+       * recovered switch and to drop the binding of a recovered takeover. The
+       * private choice of the owner is never part of it.
+       */
+      readonly control?: {
+        readonly kind: 'agent' | 'human';
+        readonly modelLabel?: string;
+        /** The control epoch of the seat that the receipt proved. */
+        readonly controlEpoch: number;
+      };
+    }
   /** The service or the runner refused the decision. The seat keeps its state. */
   | { readonly kind: 'refused'; readonly detail: string }
   /** The outcome could not be established. The owner may retry. */
@@ -1319,6 +1338,17 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   let seatEpoch = 0;
   let boundSeatControlEpoch: number | null = null;
   let superseded = false;
+  /**
+   * True when the control of the seat changed and the runner waits for the
+   * caller.
+   *
+   * The private selection of the seat belongs to the caller, so only the
+   * caller can bind the model of the new control. The runner of the old
+   * selection never plays the seat again: it would ask the provider with the
+   * credential of the old model at the new control. The caller builds the
+   * runner of the new selection.
+   */
+  let controlHandoff = false;
   let illegalSpent = 0;
   let formatSpent = 0;
   let uncertainty: ProviderRunnerUncertainty | null = null;
@@ -1956,6 +1986,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     if (current.sideToMove !== seat) return false;
     if (current.seatControl.kind !== 'agent') return false;
     if (superseded) return false;
+    // The control of the seat changed and the caller binds the new selection.
+    // The runner of the old selection never plays the seat again.
+    if (controlHandoff) return false;
     const epoch = seatControlEpochOf(current);
     if (boundSeatControlEpoch !== null && epoch !== null) {
       // A snapshot of an older epoch of the seat is stale. The runner waits
@@ -2226,6 +2259,38 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       pendingSubmission = fresh;
     }
     return sendEnvelope(fresh, fence);
+  }
+
+  /**
+   * The control of the seat that a receipt of a control change proves.
+   *
+   * The receipt is the proof: the service publishes the control it applied,
+   * and the receipt of the command carries it. The receipt is only read when
+   * it is not older than the control epoch the runner already knows, so a
+   * receipt that arrives after a newer canonical state never binds a stale
+   * epoch of the seat. A receipt that proves nothing leaves the runner as it
+   * is.
+   */
+  function provenControl(
+    receipt: Receipt,
+    action: OnlineAction,
+  ): { readonly kind: 'agent' | 'human'; readonly modelLabel?: string; readonly controlEpoch: number } | null {
+    if (action.kind !== 'set_control') return null;
+    const control = receipt.event?.control;
+    if (control === undefined) return null;
+    // The receipt has to prove the control the command asked for.
+    if (control.kind !== action.control.kind) return null;
+    if (control.kind !== 'agent' && control.kind !== 'human') return null;
+    // A receipt of an older epoch of the seat is a receipt of a state the seat
+    // already left.
+    if (boundSeatControlEpoch !== null && receipt.controlEpoch < boundSeatControlEpoch) return null;
+    return control.kind === 'agent'
+      ? {
+        kind: 'agent',
+        ...(control.modelLabel === undefined ? {} : { modelLabel: control.modelLabel }),
+        controlEpoch: receipt.controlEpoch,
+      }
+      : { kind: 'human', controlEpoch: receipt.controlEpoch };
   }
 
   async function reportRecoveryAttempt(
@@ -3005,12 +3070,34 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
         }
         if (outcome.kind === 'accepted') {
+          // The receipt of the replayed command is the proof of what the
+          // command did. A replayed control change is adopted like the
+          // decision that sent it: the runner keeps the label the service
+          // published, binds the control epoch of the seat and stands down
+          // when the seat belongs to the human owner now.
+          const control = provenControl(outcome.receipt, operation.action);
+          if (control !== null) {
+            // Fence snapshots before releasing the lease, which can wait for
+            // the service. Only a control change requires a new private binding.
+            controlHandoff = true;
+            if (control.kind === 'agent') {
+              if (control.modelLabel !== undefined) publicModelLabel = control.modelLabel;
+              superseded = false;
+            }
+            boundSeatControlEpoch = outcome.receipt.controlEpoch;
+          }
           await releaseLease();
           if (!ownerActionIsCurrent(owner.token, owner.generation)) {
             return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
           }
+          if (control?.kind === 'human') {
+            // The seat belongs to the human owner now, so the browser stops
+            // playing it and asks for no provider request any more.
+            setPhase('stopped', 'The seat belongs to the human owner now.');
+            return { kind: 'accepted', publicModelLabel, control };
+          }
           setPhase('idle');
-          return { kind: 'accepted', publicModelLabel };
+          return { kind: 'accepted', publicModelLabel, ...(control === null ? {} : { control }) };
         }
         if (outcome.kind === 'unacknowledged') {
           // The acknowledgement of the command was lost. The outcome could not
@@ -3097,6 +3184,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // The service resolves the declared label to a publishable one, so the
       // runner adopts the published label of the receipt. The seat control
       // epoch of the receipt is the epoch of the seat after the change.
+      controlHandoff = true;
       const published = outcome.receipt.event?.control?.modelLabel;
       if (published !== undefined) publicModelLabel = published;
       boundSeatControlEpoch = outcome.receipt.controlEpoch;
@@ -3119,8 +3207,12 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
       }
       setPhase('idle');
-      schedule();
-      return { kind: 'accepted', publicModelLabel, ...(leaseNote === undefined ? {} : { detail: leaseNote }) };
+      const control = provenControl(outcome.receipt, command);
+      return {
+        kind: 'accepted', publicModelLabel,
+        ...(leaseNote === undefined ? {} : { detail: leaseNote }),
+        ...(control === null ? {} : { control }),
+      };
     },
     async takeover(): Promise<ProviderRunnerActionOutcome> {
       if (disposed) return { kind: 'unknown', detail: 'The runner is disposed.' };

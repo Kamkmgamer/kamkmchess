@@ -1,0 +1,47 @@
+{
+  "leaseAcquire": {
+    "schemaVersion": 2,
+    "action": "acquire",
+    "seat": "white",
+    "runnerId": "runner-tab-01",
+    "controlEpoch": 2
+  },
+  "leaseRenew": {
+    "schemaVersion": 2,
+    "action": "renew",
+    "seat": "white",
+    "runnerId": "runner-tab-01",
+    "leaseId": "lease-contract-01",
+    "turnVersion": 4,
+    "controlEpoch": 2
+  },
+  "leaseRelease": {
+    "schemaVersion": 2,
+    "action": "release",
+    "seat": "white",
+    "runnerId": "runner-tab-01",
+    "leaseId": "lease-contract-01",
+    "turnVersion": 4,
+    "controlEpoch": 2
+  },
+  "requestBegin": {
+    "schemaVersion": 2,
+    "action": "begin",
+    "seat": "white",
+    "runnerId": "runner-tab-01",
+    "leaseId": "lease-contract-01",
+    "requestId": "request-contract-01",
+    "controlEpoch": 2,
+    "turnVersion": 4
+  },
+  "requestClear": {
+    "schemaVersion": 2,
+    "action": "clear",
+    "seat": "white",
+    "runnerId": "runner-tab-01",
+    "leaseId": "lease-contract-01",
+    "requestId": "request-contract-01",
+    "controlEpoch": 2,
+    "turnVersion": 4
+  }
+}

@@ -584,6 +584,70 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    */
   const capturedSelections = new Map<string, Map<string, ModelSelection>>();
 
+  /**
+   * The decision of the owner that a seat waits for.
+   *
+   * A handoff whose acknowledgement is lost is a decision the browser cannot
+   * prove. The decision is captured before the service is asked, so the
+   * private selection of the owner never changes while the decision waits: a
+   * later catalog entry, an identity that comes and goes and a newer decision
+   * never replace it. The record is dropped when the decision is proven.
+   */
+  interface PendingAgentDecision {
+    /** The decision the owner took. */
+    readonly kind: 'switch' | 'takeover';
+    /** The public label the owner declared, when the decision declared one. */
+    readonly label: string | null;
+    /** The private selection the owner chose, captured before the await. */
+    readonly selection: ModelSelection | null;
+    /**
+     * The generation of the identity that took the decision.
+     *
+     * The generation is monotonic, so an identity that leaves and comes back
+     * is a different generation and never inherits the decision of the older
+     * one. The identity itself is not enough: the same identity can return.
+     */
+    readonly generation: number;
+  }
+
+  /** The decisions of the owner that the seats wait for. */
+  const pendingAgentDecisions = new Map<string, PendingAgentDecision>();
+
+  /**
+   * Reports whether a captured decision is still the decision of the seat.
+   *
+   * The decision is the one the browser waits for when the record of the seat
+   * still names it, when the identity of the browser is the identity that
+   * took it and when the runner of the seat is the runner that waited for it.
+   * A newer decision of the owner, an identity that came and went and a
+   * runner that was replaced all end the decision.
+   */
+  function intentIsCurrent(
+    key: string,
+    intent: PendingAgentDecision,
+    runner: OnlineProviderRunner | undefined,
+  ): boolean {
+    if (pendingAgentDecisions.get(key) !== intent) return false;
+    if (intent.generation !== identityGeneration) return false;
+    if (runner !== undefined && agentRunners.get(key) !== runner) return false;
+    return true;
+  }
+
+  /** Drops the record of a decision, when it still names that decision. */
+  function clearIntent(key: string, intent: PendingAgentDecision): void {
+    if (pendingAgentDecisions.get(key) === intent) pendingAgentDecisions.delete(key);
+  }
+
+  /**
+   * The control epoch of a seat that a proven control change produced.
+   *
+   * The receipt of the service is a fact, and it can be newer than the
+   * canonical view the browser holds. The epoch keeps the runner of the seat
+   * from binding the older epoch of a stale view, which would make it stand
+   * down for a control change the owner asked for.
+   */
+  const provenSeatEpochs = new Map<string, number>();
+
   /** The captured selections of one identity. */
   function capturedFor(identity: string): Map<string, ModelSelection> {
     const existing = capturedSelections.get(identity);
@@ -740,6 +804,10 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       queue.reset();
       fenceAccountSeats();
       agentBindings.clear();
+      // The decisions of the owner and the epochs they proved belong to the
+      // identity that took them.
+      pendingAgentDecisions.clear();
+      provenSeatEpochs.clear();
       // The deferred claims of the previous identity are dropped. They are
       // restored from the device when the identity comes back.
       for (const [invitationId, tracked] of [...createdInvitations]) {
@@ -1551,11 +1619,57 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     // A choice the owner never connected binds nothing, and a seat without a
     // selection stays unbound: the browser then asks the owner to choose.
     if (!resolved) return;
+    bindResolvedAgentSeat(matchId, seat, resolved);
+  }
+
+  /**
+   * Binds a private selection that was already resolved.
+   *
+   * The selection is the one the owner chose, so it is never inferred from a
+   * public label: two private models can carry the same canonical label. The
+   * binding stays in the browser and on the device.
+   */
+  function bindResolvedAgentSeat(
+    matchId: string,
+    seat: Seat,
+    resolved: { readonly label: string; readonly selection: ModelSelection },
+  ): void {
+    const key = `${matchId}:${seat}`;
     agentBindings.set(key, { label: resolved.label, selection: resolved.selection });
     const identity = queueIdentity();
     const bindings = readAgentBindings(identity)
       .filter(binding => !(binding.matchId === matchId && binding.seat === seat));
     bindings.push({ matchId, seat, label: resolved.label, selection: resolved.selection });
+    writeAgentBindings(identity, bindings);
+  }
+
+  /**
+   * Replaces the private binding of a seat with a resolved selection.
+   *
+   * It replaces an existing binding, because the owner asked for it. The
+   * selection is the captured one and is never resolved again: a catalog that
+   * changed while the decision waited never replaces the choice of the owner.
+   */
+  function rebindCapturedAgentSeat(
+    matchId: string,
+    seat: Seat,
+    resolved: { readonly label: string; readonly selection: ModelSelection },
+  ): void {
+    agentBindings.delete(`${matchId}:${seat}`);
+    bindResolvedAgentSeat(matchId, seat, resolved);
+  }
+
+  /**
+   * Removes the private binding of a seat.
+   *
+   * The binding leaves the memory and the device, so a seat that belongs to
+   * the human owner is never played by the browser again.
+   */
+  function removeAgentBinding(matchId: string, seat: Seat): void {
+    agentBindings.delete(`${matchId}:${seat}`);
+    const identity = queueIdentity();
+    const bindings = readAgentBindings(identity)
+      .filter(binding => !(binding.matchId === matchId && binding.seat === seat));
     writeAgentBindings(identity, bindings);
   }
 
@@ -1686,7 +1800,16 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         runner.subscribe(() => notify());
         created = true;
       }
-      runner.applySnapshot(providerRunnerSnapshot(view, ownSeat));
+      const snapshot = providerRunnerSnapshot(view, ownSeat);
+      // The receipt of a proven control change can be newer than the canonical
+      // view the browser holds. The runner binds the proven epoch, so it does
+      // not stand down for a control change the owner asked for.
+      const proven = provenSeatEpochs.get(key);
+      runner.applySnapshot(
+        proven !== undefined && proven > snapshot.seatControlEpoch
+          ? { ...snapshot, seatControlEpoch: proven }
+          : snapshot,
+      );
       // Only a new runner starts on its own. A snapshot never resumes a
       // runner the owner stopped, and it never resets the phase of an owner
       // decision.
@@ -1879,20 +2002,56 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         if (!resolved) {
           return { kind: 'refused', detail: 'That agent is not connected.' };
         }
+        // The decision of the owner is captured before the service is asked.
+        // The private selection never changes while the decision waits, so a
+        // later catalog entry, an identity that comes and goes and a newer
+        // decision never replace it. A lost acknowledgement leaves the record
+        // in place, so the owner may replay the decision and the browser still
+        // knows what the decision was.
+        const intent: PendingAgentDecision = {
+          kind: 'switch',
+          label: resolved.label,
+          selection: resolved.selection,
+          generation: identityGeneration,
+        };
+        pendingAgentDecisions.set(key, intent);
         const runner = agentRunners.get(key);
         if (!runner) {
-          rebindAgentSeat(matchId, seat, choice ?? resolved.label);
+          rebindCapturedAgentSeat(matchId, seat, resolved);
+          clearIntent(key, intent);
           driveAgentSeats();
           return { kind: 'accepted', publicModelLabel: resolved.label };
         }
         // The runner reports the outcome of the decision. A refused or an
         // unknown outcome keeps the runner and the binding of the seat.
         const outcome = await runner.switchModel(resolved.label);
-        if (outcome.kind !== 'accepted') return outcome;
+        if (outcome.kind !== 'accepted') {
+          // A refused switch is proven negative: the seat did not change, so
+          // the record of the decision is dropped. An unknown switch keeps it,
+          // so the owner may replay the decision. A newer decision of the
+          // owner keeps its own record.
+          if (outcome.kind === 'refused') clearIntent(key, intent);
+          return outcome;
+        }
+        // The decision is applied only while it is the decision the browser
+        // waits for: a newer decision of the owner, an identity that came and
+        // went and a runner that was replaced all end it.
+        if (!intentIsCurrent(key, intent, runner)) {
+          return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
+        }
+        if (outcome.control !== undefined) {
+          provenSeatEpochs.set(key, outcome.control.controlEpoch);
+        }
         // The switch is the explicit choice of the owner, so it replaces the
         // private binding of the seat.
-        rebindAgentSeat(matchId, seat, choice ?? resolved.label);
+        rebindCapturedAgentSeat(matchId, seat, resolved);
         await runner.stop().catch(() => undefined);
+        // The stop waits for the service, so the decision is checked again
+        // before the record of the seat and the runner of the seat change.
+        if (!intentIsCurrent(key, intent, runner)) {
+          return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
+        }
+        clearIntent(key, intent);
         agentRunners.delete(key);
         // The canonical snapshot is fed again, so the new runner plays the seat.
         driveAgentSeats();
@@ -1907,14 +2066,89 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         return { kind: 'refused', detail: 'The seat has no runner.' };
       }
       if (decision === 'retry') {
-        return runner.retry();
+        // The decision the browser waits for is captured before the runner
+        // waits for the service. A newer decision of the owner, an identity
+        // that comes and goes and a runner that is replaced while the receipt
+        // of the replay is on its way all end the captured decision.
+        const intent = pendingAgentDecisions.get(key);
+        const outcome = await runner.retry();
+        if (outcome.kind !== 'accepted') return outcome;
+        // The decision of the owner is applied only when the outcome proves
+        // it. The receipt of the service names the control of the seat, the
+        // captured decision has to be the decision that was replayed, and the
+        // identity that took the decision has to be the identity of the
+        // browser now.
+        if (intent === undefined) return outcome;
+        if (!intentIsCurrent(key, intent, runner)) {
+          return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
+        }
+        const control = outcome.control;
+        if (control === undefined) return outcome;
+        if (intent.kind === 'switch' && control.kind !== 'agent') return outcome;
+        if (intent.kind === 'takeover' && control.kind !== 'human') return outcome;
+        provenSeatEpochs.set(key, control.controlEpoch);
+        if (control.kind === 'human') {
+          // The seat belongs to the human owner now: the browser stops playing
+          // it and the private binding of the seat leaves the browser.
+          await runner.stop().catch(() => undefined);
+          if (!intentIsCurrent(key, intent, runner)) {
+            return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
+          }
+          clearIntent(key, intent);
+          removeAgentBinding(matchId, seat);
+          agentRunners.delete(key);
+          return outcome;
+        }
+        // The switch is proven. The seat plays the selection the owner chose,
+        // the one that was captured before the service was asked.
+        if (intent.selection !== null && intent.label !== null) {
+          rebindCapturedAgentSeat(matchId, seat, {
+            label: intent.label,
+            selection: intent.selection,
+          });
+        }
+        await runner.stop().catch(() => undefined);
+        // The stop waits for the service, so the decision is checked again
+        // before the runner of the seat is replaced. A newer decision of the
+        // owner keeps its own binding and its own runner.
+        if (!intentIsCurrent(key, intent, runner)) {
+          return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
+        }
+        clearIntent(key, intent);
+        agentRunners.delete(key);
+        // The canonical snapshot is fed again, so the new runner plays the seat
+        // with the new selection and its own credential.
+        driveAgentSeats();
+        return outcome;
       }
       // A takeover hands the seat to the owner, so the browser stops playing
       // it. A refused or an unknown takeover keeps the runner and the binding
       // of the seat.
+      const intent: PendingAgentDecision = {
+        kind: 'takeover',
+        label: null,
+        selection: null,
+        generation: identityGeneration,
+      };
+      pendingAgentDecisions.set(key, intent);
       const outcome = await runner.takeover();
-      if (outcome.kind !== 'accepted') return outcome;
-      agentBindings.delete(key);
+      if (outcome.kind !== 'accepted') {
+        // A refused takeover is proven negative: the seat did not change, so
+        // the record of the decision is dropped. An unknown takeover keeps it,
+        // so the owner may replay the decision. A newer decision of the owner
+        // keeps its own record.
+        if (outcome.kind === 'refused') clearIntent(key, intent);
+        return outcome;
+      }
+      if (!intentIsCurrent(key, intent, runner)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the takeover.' };
+      }
+      await runner.stop().catch(() => undefined);
+      if (!intentIsCurrent(key, intent, runner)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the takeover.' };
+      }
+      clearIntent(key, intent);
+      removeAgentBinding(matchId, seat);
       agentRunners.delete(key);
       return outcome;
     },    attachAndFocus,

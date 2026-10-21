@@ -390,13 +390,19 @@ controller took the seat.
 ## The explicit owner decisions
 
 - `retry()` sends the lost operation again with the same operation identifier
-  and starts one more provider request. The owner accepts that the uncertain
-  work may be paid twice. The spent budgets stay spent.
+  and with the envelope it was sent with, so the service answers with the
+  original receipt instead of accepting the command twice. When the browser
+  holds no command, `retry()` starts one more provider request. The owner
+  accepts that the uncertain work may be paid twice. The spent budgets stay
+  spent.
 - `switchModel(publicModelLabel)` sends `set_control` with a new public label.
   The control epoch advances, the lease of the seat is revoked and the runner
-  continues with the new agent. The service resolves the declared label to a
+  hands the seat to the new agent. The service resolves the declared label to a
   publishable one, so the runner adopts the published label of the receipt and
-  binds the new control epoch of the seat.
+  binds the new control epoch of the seat. The runner of the old model does
+  not play the seat any more: the private selection of the seat belongs to the
+  caller, and the caller binds the model of the new control and builds the
+  runner of the seat again.
 - `takeover()` sends `set_control` with the human control. The seat belongs to
   the owner and the runner stops. The record of an uncertain billable request
   stays open: a human owner does not pay for the request of the agent, and the
@@ -407,7 +413,7 @@ Every one of them answers with the outcome of the decision:
 
 | Outcome | Meaning |
 | --- | --- |
-| `accepted` | The decision was accepted. `retry()` accepted the scheduling of one more request of the provider, `switchModel()` and `takeover()` accepted the canonical command of the service. The seat declares this public label |
+| `accepted` | The decision was accepted. `retry()` accepted the replay of the pending command, or the scheduling of one more request of the provider when the browser holds no command; `switchModel()` and `takeover()` accepted the canonical command of the service. The seat declares this public label |
 | `refused` | The service or the runner refused the decision. The seat keeps its state |
 | `unknown` | The outcome could not be established. The owner may retry |
 
@@ -416,6 +422,40 @@ runner had to leave out, for example that the lease of the seat could not be
 taken and that the handoff therefore went without it. The detail never
 replaces the outcome: an outcome of `accepted` still means that the decision
 was applied.
+
+An accepted decision may carry the control of the seat that the receipt
+proves. It is set only when the accepted command was a control change and the
+receipt of the service proves it: `agent` for the browser, `human` for the
+owner. The runner adopts the published label of the receipt and binds the
+control epoch of the seat, and it stands down when the seat belongs to the
+human owner. The receipt is only read when it is not older than the control
+epoch the runner already knows, so a receipt that arrives after a newer
+canonical state never binds a stale epoch of the seat. The control carries no
+private choice of the owner: the caller binds the selection it captured before
+it asked the service, and it never infers a private choice from a public
+label.
+
+The caller keeps the decision of the owner. A handoff whose acknowledgement is
+lost is a decision the browser cannot prove, so the caller captures the choice
+of the owner and the private selection it resolves to before it asks the
+service. The capture survives an unknown outcome and every retry of it: a
+later catalog entry, an identity that comes and goes and a newer decision
+never replace it. The caller applies it only when the outcome proves it: the
+receipt has to name the control of the seat, the captured decision has to be
+the decision that was replayed, and the identity that took the decision has to
+be the identity of the browser now. The generation of the identity decides
+that: the generation is monotonic, so an identity that leaves and comes back
+is a different generation and never inherits the decision of the older one.
+A proven switch binds the captured private
+selection and builds the runner of the seat again, so the seat plays the model
+the owner chose with the credential of that model. A proven takeover removes
+the private binding of the seat from the memory and from the device, so the
+seat is never played by the browser again.
+
+A runner that proved a control change asks the provider for nothing after the
+receipt. The private selection of the seat belongs to the caller, and only the
+caller can bind the model of the new control: the runner of the old selection
+would ask the provider with the credential of the old model.
 
 The outcome carries no routing identifier, no credential and no private
 selection; it carries the public label the seat declares. The caller reads it:

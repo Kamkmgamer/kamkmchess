@@ -5,6 +5,13 @@ import type { ModelSelection } from '../controller/index.js';
 import type { OnlineComposition } from './composition';
 import { createGuestCredential } from './auth';
 import type { OnlineMatchView } from './updates';
+import type { ConnectionNamespace, ConnectionProfile, ConnectionStore } from '../providers/connections/index.js';
+import { namespaceKey } from '../providers/connections/index.js';
+import {
+  bindCredentialValues,
+  captureCredentialBindingGeneration,
+  createCredentialBindingOwner,
+} from '../providers/connections/credential-binding.js';
 
 const timeControl = { startingTimeMs: 300_000, incrementMs: 2_000 };
 
@@ -699,3 +706,627 @@ describe('the composition keeps the guest authority (B-6)', () => {  it('never d
     composition.dispose();
   });
 });
+
+/**
+ * The service of a composition that plays an agent seat.
+ *
+ * The double answers the lease route, the request route and the command route
+ * of the runner, so the composition drives a real runner over the real
+ * transport. The acknowledgement of a command can be lost, so a test can
+ * recover a command the service already applied, and a route can wait for the
+ * test, so a test can open a window between two answers of the service.
+ */
+interface AgentServiceState {
+  view: OnlineMatchView;
+  /** The mode of the command route of the runner. */
+  mode: 'online' | 'lost';
+  version: number;
+  controlEpoch: number;
+  commands: Array<Record<string, unknown>>;
+  leases: number;
+  /** The lease of the seat. */
+  leaseId: string | null;
+  /** The command route waits for the test. */
+  holdCommand: boolean;
+  /** The command route waits for the test now. */
+  heldCommand: boolean;
+  /** The lease route waits for the test. */
+  holdLease: boolean;
+  /** The lease route waits for the test now. */
+  heldLease: boolean;
+  /** The releases the service saw. */
+  releases: number;
+  /** The gate the command route waits for. */
+  commandGate: Promise<void>;
+  /** The gate the lease route waits for. */
+  leaseGate: Promise<void>;
+}
+
+/** One held answer of the service. */
+function createGate(): { readonly promise: Promise<void>; release: () => void } {
+  let resolve: () => void = () => undefined;
+  const promise = new Promise<void>(res => { resolve = res; });
+  return { promise, release: () => resolve() };
+}
+
+function agentServiceDouble(state: AgentServiceState): typeof fetch {
+  const receipts = new Map<string, Record<string, unknown>>();
+  const attempts = new Map<string, number>();
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const path = url.startsWith('http') ? new URL(url).pathname : url;
+    const body = init?.body === undefined ? null : JSON.parse(String(init.body)) as Record<string, unknown>;
+    const json = (payload: unknown, status = 200): Response => new Response(JSON.stringify(payload), {
+      status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (path.endsWith('/runner/lease') || path.endsWith('/runner/request')) {
+      if (state.holdLease) {
+        state.holdLease = false;
+        state.heldLease = true;
+        await state.leaseGate;
+      }
+      if (String(body?.action ?? '') === 'release') state.releases += 1;
+      state.leases += 1;
+      // The lease of the seat keeps its identifier while the runner renews it.
+      if (state.leaseId === null) state.leaseId = `lease-0000000${state.leases}`;
+      return json({
+        schemaVersion: 2,
+        leaseId: state.leaseId,
+        matchId: 'match-00000001',
+        seat: 'white',
+        controlEpoch: state.controlEpoch,
+        generation: 1,
+        runnerId: String(body?.runnerId ?? 'runner-1'),
+        status: 'active',
+        acquiredAt: '2026-10-21T10:00:00.000Z',
+        expiresAt: '2035-01-01T00:00:00.000Z',
+        revokedAt: null,
+        turnVersion: state.version,
+        runnerEpoch: 1,
+        pendingRequestId: path.endsWith('/runner/request') ? String(body?.requestId ?? '') : null,
+        pendingRequestStartedAt: null,
+        revokedReason: null,
+        lastRenewedAt: '2026-10-21T10:00:00.000Z',
+      });
+    }
+    if (path.endsWith('/commands')) {
+      if (state.holdCommand) {
+        state.holdCommand = false;
+        state.heldCommand = true;
+        await state.commandGate;
+      }
+      state.commands.push(body ?? {});
+      const operationId = String(body?.operationId ?? 'operation-1');
+      const attempt = (attempts.get(operationId) ?? 0) + 1;
+      attempts.set(operationId, attempt);
+      const stored = receipts.get(operationId);
+      if (stored !== undefined) {
+        // The replay of an accepted operation answers with the stored receipt.
+        if (state.mode === 'lost' && attempt <= 3) throw new TypeError('The network failed.');
+        return json(stored);
+      }
+      const action = (body?.action ?? {}) as { kind?: string; control?: { kind?: string; modelLabel?: string } };
+      if (Number(body?.expectedVersion ?? 0) > state.version) {
+        return json({ error: 'conflict' }, 409);
+      }
+      state.version += 1;
+      if (action.kind === 'set_control') state.controlEpoch += 1;
+      const receipt: Record<string, unknown> = {
+        schemaVersion: 2,
+        matchId: 'match-00000001',
+        operationId,
+        outcome: 'accepted',
+        version: state.version,
+        controlEpoch: state.controlEpoch,
+        decidedAt: '2026-10-21T10:00:00.000Z',
+      };
+      if (action.kind === 'set_control') {
+        receipt.event = {
+          schemaVersion: 2,
+          matchId: 'match-00000001',
+          version: state.version,
+          kind: 'control_change',
+          seat: 'white',
+          controlEpoch: state.controlEpoch,
+          decisionAt: '2026-10-21T10:00:00.000Z',
+          acceptedAt: '2026-10-21T10:00:00.000Z',
+          control: action.control ?? { kind: 'agent' },
+        };
+      }
+      receipts.set(operationId, receipt);
+      // The command reached the service and was applied there, but the browser
+      // never learned the receipt.
+      if (state.mode === 'lost' && attempt <= 3) throw new TypeError('The network failed.');
+      return json(receipt);
+    }
+    if (path.includes('/updates')) {
+      return json({ schemaVersion: 1, cursor: state.version, snapshot: state.view });
+    }
+    if (path.includes('/v1/online/matches/')) {
+      return json(state.view);
+    }
+    return json({ error: 'not_found' }, 404);
+  }) as unknown as typeof fetch;
+}
+
+/** The private selection of one catalog entry. */
+function selectionOf(connectionId: string, modelRoutingId: string): ModelSelection {
+  return {
+    kind: 'model',
+    providerId: 'p',
+    connectionId,
+    configurationRevision: 1,
+    modelRoutingId,
+    protocol: 'chat-completions',
+    diagnostic: 'passed-current-session',
+  } as unknown as ModelSelection;
+}
+
+/**
+ * The connection store of the fixture.
+ *
+ * Every profile carries its own credential, so a test can see which private
+ * selection asked the provider and which credential it used.
+ */
+function connectionStoreOf(profiles: readonly { id: string }[]): {
+  readonly store: Promise<ConnectionStore>;
+  readonly asked: string[];
+} {
+  const asked: string[] = [];
+  const owner = createCredentialBindingOwner();
+  const store = {
+    async getProfile(_namespace: ConnectionNamespace, profileId: string) {
+      asked.push(profileId);
+      return profiles.some(profile => profile.id === profileId)
+        ? {
+          schemaVersion: 1,
+          id: profileId,
+          name: profileId,
+          provider: 'custom',
+          protocol: 'chat-completions',
+          baseUrl: 'https://127.0.0.1:1',
+          catalogPagination: 'none',
+          auth: { kind: 'bearer' },
+          headers: [],
+          configRevision: 'r1',
+        }
+        : undefined;
+    },
+    async resolveCredentials(namespace: ConnectionNamespace, profile: ConnectionProfile) {
+      // The credential of the profile is bound to the profile, so the
+      // provider request carries the credential of the private model that owns
+      // it.
+      const generation = captureCredentialBindingGeneration(owner, namespaceKey(namespace), profile.id);
+      const credentials = bindCredentialValues({
+        profileId: profile.id,
+        configRevision: profile.configRevision,
+        credentialRevision: 1,
+        generationUrl: 'https://127.0.0.1:1/v1/chat/completions',
+      }, { apiKey: `key-${profile.id}` }, generation);
+      return { status: 'bound', credentials };
+    },
+  } as unknown as ConnectionStore;
+  return { store: Promise.resolve(store), asked };
+}
+
+/**
+ * The provider of the fixture.
+ *
+ * The provider transport is the global transport of the browser, so the
+ * fixture answers it directly. Every answer records the credential of the
+ * request, so a test can see which private model asked the provider.
+ */
+function providerFixture(): {
+  readonly requests: Array<{ readonly url: string; readonly authorization: string | null }>;
+  restore(): void;
+} {
+  const requests: Array<{ readonly url: string; readonly authorization: string | null }> = [];
+  vi.stubGlobal('fetch', (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers((init?.headers ?? {}) as HeadersInit);
+    requests.push({ url: String(input), authorization: headers.get('authorization') });
+    return new Response(JSON.stringify({
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', content: '{"move":"e2e4"}' },
+        finish_reason: 'stop',
+      }],
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as unknown as typeof fetch);
+  return { requests, restore: () => vi.unstubAllGlobals() };
+}
+
+/** The canonical view of the agent seat of the fixture. */
+function agentView(state: AgentServiceState, control: { kind: 'human' | 'agent'; modelLabel?: string }, seatToMove: boolean): OnlineMatchView {
+  return matchView({
+    version: state.version,
+    controlEpoch: state.controlEpoch,
+    seats: [
+      { seat: 'white', publicLabel: 'Owner', control, controlEpoch: state.controlEpoch, illegalAttemptsSpent: 0, formatCorrectionsSpent: 0 },
+      { seat: 'black', publicLabel: 'Guest', control: { kind: 'human' }, controlEpoch: 1, illegalAttemptsSpent: 0, formatCorrectionsSpent: 0 },
+    ],
+    clock: {
+      whiteMs: 300_000,
+      blackMs: 300_000,
+      // The opening reply window keeps the seat from moving while the seat
+      // waits for the decision of the owner.
+      activeSeat: seatToMove ? 'white' : null,
+      activeSince: seatToMove ? '2026-10-21T10:00:00.000Z' : null,
+      deadlineAt: null,
+      whiteMoved: false,
+      blackMoved: false,
+      turnNumber: 1,
+      replySeat: seatToMove ? null : 'black',
+      replyDeadlineAt: null,
+    },
+  });
+}
+
+describe('the recovery of an applied handoff (R10-A)', () => {
+  /** The state of the service of the fixture. */
+  function serviceState(seatToMove = true): AgentServiceState {
+    const commandGate = createGate();
+    const leaseGate = createGate();
+    const state: AgentServiceState = {
+      view: matchView(),
+      mode: 'lost',
+      version: 1,
+      controlEpoch: 1,
+      commands: [],
+      leases: 0,
+      leaseId: null,
+      holdCommand: false,
+      heldCommand: false,
+      holdLease: false,
+      heldLease: false,
+      releases: 0,
+      commandGate: commandGate.promise,
+      leaseGate: leaseGate.promise,
+    };
+    state.view = agentView(state, { kind: 'agent', modelLabel: 'Custom model' }, seatToMove);
+    return state;
+  }
+
+  /** Waits for a condition of the test. */
+  async function until(condition: () => boolean, label: string): Promise<void> {
+    const deadline = Date.now() + 2_000;
+    while (!condition()) {
+      if (Date.now() > deadline) throw new Error(`The condition (${label}) was not reached.`);
+      await new Promise<void>(resolve => { setTimeout(resolve, 5); });
+    }
+  }
+
+  it('binds the captured private selection of a recovered switch and plays the seat with it', async () => {
+    const provider = providerFixture();
+    const storage = createStorage();
+    const first = selectionOf('c1', 'm1');
+    const second = selectionOf('c2', 'm2');
+    const state = serviceState();
+    const connections = connectionStoreOf([{ id: 'c1' }, { id: 'c2' }]);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: agentServiceDouble(state),
+      storage,
+      accountSession: accountSession(),
+      connectionStore: connections.store,
+    });
+    composition.setAgentCatalog([
+      { id: 'private-a', label: 'Custom model', selection: first },
+      { id: 'private-b', label: 'Custom model', selection: second },
+    ]);
+    composition.setAgent({ label: 'Custom model', selection: first });
+    composition.attachAndFocus('match-00000001', 'white', {
+      kind: 'guest',
+      guestId: 'guest-1',
+      matchId: 'match-00000001',
+      seat: 'white',
+      issue: async () => 'guest-token',
+    }, first);
+    await until(() => composition.agentRunnerState('match-00000001', 'white') !== null, 'the runner of the seat');
+
+    // The seat is to move, so the runner of the old selection asks the
+    // provider and submits the move of the seat.
+    await until(() => provider.requests.length > 0, 'the provider is asked');
+    expect(provider.requests.every(request => request.authorization === 'Bearer key-c1')).toBe(true);
+
+    // The owner switches the seat to the other private model. The service
+    // applies the command and the browser never learns the receipt, so the
+    // outcome is unknown and the binding of the seat stays the old one.
+    const unknown = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'private-b');
+    expect(unknown.kind).toBe('unknown');
+    expect(composition.agentBindingFor('match-00000001', 'white')).toBe('Custom model');
+    expect(persistedSelection(storage, 'match-00000001', 'white')).toBe('c1');
+    // The control of the seat changed at the service. From this moment the
+    // browser never asks the provider with the credential of the old model
+    // again.
+    const askedBefore = provider.requests.length;
+
+    // The owner retries. The service answers with the stored receipt, so the
+    // switch is proven.
+    state.mode = 'online';
+    const accepted = await composition.agentDecision('match-00000001', 'white', 'retry');
+    expect(accepted.kind).toBe('accepted');
+
+    // The seat plays the private selection the owner chose, and not the one
+    // the public label names: both models carry the same public label.
+    expect(persistedSelection(storage, 'match-00000001', 'white')).toBe('c2');
+    // The runner of the seat is the one of the new selection.
+    expect(composition.agentRunnerState('match-00000001', 'white')).not.toBeNull();
+
+    // The seat is to move, so the runner of the new selection asks the
+    // provider, and the request carries the credential of that selection. The
+    // runner of the old selection never plays again: only the private
+    // binding of the proven control may play the seat.
+    await until(() => provider.requests.length > askedBefore, 'the provider is asked again');
+    const after = provider.requests.slice(askedBefore);
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.every(request => request.authorization === 'Bearer key-c2')).toBe(true);
+    expect(connections.asked).toContain('c2');
+
+    // The seat keeps playing with the new model: the runner of the new
+    // selection is the one that asks the provider and submits the answer.
+    expect(composition.agentRunnerState('match-00000001', 'white')?.publicModelLabel).toBe('Custom model');
+    composition.dispose();
+    provider.restore();
+  });
+
+  it('plays the seat with the new private selection after a direct switch and never with the old credential again', async () => {
+    const provider = providerFixture();
+    const storage = createStorage();
+    const first = selectionOf('c1', 'm1');
+    const second = selectionOf('c2', 'm2');
+    const state = serviceState();
+    const connections = connectionStoreOf([{ id: 'c1' }, { id: 'c2' }]);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: agentServiceDouble(state),
+      storage,
+      accountSession: accountSession(),
+      connectionStore: connections.store,
+    });
+    composition.setAgentCatalog([
+      { id: 'private-a', label: 'Custom model', selection: first },
+      { id: 'private-b', label: 'Custom model', selection: second },
+    ]);
+    composition.setAgent({ label: 'Custom model', selection: first });
+    composition.attachAndFocus('match-00000001', 'white', {
+      kind: 'guest',
+      guestId: 'guest-1',
+      matchId: 'match-00000001',
+      seat: 'white',
+      issue: async () => 'guest-token',
+    }, first);
+    await until(() => composition.agentRunnerState('match-00000001', 'white') !== null, 'the runner of the seat');
+
+    // The seat is to move, so the runner of the old selection asks the
+    // provider with its own credential.
+    await until(() => provider.requests.length > 0, 'the provider is asked');
+    expect(provider.requests.every(request => request.authorization === 'Bearer key-c1')).toBe(true);
+
+    // The owner switches the seat to the other private model. The service
+    // answers the command, so the switch is proven.
+    state.mode = 'online';
+    const askedBefore = provider.requests.length;
+    const accepted = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'private-b');
+    expect(accepted.kind).toBe('accepted');
+    await until(
+      () => composition.agentRunnerState('match-00000001', 'white')?.boundSeatControlEpoch === state.controlEpoch,
+      'the replacement runner binds the proven control epoch',
+    );
+    expect(composition.agentRunnerState('match-00000001', 'white')?.boundSeatControlEpoch)
+      .toBe(state.controlEpoch);
+    // The control of the seat changed at the service. From this moment the
+    // browser never asks the provider with the credential of the old model
+    // again.
+    // The seat plays the private selection the owner chose: the runner of the
+    // new selection asks the provider with the credential of that selection.
+    await until(() => provider.requests.length > askedBefore, 'the provider is asked again');
+    const after = provider.requests.slice(askedBefore);
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.every(request => request.authorization === 'Bearer key-c2')).toBe(true);
+    expect(persistedSelection(storage, 'match-00000001', 'white')).toBe('c2');
+    expect(connections.asked).toContain('c2');
+    composition.dispose();
+    provider.restore();
+  });
+
+  it('removes the binding of a seat that a recovered takeover gave to the owner', async () => {
+    const provider = providerFixture();
+    const storage = createStorage();
+    const first = selectionOf('c1', 'm1');
+    const state = serviceState(false);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: agentServiceDouble(state),
+      storage,
+      accountSession: accountSession(),
+      connectionStore: connectionStoreOf([{ id: 'c1' }]).store,
+    });
+    composition.setAgentCatalog([{ id: 'private-a', label: 'Custom model', selection: first }]);
+    composition.setAgent({ label: 'Custom model', selection: first });
+    composition.attachAndFocus('match-00000001', 'white', {
+      kind: 'guest',
+      guestId: 'guest-1',
+      matchId: 'match-00000001',
+      seat: 'white',
+      issue: async () => 'guest-token',
+    }, first);
+    await until(() => composition.agentRunnerState('match-00000001', 'white') !== null, 'the runner of the seat');
+
+    // The owner takes the seat over. The service applies the command and the
+    // browser never learns the receipt.
+    const unknown = await composition.agentDecision('match-00000001', 'white', 'takeover');
+    expect(unknown.kind).toBe('unknown');
+    // The binding of the seat stays: the takeover is not proven.
+    expect(persistedSelection(storage, 'match-00000001', 'white')).toBe('c1');
+
+    // The owner retries. The service answers with the stored receipt, so the
+    // takeover is proven.
+    state.mode = 'online';
+    const accepted = await composition.agentDecision('match-00000001', 'white', 'retry');
+    expect(accepted.kind).toBe('accepted');
+    // The seat belongs to the human owner now: the binding leaves the memory
+    // and the device, and the browser keeps no runner for the seat.
+    expect(composition.agentBindingFor('match-00000001', 'white')).toBeNull();
+    expect(persistedSelection(storage, 'match-00000001', 'white')).toBeNull();
+    expect(composition.agentRunnerState('match-00000001', 'white')).toBeNull();
+    // The seat is the human's now, so the browser asks the provider for
+    // nothing.
+    expect(provider.requests).toHaveLength(0);
+    composition.dispose();
+    provider.restore();
+  });
+
+  it('keeps the decision of a newer owner and never applies the older one', async () => {
+    const provider = providerFixture();
+    const storage = createStorage();
+    const first = selectionOf('c1', 'm1');
+    const second = selectionOf('c2', 'm2');
+    const third = selectionOf('c3', 'm3');
+    const state = serviceState();
+    const commandGate = createGate();
+    const leaseGate = createGate();
+    state.commandGate = commandGate.promise;
+    state.leaseGate = leaseGate.promise;
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: agentServiceDouble(state),
+      storage,
+      accountSession: accountSession(),
+      connectionStore: connectionStoreOf([{ id: 'c1' }, { id: 'c2' }, { id: 'c3' }]).store,
+    });
+    composition.setAgentCatalog([
+      { id: 'private-a', label: 'Custom model', selection: first },
+      { id: 'private-b', label: 'Custom model', selection: second },
+      { id: 'private-c', label: 'Custom model', selection: third },
+    ]);
+    composition.setAgent({ label: 'Custom model', selection: first });
+    composition.attachAndFocus('match-00000001', 'white', {
+      kind: 'guest',
+      guestId: 'guest-1',
+      matchId: 'match-00000001',
+      seat: 'white',
+      issue: async () => 'guest-token',
+    }, first);
+    await until(() => composition.agentRunnerState('match-00000001', 'white') !== null, 'the runner of the seat');
+
+    // The owner switches the seat to the second private model. The service
+    // applies the command and the browser never learns the receipt.
+    const unknown = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'private-b');
+    expect(unknown.kind).toBe('unknown');
+    expect(persistedSelection(storage, 'match-00000001', 'white')).toBe('c1');
+
+    // The owner retries. The receipt of the replay waits for the service.
+    state.mode = 'online';
+    state.holdCommand = true;
+    const retrying = composition.agentDecision('match-00000001', 'white', 'retry');
+    await until(() => state.heldCommand, 'the replay waits for the service');
+    commandGate.release();
+
+    // The receipt of the replay proves the switch, and the runner of the seat
+    // gives its lease back while the owner decides again.
+    state.holdLease = true;
+    await until(() => state.heldLease, 'the lease of the seat waits for the service');
+
+    // The owner decides again while the older recovery waits: the newer
+    // decision is the one the seat waits for.
+    const newer = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'private-c');
+    expect(newer.kind).toBe('accepted');
+    leaseGate.release();
+    // The older recovery is ended by the newer decision of the owner.
+    expect((await retrying).kind).toBe('unknown');
+
+    // The newer decision is the one the seat plays, and the older decision
+    // never reaches the binding of the seat.
+    expect(persistedSelection(storage, 'match-00000001', 'white')).toBe('c3');
+    expect(provider.requests.map(request => request.authorization)).not.toContain('Bearer key-c2');
+    composition.dispose();
+    provider.restore();
+  });
+
+  it('never applies the decision of an identity that left and came back', async () => {
+    const provider = providerFixture();
+    const storage = createStorage();
+    const first = selectionOf('c1', 'm1');
+    const second = selectionOf('c2', 'm2');
+    const state = serviceState();
+    const commandGate = createGate();
+    state.commandGate = commandGate.promise;
+    const identity = controllableAccountSession();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: agentServiceDouble(state),
+      storage,
+      accountSession: identity.session,
+      connectionStore: connectionStoreOf([{ id: 'c1' }, { id: 'c2' }]).store,
+    });
+    composition.setAgentCatalog([
+      { id: 'private-a', label: 'Custom model', selection: first },
+      { id: 'private-b', label: 'Custom model', selection: second },
+    ]);
+    composition.setAgent({ label: 'Custom model', selection: first });
+    composition.attachAndFocus('match-00000001', 'white', {
+      kind: 'guest',
+      guestId: 'guest-1',
+      matchId: 'match-00000001',
+      seat: 'white',
+      issue: async () => 'guest-token',
+    }, first);
+    await until(() => composition.agentRunnerState('match-00000001', 'white') !== null, 'the runner of the seat');
+
+    // The owner switches the seat to the other private model. The service
+    // applies the command and the browser never learns the receipt.
+    const unknown = await composition.agentDecision('match-00000001', 'white', 'switch-model', 'private-b');
+    expect(unknown.kind).toBe('unknown');
+
+    // The owner retries. The receipt of the replay waits for the service, and
+    // the identity of the browser leaves and comes back in the meantime.
+    state.mode = 'online';
+    state.holdCommand = true;
+    const retrying = composition.agentDecision('match-00000001', 'white', 'retry');
+    await until(() => state.heldCommand, 'the replay waits for the service');
+    identity.switchTo(null);
+    identity.switchTo('account-1');
+    commandGate.release();
+    await retrying;
+
+    // The decision of the older identity never reaches the binding of the
+    // seat, although the identity of the browser is the same one again.
+    expect(persistedSelection(storage, 'match-00000001', 'white')).toBe('c1');
+    expect(provider.requests.map(request => request.authorization)).not.toContain('Bearer key-c2');
+    composition.dispose();
+    provider.restore();
+  });
+});
+
+/** The private selection the device holds for one seat. */
+function persistedSelection(storage: Storage, matchId: string, seat: string): string | null {
+  for (const [key, value] of storage.data) {
+    if (!key.includes('agent')) continue;
+    const parsed = JSON.parse(value) as Array<{ matchId: string; seat: string; selection: { connectionId?: string } }>;
+    const record = parsed.find(binding => binding.matchId === matchId && binding.seat === seat);
+    if (record) return record.selection.connectionId ?? null;
+  }
+  return null;
+}
+
+/** An account session the test can hand over. */
+function controllableAccountSession(): {
+  readonly session: NonNullable<Parameters<typeof createOnlineComposition>[0]['accountSession']>;
+  switchTo(accountId: string | null): void;
+} {
+  let listener: ((identity: { accountId: string; token: () => Promise<string> } | null) => void) | null = null;
+  const session = {
+    identity: { accountId: 'account-1', token: async () => 'account-token' },
+    subscribe: (next: (identity: { accountId: string; token: () => Promise<string> } | null) => void) => {
+      listener = next;
+      return () => { listener = null; };
+    },
+  };
+  return {
+    session,
+    switchTo(accountId) {
+      listener?.(accountId === null ? null : { accountId, token: async () => 'account-token' });
+    },
+  };
+}

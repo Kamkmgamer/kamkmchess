@@ -686,9 +686,13 @@ describe('the private corrections of the prompt', () => {
     // stays in the prompt of the next request.
     await runner.switchModel('Second Agent');
     await until(() => service.match.control.modelLabel === 'Second Agent', 'the agent is switched');
+    // The control of the seat changed, so the runner of the old model does
+    // not play the seat any more: the private selection of the seat belongs
+    // to the caller, and the caller builds the runner of the new selection.
     runner.applySnapshot(fakeSnapshot(service.match));
-    await until(() => provider.prompts.length === 3, 'the runner asks the new agent');
-    expect(provider.prompts[2]?.corrections.length).toBe(1);
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    expect(provider.prompts.length).toBe(2);
+    expect(runner.state.publicModelLabel).toBe('Second Agent');
   });
 });
 
@@ -2802,6 +2806,154 @@ describe('the envelope of a replayed command', () => {
   });
 });
 
+describe('the recovery of an applied control change', () => {
+  it('keeps playing later turns after recovering an ordinary move receipt', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const transport = switchableTransport(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: transport,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+    transport.mode('lost');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => runner.state.phase === 'uncertain', 'the move acknowledgement is lost');
+
+    transport.mode('online');
+    expect((await runner.retry()).kind).toBe('accepted');
+    service.opponentMove('e7e5');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => provider.prompts.length === 2, 'the same model plays its next turn');
+    await runner.stop();
+  });
+
+  it('adopts the published label and the seat epoch of a recovered switch and waits for the caller', async () => {
+    const service = createFakeOnlineService({ sideToMove: 'white' });
+    const provider = createFakeProvider();
+    const transport = switchableTransport(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: transport,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    // The runner plays the first move of the seat and binds the control epoch
+    // of the seat.
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => service.recordedCommands.length === 1, 'the move is submitted');
+    expect(runner.state.boundSeatControlEpoch).toBe(1);
+
+    // The owner switches the model while the transport is down. The command
+    // never reaches the service, so the service never applies it.
+    transport.mode('offline');
+    const switched = await runner.switchModel('Second Agent');
+    expect(switched.kind).toBe('unknown');
+    expect(service.match.control.modelLabel).toBe('Test Agent');
+
+    // The canonical state of the match moves on: the opponent moves.
+    service.opponentMove('e7e5');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => runner.state.version === 3, 'the runner knows the new version');
+
+    // The owner retries. The original envelope is stale, the refreshed
+    // envelope is applied by the service and its acknowledgement is lost.
+    transport.mode('lost');
+    const retried = await runner.retry();
+    expect(retried.kind).toBe('unknown');
+    // The service applied the switch exactly once.
+    expect(service.match.control.modelLabel).toBe('Second Agent');
+    expect(service.match.seatControlEpoch).toBe(2);
+
+    // The owner retries again. The service answers with the stored receipt.
+    transport.mode('online');
+    const again = await runner.retry();
+    expect(again.kind).toBe('accepted');
+    // The outcome names the control that the receipt proves.
+    if (again.kind !== 'accepted') throw new Error('The replayed switch was not accepted.');
+    expect(again.control?.kind).toBe('agent');
+    expect(again.control?.modelLabel).toBe('Second Agent');
+    expect(again.control?.controlEpoch).toBe(2);
+
+    // The browser learned the label the service published for the seat.
+    expect(runner.state.publicModelLabel).toBe('Second Agent');
+    // The browser bound the control epoch of the seat that the applied
+    // command produced.
+    expect(runner.state.boundSeatControlEpoch).toBe(2);
+    expect(runner.state.superseded).toBe(false);
+
+    // The runner of the old model does not play the seat any more: the
+    // private selection of the seat belongs to the caller, and the caller
+    // builds the runner of the new selection. The runner of the old model
+    // would ask the provider with the credential of the old model.
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    expect(provider.prompts.length).toBe(1);
+  });
+
+  it('stops the agent seat when the recovered command gave the seat to the human owner', async () => {
+    const service = createFakeOnlineService({ sideToMove: 'white' });
+    const provider = createFakeProvider();
+    const transport = switchableTransport(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: transport,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    await until(() => service.recordedCommands.length === 1, 'the move is submitted');
+
+    // The owner takes the seat over while the transport is down.
+    transport.mode('offline');
+    const taken = await runner.takeover();
+    expect(taken.kind).toBe('unknown');
+    expect(service.match.control.kind).toBe('agent');
+
+    // The canonical state of the match moves on.
+    service.opponentMove('e7e5');
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => runner.state.version === 3, 'the runner knows the new version');
+
+    // The owner retries. The refreshed envelope is applied by the service and
+    // its acknowledgement is lost.
+    transport.mode('lost');
+    const retried = await runner.retry();
+    expect(retried.kind).toBe('unknown');
+    expect(service.match.control.kind).toBe('human');
+
+    // The owner retries again. The service answers with the stored receipt.
+    transport.mode('online');
+    const again = await runner.retry();
+    expect(again.kind).toBe('accepted');
+    if (again.kind !== 'accepted') throw new Error('The replayed takeover was not accepted.');
+    expect(again.control?.kind).toBe('human');
+    // The seat belongs to the human owner now, so the browser stops playing
+    // it and asks for no provider request any more.
+    expect(runner.state.phase).toBe('stopped');
+    expect(runner.state.publicModelLabel).toBe('Test Agent');
+    expect(provider.prompts).toHaveLength(1);
+  });
+});
+
 describe('the published model binding of the runner', () => {
   it('converts the canonical match view into the state of the runner', () => {
     const view: OnlineMatchView = {
@@ -2981,16 +3133,13 @@ describe('the published model binding of the runner', () => {
     // The runner adopts the published label of the service.
     expect(runner.state.publicModelLabel).toBe('Custom model');
 
-    // The seat still owes the move and the runner plays it, although the
-    // published label is not the label the owner declared.
+    // The seat still owes the move, but the runner of the old model does not
+    // play it: the private selection of the seat belongs to the caller, and
+    // the caller builds the runner of the new selection.
     service.opponentMove('e7e5');
     runner.applySnapshot(fakeSnapshot(service.match));
-    await until(() => provider.prompts.length === 2, 'the runner plays the next turn');
-    provider.answer('{"move":"d2d4"}');
-    await until(
-      () => service.recordedCommands.some((command) => command.action.kind === 'submit_move' && command.action.move === 'd2d4'),
-      'the second move is accepted',
-    );
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+    expect(provider.prompts.length).toBe(1);
   });
 
   it('adopts the published label of the seat view of the snapshot', async () => {

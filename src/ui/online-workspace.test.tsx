@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { OnlineWorkspace } from './online-workspace';
 import { createOnlineComposition } from '../online/composition';
 import type { OnlineComposition } from '../online/composition';
+import type { ProviderRunnerPhase, ProviderRunnerState } from '../online/provider-runner';
 import type { OnlineMatchView } from '../online/updates';
 
 function matchView(overrides: Partial<OnlineMatchView> = {}): OnlineMatchView {
@@ -129,6 +130,91 @@ describe('the online workspace screen (UX-03, UX-04)', () => {
     expect(markup).toContain('aria-label="Cancel queue entry queue-1"');
     expect(markup).toContain('aria-label="Show queue entry queue-2"');
     expect(markup).toContain('aria-label="Cancel queue entry queue-2"');
+    composition.dispose();
+  });
+});
+
+/**
+ * A composition whose agent seat is in the given phase.
+ *
+ * The workspace reads the state of the runner of the seat, so the screen
+ * renders the decisions of the runner exactly as it renders them for a real
+ * runner.
+ */
+function compositionWithRunner(phase: ProviderRunnerPhase): OnlineComposition {
+  const view = matchView({
+    seats: [
+      { seat: 'white', publicLabel: 'Alice', control: { kind: 'agent', modelLabel: 'Custom model' }, controlEpoch: 1, illegalAttemptsSpent: 0, formatCorrectionsSpent: 0 },
+      { seat: 'black', publicLabel: 'Bob', control: { kind: 'human' }, controlEpoch: 1, illegalAttemptsSpent: 0, formatCorrectionsSpent: 0 },
+    ],
+  });
+  const fetcher = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const body = url.includes('/updates')
+      ? { schemaVersion: 1, cursor: 1, snapshot: view }
+      : view;
+    return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }) as unknown as typeof fetch;
+  const composition = createOnlineComposition({ baseUrl: 'https://api.example.test', fetch: fetcher });
+  return new Proxy(composition, {
+    get(target, property, receiver) {
+      if (property === 'agentRunnerState') {
+        return () => ({ phase } as ProviderRunnerState);
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+}
+
+/** Lets the workspace learn the canonical view of the match. */
+async function untilSnapshot(composition: OnlineComposition): Promise<void> {
+  const deadline = Date.now() + 2_000;
+  while (composition.workspace.state('match-00000001')?.snapshot === null && Date.now() < deadline) {
+    await new Promise<void>(resolve => { setTimeout(resolve, 10); });
+  }
+}
+
+describe('the decisions of the agent seat', () => {
+  it('renders the decisions of a stopped runner with an honest note', async () => {
+    const composition = compositionWithRunner('stopped');
+    composition.workspace.attach({
+      matchId: 'match-00000001',
+      seat: 'white',
+      credential: {
+        kind: 'guest',
+        guestId: 'guest-1',
+        matchId: 'match-00000001',
+        seat: 'white',
+        issue: async () => 'token',
+      },
+    });
+    await untilSnapshot(composition);
+    const markup = renderToStaticMarkup(<OnlineWorkspace composition={composition} onClose={() => {}} />);
+    // The runner offers its decisions in the phase `stopped`, so the
+    // interface renders them and names the phase honestly.
+    expect(markup).toContain('aria-label="Agent decisions"');
+    expect(markup).toContain('The agent is stopped.');
+    expect(markup).toMatch(/<button[^>]*>Retry<\/button>/);
+    expect(markup).toMatch(/<button[^>]*>Take over<\/button>/);
+    composition.dispose();
+  });
+
+  it('offers no decision of the agent in a phase the runner does not wait in', async () => {
+    const composition = compositionWithRunner('idle');
+    composition.workspace.attach({
+      matchId: 'match-00000001',
+      seat: 'white',
+      credential: {
+        kind: 'guest',
+        guestId: 'guest-1',
+        matchId: 'match-00000001',
+        seat: 'white',
+        issue: async () => 'token',
+      },
+    });
+    await untilSnapshot(composition);
+    const markup = renderToStaticMarkup(<OnlineWorkspace composition={composition} onClose={() => {}} />);
+    expect(markup).not.toContain('aria-label="Agent decisions"');
     composition.dispose();
   });
 });

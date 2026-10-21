@@ -32,6 +32,7 @@ import type { CoordinateMove, Promotion } from '../rules/index.js';
 import { formatOnlineClock, onlineClockReading } from '../online/clock.js';
 import type { OnlineClockReading } from '../online/clock.js';
 import { onlineSideToMove } from '../online/turn.js';
+import type { ProviderRunnerPhase } from '../online/provider-runner.js';
 import type { OnlineComposition } from '../online/composition.js';
 import type { Seat, SeatControl, TimeControl } from '../online/contracts.js';
 import type { FriendInvitation, FriendRematch } from '../online/friend-routes.js';
@@ -80,6 +81,23 @@ function screenRequestContext(composition: OnlineComposition, addressInvitation:
   const focus = composition.workspace.focusedMatchId ?? composition.workspace.games[0]?.matchId ?? null;
   return JSON.stringify([composition.identityKey, composition.identityGeneration,
     composition.pendingInvitation ?? addressInvitation, focus]);
+}
+
+/**
+ * The note of the agent decisions, when the interface renders them.
+ *
+ * The runner offers its decisions in the phases `uncertain`, `paused`,
+ * `failed` and `stopped`. The interface renders the block for the same
+ * phases, so the owner sees every decision the runner offers, and the note
+ * names the phase honestly: a stopped runner waits for a decision of the
+ * owner.
+ */
+function agentDecisionNote(phase: ProviderRunnerPhase): string | null {
+  if (phase === 'uncertain') return 'The agent turn is uncertain.';
+  if (phase === 'paused') return 'The agent turn waits for you.';
+  if (phase === 'failed') return 'The agent turn failed.';
+  if (phase === 'stopped') return 'The agent is stopped. It waits for your decision.';
+  return null;
 }
 
 /**
@@ -207,6 +225,9 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
   const reviewing = view !== null && ply !== moveCount;
   const rows = view ? onlineSeatRows(view, seat) : [];
   const agentRunner = view && seat ? composition.agentRunnerState(view.matchId, seat) : null;
+  // The runner offers its decisions in the phases the interface renders them
+  // in, so the owner sees every decision the runner offers.
+  const agentDecisionText = agentRunner ? agentDecisionNote(agentRunner.phase) : null;
   // The browser only plays the agent of the owner when the owner chose the
   // private selection of this seat. Without that choice the seat waits.
   const ownSeatIsAgent = view !== null && seat !== null
@@ -752,15 +773,15 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
             <button className="button quiet" type="button" onClick={() => setConfirm(null)}>Keep playing</button>
           </div>
         </div>}
-        {agentRunner && (agentRunner.phase === 'uncertain' || agentRunner.phase === 'paused' || agentRunner.phase === 'failed') &&
+        {agentRunner && agentDecisionText !== null &&
           <div className="online-decisions" role="group" aria-label="Agent decisions">
-            <p>{agentRunner.phase === 'uncertain' ? 'The agent turn is uncertain.' : agentRunner.phase === 'paused' ? 'The agent turn waits for you.' : 'The agent turn failed.'}</p>
+            <p>{agentDecisionText}</p>
             <div className="button-row">
-              <button className="button" type="button" disabled={busy} onClick={() => void applyDecision(view.matchId, seat ?? 'white', 'retry')}>Retry</button>
-              <button className="button" type="button" disabled={busy} onClick={() => void applyDecision(view.matchId, seat ?? 'white', 'takeover')}>Take over</button>
+              <button className="button" type="button" disabled={busy || view.status !== 'active'} onClick={() => void applyDecision(view.matchId, seat ?? 'white', 'retry')}>Retry</button>
+              <button className="button" type="button" disabled={busy || view.status !== 'active'} onClick={() => void applyDecision(view.matchId, seat ?? 'white', 'takeover')}>Take over</button>
             </div>
             <div className="button-row" aria-label="Switch model">
-              {composition.agentCatalog.map(entry => <button className="button" type="button" key={entry.id} disabled={busy}
+              {composition.agentCatalog.map(entry => <button className="button" type="button" key={entry.id} disabled={busy || view.status !== 'active'}
                 onClick={() => void applyDecision(view.matchId, seat ?? 'white', 'switch-model', entry.id)}>{entry.label}</button>)}
             </div>
           </div>}
