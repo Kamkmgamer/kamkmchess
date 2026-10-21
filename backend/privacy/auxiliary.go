@@ -44,21 +44,23 @@ func auxiliaryTablesPresent(ctx context.Context, q interface {
 // subject are ordered against the allocation and the acceptance that could
 // still name it.
 func (s *Service) removeAuxiliaryPersonalData(ctx context.Context, tx pgx.Tx, subjectKind, rawID string) error {
-	present, err := auxiliaryTablesPresent(ctx, tx, "online_friend_invitations")
-	if err != nil {
-		return err
-	}
-	if present {
-		if err = s.removeFriendInvitations(ctx, tx, subjectKind, rawID); err != nil {
-			return err
-		}
-	}
-	present, err = auxiliaryTablesPresent(ctx, tx, "online_invitation_acceptances")
+	// The acceptances come first: an acceptance refers to its invitation, so
+	// the unused acceptance has to be gone before the unused invitation.
+	present, err := auxiliaryTablesPresent(ctx, tx, "online_invitation_acceptances")
 	if err != nil {
 		return err
 	}
 	if present {
 		if err = s.removeInvitationAcceptances(ctx, tx, subjectKind, rawID); err != nil {
+			return err
+		}
+	}
+	present, err = auxiliaryTablesPresent(ctx, tx, "online_friend_invitations")
+	if err != nil {
+		return err
+	}
+	if present {
+		if err = s.removeFriendInvitations(ctx, tx, subjectKind, rawID); err != nil {
 			return err
 		}
 	}
@@ -98,7 +100,9 @@ func (s *Service) removeFriendInvitations(ctx context.Context, tx pgx.Tx, subjec
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE online_friend_invitations
-		SET inviter_id='anonymized', inviter_public_label='Deleted player', inviter_model_label=NULL
+		SET inviter_id='anonymized', inviter_public_label='Deleted player',
+			inviter_model_label = CASE WHEN inviter_control_kind = 'human' THEN NULL ELSE 'Custom model' END,
+			owner_token_hash=NULL
 		WHERE inviter_kind=$1 AND inviter_id=$2 AND match_id IS NOT NULL`, subjectKind, rawID); err != nil {
 		return err
 	}
@@ -128,7 +132,9 @@ func (s *Service) removeInvitationAcceptances(ctx context.Context, tx pgx.Tx, su
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE online_invitation_acceptances
-		SET acceptor_id='anonymized', acceptor_public_label='Deleted player', model_label=NULL, guest_id=NULL
+		SET acceptor_id='anonymized', acceptor_public_label='Deleted player',
+			model_label = CASE WHEN control_kind = 'human' THEN NULL ELSE 'Custom model' END,
+			guest_id = CASE WHEN acceptor_kind = 'guest' THEN 'anonymized' ELSE guest_id END
 		WHERE acceptor_kind=$1 AND acceptor_id=$2 AND match_id IS NOT NULL`, subjectKind, rawID); err != nil {
 		return err
 	}
@@ -191,9 +197,9 @@ func (s *Service) removeQueueEntries(ctx context.Context, tx pgx.Tx, rawID strin
 		return err
 	}
 	// The allocation of the subject keeps its identity and loses the public
-	// label of the removed participant. The redaction runs before the entries
-	// are anonymized, because the guard of the allocation finds the owner of
-	// the entry it refers to.
+	// label and the declared model label of the removed participant. The
+	// redaction runs before the entries are anonymized, because the guard of
+	// the allocation finds the owner of the entry it refers to.
 	present, err := auxiliaryTablesPresent(ctx, tx, "online_queue_allocations")
 	if err != nil {
 		return err
@@ -201,25 +207,30 @@ func (s *Service) removeQueueEntries(ctx context.Context, tx pgx.Tx, rawID strin
 	if present {
 		if _, err = tx.Exec(ctx, `
 			UPDATE online_queue_allocations a
-			SET initiator_label='Deleted player'
+			SET initiator_label='Deleted player',
+				initiator_control_model_label = CASE WHEN a.initiator_control_kind = 'human' THEN NULL ELSE 'Custom model' END
 			WHERE a.initiator_entry_id = ANY($1)
 			  AND a.initiator_label <> 'Deleted player'`, entryIDs); err != nil {
 			return err
 		}
 		if _, err = tx.Exec(ctx, `
 			UPDATE online_queue_allocations a
-			SET opponent_label='Deleted player'
+			SET opponent_label='Deleted player',
+				opponent_control_model_label = CASE WHEN a.opponent_control_kind = 'human' THEN NULL ELSE 'Custom model' END
 			WHERE a.opponent_entry_id = ANY($1)
 			  AND a.opponent_label <> 'Deleted player'`, entryIDs); err != nil {
 			return err
 		}
 	}
-	// An assigned entry keeps its row and loses the owner identifier. The
-	// guard of the queue entries accepts the redaction only with a recorded
-	// removal request of the account.
+	// An assigned entry keeps its row and loses the owner identifier, the
+	// declared model label and the client supplied idempotency key. The guard
+	// of the queue entries accepts the redaction only with a recorded removal
+	// request of the account.
 	if _, err = tx.Exec(ctx, `
 		UPDATE online_queue_entries
-		SET owner_id='anonymized', seat_control_model_label=NULL, version=version+1
+		SET owner_id='anonymized',
+		seat_control_model_label = CASE WHEN seat_control_kind = 'human' THEN NULL ELSE 'Custom model' END,
+		client_request_id=NULL, version=version+1
 		WHERE owner_kind='account' AND owner_id=$1 AND status='assigned'`, rawID); err != nil {
 		return err
 	}

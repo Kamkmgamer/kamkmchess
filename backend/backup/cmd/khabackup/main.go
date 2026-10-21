@@ -20,6 +20,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -361,6 +363,13 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
+	// The newer rotation copies carry the online removal ledgers as well. The
+	// deletion tombstones and the online removals are two different ledgers,
+	// and a restore has to replay both of them.
+	newerRemovals, newerSubjectRemovals, err := backup.CollectRemovalLedgers(options.newerLedgers, secret)
+	if err != nil {
+		return err
+	}
 	pool, err := openPool(ctx, url)
 	if err != nil {
 		return err
@@ -371,9 +380,11 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	request := backup.RestoreRequest{Path: options.file, Passphrase: secret, Restorer: tools, Tombstones: postgresLedger{pool: pool}, Removals: removals}
+	request := backup.RestoreRequest{Path: options.file, Passphrase: secret, Restorer: tools, Tombstones: postgresLedger{pool: pool}, Removals: removals, AdmissionFence: removals}
 	if len(options.newerLedgers) > 0 {
 		request.NewerLedgers = append(request.NewerLedgers, newer)
+		request.NewerRemovalLedgers = append(request.NewerRemovalLedgers, newerRemovals)
+		request.NewerSubjectRemovalLedgers = append(request.NewerSubjectRemovalLedgers, newerSubjectRemovals)
 	}
 	if !options.apply {
 		plan, planErr := backup.PlanRestore(ctx, options.file, secret, postgresLedger{pool: pool}, request.NewerLedgers)
@@ -418,14 +429,17 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 			return err
 		}
 	}
-	restoreID := "restore-" + time.Now().UTC().Format("20060102T150405Z")
+	restoreID := "restore-" + time.Now().UTC().Format("20060102T150405Z") + "-" + randomSuffix()
 	digest, err := privacy.RemovalLedgerDigestOf(merged, mergedSubjects)
 	if err != nil {
 		return err
 	}
-	if err = removals.WriteFence(restoreID, digest); err != nil {
+	// The fence is bound to this restore and to the ledger it has to apply. A
+	// restore that is already in progress keeps its fence.
+	if err = removals.OpenFence(restoreID, digest); err != nil {
 		return err
 	}
+	request.RestoreID = restoreID
 	result, err := backup.Restore(ctx, request)
 	if err != nil {
 		// The fence stays open: the restored data must not serve traffic
@@ -440,15 +454,26 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 	}
 	// The restore is recorded and the gate is released only after the removal
 	// ledger was replayed and the replay was verified.
+	//
+	// The verification is the digest of the ledger that was actually applied:
+	// a restore that applied a different ledger keeps the fence open and the
+	// gate closed.
+	applied, err := removals.AppliedLedgerDigest(ctx)
+	if err != nil {
+		return err
+	}
+	if applied != "" && applied != fmt.Sprintf("%x", digest) {
+		return fmt.Errorf("the applied removal ledger is not the ledger of the restore; the fence stays open")
+	}
 	if _, err = removals.RecordRestore(ctx, restoreID); err != nil {
 		return err
 	}
 	if err = removals.ReleaseRestoreGate(ctx, restoreID); err != nil {
 		return fmt.Errorf("the restore gate stays closed: %w", err)
 	}
-	// The durable fence is closed last: the service may serve traffic only
-	// after the ledger was replayed, verified and recorded.
-	if err = removals.ClearFence(); err != nil {
+	// The durable fence is closed last, and only for this restore and this
+	// ledger.
+	if err = removals.CloseFence(restoreID, digest); err != nil {
 		return err
 	}
 	report := map[string]any{
@@ -616,6 +641,19 @@ func emit(asJSON bool, report map[string]any, text func()) error {
 	}
 	text()
 	return nil
+}
+
+// randomSuffix returns a short random suffix for a restore identifier.
+//
+// The suffix keeps two restores of the same second apart, so the restore
+// identifiers are unique and the fence of one restore is never the fence of
+// another.
+func randomSuffix() string {
+	raw := make([]byte, 6)
+	if _, err := rand.Read(raw); err != nil {
+		return "unknown"
+	}
+	return hex.EncodeToString(raw)
 }
 
 func defaultBinary(name string) string {

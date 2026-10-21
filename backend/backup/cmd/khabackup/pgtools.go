@@ -178,12 +178,35 @@ func (l postgresRemovalLedger) WriteFence(restoreID string, digest []byte) error
 	return l.removals.WriteFence(restoreID, digest)
 }
 
+// OpenFence opens the durable restore fence of one restore.
+func (l postgresRemovalLedger) OpenFence(restoreID string, digest []byte) error {
+	return l.removals.OpenFence(restoreID, digest)
+}
+
+// CloseFence closes the durable restore fence of one restore.
+func (l postgresRemovalLedger) CloseFence(restoreID string, digest []byte) error {
+	return l.removals.CloseFence(restoreID, digest)
+}
+
 // ClearFence closes the durable restore fence.
 //
 // The fence is closed only after the removal ledger of the restore was
 // replayed and verified.
 func (l postgresRemovalLedger) ClearFence() error {
 	return l.removals.ClearFence()
+}
+
+// AppliedLedgerDigest is the digest of the removal ledger that is applied in the
+// database.
+func (l postgresRemovalLedger) AppliedLedgerDigest(ctx context.Context) (string, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !available {
+		return "", nil
+	}
+	return l.removals.AppliedLedgerDigest(ctx)
 }
 
 // RecordRestore records that the database was restored from a backup.

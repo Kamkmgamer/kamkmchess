@@ -108,6 +108,28 @@ func (s *Service) applySubjectRemoval(ctx context.Context, record backup.Subject
 // the restored database serves traffic. The subject level removals live in
 // their own ledger, because a subject that played no match still has to stay
 // removed.
+// AppliedLedgerDigest is the digest of the removal ledger that is applied in
+// the database.
+//
+// The restore compares it with the digest of the ledger it had to apply, so a
+// restore that applied a different ledger keeps the fence open and the gate
+// closed.
+func (s *Service) AppliedLedgerDigest(ctx context.Context) (string, error) {
+	records, err := s.ListRemovalRecords(ctx)
+	if err != nil {
+		return "", err
+	}
+	subjects, err := s.ListSubjectRemovalRecords(ctx)
+	if err != nil {
+		return "", err
+	}
+	digest, err := RemovalLedgerDigestOf(records, subjects)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest), nil
+}
+
 func (s *Service) ListRemovalRecords(ctx context.Context) ([]backup.RemovalRecord, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT removal_id,subject_kind,subject_id,match_id,scope,removed_at

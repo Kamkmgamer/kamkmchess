@@ -398,6 +398,15 @@ type RestoreRequest struct {
 	// NewerSubjectRemovalLedgers carries the subject level removal ledgers of
 	// the newer rotation copies.
 	NewerSubjectRemovalLedgers [][]SubjectRemovalRecord
+	// AdmissionFence is the durable admission control of the restore.
+	//
+	// A restore that carries removals is refused without it. The fence lives
+	// outside the restored database, so it survives the schema replacement and
+	// a crash of the restore process, and it is the only control that keeps a
+	// restored database from serving a removal that was not replayed.
+	AdmissionFence AdmissionFence
+	// RestoreID identifies the restore. It is bound to the fence.
+	RestoreID string
 }
 
 // RestoreResult reports what a completed restore actually did.
@@ -481,6 +490,12 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 		result.SubjectRemovalsPending = subjectRemovals
 		return result, nil
 	}
+	if request.AdmissionFence == nil {
+		// A restore that carries removals needs the durable admission
+		// control. Without it, a crash between the import and the replay would
+		// leave a restored database that serves a removal it lost.
+		return RestoreResult{}, fmt.Errorf("%w: a restore with removals needs an admission fence", ErrLedgerConflict)
+	}
 	if len(removals) > 0 {
 		if err = request.Removals.ApplyRemovalRecords(ctx, removals); err != nil {
 			return RestoreResult{}, err
@@ -559,6 +574,31 @@ func CollectLedgers(paths []string, passphrase []byte) ([]Tombstone, error) {
 		}
 	}
 	return merged, nil
+}
+
+// CollectRemovalLedgers verifies several bundles and merges their online
+// removal ledgers.
+//
+// The deletion tombstones and the online removals are two different ledgers: a
+// restore has to replay both, so the operator flow needs both of them.
+func CollectRemovalLedgers(paths []string, passphrase []byte) ([]RemovalRecord, []SubjectRemovalRecord, error) {
+	var (
+		removals  []RemovalRecord
+		subjects  []SubjectRemovalRecord
+	)
+	for _, path := range paths {
+		verified, err := Verify(path, passphrase)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%s: %w", path, err)
+		}
+		if removals, err = MergeRemovalLedgers(removals, verified.Payload.Removals); err != nil {
+			return nil, nil, err
+		}
+		if subjects, err = MergeSubjectRemovalLedgers(subjects, verified.Payload.SubjectRemovals); err != nil {
+			return nil, nil, err
+		}
+	}
+	return removals, subjects, nil
 }
 
 type limitWriter struct {

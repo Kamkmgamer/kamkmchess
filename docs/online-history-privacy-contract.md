@@ -164,17 +164,28 @@ Rules the browser must honour:
   before it starts and on every request, the restore tool writes it with `--fence` (which
   defaults to the same environment variable) and refuses an applied restore without it. The path
   has to be a **shared persistent location**: a per container or per host path would let two
-  instances disagree about the state of a restore. The fence survives the schema replacement of
+  instances disagree about the state of a restore, and the file has to be readable by the account of
+  the API and of the restore tool. The fence survives the schema replacement of
   the restore and a crash of the restore process, so a restore that dies between the import and
   the replay leaves the service closed instead of a restored database that lost the newest
-  removals. The fence is closed only after the ledger was replayed, verified and recorded.
+  removals.
+* The fence is **bound to its restore**: it names the restore and the digest of the removal ledger
+  the restore has to apply. A second restore is refused instead of overwriting the fence of the
+  first, a fence is closed only by its own restore, and a restore that applied a different ledger
+  keeps the fence open and the gate closed. The library refuses a restore that carries removals
+  without an admission fence at all.
 * The **subject level removal record** (`online_removal_subjects`, `subjectRef`) records that a
   subject was removed, whatever it played and whatever private data it held. It names no match
   and it stores the one-way reference of the subject, never the identifier. It travels in the
   encrypted bundle with the match bound records, it is merged with the newer rotation copies and
-  it is replayed after a restore. Without it, a restore of an older backup — where the deletion
-  table of the account is absent — would bring the private data back and let the old session of
+  it is replayed after a restore. Without it, a restore of an older backup - where the deletion
+  table of the account is absent - would bring the private data back and let the old session of
   the account work again.
+* The removal ledger is keyed by the **match, the kind and the subject**, so two participants of
+  one match are two removals and both are sealed into the bundle.
+* The **per match removal of a public replay** (`remove_public_replay`) revokes the published
+  replay of that match, and the publisher does not publish it again. It is not a removal of the
+  participant: the participant keeps its seat, its history and its other games.
 * The operator tooling (`khabackup`) seals the removal ledger into the bundle, writes the fence,
   restores, replays the ledger, verifies the replay, records the restore, releases the gate and
   closes the fence. A ledger that cannot be read is an error, never an empty ledger.
@@ -229,8 +240,17 @@ well:
   identity of the acceptor;
 * a **rematch offer** keeps its row and loses the identity of the proposer and of the acceptor;
 * a **waiting queue entry** is deleted, and an entry that already produced a match keeps its row
-  and loses the owner identifier; the allocation of that entry loses the public label of the
+  and loses the owner identifier, the declared model label and the client supplied idempotency
+  key; the allocation of that entry loses the public label and the declared model label of the
   removed participant and keeps the label of the other one.
+
+The capability hashes of the friend records are cleared with the identity: the revocable ownership
+secret of the inviter and the acceptance key of the acceptor are hashes, never identifiers, and
+they are destroyed so the capability cannot be used any more. The server identifiers of the rows
+(the invitation, the acceptance, the rematch offer and the allocation) survive, because the match
+and the allocation refer to them; they name no subject. The operation receipts and the accepted
+events keep the participant-bound fingerprint of the accepted commands: they are service-held, are
+never public, and the declared label they carry is an allowlisted public label.
 
 The records of the other participants are never touched, the per match removal of a public replay
 is not one of these removals (it removes the replay of one match and keeps the participant), and

@@ -470,11 +470,12 @@ func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, subject
 					return err
 				}
 			}
-			// The friend and the queue records of the account are sanitized as
-			// well: an unused invitation preview must not name a removed owner.
-			if err := s.removeAuxiliaryPersonalData(ctx, tx, subjectKind, rawID); err != nil {
-				return err
-			}
+
+		}
+		// The friend and the queue records of the account are sanitized as
+		// well: an unused invitation preview must not name a removed owner.
+		if err := s.removeAuxiliaryPersonalData(ctx, tx, subjectKind, rawID); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -483,6 +484,11 @@ func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, subject
 		return err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE online_guest_ownership_proofs SET revoked_at=clock_timestamp(), revoked_reason='erasure_request' WHERE `+subject.SQLReference("guest_id")+` = $1 AND revoked_at IS NULL`, reference); err != nil {
+		return err
+	}
+	// The friend records of the guest are sanitized as well: an unused
+	// invitation preview must not name a removed guest.
+	if err := s.removeAuxiliaryPersonalData(ctx, tx, subjectKind, rawID); err != nil {
 		return err
 	}
 	return nil

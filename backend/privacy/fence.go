@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -37,6 +38,52 @@ type Fence struct {
 	ExpectedLedgerDigest string `json:"expectedLedgerDigest"`
 	// RecordedAt is when the fence was written.
 	RecordedAt time.Time `json:"recordedAt"`
+}
+
+// OpenFence opens the durable restore fence of one restore.
+//
+// The fence is bound to the restore: a restore that is already in progress
+// keeps its fence, and a second restore is refused instead of overwriting it.
+// The digest is the digest of the removal ledger the restore has to apply, so
+// the fence states what the restore owes.
+func (s *Service) OpenFence(restoreID string, expectedDigest []byte) error {
+	restoreID = strings.TrimSpace(restoreID)
+	if restoreID == "" {
+		return errors.New("privacy: the restore needs an identifier")
+	}
+	existing, open, err := s.ReadFence()
+	if err != nil {
+		return err
+	}
+	if open && existing.RestoreID != restoreID {
+		return fmt.Errorf("privacy: the restore %q is already in progress", existing.RestoreID)
+	}
+	return s.WriteFence(restoreID, expectedDigest)
+}
+
+// CloseFence closes the durable restore fence of one restore.
+//
+// The fence is closed only when the restore that opened it applied the ledger
+// the fence names. A different restore, or a different ledger, is refused.
+func (s *Service) CloseFence(restoreID string, appliedDigest []byte) error {
+	restoreID = strings.TrimSpace(restoreID)
+	if restoreID == "" {
+		return errors.New("privacy: the restore needs an identifier")
+	}
+	existing, open, err := s.ReadFence()
+	if err != nil {
+		return err
+	}
+	if !open {
+		return errors.New("privacy: no restore fence is open")
+	}
+	if existing.RestoreID != restoreID {
+		return fmt.Errorf("privacy: the open fence belongs to the restore %q", existing.RestoreID)
+	}
+	if existing.ExpectedLedgerDigest != fmt.Sprintf("%x", appliedDigest) {
+		return errors.New("privacy: the applied removal ledger is not the ledger of the restore")
+	}
+	return s.ClearFence()
 }
 
 // WriteFence opens the durable restore fence.

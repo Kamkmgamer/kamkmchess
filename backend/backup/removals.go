@@ -50,35 +50,41 @@ func (r RemovalRecord) validate() error {
 }
 
 // MergeRemovalLedgers unions two removal ledgers, keeping the later removal
-// of every match.
+// of every subject of every match.
 //
-// Restoring an older rotation copy and replaying every newer removal is what
-// keeps an erased shared game from resurrecting.
+// The key is the match, the kind and the subject: two participants of the same
+// match can both be removed, and their removals are two different removals.
+// The reason of a removal is kept: a match that was anonymized and later erased
+// keeps the later, stronger removal, so the replay of the ledger never weakens
+// a removal.
 func MergeRemovalLedgers(older, newer []RemovalRecord) ([]RemovalRecord, error) {
-	byMatch := map[string]RemovalRecord{}
+	bySubject := map[string]RemovalRecord{}
 	for _, set := range [][]RemovalRecord{older, newer} {
 		for _, entry := range set {
 			if err := entry.validate(); err != nil {
 				return nil, err
 			}
-			current, exists := byMatch[entry.MatchID]
+			key := entry.MatchID + "\x00" + entry.SubjectKind + "\x00" + entry.SubjectID
+			current, exists := bySubject[key]
 			if !exists {
-				byMatch[entry.MatchID] = entry
+				bySubject[key] = entry
 				continue
 			}
-			if current.SubjectID != entry.SubjectID {
-				return nil, fmt.Errorf("%w: match %q has two removal subjects", ErrLedgerConflict, entry.MatchID)
-			}
 			if entry.RemovedAt.After(current.RemovedAt) {
-				byMatch[entry.MatchID] = entry
+				bySubject[key] = entry
 			}
 		}
 	}
-	merged := make([]RemovalRecord, 0, len(byMatch))
-	for _, entry := range byMatch {
+	merged := make([]RemovalRecord, 0, len(bySubject))
+	for _, entry := range bySubject {
 		merged = append(merged, entry)
 	}
-	sort.Slice(merged, func(i, j int) bool { return merged[i].MatchID < merged[j].MatchID })
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].MatchID != merged[j].MatchID {
+			return merged[i].MatchID < merged[j].MatchID
+		}
+		return merged[i].SubjectID < merged[j].SubjectID
+	})
 	return merged, nil
 }
 
@@ -164,4 +170,20 @@ type RemovalLedgerSink interface {
 	ApplyRemovalRecords(ctx context.Context, records []RemovalRecord) error
 	// ApplySubjectRemovalRecords must be idempotent as well.
 	ApplySubjectRemovalRecords(ctx context.Context, records []SubjectRemovalRecord) error
+}
+
+// AdmissionFence is the durable admission control of a restore.
+//
+// The fence lives outside the restored database, so it survives the schema
+// replacement of the restore and a crash of the restore process. A restore
+// that carries removals is refused without it, because the removals are the
+// records that keep a removed subject removed.
+type AdmissionFence interface {
+	// OpenFence opens the durable fence of the restore. The digest is the
+	// digest of the removal ledger the restore has to apply.
+	OpenFence(restoreID string, expectedDigest []byte) error
+	// CloseFence closes the fence of the restore. It is called only after the
+	// removal ledger was applied and verified, and it refuses a restore that
+	// applied a different ledger.
+	CloseFence(restoreID string, appliedDigest []byte) error
 }

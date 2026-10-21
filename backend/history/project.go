@@ -167,10 +167,14 @@ func (s *Service) ProjectMatch(ctx context.Context, matchID string) (Replay, err
 func matchErased(ctx context.Context, q Querier, matchID string) (bool, error) {
 	var erased bool
 	err := q.QueryRow(ctx, `
-		SELECT EXISTS(
-			SELECT 1 FROM online_removal_ledger l
-			JOIN online_removal_requests r ON r.removal_id = l.removal_id
-			WHERE l.match_id = $1 AND l.scope = 'explicit_removal')`, matchID).Scan(&erased)
+		SELECT
+			EXISTS(
+				SELECT 1 FROM online_removal_ledger l
+				JOIN online_removal_requests r ON r.removal_id = l.removal_id
+				WHERE l.match_id = $1 AND l.scope = 'explicit_removal')
+			OR EXISTS(
+				SELECT 1 FROM online_deletion_markers m
+				WHERE m.match_id = $1 AND m.marker_kind = 'replay_removal')`, matchID).Scan(&erased)
 	if err != nil {
 		return false, err
 	}
