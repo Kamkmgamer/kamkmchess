@@ -382,9 +382,12 @@ export interface OnlineComposition {
    * An engine seat releases the lease of its turn when the turn ends, so the
    * promise settles when the seats released their leases. The transport of
    * the composition goes away with them, so a release that is still on the
-   * wire keeps a usable requester and a usable session. A caller that owns
-   * the lifetime of the composition awaits it, so a page that navigates away
-   * does not lose the release of a lease.
+   * wire keeps a usable requester and a usable session.
+   *
+   * The promise belongs to a caller that owns the lifetime of the
+   * composition. The React callers cannot await it: their effect cleanup
+   * returns nothing, so the transport of the composition goes away in the
+   * background, after the engine seats released their leases.
    */
   disposeAsync(): Promise<void>;
 }
@@ -958,23 +961,21 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   }
 
   /**
-   * Releases the transport of one seat.
+   * Detaches the transport of one seat.
    *
-   * The requester and the session of a seat are the transport of that seat.
-   * They go away after the engine seat of the match released its lease, so a
-   * release that is still on the wire keeps a usable transport.
+   * The requester and the session leave the maps at once, so a new seat of
+   * the same match never reuses the transport of the old one. The caller
+   * keeps the detached objects and disposes them itself, when the engine
+   * seat that used them released its lease. The transport is never looked up
+   * by its key after an await: a replacement seat would lose its own
+   * transport.
    */
-  function releaseSeatTransport(key: string): void {
-    const requester = guestRequesters.get(key);
-    if (requester) {
-      requester.dispose();
-      guestRequesters.delete(key);
-    }
-    const session = guestSessions.get(key);
-    if (session) {
-      session.dispose();
-      guestSessions.delete(key);
-    }
+  function detachSeatTransport(key: string): { readonly requester: AuthorizedRequester | null; readonly session: ParticipantSession | null } {
+    const requester = guestRequesters.get(key) ?? null;
+    const session = guestSessions.get(key) ?? null;
+    guestRequesters.delete(key);
+    guestSessions.delete(key);
+    return { requester, session };
   }
 
   /** Disposes the seat authority the previous account held. */
@@ -984,16 +985,21 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       // The authority of the seat is invalid at once.
       seats.delete(key);
       engineTurns.delete(key);
+      // The transport of the seat is detached at once, so a new seat of the
+      // same match gets a transport of its own.
+      const transport = detachSeatTransport(key);
       const engine = engineSeats.get(key);
       if (!engine) {
-        releaseSeatTransport(key);
+        transport.requester?.dispose();
+        transport.session?.dispose();
         continue;
       }
       engineSeats.delete(key);
-      // The engine seat releases the lease of its turn with a usable
-      // transport, and the transport of the seat goes away afterwards.
+      // The engine seat releases the lease of its turn with the transport it
+      // used, and that transport is disposed afterwards.
       void engine.dispose().catch(() => undefined).then(() => {
-        releaseSeatTransport(key);
+        transport.requester?.dispose();
+        transport.session?.dispose();
       });
     }
   }
@@ -1207,14 +1213,36 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
 
   const queueRecords = new Map<string, QueueRecord>();
   let activeQueueId: string | null = null;
-  /** The entries whose engine credential is being recovered right now. */
-  const recoveringEntries = new Set<string>();
-  /** The entries whose waiting state is being restored right now. */
-  const restoringEntries = new Set<string>();
+  /**
+   * The entries whose engine credential is being recovered right now.
+   *
+   * The claim names the identity and the generation that made it, so a
+   * superseded recovery never blocks the recovery of the identity that came
+   * back, and a finished recovery only removes its own claim.
+   */
+  const recoveringEntries = new Map<string, string>();
+  /**
+   * The entries whose waiting state is being restored right now.
+   *
+   * The claim names the identity and the generation that made it, like the
+   * claim of the credential recovery.
+   */
+  const restoringEntries = new Map<string, string>();
   /** The record that owns an entry of the service. */
   const entryRecords = new Map<string, string>();
   /** The cleanup of the engine seats, awaited by `disposeAsync()`. */
   let engineCleanup: Promise<void> = Promise.resolve();
+
+  /**
+   * The claim of one recovery.
+   *
+   * The claim names the identity and the generation that started it, so the
+   * recovery of an identity that came back is never blocked by the recovery
+   * of the identity that left.
+   */
+  function recoveryClaim(identityKey: string, generation: number, entryId: string): string {
+    return `${identityKey}:${generation}:${entryId}`;
+  }
 
   function createQueueRecord(): QueueRecord {
     const id = `queue-${queueRecords.size + 1}`;
@@ -1374,11 +1402,16 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       if (!entryId) continue;
       // One recovery per entry at a time. A reload and an identity change in
       // the same moment never rotate the same credential twice, so the engine
-      // seat is never replaced while its turn runs.
-      if (recoveringEntries.has(entryId)) continue;
-      recoveringEntries.add(entryId);
+      // seat is never replaced while its turn runs. The claim belongs to the
+      // identity and the generation that made it: a superseded recovery never
+      // blocks the recovery of the identity that came back.
+      const claim = recoveryClaim(identityKey, generation, entryId);
+      if (recoveringEntries.get(entryId) === claim) continue;
+      recoveringEntries.set(entryId, claim);
       void recoverEngineCredential(intent, identityKey, generation, owner).finally(() => {
-        recoveringEntries.delete(entryId);
+        // Only the claim of this recovery is removed. A newer recovery of the
+        // identity that came back keeps its own claim.
+        if (recoveringEntries.get(entryId) === claim) recoveringEntries.delete(entryId);
       });
     }
   }
@@ -1493,11 +1526,17 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       const entryId = intent.entryId;
       if (!entryId) continue;
       // One restoration per entry at a time. A reload and an identity change
-      // in the same moment never restore the same entry twice.
-      if (restoringEntries.has(entryId)) continue;
-      restoringEntries.add(entryId);
+      // in the same moment never restore the same entry twice. The claim
+      // belongs to the identity and the generation that made it: a
+      // superseded restoration never blocks the restoration of the identity
+      // that came back.
+      const claim = recoveryClaim(identityKey, generation, entryId);
+      if (restoringEntries.get(entryId) === claim) continue;
+      restoringEntries.set(entryId, claim);
       void restoreWaitingEntry(intent, entryId, identityKey, generation).finally(() => {
-        restoringEntries.delete(entryId);
+        // Only the claim of this restoration is removed. A newer restoration
+        // of the identity that came back keeps its own claim.
+        if (restoringEntries.get(entryId) === claim) restoringEntries.delete(entryId);
       });
     }
   }
@@ -1674,18 +1713,22 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       // A re-minted credential replaces the old one. The old session and its
       // requester are released, so the seat never keeps a revoked token.
       // The browser engine seat of the match used the revoked credential, so
-      // it is released and built again with the fresh one. The engine seat
-      // releases the lease of its turn first, and the transport of the seat
-      // goes away afterwards.
+      // it is released and built again with the fresh one. The transport of
+      // the seat is detached at once, so the new seat of the same match gets
+      // a transport of its own, and the old transport is disposed when the
+      // engine seat released the lease of its turn.
       const engine = engineSeats.get(key);
       engineTurns.delete(key);
+      const transport = detachSeatTransport(key);
       if (engine) {
         engineSeats.delete(key);
         void engine.dispose().catch(() => undefined).then(() => {
-          releaseSeatTransport(key);
+          transport.requester?.dispose();
+          transport.session?.dispose();
         });
       } else {
-        releaseSeatTransport(key);
+        transport.requester?.dispose();
+        transport.session?.dispose();
       }
     }
     seats.set(key, { credential, owner, identityKey: queueIdentity() });
@@ -2222,6 +2265,12 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     const accountRequester = accountRequesterInstance;
     accountParticipant = null;
     accountRequesterInstance = null;
+    // The transport of the guest seats is detached at once, so a seat that is
+    // created later never reuses the transport of a disposed one.
+    const guestTransport = [...guestRequesters.values()];
+    const guestSessionsOfComposition = [...guestSessions.values()];
+    guestRequesters.clear();
+    guestSessions.clear();
     // The engine seats release the lease of their turn while the transport of
     // the composition is still usable. The requesters and the sessions go
     // away afterwards, so a release that is still on the wire is never lost.
@@ -2229,10 +2278,8 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       await Promise.all(engines.map(engine => engine.dispose().catch(() => undefined)));
       account?.dispose();
       accountRequester?.dispose();
-      for (const requester of guestRequesters.values()) requester.dispose();
-      for (const session of guestSessions.values()) session.dispose();
-      guestRequesters.clear();
-      guestSessions.clear();
+      for (const requester of guestTransport) requester.dispose();
+      for (const session of guestSessionsOfComposition) session.dispose();
     })();
   }
   return {

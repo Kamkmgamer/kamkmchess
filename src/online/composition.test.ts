@@ -858,8 +858,7 @@ describe('the waiting entry of a reload is resumed with its original cutoff (R6-
     composition.dispose();
   });
 
-  it('ignores the answer of a restore that belongs to an older identity', async () => {
-    // The identity changed while the service was asked for the entry. The
+  it('ignores the answer of a restore that belongs to an older identity', async () => {    // The identity changed while the service was asked for the entry. The
     // answer of the older identity never reaches the current one.
     const listeners = new Set<(identity: { accountId: string; token: () => Promise<string> } | null) => void>();
     let identity: { accountId: string; token: () => Promise<string> } | null = { accountId: 'account-1', token: async () => 'token' };
@@ -897,6 +896,59 @@ describe('the waiting entry of a reload is resumed with its original cutoff (R6-
     await settle();
     // The entry of the older identity never reaches the screen.
     expect(composition.queueEntries).toHaveLength(0);
+    expect(wires.filter(wire => wire.path.endsWith('/fallback'))).toHaveLength(0);
+    composition.dispose();
+  });
+
+  it('resumes the entry of the identity that comes back while a read is held', async () => {
+    // The read of the entry is held while the identity leaves and comes back.
+    // The claim of the older identity never blocks the claim of the identity
+    // that returned, so the entry is resumed again.
+    const listeners = new Set<(identity: { accountId: string; token: () => Promise<string> } | null) => void>();
+    let identity: { accountId: string; token: () => Promise<string> } | null = { accountId: 'account-1', token: async () => 'token' };
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let held = false;
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: waitingEntry('qe_waiting0008') }),
+    });
+    const holding: typeof fetch = async (input, init) => {
+      const path = String(input);
+      // Only the first read of the entry is held.
+      if (!held && path.includes('/queue/entries/qe_waiting0008')) {
+        held = true;
+        await gate;
+      }
+      return fetcher(input, init);
+    };
+    const storage = createStorage();
+    storeIntent(storage, 'qe_waiting0008', null);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: holding as typeof fetch,
+      storage,
+      accountSession: {
+        get identity() { return identity; },
+        subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      },
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    await settle();
+    expect(held).toBe(true);
+    // The identity leaves and comes back while the read is held.
+    identity = { accountId: 'account-2', token: async () => 'token' };
+    for (const listener of listeners) listener(identity);
+    identity = { accountId: 'account-1', token: async () => 'token' };
+    for (const listener of listeners) listener(identity);
+    await settle();
+    // The answer of the older identity arrives and is discarded.
+    release?.();
+    await settle();
+    await settle();
+    await settle();
+    // The identity that came back owns its entry again.
+    expect(composition.queueEntries.filter(entry => entry.state.phase === 'searching')).toHaveLength(1);
     expect(wires.filter(wire => wire.path.endsWith('/fallback'))).toHaveLength(0);
     composition.dispose();
   });
@@ -1019,6 +1071,81 @@ describe('the disposal of a composition waits for its engine seats', () => {
     await guest?.resign().catch(() => undefined);
     await account?.resign().catch(() => undefined);
     expect(wires.length).toBe(after);
+  });
+
+  it('keeps the old transport of a rotated seat and never touches the new one', async () => {
+    // A re-minted credential replaces the seat. The transport of the old
+    // seat is detached at once, so the new seat gets a transport of its own,
+    // and the old transport is disposed when the old engine seat released
+    // the lease of its turn.
+    const { fetcher, wires } = createFetchDouble({
+      updates: {
+        snapshot: matchView({
+          clock: { ...matchView().clock, activeSeat: 'black', activeSince: '2026-10-21T10:00:00.000Z' },
+        }),
+      },
+    });
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let released = false;
+    let created = false;
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage: createStorage(),
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      createEngineSeat: () => {
+        created = true;
+        return {
+          seat: 'black',
+          stopped: false,
+          play: () => new Promise(() => undefined),
+          dispose: async () => { await gate; released = true; },
+        };
+      },
+    });
+    composition.registerGuestCredential(createGuestCredential({
+      guestId: 'guest-engine',
+      matchId: 'match-00000001',
+      seat: 'black',
+      token: 'engine-token',
+    }), 'guest');
+    composition.attachAndFocus('match-00000001', 'white');
+    await vi.waitFor(() => { expect(created).toBe(true); });
+    const oldSeat = composition.commandClient('match-00000001', 'black');
+    expect(oldSeat).not.toBeNull();
+    // The credential of the seat is re-minted. The old engine seat is
+    // released, and its release is held.
+    composition.registerGuestCredential(createGuestCredential({
+      guestId: 'guest-engine',
+      matchId: 'match-00000001',
+      seat: 'black',
+      token: 'engine-token-2',
+    }), 'guest');
+    await settle();
+    expect(released).toBe(false);
+    // The new seat has a transport of its own.
+    const newSeat = composition.commandClient('match-00000001', 'black');
+    expect(newSeat).not.toBeNull();
+    const before = wires.length;
+    await newSeat?.resign().catch(() => undefined);
+    expect(wires.length).toBe(before + 1);
+    // The old transport is still usable while the old seat releases its
+    // lease.
+    await oldSeat?.resign().catch(() => undefined);
+    expect(wires.length).toBe(before + 2);
+    // The release ends: the old transport goes away, and the new one stays.
+    release?.();
+    await settle();
+    await settle();
+    expect(released).toBe(true);
+    const after = wires.length;
+    await oldSeat?.resign().catch(() => undefined);
+    expect(wires.length).toBe(after);
+    await newSeat?.resign().catch(() => undefined);
+    expect(wires.length).toBe(after + 1);
+    composition.dispose();
   });
 });
 
