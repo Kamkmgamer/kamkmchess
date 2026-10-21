@@ -362,7 +362,6 @@ type GuestCredential struct {
 const (
 	internalPreparing = "preparing"
 	internalWaiting   = "waiting"
-	internalReserved  = "reserved"
 	internalFallback  = "fallback"
 	internalExpired   = "expired"
 	internalCancelled = "cancelled"
@@ -633,7 +632,7 @@ func (s *Service) Cancel(ctx context.Context, actor online.ParticipantRef, entry
 	}
 	result, err := s.mutateEntry(ctx, actor, entryID, operation, func(ctx context.Context, tx pgx.Tx, now time.Time, record entryRecord) (bool, error) {
 		switch record.InternalState {
-		case internalAssigned, internalReserved:
+		case internalAssigned:
 			return false, fmt.Errorf("%w: the entry is %s", ErrConflict, record.InternalState)
 		case internalCancelled:
 			return false, nil
@@ -660,7 +659,7 @@ func (s *Service) KeepSearching(ctx context.Context, actor online.ParticipantRef
 	}
 	result, err := s.mutateEntry(ctx, actor, entryID, operation, func(ctx context.Context, tx pgx.Tx, now time.Time, record entryRecord) (bool, error) {
 		switch record.InternalState {
-		case internalAssigned, internalReserved, internalCancelled:
+		case internalAssigned, internalCancelled:
 			return false, fmt.Errorf("%w: the entry is %s", ErrConflict, record.InternalState)
 		case internalExpired:
 			return false, fmt.Errorf("%w: the entry expired", ErrConflict)
@@ -696,7 +695,7 @@ func (s *Service) Heartbeat(ctx context.Context, actor online.ParticipantRef, en
 	}
 	result, err := s.mutateEntry(ctx, actor, entryID, operation, func(ctx context.Context, tx pgx.Tx, now time.Time, record entryRecord) (bool, error) {
 		switch record.InternalState {
-		case internalAssigned, internalReserved, internalCancelled:
+		case internalAssigned, internalCancelled:
 			return false, fmt.Errorf("%w: the entry is %s", ErrConflict, record.InternalState)
 		case internalExpired:
 			return false, fmt.Errorf("%w: the entry expired", ErrConflict)

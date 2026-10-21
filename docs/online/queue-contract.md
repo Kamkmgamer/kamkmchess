@@ -109,6 +109,11 @@ the operation, so a repeated call returns the same answer and never performs
 the operation twice. Without it the operations are idempotent by state
 already.
 
+The fallback body accepts one more optional field, `credentialRecovery`
+(a boolean). It is the explicit rotation of an owner that lost the answer of
+the fallback and holds no usable credential. A routine retry never sets it:
+it would rotate the secret the browser still has.
+
 `ready` is the explicit rejoin. It re-arms a fresh window for an entry that
 is not ready (an expired entry), and it is idempotent for an entry that is
 already waiting: a running window is never extended.
@@ -116,7 +121,8 @@ already waiting: a running window is never extended.
 `heartbeat` renews the readiness lease of a waiting entry. One heartbeat
 keeps the entry eligible for fifteen seconds. A responsive background tab
 keeps its entry; a frozen or disconnected entry loses the lease, expires and
-needs an explicit rejoin.
+needs an explicit rejoin. A heartbeat that arrives after the lease died is
+refused: only the explicit rejoin revives an entry.
 
 `keep-searching` removes the automatic cutoff (`cutoffAt: null`). The entry
 then waits until it is matched, cancelled or expired, and it never falls back
@@ -137,7 +143,7 @@ the browser engine is ready. The answer:
   "matchId": "m_…",
   "seat": "white",
   "opponentLabel": "Stockfish 19 Lite",
-  "control": { "kind": "engine", "modelLabel": "Stockfish 19 Lite" },
+  "control": { "kind": "engine", "modelLabel": "Stockfish 19 Lite (browser)" },
   "guestCredential": {
     "guestId": "engine_…",
     "matchId": "m_…",
@@ -148,8 +154,13 @@ the browser engine is ready. The answer:
 }
 ```
 
-`guestCredential` is present only for a browser engine fallback. A candidate
-match answers the same shape without the credential.
+`guestCredential` is present only when the service issued a credential in
+this call. A candidate match answers the same shape without the credential.
+
+The engine seat has the public label `Stockfish 19 Lite` and the canonical
+model label `Stockfish 19 Lite (browser)`. The two are the canonical
+resolution of the shared schema, so the answer, the seat and the public
+replay name the engine the same way.
 
 ### The entry state on the wire
 
@@ -190,11 +201,25 @@ expired entry is never revived: the owner rejoins explicitly.
 - A late candidate, a late engine readiness or a reconnected tab can never
   replace a committed opponent.
 - A waiting entry whose owner stops responding expires. The owner rejoins
-  explicitly.
+  explicitly. The lease of the initiator is enforced inside the decision, so
+  a silent owner never consumes a live candidate.
 - There is no owner concurrency cap: an owner may hold any number of entries
   and games.
 
-## The browser engine seat
+## The declared control of an entry
+
+The declared model label of an entry is resolved through the canonical
+resolution of the shared schema before it is accepted. A private routing
+identity, a secret-bearing alias or a connection nickname is replaced by the
+neutral label, and it never reaches a durable row and never crosses an owner
+boundary. The stored entry, the stored allocation, the answer and the
+canonical seat of the match therefore carry the same label.
+
+The public label of an owner is the chosen public name of the account, read
+through the canonical account label resolver. An account without a chosen name
+is the neutral `Player` label.
+
+## The engine credential of a fallback
 
 The engine of a fallback runs in the requesting owner's browser, so the owner
 needs an authority that can move the engine seat and nothing else.
@@ -203,7 +228,7 @@ The implementation gives the engine seat **its own participant identity**, a
 guest identity that is derived from the idempotency key of the allocation and
 that is never the requesting account. The answer carries a seat credential
 for that participant, scoped to that one match and that one seat, revocable,
-and superseded by every later issuance.
+and superseded by a later explicit rotation.
 
 ```
 online_seats:  engine seat  -> owner_kind='guest', owner_id='engine_…'
@@ -215,6 +240,19 @@ for the engine through its account session, and the credential it receives
 acts for the engine seat only. The participant checks of the match are not
 weakened: the credential is checked against the seat binding on every use,
 and the seat owner in `online_seats` is immutable.
+
+**The credential is issued once.** The rules are:
+
+| Situation | The service does | The answer carries |
+| --- | --- | --- |
+| The first fallback | issues the credential | the credential |
+| A routine retry of the same fallback | keeps the live credential | no credential |
+| An explicit `credentialRecovery` | rotates the credential on purpose | the new credential |
+
+The plaintext of a credential exists only in the answer that delivered it.
+The durable receipt of an operation stores the assignment **without** the
+secret, so a repeated operation returns the same assignment and never a
+credential. The browser keeps the secret it received.
 
 **Known residual (coordination, not a queue defect).** The credential is a
 full *seat* credential, so its holder may also resign the engine seat. The
@@ -230,32 +268,58 @@ separate participant and never gives the account the opponent seat.
 
 | Module | Owner | Purpose |
 | --- | --- | --- |
-| `src/online/queue.ts` | queue | the route constants, the request and answer types, the parsers and the domain rules (`isExpiredEntry`, `isAssignedEntry`, `queuePhaseOf`) |
-| `src/online/queue-client.ts` | workspace | the HTTP adapter for the queue routes |
+| `src/online/queue.ts` | queue | the route constants, the request and answer types, the parsers, the domain rules (`isExpiredEntry`, `isAssignedEntry`, `queuePhaseOf`) and the typed client `createQueueClient(requester, credentials?)` |
+| `src/online/composition.ts` | workspace | the production composition of the queue client with the authorized request boundary |
 
-`src/online/queue.ts` exports `createQueueClient(requester)`, which takes the
-authorized request boundary and calls the routes above. The workspace should
-use it instead of re-declaring the bodies.
+`createQueueClient` takes the authorized request boundary and calls the
+routes above. Its second parameter is the engine credential port:
+
+```ts
+export interface QueueEngineCredentialPort {
+  /** Reports whether the browser holds a usable credential of the match. */
+  holdsEngineCredential(matchId: string): boolean;
+}
+```
+
+The port is how the browser tells a routine retry from a lost answer. When
+the answer of a fallback carries no credential and the browser holds none,
+the client asks for the explicit `credentialRecovery` once. When the browser
+still holds its credential, the client does nothing and the live credential
+keeps working.
+
+**Handoff to the workspace.** The composition has to pass the port:
+
+```ts
+const queueClient = createQueueClient(requester, {
+  holdsEngineCredential: matchId => engineSeatStore.holds(matchId),
+});
+```
+
+Without the port the client never rotates a credential, so a browser that
+lost the answer of a fallback stays without an engine credential until the
+owner asks for the recovery explicitly. The composition already sends an
+operation identifier for every mutation ✓.
 
 ## Composition notes for the integrator
 
 - The queue allocates matches through the **shared** trusted writer
-  (`online.MatchAllocator`: `CreateAllocatedMatch` and `ValidateSetup`). The
-  queue never writes a match row itself, so there is one copy of the
-  acceptance SQL and one rules-policy check. The queue asks the writer for
-  the match **outside** the queue transaction, after the durable reservation
-  row was written; a failure in between leaves a recoverable pending
-  allocation that the reconciliation loop finishes.
+  (`online.MatchAllocator`: `CreateMatchInTx` and `ValidateSetup`). The queue
+  never writes a match row itself, so there is one copy of the acceptance SQL
+  and one rules-policy check. The writer runs **inside** the queue
+  transaction that holds the time-control bucket lock, so the game and the
+  consumption of the entries commit together and two owners of one pair can
+  never write the same match.
 - The composition reads `cfg.Online.FriendEnabled` and
   `cfg.Online.QueueEnabled` and passes
   `httpapi.NewFeatures(httpapi.OnlineFeatures{Friends: …, Queue: …})`.
 - The queue reconciliation loop (`StartQueueReconciler`) expires the
-  unresponsive entries, resolves the cutoffs that passed against their
-  original deadline and finishes the pending allocations. It never commits
-  the engine fallback: that needs a ready engine in the owner's browser.
-- The public label of an owner comes from a `LabelResolver` port. The queue
-  ships with a default resolver that names every owner "Player"; the
-  production composition should pass the public profile service.
+  unresponsive entries and resolves the cutoffs that passed against their
+  original deadline. It never commits the engine fallback: that needs a
+  ready engine in the owner's browser. The result of a pass is reported, so
+  a queue that fails every pass is visible.
+- The public label of an owner comes from the canonical account label
+  resolver (`invite.NewAccountLabelResolver`), and the declared control is
+  resolved through the canonical resolution of the shared schema.
 
 ## Status
 

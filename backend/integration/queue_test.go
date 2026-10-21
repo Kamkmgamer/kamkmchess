@@ -48,16 +48,19 @@ type recordingCredentials struct {
 	mu      sync.Mutex
 	issued  []onlineauth.EngineSeatRequest
 	secrets []string
-	live    bool
+	live    map[string]bool
 }
 
 func (c *recordingCredentials) IssueEngineSeatCredential(_ context.Context, request onlineauth.EngineSeatRequest) (onlineauth.IssuedSeatCredential, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.live == nil {
+		c.live = map[string]bool{}
+	}
 	c.issued = append(c.issued, request)
 	secret := "kmgc1_testsecret" + fmt.Sprintf("%043d", len(c.issued))
 	c.secrets = append(c.secrets, secret)
-	c.live = true
+	c.live[request.MatchID+"/"+string(request.Seat)] = true
 	return onlineauth.IssuedSeatCredential{
 		CredentialID: "kg-test-" + fmt.Sprintf("%08d", len(c.issued)),
 		GuestID:      request.GuestID,
@@ -70,10 +73,10 @@ func (c *recordingCredentials) IssueEngineSeatCredential(_ context.Context, requ
 	}, nil
 }
 
-func (c *recordingCredentials) HasEngineSeatCredential(context.Context, string, online.Seat) (bool, error) {
+func (c *recordingCredentials) HasEngineSeatCredential(_ context.Context, matchID string, seat online.Seat) (bool, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.live, nil
+	return c.live[matchID+"/"+string(seat)], nil
 }
 
 // namedLabels names the owners of the test with a stable public label.

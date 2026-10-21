@@ -23,18 +23,17 @@ The wire contract of the queue is published in
 
 An entry is created by an explicit, account-only request. The creation is the
 authoritative ready acceptance: it records `readyAt` and arms the ten second
-window `cutoffAt = readyAt + 10s`, and it never moves afterwards. Candidate
-selection, reservation, cancellation and the engine fallback are serialized
-per time-control bucket with a transaction advisory lock, so a delayed timer,
-a competing matchmaker and a cancellation observe one order and a candidate is
-never skipped because another transaction held its row. The allocation itself
-has three durable steps: the reservation row (and the consumed entry rows) are
-written inside the bucket lock, the shared writer writes the canonical match
-outside the queue transaction with the idempotency key of the reservation, and
-the reservation is completed and the entries are published as assigned. A
-failure between the steps leaves a pending reservation that the reconciliation
-loop finishes into the same match. The unique index on the consumed entry is
-the database fact behind "one entry produces one game".
+window `cutoffAt = readyAt + 10s`, and it never moves afterwards. The
+declared model label is resolved through the canonical resolution of the
+shared schema before it is accepted, so a raw requested label never reaches a
+durable row and never crosses an owner boundary. Candidate selection,
+reservation, the write of the canonical match, cancellation and the engine
+fallback are one decision inside one transaction that holds the time-control
+bucket lock: the shared writer writes the match inside that transaction, so
+the game and the consumption of the entries commit together and two owners
+of one pair can never write the same match. A delayed timer, a competing
+matchmaker and a cancellation observe one order. The unique index on the
+consumed entry is the database fact behind "one entry produces one game".
 
 ## Acceptance scenarios
 
@@ -45,12 +44,12 @@ the database fact behind "one entry produces one game".
 | `QUE-03` concurrent games | `TestQueueOwnerHoldsUnlimitedConcurrentEntries` (three intents of one owner, no extra entry), `TestQueueCompetingMatchersProduceOneGame` (two assigned entries and one waiting) | covered |
 | `QUE-04` multi-tab entry | `TestQueueCreationIsIdempotentPerOwner` (the replay of an intent answers the same entry; the same intent with another request is a conflict; another owner may use the same intent value) | covered |
 | `QUE-05` readiness start | `TestQueueWindowStartsAtTheReadyAcceptance` (the ready time is the acceptance time; the cutoff is the ten second window after it; the window does not move) | covered |
-| `QUE-07` background eligibility | `TestQueueUnresponsiveEntryExpiresAndNeedsAnExplicitRejoin` (the lease runs out, the entry expires and is reported without a ready time, it leaves the eligibility, and an explicit rejoin arms a fresh window) | covered |
+| `QUE-07` background eligibility | `TestQueueUnresponsiveEntryExpiresAndNeedsAnExplicitRejoin` (the lease runs out, the entry expires and is reported without a ready time, it leaves the eligibility, and an explicit rejoin arms a fresh window), `TestQueueResponsiveBackgroundEntryStaysEligible` (a responsive owner stays eligible and is still a candidate), `TestQueueExpiredInitiatorNeverConsumesACandidate`, `TestQueueLateHeartbeatNeverRevivesADeadLease` | covered |
 | `QUE-08` selection change | `TestQueueSelectionStaysFixedAndOtherEntriesSurvive` (the settings of an entry are fixed, a change is a cancellation and a new entry with a fresh window, the other entry of the owner is unaffected) | covered |
 | `QUE-09` deadline equality | `TestQueueCutoffEqualityWinsAndLaterCandidatesDoNot` (a candidate that becomes ready exactly at the cutoff wins over the engine; a later candidate never replaces the committed opponent) | covered |
-| `QUE-10` atomic allocation | `TestQueueCompetingMatchersProduceOneGame` (three competing matchmakers produce exactly one game), `TestQueueCancelAndAssignmentRaceHasOneOutcome` (the cancellation and the assignment race to one outcome) | covered |
-| `QUE-13` fixed opponent | `TestQueueCommittedOpponentIsNeverReplaced` (a late candidate cannot replace the committed engine), `TestQueuePendingAllocationIsRecovered` | covered |
-| `QUE-14` queue position isolation | `TestQueueUsesTheStandardPositionAndRandomColors` (the standard position, the requested clock, two different seat owners), `TestQueueMatchIdentifiersNeverCollideAcrossOwners` | covered |
+| `QUE-10` atomic allocation | `TestQueueCompetingMatchersProduceOneGame` (three competing matchmakers produce exactly one game), `TestQueueCancelAndAssignmentRaceHasOneOutcome` (the cancellation and the assignment race to one outcome), `TestQueueCompetingOwnersNeverSeeAServerError` (five rounds of two competing owners: one game, no server error), `TestQueueSweepAndOwnerRaceOnTheSameAllocation` (the reconciliation loop and the owner race on one allocation) | covered |
+| `QUE-13` fixed opponent | `TestQueueCommittedOpponentIsNeverReplaced` (a late candidate cannot replace the committed engine), `TestQueueCommittedAllocationIsNeverResolvedAgain` | covered |
+| `QUE-14` queue position isolation | `TestQueueUsesTheStandardPositionAndRandomColors` (the standard position, the requested clock, two different seat owners), `TestQueueMatchIdentifiersNeverCollideAcrossOwners`, `TestQueueRawRequestedLabelNeverCrossesTheOwnerBoundary` (a raw requested label never reaches a row or another owner) | covered |
 | `ARC-10` late timer | `TestQueueDelayedWorkerResolvesTheOriginalCutoff` (a late worker pairs the candidate that was ready before the original cutoff and leaves the post-cutoff candidate waiting), `TestQueueLateWorkerDoesNotMatchPostCutoffCandidates` (a late worker never matches a post-cutoff candidate; the entry waits for the engine fallback) | covered |
 
 `QUE-06` (readiness failure), `QUE-11` (Stockfish assignment), `QUE-12`
@@ -106,90 +105,94 @@ pnpm exec tsc -p tsconfig.node.json --noEmit    # clean
 pnpm exec eslint . --max-warnings 0             # clean
 ```
 
-## Review findings
+## Review findings of round 3 (independent queue review)
 
-### F-10 — the browser engine seat (P1, `early-authority-review.md`)
+The independent review of round 3 (`queue-review-r3.md`) found ten items. Each
+of them is fixed and covered by a regression in this branch. The review
+reproduced the defects against the reviewed head; the corrections below are
+the ones this branch ships.
 
-**Assessed against the approved specification, and partially addressed.**
+| Item | Disposition | Evidence |
+| --- | --- | --- |
+| Q-01 the completion of one allocation is not serialized | **fixed**: the decision is one transaction that holds the bucket lock, and the shared writer writes the match inside it. The pending allocation state is gone. | `TestQueueAllocationRacesAreSerialized` (three rounds of two competing owners, no server error, one game each), `TestQueueSweepAndOwnerRaceOnTheSameAllocation` (the sweep and the owner race on one allocation, one game, no error), `TestQueueCompetingMatchersProduceOneGame` |
+| Q-02 every fallback rotates the engine credential | **fixed**: the credential is issued once. A routine retry keeps the live credential and answers without a secret; an explicit recovery rotates it on purpose. | `TestQueueEngineCredentialLifecycle`, `TestQueueHTTPFallbackCarriesTheEngineCredential` |
+| Q-03 the operation receipt stores the plaintext engine credential | **fixed**: the durable receipt stores the assignment without the secret. | `TestQueueEngineCredentialLifecycle` (the stored row carries neither the token nor a credential) |
+| Q-04 the answer carries the raw requested model label | **fixed**: the declared control is resolved through the canonical resolution of the shared schema before it is stored or returned. | `TestQueueCanonicalLabels` (the answer, the allocation row, the entry row and the canonical seat all carry the resolved label) |
+| Q-05 the engine label drifts from the canonical one | **fixed**: the engine seat and the answer carry the canonical model label `Stockfish 19 Lite (browser)` and the public label `Stockfish 19 Lite`. | `TestQueueCanonicalLabels` |
+| Q-06 the readiness lease of the initiator is not enforced | **fixed**: a dead lease is refused inside the decision, and a heartbeat never revives it. | `TestQueueReadinessLeaseIsEnforced` |
+| Q-07 a fallback pending entry never expires | **fixed**: the expiry sweep covers the `fallback` state as well. | `TestQueueFallbackPendingEntryExpires` |
+| Q-08 the failures of the reconciliation loop are invisible | **fixed**: the pass result and every failure reach the logger or the error hook of the composition. | `TestQueueReconcilerReportsTheSweepResult`, `TestQueueReconcilerReportsAFailedPass` |
+| Q-09 the documentation and the evidence drift | **fixed**: the contract and this file state the canonical engine label, the credential lifecycle, the canonical label resolution, the lease enforcement and the atomic allocation. The recorded runs below are the ones of this commit. | the "Executed results" section |
+| Q-10 the HTTP regressions are stub only | **fixed**: the HTTP surface is exercised end to end against the real queue, the real database and the real shared writer, and the engine credential of the production composition is exercised against the real authorization service. | `TestQueueHTTPRoutesRunAgainstTheRealQueue`, `TestQueueHTTPFallbackCarriesTheEngineCredential`, `TestQueueRealEngineCredentialIsScopedAndRefusedByTheQueue` |
 
-The approved specification (KHA-60) says: "Stockfish fallback runs in the
-initiating browser using a narrowly scoped engine-seat grant. Its accepted
-moves still require server validation." The published matching contract says
-the fallback answer carries a seat credential for the engine seat.
+The foundation owns `backend/online/allocation_writer.go`. This branch does
+not edit it: it uses the exported in-transaction seam
+(`CreateMatchInTx`, `ValidateSetup`, `NewAllocationCommand`) exactly as it
+is, and the queue regressions reproduce the races against it.
 
-Addressed in this ticket:
+### The credential design of Q-02 and Q-03
 
-* The engine seat is **its own participant**. It is a guest identity derived
-  from the idempotency key of the allocation, and it is never the requesting
-  account. The requesting account therefore cannot act as the opponent
-  through its account session, and the seat owner in `online_seats` stays
-  immutable (`TestQueueFallbackEngineSeatIsASeparateParticipant`).
-* The credential is scoped to one match and one seat, revocable, and
-  superseded by every later issuance
-  (`backend/onlineauth/engine.go`).
-* No ownership proof is minted for the engine seat, so the engine seat can
-  never be linked to an account.
+The two requirements pull in opposite directions: a routine retry must not
+rotate a secret the browser holds, and an owner that lost the answer must be
+able to get a usable credential again - without a plaintext durable receipt.
 
-**Residual and coordination.** The credential is a full *seat* credential, so
-its holder may also resign the engine seat, and the runner model of KHA-73
-treats the holder as the legitimate runner of that seat. A move-only
-capability would change the approved contract, so it is not invented here.
-The matching worker (KHA-75) and the runner worker (KHA-73) own that
-boundary; the queue keeps the engine seat a separate participant and never
-gives the account the opponent seat. The note records the residual for the
-integrator.
+The resolution has three parts:
 
-### F-14 — the feature route and the server gates (P1)
+1. The service issues the credential once. A repeated fallback checks whether
+   the seat has a live credential and, if it has, answers the assignment
+   **without** a secret. The browser keeps the secret it received, so the
+   engine seat of a running game keeps working.
+2. The durable receipt stores the assignment **without** the secret. The
+   plaintext of a credential exists only in the answer that delivered it, and
+   the database keeps the hash of the secret.
+3. The owner that lost the answer asks for the explicit recovery
+   (`credentialRecovery: true`). That rotation is the only one, and it is the
+   owner's own decision. The browser client asks for it exactly when the
+   browser holds no usable credential, and the port that reports that state
+   is handed to the workspace composition.
 
-**Addressed.** `GET /v1/online/features` answers exactly
-`{"friends": boolean, "queue": boolean}`
-(`TestOnlineFeaturesAnswerCarriesExactlyTwoSwitches`). The queue routes are
-mounted only when `ONLINE_QUEUE_ENABLED` is on, and both switches default to
-off. The route is registered in exactly one place
-(`backend/serverapp/server.go`); a second registration of the same pattern
-would panic the server, so the composition keeps one.
+No encryption was invented and no boundary was weakened: the credential stays
+seat-scoped, origin-scoped and revocable, and the queue stays account-only.
 
-### F-22 — the match identifier of an allocation (P2)
+### The composition of the credential port
 
-**Addressed by construction.** The queue never uses the client intent
-identifier as the idempotency key of a match: every reservation gets its own
-server generated operation identifier, and the shared writer derives the
-match identifier from that key and the participant that caused the
-allocation. Two owners that use the same intent identifier therefore never
-share a match (`TestQueueMatchIdentifiersNeverCollideAcrossOwners`).
+`createQueueClient(requester, credentials?)` in `src/online/queue.ts` takes
+the engine credential port. The workspace composition has to pass it:
 
-### The review note about the queue expiry
+```ts
+const queueClient = createQueueClient(requester, {
+  holdsEngineCredential: matchId => engineSeatStore.holds(matchId),
+});
+```
 
-The wire answer of an expired entry is `waiting` with a `null` `readyAt`, so
-the browser can tell "expired" from "still searching"
-(`TestQueueUnresponsiveEntryExpiresAndNeedsAnExplicitRejoin`).
+Without the port the client never rotates a credential, so a browser that
+lost the answer of a fallback stays without an engine credential until the
+owner asks for the recovery. The composition already sends an operation
+identifier for every mutation.
 
 ## Known limitations
 
-1. The public label of an owner comes from a `LabelResolver` port. The queue
-   ships with a default resolver that names every owner "Player"; the
-   production composition should pass the public profile service. The port is
-   `queue.Options.Labels`.
-2. The queue asks the shared writer for the canonical match **outside** the
-   queue transaction, because the shared writer owns its transaction. The
-   durable reservation is what makes that safe: it names the idempotency key
-   of the match, and the reconciliation loop finishes a pending reservation
-   into the same match. A match that exists while the reservation is still
-   pending is never published as an assignment.
-3. The engine credential is minted in its own transaction, after the match
-   exists (the credential needs the committed seat row). A crash in between
-   leaves a committed match without a credential; the owner asks again and
-   receives a fresh credential for the same seat.
-4. The reconciliation loop never commits the browser engine fallback. That
+1. The engine credential is minted in its own transaction, after the match
+   exists, because the credential needs the committed seat row. A crash in
+   between leaves a committed match without a credential; the owner asks for
+   the explicit recovery and receives a fresh credential for the same seat.
+2. The reconciliation loop never commits the browser engine fallback. That
    needs a ready engine in the owner's browser, so the loop only records that
    the cutoff was reached.
-5. The service does not run the browser agent or the engine. It allocates the
+3. The service does not run the browser agent or the engine. It allocates the
    match and names the opponent; the moves, the clocks and the results stay
    with the shared match service of KHA-65 and KHA-73.
-6. The candidate order is the ready time and then the creation time. Two
+4. The candidate order is the ready time and then the creation time. Two
    entries that became ready at the very same instant are a tie, and the tie
    is broken by the entry identifier. The tie is stable but not
    creation-ordered; a monotonic sequence column would remove it.
+5. The workspace composition has to pass the engine credential port to
+   `createQueueClient` before a browser that lost the answer of a fallback
+   can recover it. The contract change is recorded above.
+6. The account path of the HTTP regressions uses a fixture token: producing a
+   genuine Clerk session token would need a live JWKS endpoint. The guest
+   path, the origin rule, the strict bodies and the real engine credential
+   are exercised against the real services.
 
 ## Status
 

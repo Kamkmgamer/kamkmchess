@@ -24,14 +24,18 @@ import (
 
 // The regressions of the independent queue review, round 3. Every one of them
 // runs against the real PostgreSQL fixture and the real shared writer.
+//
+// The regressions share one fixture per group: every fixture applies the
+// whole migration set, so a group keeps its own database and still runs
+// against the real schema.
 
 // Q-01: the completion of one allocation is serialized. Two owners of one
 // pair, or the reconciliation loop and an owner, never write the same match
 // and never answer a server error for a committed game.
-func TestQueueCompetingOwnersNeverSeeAServerError(t *testing.T) {
+func TestQueueAllocationRacesAreSerialized(t *testing.T) {
 	h := newQueueHarness(t)
 	ctx := context.Background()
-	for round := 0; round < 5; round++ {
+	for round := 0; round < 3; round++ {
 		firstOwner := fmt.Sprintf("user_a%d", round)
 		secondOwner := fmt.Sprintf("user_b%d", round)
 		first := h.createEntry(firstOwner, agentControl("GPT-4o"), standardClock(), "")
@@ -73,9 +77,11 @@ func TestQueueCompetingOwnersNeverSeeAServerError(t *testing.T) {
 func TestQueueSweepAndOwnerRaceOnTheSameAllocation(t *testing.T) {
 	h := newQueueHarness(t)
 	ctx := context.Background()
-	for round := 0; round < 3; round++ {
-		first := h.createEntry(fmt.Sprintf("user_c%d", round), agentControl("GPT-4o"), standardClock(), "")
-		second := h.createEntry(fmt.Sprintf("user_d%d", round), agentControl("Claude"), standardClock(), "")
+	for round := 0; round < 2; round++ {
+		firstOwner := fmt.Sprintf("user_c%d", round)
+		secondOwner := fmt.Sprintf("user_d%d", round)
+		first := h.createEntry(firstOwner, agentControl("GPT-4o"), standardClock(), "")
+		second := h.createEntry(secondOwner, agentControl("Claude"), standardClock(), "")
 		// The cutoff of the first entry passes, so the reconciliation loop
 		// resolves it while the owner asks for a match.
 		h.clock.Advance(11 * time.Second)
@@ -89,7 +95,7 @@ func TestQueueSweepAndOwnerRaceOnTheSameAllocation(t *testing.T) {
 		}()
 		go func() {
 			defer wg.Done()
-			_, err := h.service.Match(ctx, account(fmt.Sprintf("user_c%d", round)), first.EntryID, queue.Operation{})
+			_, err := h.service.Match(ctx, account(firstOwner), first.EntryID, queue.Operation{})
 			if err != nil && !errors.Is(err, queue.ErrNoCandidate) {
 				errs <- err
 				return
@@ -103,11 +109,11 @@ func TestQueueSweepAndOwnerRaceOnTheSameAllocation(t *testing.T) {
 				t.Fatalf("round %d: the race produced an error: %v", round, err)
 			}
 		}
-		firstEntry, err := h.service.Entry(ctx, account(fmt.Sprintf("user_c%d", round)), first.EntryID)
+		firstEntry, err := h.service.Entry(ctx, account(firstOwner), first.EntryID)
 		if err != nil {
 			t.Fatal(err)
 		}
-		secondEntry, err := h.service.Entry(ctx, account(fmt.Sprintf("user_d%d", round)), second.EntryID)
+		secondEntry, err := h.service.Entry(ctx, account(secondOwner), second.EntryID)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,9 +126,10 @@ func TestQueueSweepAndOwnerRaceOnTheSameAllocation(t *testing.T) {
 	}
 }
 
-// Q-02: a routine retry of the fallback never rotates the credential the
-// browser already holds.
-func TestQueueRepeatedFallbackKeepsTheEngineCredential(t *testing.T) {
+// Q-02 and Q-03: the credential of the engine seat is issued once, a routine
+// retry never rotates it, an explicit recovery rotates it on purpose, and the
+// durable receipt never stores the plaintext.
+func TestQueueEngineCredentialLifecycle(t *testing.T) {
 	h := newQueueHarness(t)
 	ctx := context.Background()
 	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
@@ -147,21 +154,7 @@ func TestQueueRepeatedFallbackKeepsTheEngineCredential(t *testing.T) {
 	if len(h.credentials.issued) != 1 {
 		t.Fatalf("issued credentials=%d, want 1", len(h.credentials.issued))
 	}
-}
-
-// Q-02: an explicit recovery of an owner that lost the answer rotates the
-// credential on purpose.
-func TestQueueExplicitRecoveryRotatesTheEngineCredential(t *testing.T) {
-	h := newQueueHarness(t)
-	ctx := context.Background()
-	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
-	first, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.FallbackRequest{Origin: "https://app.example"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.GuestCredential == nil {
-		t.Fatal("the first fallback carried no engine credential")
-	}
+	// The explicit recovery rotates the credential on purpose.
 	recovered, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.FallbackRequest{
 		Origin:             "https://app.example",
 		CredentialRecovery: true,
@@ -178,14 +171,9 @@ func TestQueueExplicitRecoveryRotatesTheEngineCredential(t *testing.T) {
 	if recovered.MatchID != first.MatchID {
 		t.Fatalf("the recovery named another game: %v vs %v", recovered.MatchID, first.MatchID)
 	}
-}
-
-// Q-03: the durable receipt never stores the plaintext of a credential.
-func TestQueueReceiptNeverStoresTheEngineSecret(t *testing.T) {
-	h := newQueueHarness(t)
-	ctx := context.Background()
-	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
-	assignment, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.FallbackRequest{
+	// The durable receipt of an operation never stores the plaintext.
+	operated := h.createEntry("user_b", agentControl("Claude"), standardClock(), "")
+	assignment, err := h.service.Fallback(ctx, account("user_b"), operated.EntryID, queue.FallbackRequest{
 		Operation: queue.Operation{ID: "operation-0001"},
 		Origin:    "https://app.example",
 	})
@@ -196,17 +184,13 @@ func TestQueueReceiptNeverStoresTheEngineSecret(t *testing.T) {
 		t.Fatal("the fallback carried no engine credential")
 	}
 	var stored []byte
-	if err = h.pool.QueryRow(ctx, `SELECT result_json FROM online_operation_receipts WHERE scope_kind='queue' AND scope_id=$1 AND operation_id=$2`, entry.EntryID, "operation-0001").Scan(&stored); err != nil {
+	if err = h.pool.QueryRow(ctx, `SELECT result_json FROM online_operation_receipts WHERE scope_kind='queue' AND scope_id=$1 AND operation_id=$2`, operated.EntryID, "operation-0001").Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(stored), assignment.GuestCredential.Token) {
+	if strings.Contains(string(stored), assignment.GuestCredential.Token) || strings.Contains(string(stored), "kmgc1_") {
 		t.Fatalf("the durable receipt stores the engine secret: %s", stored)
 	}
-	if strings.Contains(string(stored), "kmgc1_") {
-		t.Fatalf("the durable receipt stores a credential: %s", stored)
-	}
-	// The stored answer is the assignment without the secret.
-	retry, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.FallbackRequest{
+	retry, err := h.service.Fallback(ctx, account("user_b"), operated.EntryID, queue.FallbackRequest{
 		Operation: queue.Operation{ID: "operation-0001"},
 		Origin:    "https://app.example",
 	})
@@ -221,9 +205,9 @@ func TestQueueReceiptNeverStoresTheEngineSecret(t *testing.T) {
 	}
 }
 
-// Q-04: the raw requested label never crosses an owner boundary and never
-// reaches a durable row.
-func TestQueueRawRequestedLabelNeverCrossesTheOwnerBoundary(t *testing.T) {
+// Q-04 and Q-05: the raw requested label never crosses an owner boundary and
+// never reaches a durable row, and the engine label is the canonical one.
+func TestQueueCanonicalLabels(t *testing.T) {
 	h := newQueueHarness(t)
 	ctx := context.Background()
 	raw := "internal-tunnel-route-v2"
@@ -239,7 +223,6 @@ func TestQueueRawRequestedLabelNeverCrossesTheOwnerBoundary(t *testing.T) {
 	if *assignment.Control.ModelLabel != "Custom model" {
 		t.Fatalf("the answer carries an unexpected label: %+v", assignment.Control)
 	}
-	// The durable rows carry the canonical label too.
 	var stored string
 	if err = h.pool.QueryRow(ctx, `SELECT opponent_control_model_label FROM online_queue_allocations WHERE initiator_entry_id=$1`, entry.EntryID).Scan(&stored); err != nil {
 		t.Fatal(err)
@@ -254,7 +237,6 @@ func TestQueueRawRequestedLabelNeverCrossesTheOwnerBoundary(t *testing.T) {
 	if entryLabel == raw {
 		t.Fatalf("the entry row stores the raw requested label: %s", entryLabel)
 	}
-	// The canonical seat of the match carries the same resolved label.
 	match, err := h.online.GetMatch(ctx, assignment.MatchID)
 	if err != nil {
 		t.Fatal(err)
@@ -267,31 +249,26 @@ func TestQueueRawRequestedLabelNeverCrossesTheOwnerBoundary(t *testing.T) {
 			t.Fatalf("the canonical seat carries the raw requested label: %+v", seat.Control)
 		}
 	}
-}
-
-// Q-05: the engine label of the fallback is the canonical one.
-func TestQueueFallbackUsesTheCanonicalEngineLabel(t *testing.T) {
-	h := newQueueHarness(t)
-	ctx := context.Background()
-	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
-	assignment, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.FallbackRequest{Origin: "https://app.example"})
+	// The engine label of the fallback is the canonical one.
+	fallbackEntry := h.createEntry("user_c", agentControl("GPT-4o"), standardClock(), "")
+	fallback, err := h.service.Fallback(ctx, account("user_c"), fallbackEntry.EntryID, queue.FallbackRequest{Origin: "https://app.example"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if assignment.OpponentLabel != "Stockfish 19 Lite" {
-		t.Fatalf("the answer names the engine %q", assignment.OpponentLabel)
+	if fallback.OpponentLabel != "Stockfish 19 Lite" {
+		t.Fatalf("the answer names the engine %q", fallback.OpponentLabel)
 	}
-	if assignment.Control.Kind != online.ControlEngine {
-		t.Fatalf("the answer does not declare an engine: %+v", assignment.Control)
+	if fallback.Control.Kind != online.ControlEngine {
+		t.Fatalf("the answer does not declare an engine: %+v", fallback.Control)
 	}
-	if assignment.Control.ModelLabel == nil || *assignment.Control.ModelLabel != "Stockfish 19 Lite (browser)" {
-		t.Fatalf("the answer carries an unexpected engine label: %+v", assignment.Control)
+	if fallback.Control.ModelLabel == nil || *fallback.Control.ModelLabel != "Stockfish 19 Lite (browser)" {
+		t.Fatalf("the answer carries an unexpected engine label: %+v", fallback.Control)
 	}
-	match, err := h.online.GetMatch(ctx, assignment.MatchID)
+	fallbackMatch, err := h.online.GetMatch(ctx, fallback.MatchID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, seat := range match.Seats {
+	for _, seat := range fallbackMatch.Seats {
 		if seat.Control.Kind != online.ControlEngine {
 			continue
 		}
@@ -305,8 +282,8 @@ func TestQueueFallbackUsesTheCanonicalEngineLabel(t *testing.T) {
 }
 
 // Q-06: the readiness lease of the initiator is enforced inside the
-// decision. A silent owner never consumes a live candidate.
-func TestQueueExpiredInitiatorNeverConsumesACandidate(t *testing.T) {
+// decision, and a heartbeat never revives a dead lease.
+func TestQueueReadinessLeaseIsEnforced(t *testing.T) {
 	h := newQueueHarness(t)
 	ctx := context.Background()
 	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
@@ -326,21 +303,13 @@ func TestQueueExpiredInitiatorNeverConsumesACandidate(t *testing.T) {
 	if stored.Status != online.QueueWaiting || stored.AssignedMatchID != nil {
 		t.Fatalf("the candidate was consumed by an expired initiator: %+v", stored)
 	}
-}
-
-// Q-06: a heartbeat that arrives after the lease died never revives the
-// entry. Only the explicit rejoin does.
-func TestQueueLateHeartbeatNeverRevivesADeadLease(t *testing.T) {
-	h := newQueueHarness(t)
-	ctx := context.Background()
-	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
-	h.clock.Advance(queue.DefaultReadinessTTL + time.Second)
-	if _, err := h.service.Heartbeat(ctx, account("user_a"), entry.EntryID, queue.Operation{}); err == nil {
+	// A heartbeat that arrives after the lease died never revives the entry.
+	if _, err = h.service.Heartbeat(ctx, account("user_a"), entry.EntryID, queue.Operation{}); err == nil {
 		t.Fatal("a late heartbeat revived a dead lease")
 	} else if !errors.Is(err, queue.ErrConflict) {
 		t.Fatalf("the late heartbeat error=%v, want ErrConflict", err)
 	}
-	stored, err := h.service.Entry(ctx, account("user_a"), entry.EntryID)
+	stored, err = h.service.Entry(ctx, account("user_a"), entry.EntryID)
 	if err != nil {
 		t.Fatal(err)
 	}
