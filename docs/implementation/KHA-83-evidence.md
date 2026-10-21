@@ -175,7 +175,7 @@ measurement of a serving path is still **not run** and not claimed.
   measures that inside the real service container, with a negative control:
   the restore user is refused the file, the documented reading side hands the
   values over, and the file is still `0600` and owned by root afterwards.
-   The compose proof reports 18 steps, all of them passed on the tree of this
+   The compose proof reports 19 steps, all of them passed on the tree of this
    candidate.
 - The protected copy of the durable evidence of a restore is **durable** and
   it is measured to be so. The copy is written onto `/backups/restore-evidence`,

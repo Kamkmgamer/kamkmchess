@@ -545,8 +545,8 @@ export async function verifyComposeConfig(root) {
     const lockFailed = durable?.lockFailed ?? '';
     steps.push({
       id: 'the-failure-of-the-lock-is-not-reported-as-a-running-restore',
-      passed: !/^0:/.test(lockFailed) && !/holds the lifecycle/i.test(lockFailed) && lockFailed.length > 0,
-      detail: !/^0:/.test(lockFailed) && !/holds the lifecycle/i.test(lockFailed) && lockFailed.length > 0
+      passed: /^1:/.test(lockFailed) && /can't create.*restore-fence\.lock.*is a directory/i.test(lockFailed),
+      detail: /^1:/.test(lockFailed) && /can't create.*restore-fence\.lock.*is a directory/i.test(lockFailed)
         ? `a lock that cannot be opened fails with its own status and its own message, and it is never reported as a restore that holds the lifecycle: ${lockFailed}`
         : `the failure of the lock was not told apart from a running restore: ${lockFailed}`,
     });
