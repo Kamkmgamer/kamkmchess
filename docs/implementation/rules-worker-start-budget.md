@@ -103,12 +103,12 @@ request run out of time. The queue wait is not reset and a queued request
 does not get a fresh budget; the remedy is to keep the worker warm, not to
 relax the budget.
 
-The client of the composition is not warmed at boot. The composition
-creates one rules worker client, closes it with the server, and does not call
-`Warm`, so the first request after a server start or after a crash of the
-worker still meets a cold worker. A `client.Warm(ctx)` call next to the
-creation of the client in the composition closes that window. The composition
-is not part of this change.
+The client of the composition is warmed at boot. The composition creates
+one rules worker client, calls `Warm` next to it, and closes it with the
+server, so the first request after a server start does not meet a cold
+worker. A warm that fails stops the boot: the service must never report a
+dependency it could not prove, and the worker of the failed boot is closed and
+reaped by the ownership of the composition.
 
 ## The failure of a call
 
@@ -276,8 +276,13 @@ ownership of the composition. The repair of a closed gate is the recovery of
 a runtime outage, not a second way to boot.
 
 The setup validation of a match creation keeps its waiting behaviour: a
-creation waits for the worker instead of refusing the match. Only a probe
-reports the busy worker.
+creation of an open gate waits for the worker instead of refusing the match.
+A creation of a **closed** gate is refused before the worker is asked, like
+every other refused traffic: the closed gate must not start a cold worker and
+it must not hold the slot that the repair of the closed gate needs. The
+authoritative gate check stays inside the acceptance transaction, so a
+creation that raced a suspension is still refused there. Only a probe reports
+the busy worker.
 
 ## The fixture budgets
 

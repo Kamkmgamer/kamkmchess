@@ -169,11 +169,29 @@ stays inside the acceptance transaction of a mutation, so a command that
 raced a suspension is still refused there. The check before the evaluation
 keeps the refused traffic away from the worker: a closed gate must not start
 a cold worker, and it must not hold the slot that the repair of the closed
-gate needs.
+gate needs. It covers the move and the creation, so no refused command asks
+the rules process.
 
 The health boundary fails closed. A shared health state that cannot be read
 is an unavailable service, never a healthy one, so a service that cannot
 confirm its own health never hands out a win.
+
+A healthy service refreshes its durable liveness on every check of the
+monitor. The liveness record is the evidence that the service was alive, so a
+restart of a healthy instance is not read as an interruption: the recovery
+would otherwise derive an unexpected interruption out of a service that never
+stopped, open a new epoch, refund the clock of every unfinished match and
+fence the runner leases of the peers. The refresh happens only while every
+dependency is healthy, so a service that cannot serve keeps the stale
+liveness — that record is how the recovery locates the interruption.
+
+One outage is one interruption. The identity of a planned boundary is its
+service epoch, not the moment it was planned, and the epoch is read under the
+exclusive gate lock. Two instances that detect the same broken worker at the
+same time therefore plan the **same** boundary, and the insert of the second
+one changes nothing: one boundary, one epoch, one adjustment and one refund
+for one outage. The epoch advances with every applied interruption, so one
+epoch is one outage.
 
 ## The runner fence
 
