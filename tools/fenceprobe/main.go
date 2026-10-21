@@ -27,7 +27,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/hex"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -42,6 +41,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/backup"
 	"github.com/Kamkmgamer/kamkmchess/backend/httpapi"
 	"github.com/Kamkmgamer/kamkmchess/backend/migrations"
 	"github.com/Kamkmgamer/kamkmchess/backend/privacy"
@@ -246,19 +246,29 @@ func serveGate(databaseURL, port, fencePath, restoreID string) error {
 	if err != nil {
 		return errors.New("fence probe could not open the privacy service")
 	}
-	// The digest of the applied removal ledger is bound to the lifecycle,
-	// after the database was read.
-	digest := []byte{}
+	// The removal ledger the restore has to apply is bound to the
+	// lifecycle, after the database was read. The evidence of it is written
+	// next to the marker of the lifecycle, and the marker names its digest.
+	//
+	// The helper adds one synthetic subject removal to the ledger it binds:
+	// the ledger of a throwaway database is empty, and a close that carries
+	// a ledger which does not contain the required one can only be refused
+	// when the required ledger holds a record.
+	var bound backup.AppliedRemovalLedger
 	if handle != nil {
-		applied, err := service.AppliedLedgerDigest(ctx)
+		applied, err := service.AppliedRemovalLedger(ctx)
 		if err != nil {
 			return err
 		}
-		digest, err = hex.DecodeString(applied)
-		if err != nil {
-			return errors.New("the applied ledger digest is not hexadecimal")
-		}
-		if err = handle.Bind(digest); err != nil {
+		bound = applied
+		bound.Subjects = append(bound.Subjects, backup.SubjectRemovalRecord{
+			RecordID:    "rs_probe_" + restoreID,
+			SubjectKind: "account",
+			SubjectRef:  "probe-" + restoreID,
+			Scope:       "explicit_removal",
+			RemovedAt:   time.Now().UTC(),
+		})
+		if err = handle.Bind(bound); err != nil {
 			return err
 		}
 	}
@@ -272,12 +282,12 @@ func serveGate(databaseURL, port, fencePath, restoreID string) error {
 	// The close of the lifecycle is outside the gate, because the gate
 	// refuses every request while the fence is open.
 	mux.HandleFunc("/finish", func(w http.ResponseWriter, r *http.Request) {
-		// A digest that does not belong to the lifecycle has to be refused,
-		// so the proof can show that the fence is not closed by accident.
-		applied := digest
+		// A removal ledger that does not contain the one the restore had to
+		// apply has to be refused, so the proof can show that the fence is not
+		// closed by accident.
+		applied := bound
 		if r.URL.Query().Get("wrong") == "1" {
-			applied = append([]byte{}, digest...)
-			applied[0] ^= 0xff
+			applied = backup.AppliedRemovalLedger{}
 		}
 		if handle == nil {
 			w.WriteHeader(http.StatusConflict)

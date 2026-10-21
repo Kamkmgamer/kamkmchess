@@ -510,6 +510,30 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err != nil {
 		return RestoreResult{}, err
 	}
+	// The removals that the restores which did not finish still owe are
+	// merged into the ledger this restore has to apply.
+	//
+	// The import of a restore replaces the schema of the target database, so
+	// a removal that only the live database carried is destroyed by the
+	// import itself. The durable evidence of that removal lives outside the
+	// database, and it is merged here, so the next restore replays it and the
+	// removal cannot be forgotten.
+	owed := AppliedRemovalLedger{}
+	if request.Removals != nil {
+		if owed, err = request.Removals.PendingRemovalRequirements(ctx); err != nil {
+			return RestoreResult{}, err
+		}
+	}
+	if len(owed.Matches) > 0 {
+		if removals, err = MergeRemovalLedgers(removals, owed.Matches); err != nil {
+			return RestoreResult{}, err
+		}
+	}
+	if len(owed.Subjects) > 0 {
+		if subjectRemovals, err = MergeSubjectRemovalLedgers(subjectRemovals, owed.Subjects); err != nil {
+			return RestoreResult{}, err
+		}
+	}
 	carriesRemovals := len(removals) > 0 || len(subjectRemovals) > 0
 	if carriesRemovals && request.Removals == nil {
 		// A restore that carries removals needs the removal sink. The check
@@ -518,9 +542,11 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 		return RestoreResult{}, fmt.Errorf("%w: a restore with removals needs a removal sink", ErrLedgerConflict)
 	}
 	// The marker of the lifecycle names the removal ledger the restore has to
-	// apply. It is bound after the ledgers were read and before the import.
-	requiredDigest := RemovalLedgerDigest(removals, subjectRemovals)
-	if err = handle.Bind(requiredDigest); err != nil {
+	// apply. It is bound after the ledgers were read and before the import,
+	// and the ledger itself is kept as durable evidence next to the marker, so
+	// the recovery of a crashed restore can name it.
+	required := AppliedRemovalLedger{Matches: removals, Subjects: subjectRemovals}
+	if err = handle.Bind(required); err != nil {
 		return RestoreResult{}, err
 	}
 	if err = request.Restorer.Restore(ctx, bytes.NewReader(verified.Payload.SQL)); err != nil {
@@ -545,9 +571,8 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 		// A restore without removals still replaced the schema, so its fence
 		// has to be closed: a marker that stayed behind would keep the service
 		// closed forever. There is no removal ledger to replay and no gate to
-		// release, so the digest of the empty ledger is the one the fence
-		// names.
-		if err = handle.Finish(requiredDigest); err != nil {
+		// release, so the empty ledger is the one the fence names.
+		if err = handle.Finish(AppliedRemovalLedger{}); err != nil {
 			return RestoreResult{}, err
 		}
 		// The fence is closed, so the deferred release is not needed.
@@ -573,7 +598,6 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	required := AppliedRemovalLedger{Matches: removals, Subjects: subjectRemovals}
 	if !RemovalLedgerContains(applied, required) {
 		return RestoreResult{}, fmt.Errorf("%w: the applied removal ledger is not the ledger of the restore", ErrLedgerConflict)
 	}
@@ -587,7 +611,7 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err = request.Removals.ReleaseRestoreGate(ctx, request.RestoreID); err != nil {
 		return RestoreResult{}, err
 	}
-	if err = handle.Finish(requiredDigest); err != nil {
+	if err = handle.Finish(applied); err != nil {
 		return RestoreResult{}, err
 	}
 	// The fence is closed, so the deferred release is not needed.

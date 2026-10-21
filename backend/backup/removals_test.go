@@ -17,8 +17,12 @@ type fakeRemovalLedger struct {
 	appliedCalls   int
 	subjects       []SubjectRemovalRecord
 	subjectApplied []SubjectRemovalRecord
-	listErr        error
-	applyErr       error
+	// owed are the removals that the restores which did not finish still
+	// owe. They are the durable evidence of a crashed restore.
+	owed         []RemovalRecord
+	owedSubjects []SubjectRemovalRecord
+	listErr      error
+	applyErr     error
 }
 
 func (l *fakeRemovalLedger) ListRemovalRecords(context.Context) ([]RemovalRecord, error) {
@@ -54,6 +58,10 @@ func (l *fakeRemovalLedger) ApplySubjectRemovalRecords(_ context.Context, record
 
 func (l *fakeRemovalLedger) AppliedRemovalLedger(context.Context) (AppliedRemovalLedger, error) {
 	return AppliedRemovalLedger{Matches: l.applied, Subjects: l.subjectApplied}, nil
+}
+
+func (l *fakeRemovalLedger) PendingRemovalRequirements(context.Context) (AppliedRemovalLedger, error) {
+	return AppliedRemovalLedger{Matches: l.owed, Subjects: l.owedSubjects}, nil
 }
 
 func (l *fakeRemovalLedger) RecordRestore(_ context.Context, restoreID string) (string, error) {
@@ -313,13 +321,13 @@ type fakeFenceHandle struct {
 	fence *fakeAdmissionFence
 }
 
-func (h *fakeFenceHandle) Bind(digest []byte) error {
-	h.fence.bound = append(h.fence.bound, fmt.Sprintf("%x", digest))
+func (h *fakeFenceHandle) Bind(required AppliedRemovalLedger) error {
+	h.fence.bound = append(h.fence.bound, fmt.Sprintf("%x", RemovalLedgerDigest(required.Matches, required.Subjects)))
 	return nil
 }
 
-func (h *fakeFenceHandle) Finish(digest []byte) error {
-	h.fence.closed = append(h.fence.closed, fmt.Sprintf("%x", digest))
+func (h *fakeFenceHandle) Finish(applied AppliedRemovalLedger) error {
+	h.fence.closed = append(h.fence.closed, fmt.Sprintf("%x", RemovalLedgerDigest(applied.Matches, applied.Subjects)))
 	return nil
 }
 
@@ -343,6 +351,103 @@ func removal(removalID, subjectID, matchID, scope string, removedAt time.Time) R
 		MatchID:     matchID,
 		Scope:       scope,
 		RemovedAt:   removedAt,
+	}
+}
+
+// TestRemovalLedgerContainsUsesTheStrongestDuplicateMatchRow covers the
+// containment of the applied removal ledger.
+//
+// The applied ledger of a restored database can hold two rows for the same
+// match, kind and subject: the restored database brings its own row back and
+// the replay writes the row of the removal it applied. The strongest of those
+// rows is the one that counts, so the answer never depends on the order of
+// the rows and never on the random identifier of a removal.
+func TestRemovalLedgerContainsUsesTheStrongestDuplicateMatchRow(t *testing.T) {
+	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	weak := removal("rm_weak", "ref-one", "match-one", "account_deletion", at)
+	strong := removal("rm_strong", "rm_strong_other", "match-one", "explicit_removal", at.Add(time.Hour))
+	required := AppliedRemovalLedger{Matches: []RemovalRecord{strong}}
+	// The weaker row comes last: the containment still holds, because the
+	// explicit removal of the applied ledger is the strongest one.
+	if !RemovalLedgerContains(AppliedRemovalLedger{Matches: []RemovalRecord{strong, weak}}, required) {
+		t.Fatal("the applied ledger holds the required explicit removal")
+	}
+	// The other order gives the same answer.
+	if !RemovalLedgerContains(AppliedRemovalLedger{Matches: []RemovalRecord{weak, strong}}, required) {
+		t.Fatal("the containment of the applied ledger depends on the order of the rows")
+	}
+	// A weaker applied removal does not satisfy a required explicit removal,
+	// whatever the order of the rows is.
+	weaker := AppliedRemovalLedger{Matches: []RemovalRecord{weak}}
+	if RemovalLedgerContains(weaker, required) {
+		t.Fatal("an applied anonymization satisfied a required explicit removal")
+	}
+	// The same rule holds for the subject level half of the check.
+	subject := SubjectRemovalRecord{RecordID: "rs_strong", SubjectKind: "account", SubjectRef: "ref-subject", Scope: "explicit_removal", RemovedAt: at}
+	weakSubject := SubjectRemovalRecord{RecordID: "rs_weak", SubjectKind: "account", SubjectRef: "ref-subject", Scope: "account_deletion", RemovedAt: at}
+	subjectRequired := AppliedRemovalLedger{Subjects: []SubjectRemovalRecord{subject}}
+	if !RemovalLedgerContains(AppliedRemovalLedger{Subjects: []SubjectRemovalRecord{weakSubject, subject}}, subjectRequired) {
+		t.Fatal("the applied ledger holds the required subject removal")
+	}
+	if RemovalLedgerContains(AppliedRemovalLedger{Subjects: []SubjectRemovalRecord{weakSubject}}, subjectRequired) {
+		t.Fatal("an applied anonymization satisfied a required subject removal")
+	}
+}
+
+// TestRestoreReplaysTheRemovalsTheCrashedRestoreOwed covers the removals
+// that a crashed restore owed.
+//
+// The import of a restore destroys the removals that only the live database
+// carried, so they are kept as durable evidence outside the database. The next
+// restore merges that evidence into the removal ledger it has to apply, so the
+// removals are replayed and they are not forgotten.
+func TestRestoreReplaysTheRemovalsTheCrashedRestoreOwed(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "bundle.khabackup")
+	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	if _, err := Create(context.Background(), CreateRequest{
+		Path:       path,
+		Label:      "daily-2026-10-20",
+		Passphrase: []byte(testPassphrase),
+		CreatedAt:  at,
+		Dumper:     &fakeDumper{sql: []byte("SELECT 1;")},
+		Tombstones: &fakeLedger{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	owed := removal("rm_owed", "ref-owed", "match-owed", "explicit_removal", at)
+	owedSubject := SubjectRemovalRecord{RecordID: "rs_owed", SubjectKind: "account", SubjectRef: "ref-owed", Scope: "explicit_removal", RemovedAt: at}
+	sink := &fakeRemovalLedger{owed: []RemovalRecord{owed}, owedSubjects: []SubjectRemovalRecord{owedSubject}}
+	fence := &fakeAdmissionFence{}
+	result, err := Restore(context.Background(), RestoreRequest{
+		Path:           path,
+		Passphrase:     []byte(testPassphrase),
+		Restorer:       &fakeRestorer{},
+		Tombstones:     &fakeLedger{},
+		Removals:       sink,
+		AdmissionFence: fence,
+		RestoreID:      "restore-owed",
+	})
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if result.RemovalsApplied != 1 || result.SubjectRemovalsApplied != 1 {
+		t.Fatalf("the restore replayed %d removals and %d subject removals", result.RemovalsApplied, result.SubjectRemovalsApplied)
+	}
+	if len(sink.applied) != 1 || sink.applied[0].RemovalID != "rm_owed" {
+		t.Fatalf("the replayed removal ledger = %+v", sink.applied)
+	}
+	if len(sink.subjectApplied) != 1 || sink.subjectApplied[0].RecordID != "rs_owed" {
+		t.Fatalf("the replayed subject ledger = %+v", sink.subjectApplied)
+	}
+	// The fence is bound with the complete ledger, the owed removals
+	// included.
+	if len(fence.bound) != 1 {
+		t.Fatalf("the fence was bound %d times: %v", len(fence.bound), fence.bound)
+	}
+	bound := fmt.Sprintf("%x", RemovalLedgerDigest([]RemovalRecord{owed}, []SubjectRemovalRecord{owedSubject}))
+	if fence.bound[0] != bound {
+		t.Fatalf("the fence was bound with %q, the complete ledger is %q", fence.bound[0], bound)
 	}
 }
 

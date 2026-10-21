@@ -202,6 +202,12 @@ func openPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
 // The recovery is identity bound: the restore is named, the removal ledger
 // that is applied in the database has to be the ledger of the bundle and of
 // the newer rotation copies, and a wrong clear is refused.
+//
+// The ledger of the restore is the durable evidence of the restore, and the
+// evidence is what the recovery uses. The bundle and the rotation copies are
+// the fallback for a restore that left no evidence: they are the ledger of the
+// bundle, and the recovery refuses them when the fence of the restore names
+// another ledger.
 func recoverCommand(ctx context.Context, arguments []string) error {
 	options, err := parseFlags("recover", arguments, nil)
 	if err != nil {
@@ -235,29 +241,38 @@ func recoverCommand(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	// The required ledger is the union of the bundle and the newer rotation
-	// copies: the recovery only releases a database whose removals are
-	// applied.
-	verified, err := backup.Verify(options.file, secret)
+	// The durable evidence of the restore is the removal ledger the restore
+	// had to apply. It survives the crash of the restore and the import of its
+	// bundle, so the recovery can name the ledger even when the removals it
+	// covers are not in the database any more.
+	required, found, err := removals.RestoreRequirement(options.restoreID)
 	if err != nil {
 		return err
 	}
-	merged, err := backup.MergeRemovalLedgers(verified.Payload.Removals, nil)
-	if err != nil {
-		return err
+	if !found {
+		// The restore left no evidence, so the ledger of the bundle and of the
+		// newer rotation copies is the only description of what it owed.
+		verified, err := backup.Verify(options.file, secret)
+		if err != nil {
+			return err
+		}
+		merged, err := backup.MergeRemovalLedgers(verified.Payload.Removals, nil)
+		if err != nil {
+			return err
+		}
+		newerRemovals, newerSubjects, err := backup.CollectRemovalLedgers(options.newerLedgers, secret)
+		if err != nil {
+			return err
+		}
+		if merged, err = backup.MergeRemovalLedgers(merged, newerRemovals); err != nil {
+			return err
+		}
+		mergedSubjects, err := backup.MergeSubjectRemovalLedgers(verified.Payload.SubjectRemovals, newerSubjects)
+		if err != nil {
+			return err
+		}
+		required = backup.AppliedRemovalLedger{Matches: merged, Subjects: mergedSubjects}
 	}
-	newerRemovals, newerSubjects, err := backup.CollectRemovalLedgers(options.newerLedgers, secret)
-	if err != nil {
-		return err
-	}
-	if merged, err = backup.MergeRemovalLedgers(merged, newerRemovals); err != nil {
-		return err
-	}
-	mergedSubjects, err := backup.MergeSubjectRemovalLedgers(verified.Payload.SubjectRemovals, newerSubjects)
-	if err != nil {
-		return err
-	}
-	required := backup.AppliedRemovalLedger{Matches: merged, Subjects: mergedSubjects}
 	if err = removals.RecoverRestore(ctx, options.restoreID, required); err != nil {
 		if errors.Is(err, privacy.ErrLedgerNotApplied) {
 			// The removals of the restore are not applied in the database: the

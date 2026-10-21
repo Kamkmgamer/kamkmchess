@@ -591,7 +591,10 @@ func TestPostgresRestoreFenceSurvivesAFailedReplay(t *testing.T) {
 		t.Fatal("a fenced database serves traffic after a failed replay")
 	}
 	// The repair closes the fence.
-	if err = fence.Finish([]byte("digest-of-the-merged-ledger")); err != nil {
+	if err = fence.Bind(backup.AppliedRemovalLedger{}); err != nil {
+		t.Fatalf("bind fence: %v", err)
+	}
+	if err = fence.Finish(backup.AppliedRemovalLedger{}); err != nil {
 		t.Fatalf("clear fence: %v", err)
 	}
 	allowed, err = removals.ServingAllowed(context.Background())

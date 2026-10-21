@@ -207,6 +207,26 @@ func (l postgresRemovalLedger) AppliedLedgerDigest(ctx context.Context) (string,
 	return l.removals.AppliedLedgerDigest(ctx)
 }
 
+// PendingRemovalRequirements returns the removal ledger that the restores
+// which did not finish still owe.
+//
+// The removals that only the live database carried are destroyed by the import
+// of a restore, so they are kept as durable evidence outside the database. The
+// restore merges that evidence into the removal ledger it has to apply.
+func (l postgresRemovalLedger) PendingRemovalRequirements(ctx context.Context) (backup.AppliedRemovalLedger, error) {
+	// This evidence lives outside the imported schema. Its existence cannot
+	// depend on which tables the restored database currently contains.
+	return l.removals.PendingRemovalRequirements(ctx)
+}
+
+// RestoreRequirement returns the removal ledger that a restore had to apply.
+//
+// The ledger is the durable evidence of the restore, so the operator does not
+// have to rebuild it from the bundle and the rotation copies.
+func (l postgresRemovalLedger) RestoreRequirement(restoreID string) (backup.AppliedRemovalLedger, bool, error) {
+	return l.removals.RestoreRequirement(restoreID)
+}
+
 // RecordRestore records that the database was restored from a backup.
 func (l postgresRemovalLedger) RecordRestore(ctx context.Context, restoreID string) (string, error) {
 	available, err := l.available(ctx)

@@ -160,6 +160,14 @@ func (s *Service) AppliedLedgerDigest(ctx context.Context) (string, error) {
 // system lock of the lifecycle is the live ownership proof, and the recovery
 // may only take it when it is free.
 //
+// The removal ledger the recovery has to apply is the durable evidence of the
+// restore, not a ledger the operator rebuilds from the bundle. The import of
+// the restore destroys the removals that only the live database carried, so
+// the evidence is the only description of what the restore owed that still
+// exists after the crash. The evidence is validated against the digest the
+// marker of the fence names, and the recovery refuses a ledger that is not
+// that one.
+//
 // The immutable deletion protections are never weakened: the recovery only
 // releases the admission of a database whose removals are applied.
 func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required backup.AppliedRemovalLedger) error {
@@ -218,11 +226,36 @@ func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required
 	// has to be that ledger. A fence that names no ledger belongs to a restore
 	// that died before it read the ledgers, so the recovery cannot prove what
 	// it owed: the restore has to be run again with the take-over.
-	requiredDigest := fmt.Sprintf("%x", backup.RemovalLedgerDigest(required.Matches, required.Subjects))
 	if fence.ExpectedLedgerDigest == "" {
 		return errors.New("privacy: the fence of the crashed restore names no removal ledger; run the restore again with the take-over")
 	}
-	if fence.ExpectedLedgerDigest != requiredDigest {
+	// The durable evidence of the restore is the removal ledger the restore
+	// had to apply. The evidence is validated against the digest the marker
+	// names, so a record whose content does not hash to its name is refused.
+	owed, found, err := s.requirementForRestore(restoreID)
+	if err != nil {
+		return err
+	}
+	if !found || owed.Digest != fence.ExpectedLedgerDigest {
+		// The evidence of this restore is gone, or it names another ledger:
+		// the evidence of the ledger is looked up by its digest, because two
+		// restores may owe the very same ledger.
+		owed, found, err = s.readRequirement(fence.ExpectedLedgerDigest)
+		if err != nil {
+			return err
+		}
+	}
+	if found {
+		// The evidence is the exact ledger the restore bound. The caller may
+		// not name another one.
+		if requirementDigest(required) != fence.ExpectedLedgerDigest {
+			return errors.New("privacy: the open fence names another removal ledger")
+		}
+		required = owed.Ledger()
+	} else if requirementDigest(required) != fence.ExpectedLedgerDigest {
+		// There is no durable evidence, so the ledger of the caller is the
+		// only description of what the restore owed. It still has to be the
+		// ledger the marker names.
 		return errors.New("privacy: the open fence names another removal ledger")
 	}
 	// The applied removal ledger has to hold every removal the restore had to
@@ -235,6 +268,8 @@ func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required
 		// The removals are not applied: the database must not serve. A
 		// blocking gate is recorded, the fence is closed so that the restore
 		// can be run again, and the service stays closed because of the gate.
+		// The durable evidence of the restore stays pending, so the next
+		// restore replays the removals that were lost.
 		if err = s.recordBlockingGate(ctx, restoreID, required); err != nil {
 			return err
 		}
@@ -256,7 +291,11 @@ func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required
 	}
 	// The fence of the crashed restore is closed, so a new restore can take
 	// the lock.
-	return s.removeFenceDirectory()
+	if err = s.removeFenceDirectory(); err != nil {
+		return err
+	}
+	// The evidence of the restore is applied, so it is discharged.
+	return s.dischargeRequirements(applied, "")
 }
 
 // recordBlockingGate records a restore gate that keeps the service closed.
@@ -264,7 +303,11 @@ func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required
 // The gate is the durable proof that the database of a crashed restore may
 // not serve traffic. It is released by the next restore that applied the
 // removal ledger.
-// recordBlockingGate records a restore gate that keeps the service closed.
+//
+// The gate names the digest of the removal ledger the restore owed, and that
+// digest names the durable evidence of the ledger. The release of a gate
+// therefore finds the evidence of what the gate waits for, and it releases the
+// gate only when the database holds that ledger.
 //
 // The gate of a restore is released once and never taken back: the guard of
 // the table refuses to set a released gate to pending again. So the blocking
@@ -276,7 +319,18 @@ func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required
 // was already released, a name of its own is used, so the blocking gate is
 // always a pending gate.
 func (s *Service) recordBlockingGate(ctx context.Context, restoreID string, required backup.AppliedRemovalLedger) error {
-	digest := backup.RemovalLedgerDigest(required.Matches, required.Subjects)
+	plain := requirementDigest(required)
+	digest := []byte(nil)
+	if _, found, err := s.readRequirement(plain); err != nil {
+		return err
+	} else if found {
+		// The gate waits for a removal ledger that has durable evidence.
+		digest = gateDigest(plain)
+	} else {
+		// There is no durable evidence of the ledger, so the gate keeps the
+		// digest of the applied removal ledger.
+		digest = backup.RemovalLedgerDigest(required.Matches, required.Subjects)
+	}
 	for attempt := 0; attempt < 8; attempt++ {
 		gateID, err := newIdentifier("rg_")
 		if err != nil {
@@ -311,19 +365,29 @@ func (s *Service) recordBlockingGate(ctx context.Context, restoreID string, requ
 // restore whose removal ledger was not applied.
 //
 // The name is derived from the restore and it is kept apart from the
-// identifier of the restore itself, whose gate may already be released. The
-// name stays inside the length the table allows, so the insert is never
-// refused by its own check.
+// identifier of the restore itself, whose gate may already be released.
+//
+// The name stays inside the length the table allows, so the insert is never
+// refused by its own check, and it never becomes the identifier of the
+// restore: a restore identifier of the maximum length would otherwise be
+// truncated to itself, and the blocking gate would collide with the gate of
+// the restore, so the ledger the recovery owed would never be recorded. A name
+// that does not fit is shortened with a digest of the whole name, which keeps
+// it unique and apart from every identifier of a restore.
 func blockingGateRestoreID(restoreID string, extra ...string) string {
 	const suffix = "-blocked"
 	name := restoreID + suffix
 	for _, part := range extra {
 		name = name + part
 	}
-	if len(name) > 128 {
-		name = name[:128]
+	const limit = 128
+	if len(name) <= limit {
+		return name
 	}
-	return name
+	digest := sha256.Sum256([]byte(name))
+	marker := hex.EncodeToString(digest[:])[:16]
+	prefix := name[:limit-len(marker)-1]
+	return prefix + "-" + marker
 }
 
 func (s *Service) ListRemovalRecords(ctx context.Context) ([]backup.RemovalRecord, error) {
@@ -494,6 +558,11 @@ func RemovalLedgerDigestOf(matches []backup.RemovalRecord, subjects []backup.Sub
 // The record is written after the restore, because the restore replaces the
 // table that holds it. The gate stays closed until the removal ledger has
 // been replayed and the replay has been verified.
+//
+// The gate names the digest of the removal ledger the restore had to apply,
+// when the restore left durable evidence of it. The release of a gate then
+// finds the evidence of what the gate waits for, so a gate is never released
+// for a removal ledger that the database does not hold.
 func (s *Service) RecordRestore(ctx context.Context, restoreID string) (string, error) {
 	restoreID = trimSpace(restoreID)
 	if restoreID == "" {
@@ -503,13 +572,23 @@ func (s *Service) RecordRestore(ctx context.Context, restoreID string) (string, 
 	if err != nil {
 		return "", err
 	}
-	records, err := s.ListRemovalRecords(ctx)
-	if err != nil {
+	digest := []byte(nil)
+	if record, found, err := s.requirementForRestore(restoreID); err != nil {
 		return "", err
-	}
-	digest, err := RemovalLedgerDigest(records)
-	if err != nil {
-		return "", err
+	} else if found {
+		// The durable evidence of the restore names the ledger the restore had
+		// to apply, and the digest of the gate says that the gate waits for
+		// that evidence.
+		digest = gateDigest(record.Digest)
+	} else {
+		records, err := s.ListRemovalRecords(ctx)
+		if err != nil {
+			return "", err
+		}
+		digest, err = RemovalLedgerDigest(records)
+		if err != nil {
+			return "", err
+		}
 	}
 	if _, err = s.db.Exec(ctx, `
 		INSERT INTO online_restore_gates(gate_id,restore_id,ledger_digest,recorded_at)
@@ -527,31 +606,108 @@ func (s *Service) RecordRestore(ctx context.Context, restoreID string) (string, 
 // applied. A gate is never opened for a database that still serves a removed
 // game.
 //
-// The release covers every gate that waits for its release, not only the gate
-// of this restore: a restore that succeeded supersedes the restore that
-// crashed before it, and the blocking gate of that crashed restore is released
-// with it.
+// The release covers every gate whose removal ledger the database holds, not
+// only the gate of this restore: a restore that succeeded supersedes the
+// restore that crashed before it, and the blocking gate of that crashed
+// restore is released with it.
+//
+// A gate is released only when its own evidence says so. The gate names the
+// digest of the removal ledger it waits for, and that digest names the durable
+// evidence of the ledger. The gate is released when the applied removal
+// ledger holds that ledger, and it is retained when it does not: an
+// unresolved gate keeps the service closed, and the removals it waits for stay
+// owed. A gate without durable evidence is released only when the database
+// applies every recorded removal, which is the state the gate of a restore
+// without a fence is in.
 func (s *Service) ReleaseRestoreGate(ctx context.Context, restoreID string) error {
 	restoreID = trimSpace(restoreID)
 	if restoreID == "" {
 		return ErrInvalidArgument
 	}
-	applied, err := s.LedgerApplied(ctx)
+	applied, err := s.AppliedRemovalLedger(ctx)
 	if err != nil {
 		return err
 	}
-	if !applied {
-		return ErrLedgerNotApplied
-	}
-	// The release covers every gate that waits for its release, not only the
-	// gate of this restore: a restore that succeeded supersedes the restore
-	// that crashed before it, and the blocking gate of that crashed restore is
-	// released with it. The gate of a restore that is still running is never
-	// touched, because the lifecycle allows one restore at a time.
-	if _, err = s.db.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE serving_allowed=false`); err != nil {
+	globallyApplied, err := s.LedgerApplied(ctx)
+	if err != nil {
 		return err
 	}
-	return nil
+	if !globallyApplied {
+		return ErrLedgerNotApplied
+	}
+	// The gates that wait for their release are told apart by their own
+	// evidence. A gate whose removal ledger the database holds is released; a
+	// gate whose removal ledger the database does not hold is retained, so the
+	// service stays closed and the removals it waits for stay owed.
+	rows, err := s.db.Query(ctx, `SELECT restore_id,ledger_digest FROM online_restore_gates WHERE serving_allowed=false ORDER BY recorded_at`)
+	if err != nil {
+		return err
+	}
+	type pendingGate struct {
+		restoreID string
+		digest    []byte
+	}
+	pending := make([]pendingGate, 0)
+	for rows.Next() {
+		var gate pendingGate
+		if err = rows.Scan(&gate.restoreID, &gate.digest); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, gate)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	released := false
+	for _, gate := range pending {
+		if gateWaitsForEvidence(gate.digest) {
+			// The gate waits for a removal ledger that has durable evidence,
+			// and the evidence is what says what the gate waits for. A gate
+			// whose evidence is missing waits for removals that are still
+			// owed: it is retained and the service stays closed.
+			owed, found, err := s.requirementForGate(gate.digest)
+			if err != nil {
+				return err
+			}
+			if !found {
+				continue
+			}
+			if !backup.RemovalLedgerContains(applied, owed.Ledger()) {
+				// The database does not hold the removal ledger the gate waits
+				// for: the gate is retained and the service stays closed.
+				continue
+			}
+		}
+		if _, err = s.db.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE restore_id=$1 AND serving_allowed=false`, gate.restoreID); err != nil {
+			return err
+		}
+		if gate.restoreID == restoreID {
+			released = true
+		}
+	}
+	if !released {
+		// The gate of this restore is still pending, so the restore did not
+		// finish: the caller has to know that the service stays closed.
+		var serving bool
+		err = s.db.QueryRow(ctx, `SELECT serving_allowed FROM online_restore_gates WHERE restore_id=$1`, restoreID).Scan(&serving)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err == nil && !serving {
+			return fmt.Errorf("%w: the gate of the restore %q is not released", ErrLedgerNotApplied, restoreID)
+		}
+	}
+	// The evidence that the database holds is discharged. The evidence of the
+	// restore that holds the fence is kept, so a crash between the release and
+	// the close of the fence still finds the evidence it needs.
+	keep := ""
+	if state, fence, err := s.fenceMarkerState(); err == nil && state == fenceMarkerOwned {
+		keep = fence.RestoreID
+	}
+	return s.dischargeRequirements(applied, keep)
 }
 
 // LedgerApplied reports whether every recorded removal is applied in the

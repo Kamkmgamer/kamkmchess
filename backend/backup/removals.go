@@ -133,10 +133,22 @@ func strongerRemoval(candidate, current RemovalRecord) bool {
 // The strength of a removal counts. An explicit removal erases the shared
 // replay, and an ordinary deletion only anonymizes it, so an applied
 // anonymization does not satisfy a required explicit removal.
+//
+// The applied ledger can hold two rows for the same match, kind and subject:
+// the restored database brings its own row back and the replay writes the row
+// of the removal it applied. The strongest of those rows is the one that
+// counts, exactly like the subject level half of the check, so the answer does
+// not depend on the order of the rows and never on the random identifier of a
+// removal.
 func RemovalLedgerContains(applied, required AppliedRemovalLedger) bool {
 	haveMatches := map[string]RemovalRecord{}
 	for _, record := range applied.Matches {
-		haveMatches[removalKey(record.MatchID, record.SubjectKind, record.SubjectID)] = record
+		key := removalKey(record.MatchID, record.SubjectKind, record.SubjectID)
+		// The strongest applied removal of the match, kind and subject is the
+		// one that counts.
+		if existing, ok := haveMatches[key]; !ok || strongerRemoval(record, existing) {
+			haveMatches[key] = record
+		}
 	}
 	for _, record := range required.Matches {
 		existing, ok := haveMatches[removalKey(record.MatchID, record.SubjectKind, record.SubjectID)]
@@ -320,6 +332,15 @@ type RemovalLedgerSink interface {
 	// database. The restore compares it with the ledger it had to apply, so a
 	// restore that applied a different ledger keeps the fence open.
 	AppliedRemovalLedger(ctx context.Context) (AppliedRemovalLedger, error)
+	// PendingRemovalRequirements returns the removal ledger that the
+	// restores which did not finish still owe.
+	//
+	// The removals that only the live database carried are destroyed by the
+	// import of a restore, so they are kept as durable evidence outside the
+	// database. The restore merges that evidence into the removal ledger it
+	// has to apply, so a removal that a crashed restore owed is replayed by
+	// the next restore and cannot be forgotten.
+	PendingRemovalRequirements(ctx context.Context) (AppliedRemovalLedger, error)
 	// RecordRestore records the restore in the durable restore gate. The gate
 	// is recorded while the fence is still open, so a crash between the
 	// replay and the release leaves a recorded gate that the operator can
@@ -344,8 +365,14 @@ type AppliedRemovalLedger struct {
 //
 // The admission is taken before the restore reads anything from the database.
 // The service is closed while the fence is open, so a removal that is
-// committed after the admission cannot be lost by the import, and the
-// service never serves a database whose import is half done.
+// committed after the admission is refused by the service and cannot be lost
+// by the import, and the service never serves a database whose import is half
+// done.
+//
+// The scope of that guarantee is exact: a removal that was admitted *before*
+// the fence was taken can still commit after the ledgers were read, and the
+// import can lose it. The operator therefore stops and drains the API before
+// a restore.
 type AdmissionFence interface {
 	// BeginFence takes the ownership of the restore lifecycle and returns the
 	// handle of the ownership. The handle holds the cross process ownership
@@ -363,14 +390,18 @@ type AdmissionFence interface {
 // close of the fence uses the handle and not a lock that is taken again, so
 // the ownership cannot be lost or displaced while the restore runs.
 type FenceHandle interface {
-	// Bind records the digest of the removal ledger the restore has to apply
-	// in the marker of the lifecycle. It is called after the ledgers were
-	// read and before the import.
-	Bind(expectedDigest []byte) error
+	// Bind records the removal ledger the restore has to apply in the marker
+	// of the lifecycle. It is called after the ledgers were read and before
+	// the import.
+	//
+	// The ledger itself is kept as durable evidence outside the restored
+	// database, because the import destroys the removals that only the live
+	// database carried. The marker names the digest of that evidence.
+	Bind(required AppliedRemovalLedger) error
 	// Finish closes the fence of the restore. It is called only after the
 	// removal ledger was applied and verified, and it refuses a restore that
 	// applied a different ledger.
-	Finish(appliedDigest []byte) error
+	Finish(applied AppliedRemovalLedger) error
 	// Release gives the ownership back without closing the fence. The marker
 	// of the lifecycle survives, so the service stays closed.
 	Release()

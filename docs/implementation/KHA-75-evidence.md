@@ -737,7 +737,7 @@ The review is `D:/projects/kamkmchess/.scratch/online-swarm/matching-review-r7.m
 
 | Finding | Disposition |
 | --- | --- |
-| **R7-01** the removal of the accepter of an `accepting` offer fails with a check violation | **not ours, and not duplicated.** The privacy worker owns the sanitation of the accepter column. The friend table keeps the check, and the friend surface does not write that state any more. The privacy candidate that keeps the shape of the offer is not integrated here, so the regression of the removed accepter records the removal of the accepter directly and says so. |
+| **R7-01** the removal of the accepter of an `accepting` offer fails with a check violation | **fixed and integrated.** The privacy worker integrated the anonymized sentinel of the removal vocabulary for the accepter column, so the offer keeps its shape and the removal commits. The regressions `TestPostgresTheRemovalOfAnAcceptedRematchOfferKeepsTheShape` and `TestPostgresTheRemovalOfAnAcceptingRematchOfferKeepsTheShape` prove it against a real PostgreSQL database. |
 | **R7-02** the survivor of a removal cannot recover the credential of its own seat of the new match | **fixed.** The duplicate acceptance of a rematch is the recovery of a lost answer: it creates no match and it writes the credential of the seat of the accepter in the new match, so only the accepter is rechecked. The first acceptance still rechecks both participants, because the new match needs the consent of both. The identity of the accepter is compared exactly. |
 | **R7-03** two earlier regressions were not discriminating | **answered.** The barrier of the restart is now proved by the effective regression, which is red on the branch without the restart and green on the branch with it. The other regressions of the round are broader contract checks and are labelled as such. |
 | **R7-04** the documentation understated the removal bug | **fixed.** The published rule now states that the duplicate acceptance of a rematch names the accepter alone, and that the removal of the opponent does not lock the survivor out of the live new match. The defect was never limited to the offers of an older build. |
@@ -837,12 +837,14 @@ history of the runs is kept below under its own heading.
     now: it never writes, so a `GET` never changes the personal row of a
     removed participant, and it never raises a database error for the offer of
     an older build (the round 6 finding R6-03 and R6-04).
-11. The removal of the **accepter** of an accepted rematch offer still
-    aborts the removal with a check violation, because the shape of the offer
-    requires the record of the accepter. The privacy worker owns that
-    sanitation and its candidate keeps the shape of the offer; the friend
-    surface does not write that state, and the regression of the removed
-    accepter records the removal of the accepter directly.
+11. **Closed.** The removal of the **accepter** of an accepted rematch offer
+    does not abort the removal with a check violation any more: the privacy
+    worker integrated the anonymized sentinel of the removal vocabulary
+    (`subject.AnonymizedID`) for that column, so the offer keeps its shape and
+    the removal commits. The regressions
+    `TestPostgresTheRemovalOfAnAcceptedRematchOfferKeepsTheShape` and
+    `TestPostgresTheRemovalOfAnAcceptingRematchOfferKeepsTheShape` prove it
+    against a real PostgreSQL database.
 
 ## Status
 

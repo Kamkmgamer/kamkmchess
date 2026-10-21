@@ -43,7 +43,10 @@ func TestPostgresTheFenceHasOneOwner(t *testing.T) {
 		t.Fatal("a second restore took the fence")
 	}
 	// The fence is closed only by its owner.
-	if err = handle.Finish([]byte("digest")); err != nil {
+	if err = handle.Bind(backup.AppliedRemovalLedger{}); err != nil {
+		t.Fatalf("bind the fence: %v", err)
+	}
+	if err = handle.Finish(backup.AppliedRemovalLedger{}); err != nil {
 		t.Fatalf("close the fence: %v", err)
 	}
 }

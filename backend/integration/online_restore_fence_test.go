@@ -81,10 +81,13 @@ func TestPostgresTheRestoreFenceHasOneOwner(t *testing.T) {
 	}
 	// The fence is closed only by its owner, and only with the ledger it
 	// applied.
-	if err = ownerHandle.Bind([]byte("digest-of-the-ledger")); err != nil {
+	required := backup.AppliedRemovalLedger{Matches: []backup.RemovalRecord{{
+		RemovalID: "rm_fence_owner", SubjectKind: "account", SubjectID: "ref-owner", MatchID: "match-owner", Scope: "explicit_removal", RemovedAt: time.Now().UTC(),
+	}}}
+	if err = ownerHandle.Bind(required); err != nil {
 		t.Fatalf("bind the fence: %v", err)
 	}
-	if err = ownerHandle.Finish([]byte("another-digest")); err == nil {
+	if err = ownerHandle.Finish(backup.AppliedRemovalLedger{}); err == nil {
 		t.Fatal("the fence was closed with a ledger the restore did not apply")
 	}
 }
@@ -249,6 +252,10 @@ func (l *countingRemovalLedger) ApplySubjectRemovalRecords(context.Context, []ba
 
 func (l *countingRemovalLedger) AppliedRemovalLedger(context.Context) (backup.AppliedRemovalLedger, error) {
 	return backup.AppliedRemovalLedger{Matches: l.entries}, nil
+}
+
+func (l *countingRemovalLedger) PendingRemovalRequirements(context.Context) (backup.AppliedRemovalLedger, error) {
+	return backup.AppliedRemovalLedger{}, nil
 }
 
 func (l *countingRemovalLedger) RecordRestore(_ context.Context, restoreID string) (string, error) {

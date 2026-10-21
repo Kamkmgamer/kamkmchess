@@ -163,14 +163,16 @@ Rules the browser must honour:
   environment variable) is the **parent directory** that the operator prepares. The lifecycle
   owns a marker directory `<parent>/restore-fence` and a lock file `<parent>/restore-fence.lock`
   inside it, and the operator never prepares the marker directory itself. Both the API and the
-  restore tool use the same parent: the API reads the marker in `serverapp.Load` and checks it
-  before it starts and on every request, the restore tool creates the marker and the lock and
+  restore tool use the same parent: the API checks the marker directory in `serverapp.Load` and
+  on every request, the restore tool creates the marker, the lock and the durable evidence and
   refuses an applied restore without them. The parent has to be a **shared persistent
   location**: a per container or per host path would let two instances disagree about the state
-  of a restore, and it has to be writable by the account of the restore tool and readable by the
-  account of the API. The fence survives the schema replacement of the restore and a crash of the
-  restore process, so a restore that dies between the import and the replay leaves the service
-  closed instead of a restored database that lost the newest removals.
+  of a restore, and it has to be writable by the account of the restore tool and traversable by
+  the account of the API. The API only **stats** the marker directory: it never reads the owner
+  marker and never reads the durable evidence, so the account of the API needs traverse
+  permission on the parent and nothing more. The fence survives the schema replacement of the
+  restore and a crash of the restore process, so a restore that dies between the import and the
+  replay leaves the service closed instead of a restored database that lost the newest removals.
 * The fence is **owned across processes**. The lock file carries an operating system lock - an
   advisory file lock on Linux, the byte range lock `LockFileEx` on Windows - that the restore
   holds for the **whole** lifecycle, from the admission of the restore until the fence is closed.
@@ -189,8 +191,25 @@ Rules the browser must honour:
   fence file of an older layout.
 * The fence is **bound to its restore**: it names the restore, the digest of the removal ledger
   the restore has to apply, and a random ownership token. Only the holder of the ownership can
-  close it, and it is closed only for the ledger it names.
-* The restore **takes the admission before it reads anything from the database**. The service
+  close it, and it is closed only for the ledger it names. A marker that names no removal ledger
+  was never bound, so the close of the fence refuses it instead of verifying nothing.
+* The **durable evidence of the removal ledger** lives next to the marker of the lifecycle, in
+  `<parent>/restore-requirements/<restore>.json`. The import of a restore replaces the schema of
+  the target database, so the removals that only the live database carried are destroyed by the
+  restore itself and nobody can rebuild their digest afterwards. The record is the complete
+  removal ledger the restore had to apply, it is written and flushed **before** the import
+  starts, and the digest in the marker names it. The record holds the one-way references of the
+  removed subjects and never the identifier of a removed person, the directory is private to the
+  restore account and the file is readable by its owner only. The API never reads the evidence: it
+  only stats the marker directory. The name of the evidence directory is flushed in the parent
+  that holds it, so a crash of the host cannot lose the directory of the evidence.
+* The **close of the fence** discharges the evidence that the database holds **while it still owns
+  the lifecycle** and before it removes the marker of the lifecycle. A restore that takes the
+  lifecycle after the close binds its own evidence, and the discharge of the close must not delete
+  it: the removals of that restore would be lost with it. A close that cannot discharge the
+  evidence fails with the marker of the lifecycle in place, so the service stays closed and the
+  restore has to be run again.
+* The **restore takes the admission before it reads anything from the database**. The service
   refuses every request that arrives while the fence is open, so no removal is admitted after
   the ledgers the restore reads were read. The scope of that guarantee is exact: a removal that
   was **already admitted before the fence was taken** can still commit after the ledgers were
@@ -200,6 +219,12 @@ Rules the browser must honour:
   well. The fence is closed only after the removal ledger was replayed, the applied ledger was
   verified to hold every record the restore had to apply, and the restore gate was recorded and
   released. A restore that cannot replay its removals is refused before it touches the database.
+* The scope of the fence is the **admission of the service**, not the database. The background
+  loops of the service - the deadline sweeper, the health reporter, the queue worker and the
+  history publisher - are not behind the serving gate, so they keep writing while a restore
+  runs. The contract states that scope instead of claiming a guarantee the mechanism does not
+  provide: the **drained API** is the enforceable control, and the operator stops and drains the
+  service before a restore.
 * **The admission of the fence is a control of the admission, not a lock of the database.** The
   removal flow takes the account scope lock of the subject and the row locks of the rows it
   sanitizes, and the restore takes neither: the import replaces the schema of the database, so
@@ -222,6 +247,27 @@ Rules the browser must honour:
   ledger holds every removal the restore had to apply. A database that lost a removal is not
   released: the recovery records a blocking gate, closes the fence so that the restore can be
   run again, and the service stays closed. The immutable deletion protections are never weakened.
+* The removal ledger the recovery works with is the **durable evidence** of the restore, not a
+  ledger the operator rebuilds from the bundle: the removals that only the live database carried
+  are gone after the import, so the bundle and the rotation copies cannot describe them. The
+  recovery validates the evidence against the digest the marker names, and it refuses a ledger
+  that is not that one.
+* The **removals of a crashed restore are not forgotten**. The next restore merges the durable
+  evidence of the restores that did not finish into the removal ledger it has to apply, so the
+  removals they owed are replayed. A removal that is still owed keeps its evidence, and the
+  evidence is discharged when the database holds the ledger it names.
+* A **gate is released only when the database holds the removal ledger the gate waits for**. The
+  gate names the digest of that ledger, and the digest names the durable evidence of it, so the
+  release of a gate is a containment check and not a blanket update. A gate whose removal ledger
+  is not applied is **retained**: the service stays closed and the removals it waits for stay
+  owed. A restore that applies a stronger removal of the same subject supersedes the weaker
+  requirement, and the requirement is discharged with it.
+* The digest of a gate of the current version **says that the gate waits for a removal ledger
+  with durable evidence**, so the two kinds of gate are told apart without a schema change. A
+  gate of the current version whose evidence is missing waits for removals that are still owed,
+  so it is retained and the service stays closed: the release may never open the service for a
+  database whose removal ledger rows are gone. The gates of the version before the evidence store
+  existed have no evidence to look for, and they keep the release they always had.
 * The **durability** of the fence is explicit: the owner marker is flushed before the directory
   that holds it, and the marker directory is flushed in the parent that holds it, and a failure
   of the flush aborts the restore before it imports anything. Windows offers no flush of a

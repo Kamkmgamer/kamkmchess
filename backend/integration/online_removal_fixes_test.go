@@ -4,7 +4,9 @@ import (
 	"context"
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/backup"
 	"github.com/Kamkmgamer/kamkmchess/backend/history"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/privacy"
@@ -107,13 +109,15 @@ func TestPostgresTheRestoreFenceIsBoundToItsRestore(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := []byte("digest-of-the-ledger")
+	required := backup.AppliedRemovalLedger{Matches: []backup.RemovalRecord{{
+		RemovalID: "rm_fence_bound", SubjectKind: "account", SubjectID: "ref-bound", MatchID: "match-bound", Scope: "explicit_removal", RemovedAt: time.Now().UTC(),
+	}}}
 	fence, err := removals.BeginFence("restore-one", false)
 	if err != nil {
 		t.Fatalf("open fence: %v", err)
 	}
 	defer fence.Release()
-	if err = fence.Bind(digest); err != nil {
+	if err = fence.Bind(required); err != nil {
 		t.Fatalf("bind the fence: %v", err)
 	}
 	// A second restore does not overwrite the fence of the first.
@@ -121,11 +125,11 @@ func TestPostgresTheRestoreFenceIsBoundToItsRestore(t *testing.T) {
 		t.Fatal("a second restore overwrote the fence of the first")
 	}
 	// The wrong ledger does not close the fence.
-	if err = fence.Finish([]byte("another-digest")); err == nil {
+	if err = fence.Finish(backup.AppliedRemovalLedger{}); err == nil {
 		t.Fatal("the fence was closed with a ledger the restore did not apply")
 	}
 	// The fence of the restore that applied the ledger closes it.
-	if err = fence.Finish(digest); err != nil {
+	if err = fence.Finish(required); err != nil {
 		t.Fatalf("close fence: %v", err)
 	}
 	open, err := removals.FenceOpen()

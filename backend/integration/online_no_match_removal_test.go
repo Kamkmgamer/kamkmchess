@@ -118,7 +118,7 @@ func TestPostgresTheRecoveryOfACrashedRestoreIsIdentityBound(t *testing.T) {
 	}
 	// The restore bound the removal ledger it had to apply and then crashed:
 	// the ownership is released, the marker survives.
-	if err = crashed.Bind(backup.RemovalLedgerDigest(required.Matches, required.Subjects)); err != nil {
+	if err = crashed.Bind(required); err != nil {
 		t.Fatalf("bind the fence: %v", err)
 	}
 	crashed.Release()

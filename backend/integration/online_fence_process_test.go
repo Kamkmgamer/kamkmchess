@@ -2,7 +2,6 @@ package integration
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +31,6 @@ const (
 	fenceHelperPath    = "KHA_FENCE_HELPER_PATH"
 	fenceHelperRestore = "KHA_FENCE_HELPER_RESTORE"
 	fenceHelperReady   = "KHA_FENCE_HELPER_READY"
-	fenceHelperDigest  = "KHA_FENCE_HELPER_DIGEST"
 )
 
 // fenceHelper is a second process that owns the fence of the lifecycle.
@@ -44,9 +42,10 @@ type fenceHelper struct {
 // startFenceHelper starts a process that opens the fence of the lifecycle and
 // holds it until it is killed.
 //
-// The digest is the hexadecimal digest of the removal ledger the helper binds
-// in the marker of the lifecycle.
-func startFenceHelper(t *testing.T, parent, restoreID string, digest []byte) *fenceHelper {
+// The helper binds an empty removal ledger: the regressions of the fence are
+// about the ownership of the lifecycle and not about the removals, and an
+// empty ledger is a ledger the helper really applied.
+func startFenceHelper(t *testing.T, parent, restoreID string) *fenceHelper {
 	t.Helper()
 	ready := filepath.Join(t.TempDir(), "ready")
 	command := exec.Command(os.Args[0], "-test.run=TestFenceHelperProcess", "-test.timeout=120s")
@@ -55,7 +54,6 @@ func startFenceHelper(t *testing.T, parent, restoreID string, digest []byte) *fe
 		fenceHelperPath+"="+parent,
 		fenceHelperRestore+"="+restoreID,
 		fenceHelperReady+"="+ready,
-		fenceHelperDigest+"="+hex.EncodeToString(digest),
 	)
 	if err := command.Start(); err != nil {
 		t.Fatalf("start the helper process: %v", err)
@@ -126,11 +124,7 @@ func TestFenceHelperProcess(t *testing.T) {
 		t.Fatalf("the helper could not open the fence: %v", err)
 	}
 	// The restore bound the removal ledger it had to apply.
-	digest, err := hex.DecodeString(os.Getenv(fenceHelperDigest))
-	if err != nil {
-		t.Fatalf("the helper got no digest: %v", err)
-	}
-	if err = handle.Bind(digest); err != nil {
+	if err = handle.Bind(backup.AppliedRemovalLedger{}); err != nil {
 		t.Fatalf("the helper could not bind the fence: %v", err)
 	}
 	// The handle holds the ownership of the lifecycle until the helper dies.
@@ -154,7 +148,7 @@ func TestPostgresALiveRestoreHoldsTheFenceAgainstEveryOtherProcess(t *testing.T)
 	ctx := context.Background()
 	parent := t.TempDir()
 	restoreID := "restore-live"
-	helper := startFenceHelper(t, parent, restoreID, backup.RemovalLedgerDigest(nil, nil))
+	helper := startFenceHelper(t, parent, restoreID)
 	defer helper.stop()
 
 	service, err := privacy.Open(ctx, fixture.pool, fixture.authorizer, privacy.Options{FencePath: parent})
@@ -213,7 +207,7 @@ func TestPostgresACrashedRestoreIsRecoveredAfterItsProcessDied(t *testing.T) {
 	ctx := context.Background()
 	parent := t.TempDir()
 	restoreID := "restore-crashed"
-	helper := startFenceHelper(t, parent, restoreID, backup.RemovalLedgerDigest(nil, nil))
+	helper := startFenceHelper(t, parent, restoreID)
 	helper.crash()
 
 	service, err := privacy.Open(ctx, fixture.pool, fixture.authorizer, privacy.Options{FencePath: parent})
@@ -261,7 +255,7 @@ func TestPostgresTheRecoveryOfACrashedRestoreNeverReleasesADatabaseThatLostItsRe
 	ctx := context.Background()
 	parent := t.TempDir()
 	restoreID := "restore-crashed-with-lost-removals"
-	helper := startFenceHelper(t, parent, restoreID, backup.RemovalLedgerDigest(nil, nil))
+	helper := startFenceHelper(t, parent, restoreID)
 	helper.crash()
 
 	service, err := privacy.Open(ctx, fixture.pool, fixture.authorizer, privacy.Options{FencePath: parent})
@@ -278,7 +272,7 @@ func TestPostgresTheRecoveryOfACrashedRestoreNeverReleasesADatabaseThatLostItsRe
 	if err != nil {
 		t.Fatalf("the take-over failed: %v", err)
 	}
-	if err = lost.Bind(backup.RemovalLedgerDigest(required.Matches, required.Subjects)); err != nil {
+	if err = lost.Bind(required); err != nil {
 		t.Fatalf("bind the fence: %v", err)
 	}
 	lost.Release()
@@ -303,8 +297,10 @@ func TestPostgresTheRecoveryOfACrashedRestoreNeverReleasesADatabaseThatLostItsRe
 	if allowed {
 		t.Fatal("the service serves a database that lost its removals")
 	}
-	// The next restore takes the lock and releases the gate of the crashed
-	// restore when it applied the removals.
+	// The next restore takes the lock. It does not apply the removal that
+	// the crashed restore lost, so the gate of the crashed restore is
+	// retained: the release of a gate needs the removal ledger the gate waits
+	// for, and the database does not hold it.
 	restoring, err := privacy.Open(ctx, fixture.pool, fixture.authorizer, privacy.Options{FencePath: parent})
 	if err != nil {
 		t.Fatal(err)
@@ -314,7 +310,7 @@ func TestPostgresTheRecoveryOfACrashedRestoreNeverReleasesADatabaseThatLostItsRe
 		t.Fatalf("the next restore cannot take the lock: %v", err)
 	}
 	defer handle.Release()
-	if err = handle.Bind([]byte("digest")); err != nil {
+	if err = handle.Bind(backup.AppliedRemovalLedger{}); err != nil {
 		t.Fatalf("the bind of the fence failed: %v", err)
 	}
 	if _, err = restoring.RecordRestore(ctx, "restore-next"); err != nil {
@@ -323,15 +319,24 @@ func TestPostgresTheRecoveryOfACrashedRestoreNeverReleasesADatabaseThatLostItsRe
 	if err = restoring.ReleaseRestoreGate(ctx, "restore-next"); err != nil {
 		t.Fatalf("the release of the gate failed: %v", err)
 	}
-	if err = handle.Finish([]byte("digest")); err != nil {
+	if err = handle.Finish(backup.AppliedRemovalLedger{}); err != nil {
 		t.Fatalf("the close of the fence failed: %v", err)
 	}
+	// The gate of the crashed restore is still pending: the service stays
+	// closed, because the database lost a removal.
 	allowed, err = restoring.ServingAllowed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !allowed {
-		t.Fatal("the service does not serve after a restore that released every pending gate")
+	if allowed {
+		t.Fatal("the service serves a database that lost its removals after a restore that did not apply them")
+	}
+	var pending int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed=false`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatalf("the database holds %d pending gates, want the one of the crashed restore", pending)
 	}
 }
 
@@ -375,7 +380,7 @@ func TestPostgresTheRecoveryOfARestoreWithAReleasedGateStillBlocksTheService(t *
 	required := backup.AppliedRemovalLedger{Matches: []backup.RemovalRecord{{
 		RemovalID: "rm_lost", SubjectKind: "account", SubjectID: "ref-lost", MatchID: "match-lost", Scope: "explicit_removal", RemovedAt: time.Now().UTC(),
 	}}}
-	if err = handle.Bind(backup.RemovalLedgerDigest(required.Matches, required.Subjects)); err != nil {
+	if err = handle.Bind(required); err != nil {
 		t.Fatalf("bind the fence: %v", err)
 	}
 	handle.Release()
@@ -468,10 +473,10 @@ func TestPostgresTheFenceFailsClosedForEveryUnexpectedState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the take-over of the ownerless marker was refused: %v", err)
 	}
-	if err = takeover.Bind([]byte("digest-of-the-merged-ledger")); err != nil {
+	if err = takeover.Bind(backup.AppliedRemovalLedger{}); err != nil {
 		t.Fatalf("bind the take-over: %v", err)
 	}
-	if err = takeover.Finish([]byte("digest-of-the-merged-ledger")); err != nil {
+	if err = takeover.Finish(backup.AppliedRemovalLedger{}); err != nil {
 		t.Fatalf("close the fence of the take-over: %v", err)
 	}
 	open, err = service.FenceOpen()
@@ -523,7 +528,7 @@ func TestPostgresTheFenceOfAnotherRestoreIsAConflict(t *testing.T) {
 	if _, _, err = service.ReadFence("restore-two"); err != nil {
 		t.Fatalf("the read of an absent fence failed: %v", err)
 	}
-	helper := startFenceHelper(t, parent, "restore-one", backup.RemovalLedgerDigest(nil, nil))
+	helper := startFenceHelper(t, parent, "restore-one")
 	helper.crash()
 	// The fence of another restore is a conflict, not an absent fence.
 	_, _, err = service.ReadFence("restore-two")
@@ -601,7 +606,7 @@ func TestPostgresTheServiceRefusesEveryRequestWhileTheRestoreFenceIsOpen(t *test
 		t.Fatalf("open the fence: %v", err)
 	}
 	defer handle.Release()
-	if err = handle.Bind([]byte("digest-of-the-ledger")); err != nil {
+	if err = handle.Bind(backup.AppliedRemovalLedger{}); err != nil {
 		t.Fatalf("bind the fence: %v", err)
 	}
 	recorder := serve()
@@ -612,7 +617,7 @@ func TestPostgresTheServiceRefusesEveryRequestWhileTheRestoreFenceIsOpen(t *test
 		t.Fatalf("the request while the fence is open = %d", recorder.Code)
 	}
 	// The fence is closed and the request is admitted again.
-	if err = handle.Finish([]byte("digest-of-the-ledger")); err != nil {
+	if err = handle.Finish(backup.AppliedRemovalLedger{}); err != nil {
 		t.Fatalf("close the fence: %v", err)
 	}
 	if recorder = serve(); !reached || recorder.Code != http.StatusOK {
@@ -657,7 +662,7 @@ func TestPostgresTheScopeOfTheFenceIsTheAdmissionAndNotTheDatabase(t *testing.T)
 		t.Fatalf("open the fence: %v", err)
 	}
 	defer handle.Release()
-	if err = handle.Bind([]byte("digest-of-the-ledger")); err != nil {
+	if err = handle.Bind(backup.AppliedRemovalLedger{}); err != nil {
 		t.Fatalf("bind the fence: %v", err)
 	}
 	// The request that arrives after the fence was taken is refused.

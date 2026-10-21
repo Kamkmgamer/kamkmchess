@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Kamkmgamer/kamkmchess/backend/backup"
 )
 
 // The durable restore fence.
@@ -47,8 +49,12 @@ import (
 // has to apply, a random ownership token and the time the fence was written.
 //
 // The permissions of the parent directory are the operator's decision: the
-// restore tool has to create the marker and the service has to read the owner
-// marker, so both accounts need access to the parent directory.
+// restore tool has to create the marker and the durable evidence of the
+// removal ledger, and the service has to be able to *stat* the marker
+// directory, so the service account needs traverse permission on the parent
+// directory and nothing more. The service never reads the owner marker and
+// never reads the durable evidence: the marker directory is the whole of what
+// it observes.
 
 const (
 	// fenceLockName is the name of the marker directory of the restore
@@ -81,6 +87,9 @@ type Fence struct {
 	// ExpectedLedgerDigest is the digest of the removal ledger the restore has
 	// to apply. A database that does not carry that ledger afterwards was not
 	// restored from the expected state.
+	//
+	// The digest names the durable evidence of the ledger, which lives next
+	// to the marker of the lifecycle and survives the import of the restore.
 	ExpectedLedgerDigest string `json:"expectedLedgerDigest"`
 	// OwnershipToken proves that the caller of the close is the restore that
 	// opened the fence. It is a random value and it never leaves the process.
@@ -117,12 +126,19 @@ func (h *FenceHandle) Token() string {
 	return h.token
 }
 
-// Bind records the digest of the removal ledger the restore has to apply in
-// the marker of the lifecycle.
+// Bind records the removal ledger the restore has to apply in the marker of
+// the lifecycle.
 //
 // The marker is replaced atomically inside the marker directory, so the
 // marker of the lifecycle never disappears and the service stays closed.
-func (h *FenceHandle) Bind(expectedDigest []byte) error {
+//
+// The removal ledger itself is written as durable evidence next to the marker
+// of the lifecycle, before the marker names it. The evidence is the complete
+// ledger the restore has to apply, including the removals that only the live
+// database carried: the import of the restore destroys them, so a digest
+// alone could never be rebuilt afterwards. The marker names the digest of the
+// evidence, and the evidence is written and flushed before the import starts.
+func (h *FenceHandle) Bind(required backup.AppliedRemovalLedger) error {
 	if h == nil || h.service == nil {
 		return errors.New("privacy: there is no restore fence to bind")
 	}
@@ -139,9 +155,21 @@ func (h *FenceHandle) Bind(expectedDigest []byte) error {
 	if existing.RestoreID != h.restoreID || existing.OwnershipToken != h.token {
 		return errors.New("privacy: the caller does not own the restore fence")
 	}
+	record := requirementRecord{
+		RestoreID:  h.restoreID,
+		Digest:     requirementDigest(required),
+		Matches:    required.Matches,
+		Subjects:   required.Subjects,
+		RecordedAt: h.service.now(),
+	}
+	// The evidence is on the disk before the marker names it: a marker never
+	// names a removal ledger whose evidence is missing.
+	if err = h.service.writeRequirement(record); err != nil {
+		return err
+	}
 	fence := Fence{
 		RestoreID:            h.restoreID,
-		ExpectedLedgerDigest: fmt.Sprintf("%x", expectedDigest),
+		ExpectedLedgerDigest: record.Digest,
 		OwnershipToken:       h.token,
 		RecordedAt:           existing.RecordedAt,
 	}
@@ -155,26 +183,51 @@ func (h *FenceHandle) Bind(expectedDigest []byte) error {
 // Finish closes the fence of the lifecycle.
 //
 // The close verifies the owner marker of the lifecycle - the identifier, the
-// ownership token and the digest of the removal ledger - and removes the
-// marker only when it still belongs to this restore. The marker is removed
-// under the lock the handle holds, so no other restore can take the
-// lifecycle in the middle of the close.
-func (h *FenceHandle) Finish(appliedDigest []byte) error {
+// ownership token and the digest of the removal ledger - and it verifies that
+// the removal ledger the marker names is applied in the database. A marker
+// that names no removal ledger was never bound, so there is nothing to
+// verify and the close refuses it.
+//
+// A marker directory without an owner marker is an unknown state: the service
+// decides with the marker directory, so the close may not report a closed
+// fence while the directory is still there.
+//
+// The durable evidence that the database holds is discharged **while the
+// ownership of the lifecycle is still held** and before the marker of the
+// lifecycle is removed. A restore that takes the lifecycle after this close
+// binds its own evidence, and the discharge of this close must not delete it:
+// the removals of that restore would be lost with it. A close that cannot
+// discharge the evidence fails with the marker of the lifecycle in place, so
+// the service stays closed and the restore has to be run again.
+//
+// The marker is removed under the lock the handle holds, so no other restore
+// can take the lifecycle in the middle of the close.
+func (h *FenceHandle) Finish(applied backup.AppliedRemovalLedger) error {
 	if h == nil || h.service == nil {
 		return errors.New("privacy: there is no restore fence to close")
 	}
 	if h.finished {
 		return errors.New("privacy: the restore fence is already closed")
 	}
-	existing, open, err := readFenceMarker(h.service.fenceDirectory())
+	directory := h.service.fenceDirectory()
+	if _, err := os.Stat(directory); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// The fence is already closed. The close is idempotent.
+			h.finished = true
+			h.lock.release()
+			return nil
+		}
+		return err
+	}
+	existing, open, err := readFenceMarker(directory)
 	if err != nil {
 		return err
 	}
 	if !open {
-		// The fence is already closed. The close is idempotent.
-		h.finished = true
-		h.lock.release()
-		return nil
+		// The marker directory is there, but its owner marker is not. The
+		// state is unknown, and the service still refuses to serve because of
+		// the marker directory: the close may not report a closed fence.
+		return errors.New("privacy: the restore fence has no owner marker; the close of the fence is refused")
 	}
 	if existing.RestoreID != h.restoreID {
 		return fmt.Errorf("privacy: the open fence belongs to the restore %q", existing.RestoreID)
@@ -185,8 +238,26 @@ func (h *FenceHandle) Finish(appliedDigest []byte) error {
 	// A marker that names no removal ledger was never bound, so there is
 	// nothing to compare with. A bound marker is closed only for the ledger it
 	// names.
-	if existing.ExpectedLedgerDigest != "" && existing.ExpectedLedgerDigest != fmt.Sprintf("%x", appliedDigest) {
+	if existing.ExpectedLedgerDigest == "" {
+		return errors.New("privacy: the restore fence names no removal ledger; the close of the fence is refused")
+	}
+	required, found, err := h.service.readRequirement(existing.ExpectedLedgerDigest)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("privacy: the durable evidence of the removal ledger of the restore is missing")
+	}
+	if !backup.RemovalLedgerContains(applied, required.Ledger()) {
 		return errors.New("privacy: the applied removal ledger is not the ledger of the restore")
+	}
+	// The evidence that the database holds is discharged while the ownership
+	// of the lifecycle is still held, so a restore that takes the lifecycle
+	// after this close cannot have its own evidence deleted by it. The
+	// evidence of this restore is kept: it is discharged by the next restore,
+	// which holds the very same removals.
+	if err = h.service.dischargeRequirements(applied, h.restoreID); err != nil {
+		return err
 	}
 	if err = h.service.removeFenceDirectory(); err != nil {
 		return err
