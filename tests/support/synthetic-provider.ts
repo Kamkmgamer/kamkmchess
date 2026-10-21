@@ -48,6 +48,13 @@ export interface SyntheticProviderOptions {
    * the account carried the credential of the account.
    */
   readonly credential?: string;
+  /**
+   * The delay of the answer of a generation request.
+   *
+   * A case that switches the model of the seat while the request of the
+   * provider is running needs a provider that is slower than the owner.
+   */
+  readonly delayMs?: number;
 }
 
 /** The first legal move of a position, in the coordinate form the product uses. */
@@ -127,6 +134,15 @@ export async function startSyntheticProvider(options: SyntheticProviderOptions =
         { model: models[0] ?? 'synthetic', choices: [{ index: 0, delta: { content: answerFor(body) }, finish_reason: null }] },
         { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 25, completion_tokens: 8, prompt_tokens_details: { cached_tokens: 0 } } },
       ].map(frame => `data: ${JSON.stringify(frame)}\n\n`).join('') + 'data: [DONE]\n\n';
+      if (options.delayMs !== undefined && options.delayMs > 0) {
+        // The answer of a slow provider arrives after the delay, so a case can
+        // act while the request of the provider is running.
+        setTimeout(() => {
+          response.writeHead(200, { ...headers, 'content-type': 'text/event-stream', 'cache-control': 'no-store' });
+          response.end(frames);
+        }, options.delayMs);
+        return;
+      }
       response.writeHead(200, { ...headers, 'content-type': 'text/event-stream', 'cache-control': 'no-store' });
       response.end(frames);
     });

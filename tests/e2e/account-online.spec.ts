@@ -568,6 +568,57 @@ test('a late seat change never writes into the next account', async ({ page }) =
   }
 });
 
+test('the owner switches the own agent while the provider request is running', async ({ page }) => {
+  test.setTimeout(300_000);
+  const loaded = await loadDescriptor();
+  expect(loaded).not.toBeNull();
+  // The provider is slower than the owner, so the switch of the seat happens
+  // while the request of the provider is running.
+  const provider = await startSyntheticProvider({
+    models: ['synthetic-a', 'synthetic-b'],
+    credential: ACCOUNT_CREDENTIAL,
+    delayMs: 6_000,
+  });
+  try {
+    await signInWithFixtureAccount(page, loaded!, await firstAccount());
+    await page.goto('/play?online=1');
+    await connectLocalModel(page, provider.baseUrl, 'synthetic-a', provider);
+    await openOnline(page);
+    await page.getByRole('button', { name: 'Watch agent' }).click();
+    await waitForAssignment(page);
+    await showGames(page);
+    await expect(page.getByRole('region', { name: 'Online match board' })).toBeVisible({ timeout: 60_000 });
+    // The request of the provider is running now. The readiness check of the
+    // connection asked the provider before the game started, so the count
+    // grows with the request of the seat.
+    const before = provider.generationRequests.length;
+    await expect.poll(() => provider.generationRequests.length, { timeout: 60_000 }).toBeGreaterThan(before);
+
+    // The owner switches the seat to the other private model while the request
+    // of the provider is running.
+    await page.getByRole('button', { name: 'Your agents' }).click();
+    const panel = page.getByRole('region', { name: 'Your agents' });
+    await panel.getByRole('button', { name: 'Use for this game' }).nth(1).click();
+    await expect(panel.getByRole('status').filter({ hasText: 'plays this game now' })).toBeVisible({ timeout: 30_000 });
+    await panel.getByRole('button', { name: 'Close' }).click();
+    expectAccountCredential(provider);
+
+    // The seat is not uncertain: the record of the interrupted request was
+    // settled with a lease of the new epoch, so the seat keeps playing.
+    await expect(page.getByText('The agent turn is uncertain.')).toHaveCount(0, { timeout: 30_000 });
+    // The next turn of the seat is played by the other private model.
+    await expect.poll(
+      () => provider.generationRequests.some(request => request.body.includes('synthetic-b')),
+      { timeout: 180_000 },
+    ).toBe(true);
+    expectAccountCredential(provider);
+    console.log('the models the local provider answered:', provider.generationRequests
+      .map(request => /"model"\s*:\s*"([^"]+)"/.exec(request.body)?.[1] ?? 'unknown').join(', '));
+  } finally {
+    await provider.close();
+  }
+});
+
 test('the owner switches the own agent between two private models and the provider answers', async ({ page }) => {
   test.setTimeout(300_000);
   const loaded = await loadDescriptor();
