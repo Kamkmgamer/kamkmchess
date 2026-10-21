@@ -33,6 +33,26 @@ func NewOnlineEvaluator(client *Client) (*OnlineEvaluator, error) {
 	return &OnlineEvaluator{client: client}, nil
 }
 
+// Probe reports whether the rules process is ready to answer, and it never
+// waits.
+//
+// It is the optional seam for a health monitor. A probe of a worker that is
+// busy with a participant request reports `online.ErrRulesBusy` and returns
+// at once: the monitor must not spend the budget of a participant request, and
+// a busy worker is not an outage.
+//
+// The setup validation of a match creation keeps its waiting behaviour: a
+// creation waits for the worker instead of refusing the match.
+func (e *OnlineEvaluator) Probe(ctx context.Context) error {
+	if err := e.client.Probe(ctx); err != nil {
+		if errors.Is(err, ErrBusy) {
+			return fmt.Errorf("%w: %v", online.ErrRulesBusy, err)
+		}
+		return err
+	}
+	return nil
+}
+
 // ValidateSetup uses an evaluate-only request so Go does not duplicate FEN,
 // counter or terminal-position rules. Finished positions cannot start matches.
 func (e *OnlineEvaluator) ValidateSetup(ctx context.Context, input online.RulesInput) error {

@@ -172,16 +172,39 @@ the caller wants a failure of the worker to be reported as such.
 
 A caller whose deadline ends first learns only that it ran out of time, and
 a worker that hangs while it is idle is then indistinguishable from a caller
-that went away. A caller that probes the worker (the health probe of the
-service) therefore has to give the client a deadline that is longer than the
-internal request budget of the client, so that the internal timeout is the
-one that fires and the outage of the worker is recorded.
+that went away. A caller that probes the worker therefore has to give the
+client a deadline that is longer than the internal request budget of the
+client, so that the internal timeout is the one that fires and the outage of
+the worker is recorded.
 
 The client does not wait past the deadline of the caller to classify the
 failure. A bounded grace was tried and removed: it extended the caller's
 deadline, it held the shared worker slot for the queued requests, and it
 turned the cancellation of a caller into a timeout. The failure of a call is
 decided by the exchange that produced it.
+
+### The busy worker and the probe
+
+A worker that is busy with a request is healthy. The client reports the three
+classes that the health of the service needs:
+
+| Class | Reported as | Meaning |
+| --- | --- | --- |
+| the caller canceled or the caller's deadline passed | the context cause | the caller went away; the dependency is untouched |
+| the worker is busy with another request | `online.ErrRulesBusy` | the process is healthy and busy |
+| the exchange exceeded the internal bound of the worker | the error of the worker | an outage of the dependency |
+
+`Client.Probe` is the optional seam for a health monitor. It takes the worker
+slot only when the slot is free; when a participant request holds it, the
+probe reports `online.ErrRulesBusy` and returns at once. It never queues
+behind a participant request, it never spends the budget of that request, and
+it never makes a healthy worker look broken. `OnlineEvaluator.Probe` is the
+same seam for the evaluator of the service, and it maps the busy signal of
+the client to `online.ErrRulesBusy`.
+
+The setup validation of a match creation keeps its waiting behaviour: a
+creation waits for the worker instead of refusing the match. Only a probe
+reports the busy worker.
 
 ## The fixture budgets
 
@@ -249,6 +272,9 @@ Three further regressions cover the causes and the starts:
 - `TestTheEqualBoundaryBelongsToTheInternalBudget`: the boundary rule.
 - `TestACanceledCallReapsTheWorker`: a canceled call leaves no dead worker
   behind, and the next request starts a fresh one.
+- `TestTheProbeReportsABusyWorkerWithoutWaiting` and
+  `TestTheEvaluatorReportsTheBusySignal`: a probe of a busy worker reports
+  `online.ErrRulesBusy` and returns at once.
 
 `TestTheRealBundleAnswersAColdRequest` is the smoke test of the pinned worker
 bundle: the real process accepts the readiness probe and answers a cold

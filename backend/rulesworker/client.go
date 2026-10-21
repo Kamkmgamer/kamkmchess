@@ -78,6 +78,13 @@ var (
 	ErrCrashed     = errors.New("rules worker exited without a valid response")
 	ErrMalformed   = errors.New("rules worker returned malformed output")
 	ErrCorrelation = errors.New("rules worker response does not match the request")
+	// ErrBusy marks a worker that is busy with another request.
+	//
+	// A busy worker is not an outage. A probe that finds the worker busy
+	// reports it as busy and returns at once, so it never waits behind a
+	// participant request, never spends the budget of that request, and
+	// never makes a healthy worker look broken.
+	ErrBusy = errors.New("rules worker is busy with another request")
 )
 
 // RejectionError is a valid protocol response that refused the input. It never
@@ -420,6 +427,35 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 			return Response{}, lastErr
 		}
 	}
+}
+
+// Probe reports whether the worker is ready, and it never waits.
+//
+// A probe takes the worker slot only when the slot is free. When another
+// request holds it, the probe reports `ErrBusy` and returns at once: it never
+// queues behind a participant request, it never spends the budget of that
+// request, and a busy worker is never reported as a broken one.
+//
+// The probe performs the readiness probe when the worker is not ready yet,
+// with the start budget of the client.
+func (c *Client) Probe(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	select {
+	case c.slot <- struct{}{}:
+	default:
+		// The worker is busy with another request. That is not an outage.
+		return ErrBusy
+	}
+	defer c.release()
+	if c.closed {
+		return ErrClosed
+	}
+	startDeadline := time.Now().Add(c.config.StartTimeout)
+	startCtx, cancel := context.WithDeadline(ctx, startDeadline)
+	defer cancel()
+	return c.ensureReady(ctx, startCtx, startDeadline)
 }
 
 // Warm starts the worker and waits until it answers the readiness probe.

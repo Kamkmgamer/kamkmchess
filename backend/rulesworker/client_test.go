@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -660,6 +661,103 @@ func TestTheCancellationWinsOverAnEarlierCrash(t *testing.T) {
 	if errors.Is(err, ErrCrashed) {
 		t.Fatal("the crash of the first exchange replaced the cancellation of the caller")
 	}
+}
+
+// TestTheProbeReportsABusyWorkerWithoutWaiting proves that a probe of a
+// worker that is busy with a request returns at once.
+//
+// A busy worker is not an outage. The probe must not queue behind the
+// participant request, and it must not spend the budget of that request.
+func TestTheProbeReportsABusyWorkerWithoutWaiting(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: time.Second, StartTimeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	warm, cancelWarm := context.WithTimeout(context.Background(), warmBudget)
+	defer cancelWarm()
+	if err = client.Warm(warm); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	// A request holds the worker.
+	release := make(chan struct{})
+	held := make(chan error, 1)
+	go func() {
+		_, requestErr := client.Evaluate(context.Background(), request("slow"))
+		held <- requestErr
+	}()
+	// Wait until the request owns the slot: the permit is in the channel.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(client.slot) == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	started := time.Now()
+	probeErr := client.Probe(context.Background())
+	elapsed := time.Since(started)
+	if !errors.Is(probeErr, ErrBusy) {
+		t.Fatalf("the probe of a busy worker = %v, want ErrBusy", probeErr)
+	}
+	if elapsed > time.Second {
+		t.Fatalf("the probe of a busy worker waited %s", elapsed)
+	}
+	close(release)
+	// The held request ends with the timeout of its own budget; the probe is
+	// what this fixture is about.
+	<-held
+}
+
+// TestTheProbeOfAReadyWorkerSucceeds proves that a probe of a warm worker
+// reports the worker as ready.
+func TestTheProbeOfAReadyWorkerSucceeds(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 5 * time.Second, StartTimeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if err = client.Probe(context.Background()); err != nil {
+		t.Fatalf("the probe of a cold worker: %v", err)
+	}
+	if err = client.Probe(context.Background()); err != nil {
+		t.Fatalf("the probe of a ready worker: %v", err)
+	}
+}
+
+// TestTheEvaluatorReportsTheBusySignal proves that the busy signal of the
+// client reaches the shared contract of the service.
+//
+// The monitor of the service leaves the durable health alone for a busy
+// process, so the signal has to be the one of the shared contract.
+func TestTheEvaluatorReportsTheBusySignal(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: time.Second, StartTimeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	evaluator, err := NewOnlineEvaluator(client)
+	if err != nil {
+		t.Fatalf("new evaluator: %v", err)
+	}
+	held := make(chan error, 1)
+	go func() {
+		_, requestErr := client.Evaluate(context.Background(), request("slow"))
+		held <- requestErr
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(client.slot) == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	probeErr := evaluator.Probe(context.Background())
+	if !errors.Is(probeErr, online.ErrRulesBusy) {
+		t.Fatalf("the probe of a busy worker = %v, want online.ErrRulesBusy", probeErr)
+	}
+	client.Close()
+	<-held
 }
 
 func TestEvaluateReturnsValidatedMoveCandidate(t *testing.T) {
