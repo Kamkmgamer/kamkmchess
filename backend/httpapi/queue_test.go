@@ -25,6 +25,7 @@ type stubQueueService struct {
 	entryID    string
 	operation  queue.Operation
 	origin     string
+	recovery   bool
 	calls      []string
 }
 
@@ -92,11 +93,12 @@ func (s *stubQueueService) Match(_ context.Context, actor online.ParticipantRef,
 	return s.assignment, s.err
 }
 
-func (s *stubQueueService) Fallback(_ context.Context, actor online.ParticipantRef, entryID string, operation queue.Operation, origin string) (queue.Assignment, error) {
+func (s *stubQueueService) Fallback(_ context.Context, actor online.ParticipantRef, entryID string, request queue.FallbackRequest) (queue.Assignment, error) {
 	s.actor = actor
 	s.entryID = entryID
-	s.operation = operation
-	s.origin = origin
+	s.operation = request.Operation
+	s.origin = request.Origin
+	s.recovery = request.CredentialRecovery
 	s.calls = append(s.calls, "fallback")
 	return s.assignment, s.err
 }
@@ -275,6 +277,29 @@ func TestOnlineQueueAssignmentAnswerCarriesTheEngineCredential(t *testing.T) {
 	}
 	if service.origin != testOrigin {
 		t.Fatalf("the origin was not passed on: %q", service.origin)
+	}
+}
+
+// The fallback route reads the optional credential recovery of the request.
+func TestOnlineQueueFallbackReadsTheCredentialRecovery(t *testing.T) {
+	service := &stubQueueService{assignment: queue.Assignment{
+		SchemaVersion: online.ContractsSchemaVersion,
+		MatchID:       "m_match0001",
+		Seat:          online.SeatWhite,
+		OpponentLabel: "Stockfish 19 Lite",
+		Control:       online.SeatControl{Kind: online.ControlEngine, ModelLabel: stringPointer("Stockfish 19 Lite (browser)")},
+	}}
+	handler := newQueueHandler(service)
+	w := queueRequest(t, handler, http.MethodPost, "/v1/online/queue/entries/qe_entry0001/fallback", "token-account",
+		`{"schemaVersion":2,"operationId":"operation-0002","credentialRecovery":true}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	if !service.recovery {
+		t.Fatal("the route did not read the credential recovery")
+	}
+	if service.operation.ID != "operation-0002" {
+		t.Fatalf("the route did not read the operation identifier: %+v", service.operation)
 	}
 }
 

@@ -31,7 +31,7 @@ type QueueService interface {
 	// Match pairs the entry with a compatible ready entry.
 	Match(ctx context.Context, actor online.ParticipantRef, entryID string, operation queue.Operation) (queue.Assignment, error)
 	// Fallback commits the browser engine fallback.
-	Fallback(ctx context.Context, actor online.ParticipantRef, entryID string, operation queue.Operation, origin string) (queue.Assignment, error)
+	Fallback(ctx context.Context, actor online.ParticipantRef, entryID string, request queue.FallbackRequest) (queue.Assignment, error)
 }
 
 type queueAPI struct {
@@ -86,6 +86,17 @@ type queueCreateRequest struct {
 type queueOperationRequest struct {
 	SchemaVersion int    `json:"schemaVersion"`
 	OperationID   string `json:"operationId"`
+}
+
+// queueFallbackRequest is the body of the browser engine fallback.
+//
+// The credential recovery is the explicit rotation of an owner that lost the
+// answer of the fallback and holds no usable credential. A routine retry
+// never sets it: it would rotate the secret the browser still has.
+type queueFallbackRequest struct {
+	SchemaVersion      int    `json:"schemaVersion"`
+	OperationID        string `json:"operationId"`
+	CredentialRecovery bool   `json:"credentialRecovery"`
 }
 
 // create creates one explicit queue entry.
@@ -214,17 +225,30 @@ func (a *queueAPI) match(w http.ResponseWriter, r *http.Request) {
 // The call itself is the report that the browser engine is ready. The answer
 // carries the seat-scoped credential that lets the owner's browser move the
 // engine, and it is only produced once that credential exists.
+//
+// A routine retry of the same fallback never rotates a live credential: the
+// answer then names the assignment without a secret, because the browser
+// already holds the credential. An owner that lost the answer asks for the
+// explicit recovery, and that rotation is the only one.
 func (a *queueAPI) fallback(w http.ResponseWriter, r *http.Request) {
 	principal, ok := a.auth.account(w, r, true)
 	if !ok {
 		return
 	}
-	operation, ok := a.operation(w, r)
-	if !ok {
+	var body queueFallbackRequest
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if body.SchemaVersion != online.ContractsSchemaVersion {
+		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
 	origin := r.Header.Get("Origin")
-	assignment, err := a.service.Fallback(r.Context(), principal.Participant, r.PathValue("entryID"), operation, origin)
+	assignment, err := a.service.Fallback(r.Context(), principal.Participant, r.PathValue("entryID"), queue.FallbackRequest{
+		Operation:          queue.Operation{ID: body.OperationID},
+		CredentialRecovery: body.CredentialRecovery,
+		Origin:             origin,
+	})
 	if err != nil {
 		writeQueueError(w, err)
 		return

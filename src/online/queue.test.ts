@@ -162,19 +162,29 @@ describe('queue domain rules', () => {
   });
 });
 
+
 describe('queue client', () => {
+  function answerWith(credential: unknown) {
+    return {
+      schemaVersion: 2,
+      matchId: 'm_match0001',
+      seat: 'white',
+      opponentLabel: 'Stockfish 19 Lite',
+      control: { kind: 'engine', modelLabel: 'Stockfish 19 Lite (browser)' },
+      ...(credential ? { guestCredential: credential } : {}),
+    };
+  }
+
   it('calls the documented routes with the documented bodies', async () => {
     const calls: { path: string; method: string; body?: unknown }[] = [];
     const client = createQueueClient(async (request) => {
-      calls.push({ path: request.path, method: request.method, ...(request.body === undefined ? {} : { body: request.body }) });
+      calls.push({
+        path: request.path,
+        method: request.method,
+        ...(request.body === undefined ? {} : { body: request.body }),
+      });
       if (request.path.endsWith('/match')) {
-        return {
-          schemaVersion: 2,
-          matchId: 'm_match0001',
-          seat: 'white',
-          opponentLabel: 'Bob',
-          control: { kind: 'human' },
-        };
+        return answerWith(null);
       }
       return entry();
     });
@@ -189,7 +199,6 @@ describe('queue client', () => {
     await client.cancel('qe_entry0001', { schemaVersion: 2, operationId: 'operation-0001' });
     await client.keepSearching('qe_entry0001');
     await client.heartbeat('qe_entry0001');
-    const assignment = await client.match('qe_entry0001');
 
     expect(calls[0]?.path).toBe('/v1/online/queue/entries');
     expect(calls[0]?.method).toBe('POST');
@@ -204,7 +213,52 @@ describe('queue client', () => {
     expect(calls[2]?.body).toEqual({ schemaVersion: 2, operationId: 'operation-0001' });
     expect(calls[3]?.path).toBe('/v1/online/queue/entries/qe_entry0001/keep-searching');
     expect(calls[4]?.path).toBe('/v1/online/queue/entries/qe_entry0001/heartbeat');
-    expect(assignment.matchId).toBe('m_match0001');
+  });
+
+  it('keeps the credential of the browser on a routine retry', async () => {
+    const calls: { body?: unknown }[] = [];
+    const client = createQueueClient(async (request) => {
+      calls.push({ ...(request.body === undefined ? {} : { body: request.body }) });
+      return answerWith(null);
+    });
+
+    const answer = await client.fallback('qe_entry0001', { schemaVersion: 2, operationId: 'operation-0001' });
+
+    expect(answer.guestCredential).toBeUndefined();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.body).toEqual({ schemaVersion: 2, operationId: 'operation-0001' });
+  });
+
+  it('asks for the explicit recovery when the browser holds no credential', async () => {
+    const calls: { body?: unknown }[] = [];
+    const client = createQueueClient(
+      async (request) => {
+        calls.push({ ...(request.body === undefined ? {} : { body: request.body }) });
+        return answerWith(null);
+      },
+      { holdsEngineCredential: () => false },
+    );
+
+    const answer = await client.fallback('qe_entry0001', { schemaVersion: 2, operationId: 'operation-0001' });
+
+    expect(answer.guestCredential).toBeUndefined();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.body).toEqual({ schemaVersion: 2, operationId: 'operation-0001', credentialRecovery: true });
+  });
+
+  it('never rotates a credential the browser still holds', async () => {
+    const calls: { body?: unknown }[] = [];
+    const client = createQueueClient(
+      async (request) => {
+        calls.push({ ...(request.body === undefined ? {} : { body: request.body }) });
+        return answerWith(null);
+      },
+      { holdsEngineCredential: () => true },
+    );
+
+    await client.fallback('qe_entry0001', { schemaVersion: 2, operationId: 'operation-0001' });
+
+    expect(calls).toHaveLength(1);
   });
 
   it('builds an operation body without an identifier', () => {

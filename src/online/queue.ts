@@ -6,8 +6,8 @@
  * and completing a game never queues another one.
  *
  * This module owns the wire contract of the queue routes and the domain
- * rules of an entry. It owns no transport: the caller supplies the request
- * function, so the same module serves the workspace controller and a test.
+ * rules of an entry. It owns no transport: `src/online/queue-client.ts` is
+ * the HTTP adapter, and the workspace composes the two.
  *
  * The rules the module keeps:
  *
@@ -24,7 +24,8 @@
  * - The match route asks the service to pair the entry. A missing candidate
  *   is an empty answer, not an error.
  * - The fallback route commits the browser engine. The answer carries the
- *   seat-scoped credential that lets the owner's browser move the engine.
+ *   seat-scoped credential that lets the owner's browser move the engine, and
+ *   it carries one only when the service issued one.
  *
  * The module never guesses. An expired entry is reported as expired, an
  * assigned entry as assigned, and an answer that does not parse is refused
@@ -299,6 +300,13 @@ export function queuePhaseOf(entry: QueueEntry): QueuePhase {
   return 'preparing';
 }
 
+/** The body of a mutation without an explicit operation identifier. */
+export function queueOperationBody(operationId?: string): QueueOperationRequest {
+  return operationId === undefined
+    ? { schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION }
+    : { schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION, operationId };
+}
+
 /** The request the client needs for one call. */
 export interface QueueRequest {
   /** The path of the route, relative to the service origin. */
@@ -310,6 +318,29 @@ export interface QueueRequest {
 
 /** The transport the client needs. It never carries a credential itself. */
 export type QueueRequester = (request: QueueRequest) => Promise<unknown>;
+
+/** The failure of a queue request. */
+export class OnlineQueueRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = 'OnlineQueueRequestError';
+  }
+}
+
+/**
+ * The state the browser holds of the engine credential.
+ *
+ * The browser owns the credential of its engine seat. The queue never stores
+ * it, so the browser is the only place that knows whether it still holds a
+ * usable one.
+ */
+export interface QueueEngineCredentialPort {
+  /** Reports whether the browser holds a usable credential of the match. */
+  holdsEngineCredential(matchId: string): boolean;
+}
 
 /** The typed queue client. */
 export interface QueueClient {
@@ -327,15 +358,28 @@ export interface QueueClient {
   heartbeat(entryId: string, request?: QueueOperationRequest): Promise<QueueEntry>;
   /** Pairs the entry with a compatible ready entry. */
   match(entryId: string, request?: QueueOperationRequest): Promise<QueueAssignment>;
-  /** Commits the browser engine fallback. */
-  fallback(entryId: string, request?: QueueOperationRequest): Promise<QueueAssignment>;
+  /**
+   * Commits the browser engine fallback.
+   *
+   * The answer carries the engine credential only when the service issued
+   * one. A routine retry receives the assignment without a secret, because
+   * the browser already holds the credential. When the browser holds no
+   * usable credential at all, the client asks for the explicit recovery and
+   * the service rotates it on purpose.
+   */
+  fallback(entryId: string, request?: QueueFallbackRequest): Promise<QueueAssignment>;
 }
 
-/** The body of a mutation without an explicit operation identifier. */
-export function queueOperationBody(operationId?: string): QueueOperationRequest {
-  return operationId === undefined
-    ? { schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION }
-    : { schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION, operationId };
+/** The body of the browser engine fallback. */
+export interface QueueFallbackRequest extends QueueOperationRequest {
+  /**
+   * Asks the service to rotate the credential of the engine seat.
+   *
+   * It is the explicit recovery of an owner that lost the answer of the
+   * fallback and holds no usable credential. A routine retry never sets it:
+   * it would rotate the secret the browser still has.
+   */
+  readonly credentialRecovery?: boolean;
 }
 
 /**
@@ -345,11 +389,10 @@ export function queueOperationBody(operationId?: string): QueueOperationRequest 
  * the account credential and the origin rules, and it never sends a
  * credential in a URL or a body.
  */
-export function createQueueClient(requester: QueueRequester): QueueClient {
+export function createQueueClient(requester: QueueRequester, credentials?: QueueEngineCredentialPort): QueueClient {
   async function entry(path: string, method: 'GET' | 'POST', body?: unknown): Promise<QueueEntry> {
     const answer = await requester({ path, method, ...(body === undefined ? {} : { body }) });
-    const parsed = parseQueueEntry(answer);
-    return parsed;
+    return parseQueueEntry(answer);
   }
   async function assignment(path: string, body?: unknown): Promise<QueueAssignment> {
     const answer = await requester({ path, method: 'POST', ...(body === undefined ? {} : { body }) });
@@ -377,8 +420,24 @@ export function createQueueClient(requester: QueueRequester): QueueClient {
     match(entryId, request) {
       return assignment(queueEntryMatchPath(entryId), request ?? queueOperationBody());
     },
-    fallback(entryId, request) {
-      return assignment(queueEntryFallbackPath(entryId), request ?? queueOperationBody());
+    async fallback(entryId, request) {
+      const answer = await assignment(queueEntryFallbackPath(entryId), {
+        ...queueOperationBody(request?.operationId),
+        ...(request?.credentialRecovery ? { credentialRecovery: true } : {}),
+      });
+      if (answer.guestCredential !== undefined || request?.credentialRecovery === true) {
+        return answer;
+      }
+      // The answer carries no credential. The browser holds one, so the
+      // routine retry is complete. The browser holds none - the answer of the
+      // fallback was lost - and the client asks for the explicit recovery.
+      if (!credentials || credentials.holdsEngineCredential(answer.matchId)) {
+        return answer;
+      }
+      return assignment(queueEntryFallbackPath(entryId), {
+        ...queueOperationBody(request?.operationId),
+        credentialRecovery: true,
+      });
     },
   };
 }

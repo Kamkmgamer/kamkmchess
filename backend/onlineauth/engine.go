@@ -118,3 +118,18 @@ func (a *Allocator) IssueEngineSeatCredential(ctx context.Context, request Engin
 	}
 	return credential, nil
 }
+
+// HasEngineSeatCredential reports whether the seat already has a live
+// credential.
+//
+// The trusted allocation seam uses it to avoid an unnecessary rotation: a
+// credential that is already live is never superseded by a routine retry, so
+// the secret a browser already holds keeps working.
+//
+// The check is read-only. It never mints and never revokes.
+func (a *Allocator) HasEngineSeatCredential(ctx context.Context, matchID string, seat online.Seat) (bool, error) {
+	if a == nil || a.service == nil {
+		return false, errors.New("onlineauth: no allocator is configured")
+	}
+	return a.service.HasLiveSeatCredential(ctx, a.service.db, matchID, seat)
+}

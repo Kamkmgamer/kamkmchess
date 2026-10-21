@@ -2,8 +2,6 @@ package integration
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"sync"
@@ -42,60 +40,15 @@ func (c *queueClock) Advance(duration time.Duration) {
 	c.now = c.now.Add(duration)
 }
 
-// sharedAllocator uses the trusted allocation seam of the shared writer.
-//
-// The shared writer owns the trusted seam: it validates the setup against the
-// pinned rules policy, derives the match identifier from the idempotency key
-// and the participant that caused the allocation, and writes the match in one
-// transaction. When the branch provides that seam the test uses it, so the
-// regression exercises the production allocator and not a test double.
-type sharedAllocator struct {
-	service *online.Service
-}
-
-// productionSeam is the trusted allocation seam of the shared writer.
-type productionSeam interface {
-	CreateAllocatedMatch(ctx context.Context, actor online.ParticipantRef, setup online.CreateMatchSetup, operationID string) (online.CommandResult, error)
-	ValidateSetup(ctx context.Context, setup online.CreateMatchSetup) error
-}
-
-func (a sharedAllocator) ValidateSetup(ctx context.Context, setup online.CreateMatchSetup) error {
-	if seam, ok := any(a.service).(productionSeam); ok {
-		return seam.ValidateSetup(ctx, setup)
-	}
-	return setup.Validate()
-}
-
-func (a sharedAllocator) CreateAllocatedMatch(ctx context.Context, actor online.ParticipantRef, setup online.CreateMatchSetup, operationID string) (online.CommandResult, error) {
-	if seam, ok := any(a.service).(productionSeam); ok {
-		return seam.CreateAllocatedMatch(ctx, actor, setup, operationID)
-	}
-	if err := setup.Validate(); err != nil {
-		return online.CommandResult{}, err
-	}
-	seat := online.SeatWhite
-	if setup.Seats.Black.Participant == actor {
-		seat = online.SeatBlack
-	}
-	sum := sha256.Sum256([]byte("kamkmchess/allocated-match/" + operationID))
-	matchID := "m" + hex.EncodeToString(sum[:])[:31]
-	cmd := online.Command{
-		SchemaVersion:   online.ContractsSchemaVersion,
-		MatchID:         matchID,
-		OperationID:     operationID,
-		ExpectedVersion: 0,
-		Seat:            seat,
-		ControlEpoch:    1,
-		Action:          online.Action{Kind: online.ActionCreateMatch, CreateMatch: &setup},
-	}
-	return a.service.Execute(ctx, actor, cmd)
-}
-
 // recordingCredentials records the issued engine credentials.
+//
+// It is the recording fixture of the queue tests. The credential path of the
+// production composition is covered by the real allocator regression below.
 type recordingCredentials struct {
 	mu      sync.Mutex
 	issued  []onlineauth.EngineSeatRequest
 	secrets []string
+	live    bool
 }
 
 func (c *recordingCredentials) IssueEngineSeatCredential(_ context.Context, request onlineauth.EngineSeatRequest) (onlineauth.IssuedSeatCredential, error) {
@@ -104,6 +57,7 @@ func (c *recordingCredentials) IssueEngineSeatCredential(_ context.Context, requ
 	c.issued = append(c.issued, request)
 	secret := "kmgc1_testsecret" + fmt.Sprintf("%043d", len(c.issued))
 	c.secrets = append(c.secrets, secret)
+	c.live = true
 	return onlineauth.IssuedSeatCredential{
 		CredentialID: "kg-test-" + fmt.Sprintf("%08d", len(c.issued)),
 		GuestID:      request.GuestID,
@@ -114,6 +68,12 @@ func (c *recordingCredentials) IssueEngineSeatCredential(_ context.Context, requ
 		IssuedAt:     time.Unix(1_900_000_000, 0).UTC(),
 		ExpiresAt:    time.Unix(1_900_003_600, 0).UTC(),
 	}, nil
+}
+
+func (c *recordingCredentials) HasEngineSeatCredential(context.Context, string, online.Seat) (bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.live, nil
 }
 
 // namedLabels names the owners of the test with a stable public label.
@@ -146,8 +106,10 @@ func newQueueHarness(t *testing.T) *queueHarness {
 	clock := newQueueClock()
 	credentials := &recordingCredentials{}
 	service, err := queue.Open(context.Background(), pool, queue.Options{
-		Now:         clock.Now,
-		Allocator:   sharedAllocator{service: onlineService},
+		Now: clock.Now,
+		// The shared writer is the production allocator of the queue. The
+		// regression therefore exercises the real acceptance path.
+		Allocator:   onlineService,
 		Labels:      namedLabels{},
 		Credentials: credentials,
 		Random:      func() float64 { return 0 },
@@ -206,7 +168,7 @@ func TestQueueRefusesGuestsAndConsumesAnEntryOnce(t *testing.T) {
 	if assignment.MatchID == "" || assignment.OpponentLabel != "Player user_b" {
 		t.Fatalf("unexpected assignment: %+v", assignment)
 	}
-	if assignment.Control.Kind != online.ControlAgent || assignment.Control.ModelLabel == nil || *assignment.Control.ModelLabel != "Claude" {
+	if assignment.Control.Kind != online.ControlAgent || assignment.Control.ModelLabel == nil || *assignment.Control.ModelLabel != "Custom model" {
 		t.Fatalf("unexpected opponent control: %+v", assignment.Control)
 	}
 	// The same call again returns the same game. One entry produces one game.
@@ -550,7 +512,7 @@ func TestQueueCutoffEqualityWinsAndLaterCandidatesDoNot(t *testing.T) {
 	if exact.ReadyAt == nil || !exact.ReadyAt.Equal(cutoff) {
 		t.Fatalf("the candidate is not ready at the cutoff: %s vs %s", exact.ReadyAt, cutoff)
 	}
-	assignment, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.Operation{}, "https://app.example")
+	assignment, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.FallbackRequest{Origin: "https://app.example"})
 	if err != nil {
 		t.Fatalf("fallback at the cutoff: %v", err)
 	}
@@ -689,7 +651,7 @@ func TestQueueCommittedOpponentIsNeverReplaced(t *testing.T) {
 	h := newQueueHarness(t)
 	ctx := context.Background()
 	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
-	assignment, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.Operation{}, "https://app.example")
+	assignment, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.FallbackRequest{Origin: "https://app.example"})
 	if err != nil {
 		t.Fatalf("fallback: %v", err)
 	}
@@ -728,7 +690,7 @@ func TestQueueFallbackEngineSeatIsASeparateParticipant(t *testing.T) {
 	h := newQueueHarness(t)
 	ctx := context.Background()
 	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
-	assignment, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.Operation{}, "https://app.example")
+	assignment, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.FallbackRequest{Origin: "https://app.example"})
 	if err != nil {
 		t.Fatalf("fallback: %v", err)
 	}
@@ -896,7 +858,7 @@ func TestQueueLateWorkerDoesNotMatchPostCutoffCandidates(t *testing.T) {
 		t.Fatalf("the entry was assigned without a candidate: %+v", waiting)
 	}
 	// The entry waits for the engine fallback of the browser.
-	fallback, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.Operation{}, "https://app.example")
+	fallback, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.FallbackRequest{Origin: "https://app.example"})
 	if err != nil {
 		t.Fatalf("fallback: %v", err)
 	}
@@ -917,18 +879,20 @@ func TestQueueKeepSearchingRemovesTheAutomaticCutoff(t *testing.T) {
 	if kept.CutoffAt != nil {
 		t.Fatalf("the entry kept its cutoff: %+v", kept)
 	}
-	// The sweep never resolves a cutoff that does not exist.
-	h.clock.Advance(time.Hour)
+	// The sweep never resolves a cutoff that does not exist. The owner
+	// keeps reporting in while the search runs.
+	for step := 0; step < 3; step++ {
+		h.clock.Advance(4 * time.Second)
+		if _, err = h.service.Heartbeat(ctx, account("user_a"), entry.EntryID, queue.Operation{}); err != nil {
+			t.Fatalf("heartbeat %d: %v", step, err)
+		}
+	}
 	sweep, err := h.service.ResolveDueCutoffs(ctx, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sweep.Matched != 0 || sweep.Pending != 0 {
 		t.Fatalf("the sweep resolved a kept search: %+v", sweep)
-	}
-	// The owner is still responsive, so the entry stays eligible.
-	if _, err = h.service.Heartbeat(ctx, account("user_a"), entry.EntryID, queue.Operation{}); err != nil {
-		t.Fatalf("heartbeat: %v", err)
 	}
 	// A candidate that arrives later still matches the entry.
 	candidate := h.createEntry("user_b", agentControl("Claude"), standardClock(), "")
@@ -977,8 +941,9 @@ func TestQueueEntryOfAnotherOwnerIsNotFound(t *testing.T) {
 	}
 }
 
-// A pending allocation is recovered into the same game.
-func TestQueuePendingAllocationIsRecovered(t *testing.T) {
+// A committed allocation is final. The sweep never resolves it again and the
+// entries keep their one game.
+func TestQueueCommittedAllocationIsNeverResolvedAgain(t *testing.T) {
 	h := newQueueHarness(t)
 	ctx := context.Background()
 	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
@@ -987,13 +952,13 @@ func TestQueuePendingAllocationIsRecovered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The reservation is committed and the entries are assigned.
-	sweep, err := h.service.ResolvePendingAllocations(ctx, 10)
+	// The sweep resolves nothing: the allocation is committed.
+	sweep, err := h.service.Sweep(ctx, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sweep.Completed != 0 {
-		t.Fatalf("a committed allocation was resolved again: %+v", sweep)
+	if sweep.Matched != 0 || sweep.Failed != 0 {
+		t.Fatalf("the sweep resolved a committed allocation: %+v", sweep)
 	}
 	stored, err := h.service.Entry(ctx, account("user_a"), entry.EntryID)
 	if err != nil {

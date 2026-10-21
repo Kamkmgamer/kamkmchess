@@ -99,25 +99,40 @@ var (
 
 // MatchAllocator is the trusted seam to the canonical match writer.
 //
-// The queue never writes match rows itself. It asks the shared allocator to
-// write the match of the allocation, so there is exactly one copy of the
-// acceptance SQL and the shared rules policy stays in one place.
+// The queue never writes match rows itself. It asks the shared writer to
+// write the match **inside the transaction that consumes the entries**, so
+// the game and the consumption of its entries commit together or not at all.
 //
 // The seam is not an authorization bypass: the setup is validated against the
 // pinned rules policy, and the match, its seats, its clock, its first event
 // and its operation receipt are written exactly like an ordinary creation.
 //
-// The allocation calls the seam outside the queue transaction. The durable
-// allocation row is written first, so a lost answer or a failed match
-// creation leaves a recoverable record instead of a lost entry.
+// Because the writer runs inside the queue transaction, the bucket lock
+// covers the whole decision: two owners of one pair, or the reconciliation
+// loop and an owner, can never write the same match twice.
 type MatchAllocator interface {
-	// CreateAllocatedMatch creates the canonical match of a trusted
-	// allocation. The operation identifier is the idempotency key and
-	// derives the match identifier, so a retry names the same match.
-	CreateAllocatedMatch(ctx context.Context, actor online.ParticipantRef, setup online.CreateMatchSetup, operationID string) (online.CommandResult, error)
+	// CreateMatchInTx writes the canonical match of a trusted allocation
+	// inside the caller's transaction. The command names the idempotency
+	// key of the allocation, so a retry names the same match.
+	CreateMatchInTx(ctx context.Context, tx pgx.Tx, cmd online.Command) (online.CommandResult, error)
 	// ValidateSetup checks a match setup against the pinned rules policy
 	// without writing anything.
 	ValidateSetup(ctx context.Context, setup online.CreateMatchSetup) error
+}
+
+// DeclaredControlResolver resolves the publishable label of a declared
+// control.
+//
+// The resolution is the canonical one of the shared schema: a private
+// routing identity, a secret-bearing alias or a connection nickname is
+// replaced by a neutral label before it is accepted, and it never reaches a
+// durable row or a response body. The queue is not a second, laxer place
+// where a model label is accepted: a label that the shared match path would
+// refuse is refused here too.
+type DeclaredControlResolver interface {
+	// ResolveDeclaredControl returns the control with its publishable
+	// label.
+	ResolveDeclaredControl(ctx context.Context, ownerKind, ownerID string, control online.SeatControl) (online.SeatControl, error)
 }
 
 // LabelResolver returns the public label of an account participant.
@@ -136,8 +151,16 @@ type LabelResolver interface {
 // that is scoped to that one seat of that one match. The credential is
 // revocable, it is bound to the seat it was issued for, and it never widens
 // the participant checks of the match.
+//
+// The issuer also reports whether the seat already has a live credential, so
+// a routine retry never rotates a secret the browser already holds.
 type CredentialIssuer interface {
+	// IssueEngineSeatCredential issues the credential of an engine seat. It
+	// supersedes every earlier credential of that seat.
 	IssueEngineSeatCredential(ctx context.Context, request onlineauth.EngineSeatRequest) (onlineauth.IssuedSeatCredential, error)
+	// HasEngineSeatCredential reports whether the seat already has a live
+	// credential.
+	HasEngineSeatCredential(ctx context.Context, matchID string, seat online.Seat) (bool, error)
 }
 
 // Options configures the queue.
@@ -154,6 +177,8 @@ type Options struct {
 	EngineLabel string
 	// Allocator writes the canonical match of an allocation.
 	Allocator MatchAllocator
+	// Controls resolves the publishable label of a declared control.
+	Controls DeclaredControlResolver
 	// Labels names the public label of an owner.
 	Labels LabelResolver
 	// Credentials issues the seat credential of a browser engine seat.
@@ -175,6 +200,7 @@ type Service struct {
 	readinessTTL time.Duration
 	engineLabel  string
 	allocator    MatchAllocator
+	controls     DeclaredControlResolver
 	labels       LabelResolver
 	credentials  CredentialIssuer
 	random       func() float64
@@ -195,6 +221,7 @@ func Open(_ context.Context, db *pgxpool.Pool, options Options) (*Service, error
 		readinessTTL: options.ReadinessTTL,
 		engineLabel:  options.EngineLabel,
 		allocator:    options.Allocator,
+		controls:     options.Controls,
 		labels:       options.Labels,
 		credentials:  options.Credentials,
 		random:       options.Random,
@@ -214,10 +241,45 @@ func Open(_ context.Context, db *pgxpool.Pool, options Options) (*Service, error
 	if service.labels == nil {
 		service.labels = staticLabels{}
 	}
+	if service.controls == nil {
+		service.controls = canonicalControls{db: db}
+	}
 	if service.random == nil {
 		service.random = cryptoRandom
 	}
 	return service, nil
+}
+
+// canonicalControls resolves a declared control through the canonical
+// resolution of the shared schema.
+//
+// The resolution is the database function the shared match path applies on
+// write, so the label the queue stores and the label the canonical seat
+// stores are the same value. An unknown label becomes the neutral label and
+// a private routing identity never reaches a durable row.
+type canonicalControls struct {
+	db *pgxpool.Pool
+}
+
+func (c canonicalControls) ResolveDeclaredControl(ctx context.Context, ownerKind, ownerID string, control online.SeatControl) (online.SeatControl, error) {
+	if control.Kind == online.ControlHuman {
+		return control, nil
+	}
+	if control.ModelLabel == nil {
+		return online.SeatControl{}, fmt.Errorf("%w: the declared model label", ErrInvalidRequest)
+	}
+	if c.db == nil {
+		return online.SeatControl{}, fmt.Errorf("%w: the queue cannot resolve a declared control", ErrUnavailable)
+	}
+	var resolved *string
+	if err := c.db.QueryRow(ctx, `SELECT online_resolve_public_model_label($1,$2,$3,$4)`, ownerKind, ownerID, string(control.Kind), *control.ModelLabel).Scan(&resolved); err != nil {
+		return online.SeatControl{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
+	}
+	if resolved == nil || *resolved == "" {
+		return online.SeatControl{}, fmt.Errorf("%w: the declared model label", ErrInvalidRequest)
+	}
+	control.ModelLabel = resolved
+	return control, nil
 }
 
 // staticLabels is the fallback resolver. It names every owner with the
@@ -440,6 +502,15 @@ func (s *Service) CreateEntry(ctx context.Context, actor online.ParticipantRef, 
 	if request.ClientRequestID != "" && !clientRequestIDShape(request.ClientRequestID) {
 		return online.QueueEntry{}, false, fmt.Errorf("%w: client request id", ErrInvalidRequest)
 	}
+	// The declared control is resolved through the canonical resolution
+	// before it is accepted. A private routing identity, a secret-bearing
+	// alias or a connection nickname is replaced by a neutral label here, so
+	// it never reaches a durable row and never crosses an owner boundary.
+	resolved, err := s.controls.ResolveDeclaredControl(ctx, string(online.ParticipantAccount), actor.ID, request.Control)
+	if err != nil {
+		return online.QueueEntry{}, false, err
+	}
+	request.Control = resolved
 	now := s.now().UTC()
 	entryID, err := newIdentifier("qe_")
 	if err != nil {
@@ -612,8 +683,13 @@ func (s *Service) KeepSearching(ctx context.Context, actor online.ParticipantRef
 // Heartbeat reports that the owner of a waiting entry is still responsive.
 //
 // One heartbeat keeps the entry eligible for the readiness lease. A frozen
-// or disconnected entry loses the lease and expires, and it needs an
-// explicit rejoin afterwards.
+// or disconnected entry loses the lease, expires, and needs an explicit
+// rejoin.
+//
+// A heartbeat never revives a dead lease. The lease is the readiness signal
+// of the owner, and a heartbeat that arrives after the lease died would say
+// nothing about the time in between. Only the explicit rejoin arms a fresh
+// window.
 func (s *Service) Heartbeat(ctx context.Context, actor online.ParticipantRef, entryID string, operation Operation) (online.QueueEntry, error) {
 	if err := validateActor(actor); err != nil {
 		return online.QueueEntry{}, err
@@ -625,6 +701,11 @@ func (s *Service) Heartbeat(ctx context.Context, actor online.ParticipantRef, en
 		case internalExpired:
 			return false, fmt.Errorf("%w: the entry expired", ErrConflict)
 		default:
+			if record.ExpiresAt != nil && !record.ExpiresAt.After(now) {
+				// The lease is dead. The entry leaves the eligibility and
+				// only an explicit rejoin revives it.
+				return false, fmt.Errorf("%w: the entry expired", ErrConflict)
+			}
 			if _, err := tx.Exec(ctx, `UPDATE online_queue_entries SET last_heartbeat_at=$2,expires_at=$3,version=version+1,updated_at=$2 WHERE entry_id=$1`, record.EntryID, now, now.Add(s.readinessTTL)); err != nil {
 				return false, err
 			}
