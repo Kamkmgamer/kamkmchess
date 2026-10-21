@@ -571,6 +571,19 @@ it has to read:
    well, even though the recovery itself would not write the identifier of the
    removed subject again. The refusal is the fail closed answer, and the
    privacy sanitation of that invitation would break the recovery anyway.
+9. The **canonical writer** of the service (`requireParticipants` in
+   `backend/online/allocation_writer.go`) asks the same question about the
+   same identifier and has the same blind spot: it reads the participant of a
+   seat and asks the removal tables about it, so a seat that the sanitation
+   replaced with the anonymized sentinel passes its check. The friend surface
+   closes the hole for its own writes, and the foundation worker owns the
+   writer. The friend surface keeps its own copy of the sentinel constant
+   until the shared removal vocabulary owns one; the two must name the same
+   string.
+10. The pending read of a rematch offer retires a dead offer, so a read path
+    writes once for a dead offer and never again. The write touches only a row
+    that names nobody any more, and it takes no account scope lock, so it
+    cannot invert the order of the removal.
 
 ## Status
 
