@@ -263,14 +263,25 @@ func recoverCommand(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	if !found && options.evidence != "" {
-		// The operator restored the evidence of the restore from the protected
-		// backup of the evidence directory. The evidence names the removal
-		// ledger the restore owed, and it proves the commitment of the gate
-		// when the digest of the ledger is exactly the one the gate names.
+	if options.evidence != "" {
+		// The operator handed a file to the recovery, so the file is opened
+		// and validated, even when the evidence directory still holds a record
+		// of the restore: a file that names another restore, that does not
+		// match its own digest or that conflicts with the record of the
+		// directory is refused instead of being ignored.
 		record, err := privacy.ReadRemovalRequirement(options.evidence)
 		if err != nil {
 			return fmt.Errorf("the durable evidence of the restore cannot be read: %w", err)
+		}
+		if record.RestoreID != options.restoreID {
+			return fmt.Errorf("the durable evidence names the restore %q, not %q", record.RestoreID, options.restoreID)
+		}
+		if found {
+			directory := fmt.Sprintf("%x", backup.RemovalLedgerDigest(required.Matches, required.Subjects))
+			supplied := fmt.Sprintf("%x", backup.RemovalLedgerDigest(record.Matches, record.Subjects))
+			if directory != supplied {
+				return errors.New("the durable evidence of the restore conflicts with the record of the evidence directory")
+			}
 		}
 		required = record.Ledger()
 		found = true

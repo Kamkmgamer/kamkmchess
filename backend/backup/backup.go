@@ -482,17 +482,29 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	// The handle owns the lifecycle until the fence is closed. A restore that
-	// fails or that is killed leaves the marker of the lifecycle behind, so
-	// the service stays closed until an operator resolves the restore.
+	// The handle owns the lifecycle until the fence is closed.
+	//
+	// A restore that is refused **before** the import changed nothing, so
+	// the marker of the lifecycle that this attempt created is removed and
+	// the service keeps the state it had. A marker that was already there -
+	// the history of a crashed restore - is never removed, and a restore that
+	// was killed during its import leaves the marker behind, so the service
+	// stays closed until an operator resolves the restore.
 	//
 	// The release is deferred on every path that does not close the fence. A
 	// restore that closed the fence sets the handle to nil, so the closed
 	// fence is never released a second time.
+	imported := false
 	defer func() {
-		if handle != nil {
-			handle.Release()
+		if handle == nil {
+			return
 		}
+		if imported {
+			handle.Release()
+			return
+		}
+		// The import never ran: the marker this attempt created is undone.
+		_ = handle.Cancel()
 	}()
 	if request.Removals == nil {
 		// A restore without the removal ledger sink cannot replay the
@@ -571,6 +583,9 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err = handle.Bind(required); err != nil {
 		return RestoreResult{}, err
 	}
+	// The import is the point of no return: from here the marker of the
+	// lifecycle stays, whatever the restore does.
+	imported = true
 	if err = request.Restorer.Restore(ctx, bytes.NewReader(verified.Payload.SQL)); err != nil {
 		return RestoreResult{}, err
 	}

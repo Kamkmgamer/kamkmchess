@@ -413,4 +413,17 @@ type FenceHandle interface {
 	// Release gives the ownership back without closing the fence. The marker
 	// of the lifecycle survives, so the service stays closed.
 	Release()
+	// Cancel gives the ownership back and undoes a fence that this attempt
+	// created and that never imported anything.
+	//
+	// The cancel is the way out of a restore that is refused before its
+	// import: the marker of the lifecycle that this attempt created is
+	// removed, so the service serves again and keeps the state it had. A
+	// marker that was already there - the history of a crashed restore - is
+	// never removed, so the operator resolves that restore.
+	//
+	// The cancel is only safe before the import of a restore: an import that
+	// ran may have changed the database, and the marker of the lifecycle
+	// keeps the service closed until the restore is resolved.
+	Cancel() error
 }

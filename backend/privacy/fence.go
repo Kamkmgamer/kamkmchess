@@ -116,6 +116,10 @@ type FenceHandle struct {
 	restoreID string
 	token     string
 	finished  bool
+	// created tells whether this attempt created the marker of the lifecycle.
+	// A marker that was already there belongs to a crashed restore, and the
+	// history of that restore is never removed.
+	created bool
 }
 
 // Token is the ownership token of the lifecycle.
@@ -267,6 +271,37 @@ func (h *FenceHandle) Finish(applied backup.AppliedRemovalLedger) error {
 	return nil
 }
 
+// Cancel gives the ownership of the lifecycle back and undoes a fence that
+// this attempt created.
+//
+// The cancel is the way out of a restore that is refused before it imports
+// anything: the marker of the lifecycle is removed, so the service serves
+// again and the state it had before the restore is the state it keeps.
+//
+// The cancel never removes a marker that was already there. A marker of a
+// crashed restore is the history of that restore, and a take-over that is
+// refused leaves it where it is: the operator resolves the crashed restore.
+//
+// The cancel is only safe before the import of a restore: an import that ran
+// may have changed the database, and the marker of the lifecycle keeps the
+// service closed until the restore is resolved.
+func (h *FenceHandle) Cancel() error {
+	if h == nil || h.service == nil {
+		return errors.New("privacy: there is no restore fence to cancel")
+	}
+	if h.finished {
+		return errors.New("privacy: the restore fence is already closed")
+	}
+	if h.created {
+		if err := h.service.removeFenceDirectory(); err != nil {
+			return err
+		}
+	}
+	h.finished = true
+	h.lock.release()
+	return nil
+}
+
 // Release gives the ownership of the lifecycle back without closing the
 // fence.
 //
@@ -337,6 +372,7 @@ func (s *Service) BeginFence(restoreID string, takeover bool) (*FenceHandle, err
 	}
 	directory := s.fenceDirectory()
 	_, statErr := os.Stat(directory)
+	created := false
 	switch {
 	case statErr == nil:
 		// The marker of a crashed restore is there. Only a take-over may
@@ -351,11 +387,12 @@ func (s *Service) BeginFence(restoreID string, takeover bool) (*FenceHandle, err
 		if err = s.createMarkerDirectory(directory, raw); err != nil {
 			return nil, err
 		}
+		created = true
 	default:
 		return nil, statErr
 	}
 	release = false
-	return &FenceHandle{service: s, lock: lock, restoreID: restoreID, token: token}, nil
+	return &FenceHandle{service: s, lock: lock, restoreID: restoreID, token: token, created: created}, nil
 }
 
 // createMarkerDirectory creates the marker directory of the lifecycle and

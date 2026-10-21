@@ -301,11 +301,12 @@ func TestRestoreThatFailsLeavesItsFenceOpen(t *testing.T) {
 
 // fakeAdmissionFence records the fence calls of a restore.
 type fakeAdmissionFence struct {
-	opened   []string
-	closed   []string
-	bound    []string
-	released []string
-	openErr  error
+	opened    []string
+	closed    []string
+	bound     []string
+	released  []string
+	cancelled []string
+	openErr   error
 	// owed are the removals the restores which did not finish still owe.
 	owed AppliedRemovalLedger
 }
@@ -340,6 +341,11 @@ func (h *fakeFenceHandle) Finish(applied AppliedRemovalLedger) error {
 
 func (h *fakeFenceHandle) Release() {
 	h.fence.released = append(h.fence.released, "released")
+}
+
+func (h *fakeFenceHandle) Cancel() error {
+	h.fence.cancelled = append(h.fence.cancelled, "cancelled")
+	return nil
 }
 
 // failingRestorer is an import that fails.

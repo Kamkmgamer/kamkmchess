@@ -239,8 +239,10 @@ Rules the browser must honour:
   --fence <parent>` continues the lifecycle of the crashed restore: it takes the ownership of the
   lifecycle, replaces the owner marker inside the marker directory, imports the bundle again,
   applies the removal ledger again, verifies it, records and releases the gate and closes the
-  fence. `khabackup recover --file <bundle> --restore-id <id> --fence <parent>` resolves a
-  crashed restore whose database is intact: the recovery is identity bound (the fence of the
+  fence. `khabackup recover --evidence <file> --restore-id <id> --fence <parent>` resolves a
+  crashed restore whose database is intact, and `khabackup recover --file <bundle> --restore-id <id> --fence`
+  `<parent>` is the fallback for a restore that left no evidence: the bundle and its rotation copies
+  are then the only description of what the restore owed. The recovery is identity bound (the fence of the
   restore has to name the removal ledger the restore had to apply), it needs the live ownership
   proof (the lock of the lifecycle has to be free, so a recovery never touches the fence of a
   running restore), and it only releases the admission of a database whose applied removal
@@ -262,11 +264,21 @@ Rules the browser must honour:
   removals it applies, so the evidence directory is never empty right after a successful restore
   and never has to be cleaned by hand.
 * The **recovery preserves the evidence of the restore it recovers**, and it recreates it when the
-  evidence directory was lost and the operator supplied the ledger. The record is written before
-  the marker of the lifecycle disappears, so the obligation of the next import survives the
-  recovery. A recovery that discharged that record would let a later restore without the removal
-  ledger sink import an older bundle and destroy the removals without a replay, which is the hole
-  the refusal of such a restore closes.
+  evidence directory was lost and the operator supplied the ledger. The record is written and
+  flushed **before the release of the gate**, and the release of a gate is final, so the order is
+  the order of the safety: a failure of the write leaves the gate pending, the marker of the
+  lifecycle in place and the service closed, and the obligation survives. A recovery that
+  discharged that record would let a later restore without the removal ledger sink import an older
+  bundle and destroy the removals without a replay, which is the hole the refusal of such a
+  restore closes.
+* The **public release of a gate with a proof** is not a protocol of its own: it is the recovery of
+  the restore that the marker of the lifecycle names, with the candidate as its ledger. The marker
+  has to be there, it has to be readable and it has to name a removal ledger, the candidate has to
+  be exactly that ledger, the ownership of the lifecycle is taken once, and the release runs in one
+  transaction with the facts it depends on. It never releases a gate outside the recovery of a
+  restore.
+* The evidence an operator hands to the recovery is **always opened and validated**, even when the
+  instead of being ignored.
 * A **gate is released only when the database holds the removal ledger the gate waits for**. The
   gate names the digest of that ledger, and the digest names the durable evidence of it, so the
   release of a gate is a containment check and not a blanket update. A gate whose removal ledger
@@ -306,8 +318,10 @@ Rules the browser must honour:
 * A **restore that has a fence and no removal ledger sink** is refused while an evidence record of
   a removal is pending. The fence owns the durable evidence of the removals, so the fence itself
   says whether any are owed, and the refusal happens under the ownership of the lifecycle and
-  before the import: the database is not touched, the evidence stays pending, and the service keeps
-  the state it had.
+  before the import: the database is not touched, the evidence stays pending, and the marker of the
+  lifecycle that this attempt created is removed, so the service keeps the state it had. A marker that
+  was already there - the history of a crashed restore - is never removed, and an import that ran keeps
+  the marker in place, so the service stays closed until the restore is resolved.
 * The obligation of a pending evidence record is for the **next import**, not for the database of
   the moment. The import of a restore replaces the schema of the database, so the removals that the
   evidence names are gone afterwards, and the restore that comes next has to replay them: the
