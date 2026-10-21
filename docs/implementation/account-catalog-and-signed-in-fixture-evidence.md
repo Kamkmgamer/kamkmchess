@@ -168,7 +168,7 @@ Running 6 tests using 1 worker
 
   ok 1 the built account app reaches the fixture of the run (1.4s)
   ok 2 a signed-in browser enters the queue and the cutoff commits the browser engine (17.1s)
-     the committed moves of the fallback game: e4 e5
+     the committed moves of the fallback game: e4
   ok 3 two explicit entries of one signed-in browser are visible at the same time (1.4s)
   ok 4 the account change hides the games of the first account and restores the registry of the next (25.6s)
   -  5 the first account gets its game back when it signs in again      (fixme, see the open items)
@@ -183,7 +183,7 @@ Running 6 tests using 1 worker
 | case | what it shows |
 | --- | --- |
 | the built account app reaches the fixture of the run | the build under test is the build of this repository (the case refuses a preview server that serves another build) and the signed-in browser reaches the service |
-| a signed-in browser enters the queue and the cutoff commits the browser engine | the signed-in entry waits for the ten second cutoff, the fallback commits it and the **browser engine answers through the canonical snapshot**: the committed moves of the game are `e4 e5` |
+| a signed-in browser enters the queue and the cutoff commits the browser engine | the signed-in entry waits for the ten second cutoff, the fallback commits it and the **browser engine answers through the canonical snapshot**: the committed move of the game is `e4`. In the run of the record the owner had the black seat, so the move is the engine's; in a run with the owner on the white seat the moves were `e4 e5`, the owner's move and the reply of the browser engine |
 | two explicit entries of one signed-in browser are visible at the same time | two explicit entries of one browser are listed at the same time |
 | the account change hides the games of the first account and restores the registry of the next | the first account plays on a five minute clock and the second on a three minute clock; after the identity change the board shows the **three** minute game, so the game of the first account is hidden and the durable registry of the second account is restored |
 | the first account gets its game back when it signs in again | the required A → B → A regression. It is marked `fixme` because it is red against the current workspace code (see the open items) |
