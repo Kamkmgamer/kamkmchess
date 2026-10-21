@@ -287,6 +287,21 @@ the capability of a guest acceptance. The scope of the stored acceptor is
 locked before the row of the invitation in that case as well, so the resume is
 ordered against the removal of that acceptor.
 
+The identity of a resumed acceptance is compared **exactly**. The kind is part
+of the identity, because the one-way reference of a subject does not carry it:
+an account and a guest that share an identifier are two different
+participants, and the account never resumes the acceptance of the guest. A
+request that presents no identity resumes the acceptance of the key, which is
+the bearer capability of that acceptance.
+
+A retry can meet an acceptance that another request is writing right now. The
+acceptance of the key is read before the locks, so the retry can miss a row
+that is not committed yet. The retry then waits for the row of the invitation,
+the first request commits, and the authoritative lookup finds the acceptance
+whose acceptor was never locked. The write is **rolled back and started
+again** in that case, so the scope of the stored acceptor is always taken
+before the row of the invitation and never after it.
+
 The cancellation of an invitation is a write of the surface as well, so it is
 fenced the same way: the account scope lock of the inviter is taken before
 the row lock of the invitation, and the removal of the inviter is rechecked

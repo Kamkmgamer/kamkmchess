@@ -537,6 +537,22 @@ locked before the row of the invitation in that case as well, so an anonymous
 resume is ordered against the removal of that acceptor. The read that learns
 the stored acceptor takes no row lock, so the order of the locks is unchanged.
 
+The identity of a resumed acceptance is compared **exactly**: the kind is part
+of it, because the one-way reference of a subject does not carry the kind. An
+account and a guest that share an identifier are two different participants,
+and the account never resumes the acceptance of the guest. A request that
+presents no identity resumes the acceptance of the key, which is the bearer
+capability of that acceptance.
+
+A retry can meet an acceptance that another request is writing right now: the
+acceptance of the key is read before the locks, so the retry misses a row that
+is not committed yet. The retry waits for the row of the invitation, the first
+request commits, and the authoritative lookup finds the acceptance whose
+acceptor was never locked. The write is **rolled back and started again** in
+that case, so the scope of the stored acceptor is always taken before the row
+of the invitation and never after it: no scope lock is ever taken after a row
+lock, so the order of the removal is never inverted.
+
 An offer that can never be accepted any more is not published. The pending
 read is a **projection**: it never writes, so a `GET` never changes the
 personal row of a removed participant, and it never raises a database error
@@ -579,6 +595,17 @@ outcome:
   anonymous resume, which presents the acceptance key alone, waits for the
   account scope of the stored acceptor and recovers the credential of the
   survivor's own seat)
+* `TestPostgresFriendAnonymousRetryOfAnUncommittedAcceptanceResumesTheStoredAcceptor`
+  (the retry that meets an acceptance that is not committed yet answers the
+  same match and the credential of the stored acceptor, and creates no second
+  match and no second acceptance)
+* `TestPostgresFriendRemovalIsOrderedAgainstTheCredentialRotationOfTheAcceptor`
+  (the rotation of the credential waits for the account scope of the removed
+  guest, and the removal revokes the credential it issued, so no fresh
+  credential of a removed participant survives)
+* `TestPostgresFriendAnAccountNeverResumesTheAcceptanceOfAGuest` (an account
+  and a guest that share an identifier never resume each other's acceptance,
+  and the bearer capability of the key still resumes the guest acceptance)
 * `TestPostgresFriendRestoredSeatIdentityIsRefused` (the seat of an older
   backup that still names the removed subject is refused, because the ledger
   row of the match names that participant)

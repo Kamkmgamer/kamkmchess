@@ -703,6 +703,20 @@ func seatParticipants(match online.Match) []online.ParticipantRef {
 	return participants
 }
 
+// containsParticipant reports whether a participant is in a set of
+// participants.
+//
+// The identity is compared exactly, so the kind is part of it: an account and
+// a guest that share an identifier are two different participants.
+func containsParticipant(participants []online.ParticipantRef, participant online.ParticipantRef) bool {
+	for _, candidate := range participants {
+		if candidate == participant {
+			return true
+		}
+	}
+	return false
+}
+
 // resolvePublicModelLabel resolves a declared model control to the control
 // that may be published.
 //
@@ -875,11 +889,49 @@ func (s *Service) Accept(ctx context.Context, request AcceptRequest) (Accepted, 
 //
 // Every step is idempotent: the match identifier is derived from the
 // acceptance, so a retry creates no second match.
+//
+// The acceptance can have to start again. A retry of a lost answer can meet
+// the acceptance that another request is writing right now: the acceptance of
+// the key is read before the locks, and the row of the other request is not
+// committed yet, so the read misses it. The retry waits for the row of the
+// invitation, the first request commits, and the authoritative lookup finds
+// the acceptance whose acceptor was never locked. The write is rolled back
+// and started again in that case, so the scope of the stored acceptor is
+// always taken before the row lock and never after it.
 func (s *Service) accept(ctx context.Context, request AcceptRequest, invitation Invitation) (Accepted, error) {
+	for attempt := 0; attempt < acceptAttempts; attempt++ {
+		accepted, restart, err := s.acceptAttempt(ctx, request, invitation)
+		if err != nil {
+			return Accepted{}, err
+		}
+		if !restart {
+			return accepted, nil
+		}
+	}
+	return Accepted{}, ErrConflict
+}
+
+// acceptAttempts bounds the restarts of one acceptance.
+//
+// Two attempts are enough: the acceptance that was missing is committed by the
+// time the second one starts.
+const acceptAttempts = 3
+
+// errAcceptRestart asks the acceptance to start again.
+//
+// The authoritative lookup found an acceptance whose acceptor was not in the
+// locked scope set, so the write has to be rolled back and started again
+// with the scope of that acceptor.
+var errAcceptRestart = errors.New("invite: the acceptance has to start again")
+
+// acceptAttempt runs one attempt of an acceptance.
+//
+// It answers whether the acceptance has to start again.
+func (s *Service) acceptAttempt(ctx context.Context, request AcceptRequest, invitation Invitation) (Accepted, bool, error) {
 	keyHash := hashAcceptanceKey(request.AcceptanceKey)
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return Accepted{}, err
+		return Accepted{}, false, err
 	}
 	closed := false
 	defer func() {
@@ -897,7 +949,7 @@ func (s *Service) accept(ctx context.Context, request AcceptRequest, invitation 
 	if lookupErr != nil && !errors.Is(lookupErr, ErrNotFound) {
 		closed = true
 		_ = tx.Rollback(ctx)
-		return Accepted{}, lookupErr
+		return Accepted{}, false, lookupErr
 	}
 	// The account scope locks come first. The removal of a participant takes
 	// the same lock and then the row locks of the rows it sanitizes, so the
@@ -912,7 +964,7 @@ func (s *Service) accept(ctx context.Context, request AcceptRequest, invitation 
 	if err = lockParticipants(ctx, tx, participants...); err != nil {
 		closed = true
 		_ = tx.Rollback(ctx)
-		return Accepted{}, err
+		return Accepted{}, false, err
 	}
 	// The invitation row is locked for the acceptance. The lock is taken
 	// before the state is read, so a concurrent acceptance is observed
@@ -926,32 +978,37 @@ func (s *Service) accept(ctx context.Context, request AcceptRequest, invitation 
 		if errors.Is(err, pgx.ErrNoRows) {
 			closed = true
 			_ = tx.Rollback(ctx)
-			return Accepted{}, ErrNotFound
+			return Accepted{}, false, ErrNotFound
 		}
-		return Accepted{}, err
+		return Accepted{}, false, err
 	}
 	// The removal of a participant is rechecked in the claim, where the
 	// participants of the write are known: a fresh acceptance names the
 	// inviter and the acceptor, because it creates the match of both, and a
 	// resumed acceptance names the acceptor alone, because it only mints
 	// the credential of the seat the acceptor already holds.
-	acceptance, err := s.claim(ctx, tx, request, invitation, keyHash, status, expiresAt)
+	acceptance, err := s.claim(ctx, tx, request, invitation, keyHash, status, expiresAt, participants)
 	if err != nil {
+		if errors.Is(err, errAcceptRestart) {
+			closed = true
+			_ = tx.Rollback(ctx)
+			return Accepted{}, true, nil
+		}
 		closed = true
 		_ = tx.Rollback(ctx)
-		return Accepted{}, err
+		return Accepted{}, false, err
 	}
 	accepted, err := s.complete(ctx, tx, acceptance, invitation, request)
 	if err != nil {
 		closed = true
 		_ = tx.Rollback(ctx)
-		return Accepted{}, err
+		return Accepted{}, false, err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return Accepted{}, err
+		return Accepted{}, false, err
 	}
 	closed = true
-	return accepted, nil
+	return accepted, false, nil
 }
 
 // claim consumes the invitation and records the acceptance inside the
@@ -963,22 +1020,34 @@ func (s *Service) accept(ctx context.Context, request AcceptRequest, invitation 
 // The identity of an anonymous guest acceptor is allocated inside that
 // transaction and stored as the seat owner of the created match, so the
 // identity and the minted credential always agree.
-func (s *Service) claim(ctx context.Context, tx pgx.Tx, request AcceptRequest, invitation Invitation, keyHash []byte, status string, expiresAt time.Time) (acceptance, error) {
+func (s *Service) claim(ctx context.Context, tx pgx.Tx, request AcceptRequest, invitation Invitation, keyHash []byte, status string, expiresAt time.Time, locked []online.ParticipantRef) (acceptance, error) {
 	// An acceptance with the same key resumes the same acceptance.
 	existing, lookupErr := s.acceptanceByKey(ctx, tx, request.InvitationID, keyHash)
 	if lookupErr == nil {
 		// An account acceptor is bound to its own acceptance. A guest has
 		// no other identity, so the acceptance key is the whole resume
 		// capability of a guest acceptance.
-		if request.Acceptor != nil && existing.AcceptorID != request.Acceptor.Participant.ID {
+		//
+		// The identity is compared exactly: the kind is part of it, so an
+		// account and a guest that share an identifier never resume each
+		// other's acceptance. A request without an identity presents the
+		// key alone, and the key is the capability of that acceptance.
+		acceptor := online.ParticipantRef{Kind: online.ParticipantKind(existing.AcceptorKind), ID: existing.AcceptorID}
+		if request.Acceptor != nil && request.Acceptor.Participant != acceptor {
 			return acceptance{}, ErrConflict
+		}
+		// The stored acceptor has to be in the locked scope set. The
+		// acceptance of the key was read before the locks, so an
+		// acceptance that was committed after that read is not in the set:
+		// the write is rolled back and started again with its scope.
+		if !containsParticipant(locked, acceptor) {
+			return acceptance{}, errAcceptRestart
 		}
 		// A resumed acceptance names the acceptor alone. It creates no
 		// match and it writes no row of another participant, so only the
 		// acceptor is rechecked: the removal of the inviter does not take
 		// the seat of the acceptor away, and the acceptance that already
 		// happened is not undone by it.
-		acceptor := online.ParticipantRef{Kind: online.ParticipantKind(existing.AcceptorKind), ID: existing.AcceptorID}
 		if err := recheckParticipants(ctx, tx, matchIDOf(invitation.MatchID), acceptor); err != nil {
 			return acceptance{}, err
 		}

@@ -935,6 +935,249 @@ func TestPostgresFriendAnonymousBearerResumeRecoversTheSurvivorSeat(t *testing.T
 	}
 }
 
+// TestPostgresFriendAnonymousRetryOfAnUncommittedAcceptanceResumesTheStoredAcceptor
+// covers the retry that meets an acceptance that is not committed yet.
+//
+// The acceptance of the key is read before the locks of the retry, so the
+// retry can miss the acceptance that the first request is writing right now.
+// The retry waits for the row of the invitation, the first request commits,
+// and the authoritative lookup finds the acceptance whose acceptor was never
+// locked. The write is rolled back and started again, so the scope of the
+// stored acceptor is taken before the row of the invitation and never after
+// it.
+func TestPostgresFriendAnonymousRetryOfAnUncommittedAcceptanceResumesTheStoredAcceptor(t *testing.T) {
+	fixture := newFriendRemovalFixture(t)
+	ctx := context.Background()
+	created := friendRemovalCreate(t, fixture, "user_inviter")
+	key := acceptanceKey("uncommitted-retry")
+	// The first request is held inside its transaction, so its acceptance is
+	// written but not committed.
+	locker := friendLockSeats(t, fixture.pool)
+	firstDone := make(chan error, 1)
+	var firstAccepted invite.Accepted
+	go func() {
+		accepted, acceptErr := fixture.friends.Accept(ctx, invite.AcceptRequest{
+			InvitationID:  created.Invitation.InvitationID,
+			AcceptanceKey: key,
+			Acceptor:      nil,
+			Control:       online.SeatControl{Kind: online.ControlHuman},
+			Origin:        friendOrigin,
+		})
+		firstAccepted = accepted
+		firstDone <- acceptErr
+	}()
+	// The first request waits for the seats table.
+	waitForBlockedSeatInsert(t, fixture.pool)
+	// The retry of the same key starts while the first request is still
+	// uncommitted: its read of the acceptance misses the row.
+	retryDone := make(chan error, 1)
+	var retried invite.Accepted
+	go func() {
+		accepted, acceptErr := fixture.friends.Accept(ctx, invite.AcceptRequest{
+			InvitationID:     created.Invitation.InvitationID,
+			AcceptanceKey:    key,
+			Acceptor:         nil,
+			Control:          online.SeatControl{Kind: online.ControlHuman},
+			Origin:           friendOrigin,
+			RotateCredential: true,
+		})
+		retried = accepted
+		retryDone <- acceptErr
+	}()
+	// The first request commits and the retry continues.
+	locker.release(t)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("the first acceptance: %v", err)
+	}
+	if err := <-retryDone; err != nil {
+		t.Fatalf("the retry of the uncommitted acceptance: %v", err)
+	}
+	// The retry answers the match of the first request and the credential of
+	// the stored acceptor.
+	if retried.MatchID != firstAccepted.MatchID {
+		t.Fatalf("the retry named %q, want %q", retried.MatchID, firstAccepted.MatchID)
+	}
+	if retried.GuestCredential == nil {
+		t.Fatal("the retry delivered no credential")
+	}
+	if firstAccepted.GuestCredential == nil {
+		t.Fatal("the first acceptance delivered no credential")
+	}
+	if retried.GuestCredential.GuestID != firstAccepted.GuestCredential.GuestID {
+		t.Fatalf("the retry named the guest %q, want %q", retried.GuestCredential.GuestID, firstAccepted.GuestCredential.GuestID)
+	}
+	// The credential authorizes the seat of the stored acceptor.
+	principal, err := fixture.authorizer.AuthenticateGuest(ctx, retried.GuestCredential.Token, friendOrigin)
+	if err != nil {
+		t.Fatalf("authenticate the credential of the retry: %v", err)
+	}
+	if principal.MatchID != firstAccepted.MatchID || principal.Participant.ID != retried.GuestCredential.GuestID {
+		t.Fatalf("the principal of the retry = %+v", principal)
+	}
+	// Exactly one match and one acceptance exist.
+	var matches int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_matches`).Scan(&matches); err != nil {
+		t.Fatal(err)
+	}
+	if matches != 1 {
+		t.Fatalf("the retry created %d matches", matches)
+	}
+	var acceptances int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_invitation_acceptances WHERE invitation_id=$1`, created.Invitation.InvitationID).Scan(&acceptances); err != nil {
+		t.Fatal(err)
+	}
+	if acceptances != 1 {
+		t.Fatalf("the retry recorded %d acceptances", acceptances)
+	}
+}
+
+// TestPostgresFriendRemovalIsOrderedAgainstTheCredentialRotationOfTheAcceptor
+// covers the barrier between the removal of the acceptor and the credential
+// rotation of its seat.
+//
+// The rotation of the credential of a seat takes the account scope of the
+// owner of that seat, so it waits for the removal that holds the same scope.
+// The removal of the guest then revokes the credential it issued, so no fresh
+// credential of a removed participant survives the race.
+func TestPostgresFriendRemovalIsOrderedAgainstTheCredentialRotationOfTheAcceptor(t *testing.T) {
+	fixture := newFriendRemovalFixture(t)
+	ctx := context.Background()
+	created := friendRemovalCreate(t, fixture, "user_inviter")
+	key := acceptanceKey("rotation-barrier")
+	accepted, err := fixture.friends.Accept(ctx, invite.AcceptRequest{
+		InvitationID:  created.Invitation.InvitationID,
+		AcceptanceKey: key,
+		Acceptor:      nil,
+		Control:       online.SeatControl{Kind: online.ControlHuman},
+		Origin:        friendOrigin,
+	})
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	if accepted.GuestCredential == nil {
+		t.Fatal("the acceptance delivered no credential")
+	}
+	guestID := accepted.GuestCredential.GuestID
+	// The removal of the guest holds the account scope of that guest.
+	held, err := fixture.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Rollback(ctx)
+	if err = locks.LockAccountScope(ctx, held, locks.AccountScope(string(online.ParticipantGuest), guestID)); err != nil {
+		t.Fatal(err)
+	}
+	// The rotation of the credential waits for that scope: the barrier is
+	// effective.
+	rotationDone := make(chan error, 1)
+	var rotated invite.Accepted
+	go func() {
+		accepted, rotateErr := fixture.friends.Accept(ctx, invite.AcceptRequest{
+			InvitationID:     created.Invitation.InvitationID,
+			AcceptanceKey:    key,
+			Acceptor:         nil,
+			Control:          online.SeatControl{Kind: online.ControlHuman},
+			Origin:           friendOrigin,
+			RotateCredential: true,
+		})
+		rotated = accepted
+		rotationDone <- rotateErr
+	}()
+	select {
+	case err = <-rotationDone:
+		t.Fatalf("the rotation did not wait for the account scope of the removed guest: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err = held.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-rotationDone; err != nil {
+		t.Fatalf("the rotation of the credential: %v", err)
+	}
+	if rotated.GuestCredential == nil {
+		t.Fatal("the rotation delivered no credential")
+	}
+	// The removal of the guest revokes the credentials it issued, so no
+	// fresh credential of a removed participant survives.
+	principal, err := fixture.authorizer.AuthenticateGuest(ctx, rotated.GuestCredential.Token, friendOrigin)
+	if err != nil {
+		t.Fatalf("authenticate the rotated credential of the guest: %v", err)
+	}
+	if _, err = fixture.removals.RemoveGuest(ctx, principal, friendOrigin); err != nil {
+		t.Fatalf("remove the guest: %v", err)
+	}
+	var live int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_guest_seat_credentials WHERE guest_id=$1 AND revoked_at IS NULL AND superseded_at IS NULL`, guestID).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if live != 0 {
+		t.Fatalf("the removed guest has %d live credentials", live)
+	}
+}
+
+// TestPostgresFriendAnAccountNeverResumesTheAcceptanceOfAGuest covers the
+// identity of a resumed acceptance.
+//
+// The identity of an acceptance is the participant of the acceptor, and the
+// kind is part of it: an account and a guest that share an identifier are two
+// different participants, and the one-way reference of a subject does not
+// carry its kind. A request that presents an identity therefore resumes only
+// the acceptance of exactly that participant, while a request that presents
+// none resumes the acceptance of the key, which is the bearer capability of a
+// guest acceptance.
+func TestPostgresFriendAnAccountNeverResumesTheAcceptanceOfAGuest(t *testing.T) {
+	fixture := newFriendRemovalFixture(t)
+	ctx := context.Background()
+	created := friendRemovalCreate(t, fixture, "user_inviter")
+	key := acceptanceKey("kind-exact")
+	// A guest accepts under the identifier of an account.
+	guest := &invite.Identity{Participant: online.ParticipantRef{Kind: online.ParticipantGuest, ID: "user_recipient"}, PublicLabel: invite.GuestLabel}
+	accepted, err := fixture.friends.Accept(ctx, invite.AcceptRequest{
+		InvitationID:  created.Invitation.InvitationID,
+		AcceptanceKey: key,
+		Acceptor:      guest,
+		Control:       online.SeatControl{Kind: online.ControlHuman},
+		Origin:        friendOrigin,
+	})
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	// The account of the same identifier may not resume it.
+	_, err = fixture.friends.Accept(ctx, invite.AcceptRequest{
+		InvitationID:  created.Invitation.InvitationID,
+		AcceptanceKey: key,
+		Acceptor:      friendIdentity("user_recipient", "Mallory"),
+		Control:       online.SeatControl{Kind: online.ControlHuman},
+		Origin:        friendOrigin,
+	})
+	if !errors.Is(err, invite.ErrConflict) {
+		t.Fatalf("the resume of the account error = %v, want ErrConflict", err)
+	}
+	// The bearer capability of the key still resumes the acceptance of the
+	// guest.
+	resumed, err := fixture.friends.Accept(ctx, invite.AcceptRequest{
+		InvitationID:  created.Invitation.InvitationID,
+		AcceptanceKey: key,
+		Acceptor:      nil,
+		Control:       online.SeatControl{Kind: online.ControlHuman},
+		Origin:        friendOrigin,
+	})
+	if err != nil {
+		t.Fatalf("the bearer resume of the guest acceptance: %v", err)
+	}
+	if resumed.MatchID != accepted.MatchID {
+		t.Fatalf("the bearer resume named %q, want %q", resumed.MatchID, accepted.MatchID)
+	}
+	// The acceptance of the guest still names the guest.
+	var acceptorKind, acceptorID string
+	if err = fixture.pool.QueryRow(ctx, `SELECT acceptor_kind,acceptor_id FROM online_invitation_acceptances WHERE invitation_id=$1`, created.Invitation.InvitationID).Scan(&acceptorKind, &acceptorID); err != nil {
+		t.Fatal(err)
+	}
+	if acceptorKind != string(online.ParticipantGuest) || acceptorID != "user_recipient" {
+		t.Fatalf("the stored acceptor = %s/%s, want guest/user_recipient", acceptorKind, acceptorID)
+	}
+}
+
 // TestPostgresFriendRemovedParticipantCannotCancelItsInvitation covers the
 // cancellation of a removed participant.
 //
