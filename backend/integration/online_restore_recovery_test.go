@@ -412,3 +412,47 @@ func TestPostgresTheRestoreWithoutASinkIsRefusedAfterASuccessfulRestore(t *testi
 
 // unused keeps the pool import honest when the file is edited.
 var _ = (*pgxpool.Pool)(nil)
+
+// TestPostgresTheProofReleaseRefusesALiveRestore covers the ownership of the
+// public proof release.
+//
+// The release of a gate with a proof is a supported path of its own, so it
+// takes the ownership of the lifecycle: it refuses to act while a restore is
+// alive, and it releases nothing then.
+func TestPostgresTheProofReleaseRefusesALiveRestore(t *testing.T) {
+	fixture, removals, _ := evidenceFixture(t)
+	ctx := context.Background()
+	historyService := historyServiceFor(t, fixture)
+	matchID := "evidence-proof-live-match"
+	privacyCompletedMatch(t, fixture, historyService, matchID)
+	if _, err := removals.RemoveAccount(ctx, accountPrincipal("user_b", "session-user_b"), authTestOrigin); err != nil {
+		t.Fatalf("remove the opponent: %v", err)
+	}
+	live, err := removals.AppliedRemovalLedger(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := removals.BeginFence("evidence-proof-live-restore", false)
+	if err != nil {
+		t.Fatalf("open the fence: %v", err)
+	}
+	defer handle.Release()
+	if err = handle.Bind(live); err != nil {
+		t.Fatalf("bind the fence: %v", err)
+	}
+	if _, err = removals.RecordRestore(ctx, "evidence-proof-live-restore"); err != nil {
+		t.Fatalf("record the restore: %v", err)
+	}
+	// The proof release refuses while the restore is alive, and it releases
+	// nothing.
+	if _, err = removals.ReleaseRestoreGateWithProof(ctx, live); !errors.Is(err, privacy.ErrFenceLive) {
+		t.Fatalf("the proof release of a live restore returned %v, want ErrFenceLive", err)
+	}
+	var pending int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed=false`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatalf("the proof release of a live restore released %d gates", 1-pending)
+	}
+}
