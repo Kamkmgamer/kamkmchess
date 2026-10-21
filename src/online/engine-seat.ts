@@ -139,29 +139,35 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
   });
   let stopped = false;
   let prepared = false;
-  /** The lease of the current turn. */
-  let lease: ProviderRunnerLease | null = null;
   /**
-   * The controller of the running search.
+   * The turn that runs in this seat.
    *
-   * A disposed seat aborts its search, so a search of a seat that lost its
-   * credential never holds the shared engine worker.
+   * The seat plays one turn at a time. A turn that starts while another turn
+   * runs cancels that turn first, so the search of the seat and the lease of
+   * the seat never belong to two turns at once.
    */
-  let searchController: AbortController | null = null;
+  let running: { readonly controller: AbortController; readonly done: Promise<void> } | null = null;
 
-  async function releaseLease(): Promise<void> {
-    const current = lease;
-    lease = null;
-    if (!current) return;
+  async function releaseLease(lease: ProviderRunnerLease | null): Promise<void> {
+    if (!lease) return;
     try {
       await leases.release({
-        controlEpoch: current.controlEpoch,
-        turnVersion: current.turnVersion ?? 0,
-        leaseId: current.leaseId,
+        controlEpoch: lease.controlEpoch,
+        turnVersion: lease.turnVersion ?? 0,
+        leaseId: lease.leaseId,
       });
     } catch {
       // A lease that cannot be released expires on its own.
     }
+  }
+
+  /** Cancels the turn that runs, if any, and waits for its end. */
+  async function cancelRunningTurn(): Promise<void> {
+    const current = running;
+    if (!current) return;
+    current.controller.abort();
+    await current.done;
+    if (running === current) running = null;
   }
 
   /** Waits for the given time, unless the seat stops or the caller aborts. */
@@ -187,10 +193,14 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
    * offline board holds the worker for the length of that search, and the
    * engine seat waits for the worker and searches again. The wait is bounded,
    * so a worker that stays busy fails the turn instead of holding the seat.
+   *
+   * The wait keeps the lease of the turn alive, so a turn that waits for the
+   * worker still answers inside the lifetime of its lease.
    */
   async function searchTurn(
     position: { startingFen: string; moves: readonly string[] },
     controller: AbortController,
+    keepLeaseAlive: () => Promise<void>,
   ): Promise<BrowserEngineResult> {
     const deadline = Date.now() + ONLINE_ENGINE_BUSY_WAIT_MS;
     for (;;) {
@@ -203,38 +213,47 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
       } catch (error) {
         const busy = error instanceof Error && error.message.includes(ENGINE_BUSY_MESSAGE);
         if (!busy || Date.now() >= deadline) throw error;
+        await keepLeaseAlive();
         await wait(ONLINE_ENGINE_BUSY_POLL_MS, undefined, controller);
         if (controller.signal.aborted) throw error;
       }
     }
   }
 
-  async function holdLease(view: OnlineMatchView): Promise<ProviderRunnerLease | null> {
-    const current = lease;
+  /**
+   * Holds the lease of one turn.
+   *
+   * The lease belongs to the turn that took it, so a turn that ends late never
+   * releases the lease of the turn that runs now.
+   */
+  async function holdLease(
+    view: OnlineMatchView,
+    current: ProviderRunnerLease | null,
+  ): Promise<ProviderRunnerLease | null> {
     if (current && current.controlEpoch !== view.controlEpoch) {
       // A control change fences the old lease.
-      await releaseLease();
+      await releaseLease(current);
+      current = null;
     }
-    if (!lease) {
-      lease = await leases.acquire({
+    if (!current) {
+      return leases.acquire({
         controlEpoch: view.controlEpoch,
         turnVersion: view.version,
       });
-      return lease;
     }
-    const expiresAt = Date.parse(lease.expiresAt);
-    const acquiredAt = Date.parse(lease.acquiredAt);
+    const expiresAt = Date.parse(current.expiresAt);
+    const acquiredAt = Date.parse(current.acquiredAt);
     const now = Date.now();
-    if (Number.isNaN(expiresAt) || Number.isNaN(acquiredAt)) return lease;
+    if (Number.isNaN(expiresAt) || Number.isNaN(acquiredAt)) return current;
     // A lease that is more than half spent is renewed before the answer.
     if (now - acquiredAt > (expiresAt - acquiredAt) / 2) {
-      lease = await leases.renew({
+      return leases.renew({
         controlEpoch: view.controlEpoch,
-        turnVersion: lease.turnVersion ?? view.version,
-        leaseId: lease.leaseId,
+        turnVersion: current.turnVersion ?? view.version,
+        leaseId: current.leaseId,
       });
     }
-    return lease;
+    return current;
   }
 
   return {
@@ -250,36 +269,52 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
       if (!onlineSeatToMove(view, options.seat)) return { kind: 'not-turn' };
       const epoch = view.controlEpoch;
       const version = view.version;
-      // The search of the turn runs under a controller of the seat, so a
-      // disposed seat stops it and never holds the shared engine worker.
+      // The seat plays one turn at a time. A turn that starts while another
+      // turn runs cancels that turn first, so the search and the lease of the
+      // seat never belong to two turns at once.
+      await cancelRunningTurn();
+      if (stopped || signal?.aborted) return { kind: 'stopped' };
+      // The search of the turn runs under a controller of the turn, so a
+      // disposed seat or a newer turn stops it and never holds the shared
+      // engine worker.
       const controller = new AbortController();
-      searchController = controller;
       const abort = () => controller.abort();
       signal?.addEventListener('abort', abort, { once: true });
+      let settle: () => void = () => undefined;
+      const done = new Promise<void>(resolve => { settle = resolve; });
+      running = { controller, done };
+      // The lease belongs to this turn. A turn that ends late releases its own
+      // lease and never the lease of the turn that runs now.
+      let lease: ProviderRunnerLease | null = null;
       try {
         if (!prepared && options.prepareEngine) {
           await options.prepareEngine();
           prepared = true;
         }
         if (stopped || signal?.aborted) return { kind: 'stopped' };
-        const held = await holdLease(view);
-        if (!held || held.status !== 'active') {
+        lease = await holdLease(view, null);
+        if (!lease || lease.status !== 'active') {
           return { kind: 'failed', detail: 'The engine could not take its seat lease.' };
         }
         const result = await searchTurn(
           { startingFen: view.startingFen, moves: view.moves.map(move => move.uci) },
           controller,
+          async () => {
+            // The wait for a busy worker must not outlive the lease of the
+            // turn, so the lease is renewed while the seat waits.
+            lease = await holdLease(view, lease);
+          },
         );
         if (stopped || signal?.aborted) return { kind: 'stopped' };
         // A control change or a newer version fences the answer.
-        if (held.controlEpoch !== epoch) return { kind: 'stopped' };
+        if (lease.controlEpoch !== epoch) return { kind: 'stopped' };
         const move = result.move.trim();
         if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move)) {
           return { kind: 'failed', detail: 'The engine returned no playable move.' };
         }
         commands.setVersion(version);
         commands.setControlEpoch(epoch);
-        await commands.move(move, { expectedVersion: version, leaseId: held.leaseId });
+        await commands.move(move, { expectedVersion: version, leaseId: lease.leaseId });
         return { kind: 'moved', move };
       } catch (error) {
         if (stopped) return { kind: 'stopped' };
@@ -291,18 +326,17 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
         };
       } finally {
         signal?.removeEventListener('abort', abort);
-        if (searchController === controller) searchController = null;
-        await releaseLease();
+        await releaseLease(lease);
+        settle();
+        if (running?.controller === controller) running = null;
       }
     },
     async dispose() {
       stopped = true;
-      // The search of the seat stops with it, so a search of a seat that lost
-      // its credential never holds the shared engine worker.
-      searchController?.abort();
-      // The lease of the seat is released before the requester goes away, so
-      // a new runner of the seat is never refused by an orphaned lease.
-      await releaseLease();
+      // The turn of the seat stops with it and releases its own lease, so a
+      // search of a seat that lost its credential never holds the shared
+      // engine worker and never leaves an orphaned lease behind.
+      await cancelRunningTurn();
       session.dispose();
       requester.dispose();
     },

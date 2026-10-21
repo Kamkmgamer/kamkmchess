@@ -39,7 +39,7 @@ import type { QueueAssignment, QueueClient } from './queue';
 import { createOnlineMatchCommandClient } from './match-client';
 import type { OnlineMatchCommandClient } from './match-client';
 import { createOnlineEngineSeat } from './engine-seat';
-import type { OnlineEngineSeat } from './engine-seat';
+import type { OnlineEngineSeat, OnlineEngineSeatOptions } from './engine-seat';
 import { createOnlineAgentSeat, createAgentProviderPort, providerRunnerSnapshot } from './agent-seat';
 import type { OnlineProviderRunner, ProviderRunnerState } from './provider-runner';
 import { createOnlineRunnerLeaseClient } from './runner-lease';
@@ -138,6 +138,13 @@ export interface OnlineCompositionOptions {
   readonly checkModel?: (selection: ModelSelection) => Promise<OnlineAgentCheck>;
   /** Prepares the browser Stockfish 19 Lite engine. */
   readonly prepareEngine?: () => Promise<void>;
+  /**
+   * The seat factory of the browser engine.
+   *
+   * The composition owns the seats of the fallback games. The factory is a
+   * seam, so a test can drive the turn of a seat without a real engine.
+   */
+  readonly createEngineSeat?: (seat: OnlineEngineSeatOptions) => OnlineEngineSeat;
   /** The local search string of the page, used for the loopback test opt-in. */
   readonly search?: string;
   /** The local storage seam of the queue intent. */
@@ -1550,7 +1557,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       engineTurns.set(key, view.version);
       let engine = engineSeats.get(key);
       if (!engine) {
-        engine = createOnlineEngineSeat({
+        engine = (options.createEngineSeat ?? createOnlineEngineSeat)({
           matchId: view.matchId,
           seat: engineSeat.seat,
           credential: registered.credential,
@@ -1560,8 +1567,14 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         });
         engineSeats.set(key, engine);
       }
+      // The bookkeeping of the turn belongs to this seat and to this version.
+      // A seat that was replaced - a new credential, a new identity - and a
+      // turn of an older version never clear the record of the current turn,
+      // so the current turn is never played twice.
+      const turn = { engine, version: view.version, generation: identityGeneration };
       void engine.play(view).then(result => {
         if (result.kind === 'moved') return;
+        if (!ownsTurn(key, turn)) return;
         // A stopped turn - a search of a seat that lost its credential, or a
         // fenced answer - is not a failure of the engine, so the turn is
         // played again with the next snapshot. A failed turn is reported to
@@ -1569,9 +1582,24 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         engineTurns.delete(key);
         if (result.kind === 'failed') notify();
       }).catch(() => {
+        if (!ownsTurn(key, turn)) return;
         engineTurns.delete(key);
       });
     }
+  }
+
+  /**
+   * True when a turn of an engine seat still owns the record of that turn.
+   *
+   * The seat of a match is replaced when its credential is replaced, and the
+   * record of a turn names the version it played. A turn that answered late -
+   * a seat that was disposed while it searched - therefore never clears the
+   * record of the turn that runs now.
+   */
+  function ownsTurn(key: string, turn: { readonly engine: OnlineEngineSeat; readonly version: number; readonly generation: number }): boolean {
+    if (identityGeneration !== turn.generation) return false;
+    if (engineSeats.get(key) !== turn.engine) return false;
+    return engineTurns.get(key) === turn.version;
   }
 
   /**

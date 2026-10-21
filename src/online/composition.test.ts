@@ -72,6 +72,7 @@ function createFetchDouble(answers: {
   match?: { status: number; data: unknown };
   fallback?: { status: number; data: unknown };
   matchView?: { status: number; data: unknown };
+  updates?: { snapshot: OnlineMatchView };
 }) {
   const wires: Wire[] = [];
   const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -113,11 +114,12 @@ function createFetchDouble(answers: {
           matchId: 'match-00000007',
         },
       };
+    } else if (path.includes('/updates')) {
+      // The update route answers with the canonical snapshot of the match.
+      const snapshot = answers.updates?.snapshot ?? matchView();
+      result = { status: 200, data: { schemaVersion: 1, cursor: snapshot.version, snapshot } };
     } else if (path.includes('/v1/online/matches/')) {
       result = answers.matchView ?? { status: 200, data: matchView() };
-    } else if (path.includes('/updates')) {
-      const snapshot = matchView();
-      result = { status: 200, data: { schemaVersion: 1, cursor: snapshot.version, snapshot } };
     } else if (path.includes('/v1/online/features')) {
       result = { status: 200, data: { friends: true, queue: true } };
     }
@@ -428,6 +430,66 @@ describe('the online composition wires the product (B-2, B-5, B-7, B-12)', () =>
     const after = JSON.parse(String(storage.getItem(key) ?? '[]')) as { entryId: string | null }[];
     expect(after.length).toBe(1);
     expect(after[0]?.entryId).toBe(before[0]?.entryId);
+    composition.dispose();
+  });
+});
+
+describe('the engine seat of a match plays one turn at a time', () => {
+  it('never plays the current turn twice when a replaced seat answers late', async () => {
+    // A seat that is replaced - a new credential, a new identity - is disposed
+    // while it searches. Its answer arrives late, and it must never clear the
+    // record of the turn that runs now: the current turn is never played
+    // twice.
+    const plays: { resolve: (result: { kind: 'stopped' } | { kind: 'moved'; move: string }) => void }[] = [];
+    const { fetcher } = createFetchDouble({
+      updates: {
+        snapshot: matchView({
+          clock: { ...matchView().clock, activeSeat: 'black', activeSince: '2026-10-21T10:00:00.000Z' },
+        }),
+      },
+    });
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage: createStorage(),
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      createEngineSeat: () => ({
+        seat: 'black',
+        stopped: false,
+        play: () => new Promise(resolve => { plays.push({ resolve }); }),
+        dispose: async () => undefined,
+      }),
+    });
+    // The engine seat of the fallback game holds a credential.
+    composition.registerGuestCredential(createGuestCredential({
+      guestId: 'guest-engine',
+      matchId: 'match-00000001',
+      seat: 'black',
+      token: 'engine-token',
+    }), 'account');
+    composition.attachAndFocus('match-00000001', 'white');
+    // The engine seat of the fallback game plays its turn.
+    await vi.waitFor(() => { expect(plays.length).toBe(1); });
+    // The credential of the seat is replaced, so the seat is disposed and a
+    // new seat plays the turn.
+    composition.registerGuestCredential(createGuestCredential({
+      guestId: 'guest-engine',
+      matchId: 'match-00000001',
+      seat: 'black',
+      token: 'engine-token-2',
+    }), 'account');
+    await vi.waitFor(() => { expect(plays.length).toBe(2); });
+    // The disposed seat answers late. The record of the current turn survives,
+    // so the turn is not played a second time.
+    plays[0]?.resolve({ kind: 'stopped' });
+    await settle();
+    // The workspace changes again, so the engine seats are driven again with
+    // the same version of the match.
+    composition.attachAndFocus('match-00000001', 'white');
+    await settle();
+    await new Promise(resolve => { setTimeout(resolve, 500); });
+    expect(plays.length).toBe(2);
     composition.dispose();
   });
 });

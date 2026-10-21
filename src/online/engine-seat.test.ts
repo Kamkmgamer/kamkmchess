@@ -248,6 +248,48 @@ describe('the browser engine seat', () => {
     expect(signal?.aborted).toBe(true);
   });
 
+  it('cancels the running turn when a new turn starts', async () => {
+    // The seat plays one turn at a time. A new turn cancels the turn that
+    // runs, so the search and the lease of the seat never belong to two turns
+    // at once.
+    let firstSignal: AbortSignal | undefined;
+    search
+      .mockImplementationOnce((async (...args: unknown[]) => {
+        const running = args[2] as AbortSignal | undefined;
+        firstSignal = running;
+        return new Promise<never>((_resolve, reject) => {
+          running?.addEventListener('abort', () => {
+            reject(new DOMException('Engine stopped.', 'AbortError'));
+          });
+        });
+      }) as unknown as typeof search)
+      .mockResolvedValueOnce({ move: 'e2e4', engineName: 'Stockfish 19', elapsedMs: 5 });
+    const actions: string[] = [];
+    const released: string[] = [];
+    let counter = 0;
+    const { seat } = createSeat(wire => {
+      if (!wire.path.includes('/runner/lease')) return { status: 200, data: receiptAnswer };
+      const action = String(wire.body.action);
+      actions.push(action);
+      if (action === 'release') released.push(String(wire.body.leaseId));
+      if (action !== 'acquire') return { status: 200, data: leaseAnswer };
+      counter += 1;
+      return { status: 200, data: { ...leaseAnswer, leaseId: `lease-000${counter}` } };
+    });
+    const view = matchView({
+      clock: { ...matchView().clock, activeSeat: 'black', activeSince: '2026-10-21T10:00:00.000Z' },
+    });
+    const first = seat.play(view);
+    await vi.waitFor(() => { expect(firstSignal).toBeDefined(); });
+    const second = seat.play(view);
+    await expect(second).resolves.toEqual({ kind: 'moved', move: 'e2e4' });
+    await expect(first).resolves.toEqual({ kind: 'stopped' });
+    // The first turn took a lease and released it, and the second turn took
+    // its own lease. The first turn never released the lease of the second.
+    expect(actions).toEqual(['acquire', 'release', 'acquire', 'release']);
+    expect(released).toEqual(['lease-0001', 'lease-0002']);
+  });
+
   it('waits for a busy engine worker and searches again', async () => {
     // The engine worker is shared with the offline board. A busy worker is
     // waited for, so the turn is not lost.
