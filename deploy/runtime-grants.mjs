@@ -705,7 +705,7 @@ export async function readLiveGrants(databaseUrl, psqlPath, role, schema) {
     'ORDER BY table_name, privilege_type;',
   ].join(' ');
   const { stdout } = await run(psqlPath, ['--no-psqlrc', '--tuples-only', '--no-align', '--field-separator', '|', '--command', query], {
-    env: { ...process.env, PGPASSWORD: passwordOf(databaseUrl) },
+    env: { ...process.env, ...psqlEnvironment(databaseUrl) },
     windowsHide: true,
   });
   /** @type {Map<string, Set<string>>} */
@@ -734,15 +734,22 @@ export async function readLiveSequenceGrants(databaseUrl, psqlPath, role, schema
   const { execFile } = await import('node:child_process');
   const { promisify } = await import('node:util');
   const run = promisify(execFile);
+  // The information schema view of the usage of a sequence carries only the
+  // usage, so the effective rights of the role are read from the catalogue:
+  // every sequence of the schema and every privilege the role holds on it,
+  // including the ones it holds through PUBLIC.
   const query = [
-    'SELECT sequence_name, privilege_type',
-    "FROM information_schema.role_usage_grants",
-    `WHERE grantee = '${role.replace(/'/g, "''")}'`,
-    `AND sequence_schema = '${schema.replace(/'/g, "''")}'`,
-    'ORDER BY sequence_name, privilege_type;',
+    'SELECT c.relname, p.privilege_type',
+    'FROM pg_class c',
+    'JOIN pg_namespace n ON n.oid = c.relnamespace',
+    "CROSS JOIN (VALUES ('USAGE'), ('SELECT'), ('UPDATE')) AS p(privilege_type)",
+    "WHERE c.relkind = 'S'",
+    `AND n.nspname = '${schema.replace(/'/g, "''")}'`,
+    `AND has_sequence_privilege('${role.replace(/'/g, "''")}', c.oid, p.privilege_type)`,
+    'ORDER BY c.relname, p.privilege_type;',
   ].join(' ');
   const { stdout } = await run(psqlPath, ['--no-psqlrc', '--tuples-only', '--no-align', '--field-separator', '|', '--command', query], {
-    env: { ...process.env, PGPASSWORD: passwordOf(databaseUrl) },
+    env: { ...process.env, ...psqlEnvironment(databaseUrl) },
     windowsHide: true,
   });
   /** @type {Map<string, Set<string>>} */
@@ -754,6 +761,33 @@ export async function readLiveSequenceGrants(databaseUrl, psqlPath, role, schema
     grants.get(sequence.toLowerCase()).add(privilege.toUpperCase());
   }
   return grants;
+}
+
+/**
+ * Maps a database URL onto the environment of psql.
+ *
+ * The password belongs in the environment and never in the arguments of a
+ * command, and the host, the port, the database and the user have to be
+ * mapped as well, so the read audits the database of the URL and not the
+ * database of the local environment.
+ * @param {string} databaseUrl
+ * @returns {Record<string, string>}
+ */
+export function psqlEnvironment(databaseUrl) {
+  /** @type {Record<string, string>} */
+  const environment = {};
+  let parsed;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    return { ...environment, PGPASSWORD: passwordOf(databaseUrl) };
+  }
+  if (parsed.hostname) environment.PGHOST = decodeURIComponent(parsed.hostname);
+  if (parsed.port) environment.PGPORT = decodeURIComponent(parsed.port);
+  if (parsed.pathname && parsed.pathname.length > 1) environment.PGDATABASE = decodeURIComponent(parsed.pathname.slice(1));
+  if (parsed.username) environment.PGUSER = decodeURIComponent(parsed.username);
+  if (parsed.password) environment.PGPASSWORD = decodeURIComponent(parsed.password);
+  return environment;
 }
 
 /**
