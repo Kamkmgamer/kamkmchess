@@ -6,6 +6,9 @@ import { EvaluationBar } from './EvaluationBar.js';
 import { MoveList } from './MoveList.js';
 import { OnlineWorkspace } from './online-workspace.js';
 import type { OnlineComposition } from '../online/composition.js';
+
+/** The public name the owner's own agent carries in an online match. */
+const ONLINE_AGENT_PUBLIC_LABEL = 'My agent';
 import { useBoardHistory } from './use-board-history.js';
 import type { ControllerSnapshotV1 } from '../controller/index.js';
 import type { GameResultDeclarationV1, ModelSelection } from '../controller/index.js';
@@ -98,6 +101,13 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [journalRefresh, setJournalRefresh] = useState(0);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [onlineOpen, setOnlineOpen] = useState(false);
+  // The own agent of the owner is the model of the current game. The public
+  // label is the name the other participants see; the private selection stays
+  // in the browser and never reaches the service.
+  useEffect(() => {
+    if (!online) return;
+    online.setAgent(modelSelection ? { label: ONLINE_AGENT_PUBLIC_LABEL, selection: modelSelection } : null);
+  }, [online, modelSelection]);
   const history = useBoardHistory(snapshot, !setupOpen && !promotion && !recoveryOpen && !tool && resultPrompt === null);
   const generationController = useRef<AbortController | null>(null);
   const practiceController = useRef<AbortController | null>(null);
@@ -677,6 +687,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         <button className="button primary" type="button" onClick={() => openSetup()} aria-label="New game">New</button></div>
     </header>}
     {onlineOpen && online && <OnlineWorkspace composition={online} onClose={() => setOnlineOpen(false)}
+      agentLabel={online.agent?.label ?? null}
       {...(onOpenProfile ? { onOpenProfile } : {})} />}
     {tool && <section className="focus-page" aria-label="Match tools">
       <div className="panel-heading"><h2>{tool === 'move' ? 'Move' : tool.charAt(0).toUpperCase() + tool.slice(1)}</h2><IconButton icon="close" label="Close" onClick={() => setTool(null)} /></div>

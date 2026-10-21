@@ -169,6 +169,23 @@ func (l postgresRemovalLedger) available(ctx context.Context) (bool, error) {
 	return exists, nil
 }
 
+// WriteFence opens the durable restore fence.
+//
+// The fence is written before the restore imports anything, so the restored
+// data is never visible while the removal ledger of the restore was not
+// applied.
+func (l postgresRemovalLedger) WriteFence(restoreID string, digest []byte) error {
+	return l.removals.WriteFence(restoreID, digest)
+}
+
+// ClearFence closes the durable restore fence.
+//
+// The fence is closed only after the removal ledger of the restore was
+// replayed and verified.
+func (l postgresRemovalLedger) ClearFence() error {
+	return l.removals.ClearFence()
+}
+
 // RecordRestore records that the database was restored from a backup.
 func (l postgresRemovalLedger) RecordRestore(ctx context.Context, restoreID string) (string, error) {
 	available, err := l.available(ctx)
@@ -209,10 +226,43 @@ func (l postgresRemovalLedger) ListRemovalRecords(ctx context.Context) ([]backup
 	return l.removals.ListRemovalRecords(ctx)
 }
 
+// ListSubjectRemovalRecords reads the subject level removal ledger.
+func (l postgresRemovalLedger) ListSubjectRemovalRecords(ctx context.Context) ([]backup.SubjectRemovalRecord, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !available {
+		return nil, nil
+	}
+	return l.removals.ListSubjectRemovalRecords(ctx)
+}
+
+// ApplySubjectRemovalRecords replays the subject level removal ledger.
+//
+// The subject stays removed after a restore, even when the restored database
+// has no deletion record of its own.
+func (l postgresRemovalLedger) ApplySubjectRemovalRecords(ctx context.Context, records []backup.SubjectRemovalRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	available, err := l.available(ctx)
+	if err != nil {
+		return err
+	}
+	if !available {
+		return errors.New("the online removal ledger is missing; the restored database must not serve traffic")
+	}
+	return l.removals.ApplySubjectRemovalRecords(ctx, records)
+}
+
 // ApplyRemovalRecords replays the online removal ledger after a restore.
 //
 // The replay is the privacy service, so the restored rows are removed exactly
 // as the original removal removed them.
+//
+// A ledger that cannot be read is an error, never an empty ledger: a restore
+// that cannot apply its removals must not report that it applied them.
 func (l postgresRemovalLedger) ApplyRemovalRecords(ctx context.Context, records []backup.RemovalRecord) error {
 	if len(records) == 0 {
 		return nil
@@ -222,7 +272,7 @@ func (l postgresRemovalLedger) ApplyRemovalRecords(ctx context.Context, records 
 		return err
 	}
 	if !available {
-		return nil
+		return errors.New("the online removal ledger is missing; the restored database must not serve traffic")
 	}
 	return l.removals.ApplyRemovalRecords(ctx, records)
 }

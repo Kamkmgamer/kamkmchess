@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
+	"github.com/Kamkmgamer/kamkmchess/backend/subject"
 )
 
 // The durable admission gate of the online service.
@@ -307,13 +308,15 @@ func TestOnlineGateReopensAfterTheRecovery(t *testing.T) {
 func TestOnlineGateRefusesAnAllocationOfARemovedParticipant(t *testing.T) {
 	fixture := newPresenceFixture(t)
 	ctx := context.Background()
-	// The account of the second participant was removed.
+	// The account of the second participant was removed. The removal tables
+	// carry the one-way reference of the subject, never the identifier.
+	reference := subject.Reference("user_b")
 	if _, err := fixture.pool.Exec(ctx, `INSERT INTO online_removal_requests(removal_id,subject_kind,subject_id,scope,status,requested_at,verified_at,live_delete_due_at,recovery_sanitize_due_at)
-VALUES('rm_gate_0001','account','user_b','account_deletion','verified',clock_timestamp(),clock_timestamp(),clock_timestamp(),clock_timestamp())`); err != nil {
+VALUES('rm_gate_0001','account',$1,'account_deletion','verified',clock_timestamp(),clock_timestamp(),clock_timestamp(),clock_timestamp())`, reference); err != nil {
 		t.Fatalf("record the removal request: %v", err)
 	}
 	if _, err := fixture.pool.Exec(ctx, `INSERT INTO online_account_deletions(deletion_id,account_id,requested_at,applied_at,removal_id)
-VALUES('rd_gate_0001','user_b',clock_timestamp(),clock_timestamp(),'rm_gate_0001')`); err != nil {
+VALUES('rd_gate_0001',$1,clock_timestamp(),clock_timestamp(),'rm_gate_0001')`, reference); err != nil {
 		t.Fatalf("record the account deletion: %v", err)
 	}
 	setup := online.CreateMatchSetup{

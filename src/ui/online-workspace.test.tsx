@@ -116,4 +116,19 @@ describe('the online workspace screen (UX-03, UX-04)', () => {
     expect(markup).not.toContain('declared models');
     composition.dispose();
   });
+
+  it('renders every explicit queue entry with its own controls', async () => {
+    const composition = offlineComposition();
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl: { startingTimeMs: 300_000, incrementMs: 2_000 } });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl: { startingTimeMs: 180_000, incrementMs: 2_000 } }, { intent: 'new' });
+    const markup = renderToStaticMarkup(<OnlineWorkspace composition={composition} onClose={() => {}} initialTab="new" />);
+    // Every entry is listed, and every entry has its own focus and cancel
+    // control with an accessible name.
+    expect(markup).toContain('aria-label="Queue entries"');
+    expect(markup).toContain('aria-label="Show queue entry queue-1"');
+    expect(markup).toContain('aria-label="Cancel queue entry queue-1"');
+    expect(markup).toContain('aria-label="Show queue entry queue-2"');
+    expect(markup).toContain('aria-label="Cancel queue entry queue-2"');
+    composition.dispose();
+  });
 });

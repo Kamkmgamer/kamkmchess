@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/locks"
@@ -26,6 +25,12 @@ type Options struct {
 	LiveRemovalDelay time.Duration
 	// RecoverySanitizeDelay is the target of the recovery copy sanitation.
 	RecoverySanitizeDelay time.Duration
+	// FencePath is the path of the durable restore fence.
+	//
+	// The fence lives outside the restored database, so it survives the
+	// schema replacement of a restore and a crash of the restore process. The
+	// service refuses to serve while the fence is open.
+	FencePath string
 }
 
 // Service removes the data of an account or of a guest.
@@ -221,7 +226,22 @@ func (s *Service) applyRemoval(ctx context.Context, tx pgx.Tx, principal onlinea
 			return Report{}, err
 		}
 	}
-	if err = s.removePrivateOwnerData(ctx, tx, subjectKind, reference, scope); err != nil {
+	if err = s.removePrivateOwnerData(ctx, tx, subjectKind, reference, subjectID, scope); err != nil {
+		return Report{}, err
+	}
+	// The subject level record states that the subject itself was removed,
+	// whatever it played and whatever private data it held. It is the record
+	// that survives a restore of an older backup, where the deletion table of
+	// the subject is absent.
+	subjectRecordID, err := newIdentifier("rs_")
+	if err != nil {
+		return Report{}, err
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO online_removal_subjects(subject_id,removal_id,subject_kind,subject_ref,scope,removed_at)
+		VALUES($1,$2,$3,$4,$5,$6)
+		ON CONFLICT (subject_kind, subject_ref, scope) DO NOTHING`,
+		subjectRecordID, request.RemovalID, subjectKind, reference, scope, now); err != nil {
 		return Report{}, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE online_removal_requests SET status='applied', applied_at=$1, live_deleted_at=$1, removed_match_count=$2, anonymized_match_count=$3 WHERE removal_id=$4`,
@@ -415,7 +435,7 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, s
 // The account keeps no public name, no chosen avatar, no guest link and no
 // registered public label. The guest keeps no seat credential and no
 // ownership proof.
-func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, subjectKind, reference, scope string) error {
+func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, subjectKind, reference, rawID, scope string) error {
 	if subjectKind == string(online.ParticipantAccount) {
 		// The public identity of the account is removed. The profile row stays
 		// as an anonymous shell, because the base schema keeps the profile
@@ -436,6 +456,20 @@ func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, subject
 			VALUES($1,$2,$3,$3,(SELECT removal_id FROM online_removal_requests WHERE subject_kind='account' AND subject_id=$2 AND scope=$4))
 			ON CONFLICT (account_id) DO NOTHING`, deletionID(), reference, s.now(), scope); err != nil {
 			return err
+		}
+		// The private single-owner data of the account is removed as well: the
+		// owner's own games, their archive chunks, their archive events and
+		// their operation receipts. Only the payload free tombstones remain.
+		if privateOwnerRemovalIsRequired(scope) {
+			present, presentErr := privateTablesPresent(ctx, tx)
+			if presentErr != nil {
+				return presentErr
+			}
+			if present {
+				if _, err := s.removePrivateGames(ctx, tx, rawID); err != nil {
+					return err
+				}
+			}
 		}
 		return nil
 	}
@@ -500,6 +534,3 @@ func newIdentifier(prefix string) (string, error) {
 	}
 	return prefix + base64.RawURLEncoding.EncodeToString(raw), nil
 }
-
-// unusedStringsImport keeps the strings dependency honest for future use.
-var _ = strings.TrimSpace

@@ -74,14 +74,48 @@ screen is a focus page above it.
 | --- | --- | --- |
 | Type check | `corepack pnpm exec tsc -p tsconfig.app.json` | passed, no diagnostics |
 | Lint | `corepack pnpm exec eslint . --max-warnings 0` | passed, no findings |
-| Fixtures | `corepack pnpm test` | 998 tests in 85 files passed (908 before this slice) |
-| Online fixtures | `corepack pnpm vitest run src/online src/ui` | 310 tests in 26 files passed |
-| Browser suite | `corepack pnpm exec playwright test` (local config, preview on the loopback) | 77 tests passed, including the 4 new online ones |
+| Fixtures | `corepack pnpm test` | 1085 tests in 92 files passed |
+| Online and interface fixtures | `corepack pnpm vitest run src/online src/ui` | 383 tests in 33 files passed |
+| Browser suite | `corepack pnpm exec playwright test` (local config, preview on the loopback) | 9 cases passed, including the 5 online workspace cases and the 4 offline result-control cases |
 
 The new browser cases are in `tests/e2e/online-workspace.spec.ts`: the online
 screen is reachable, the closed surfaces offer no entry, the offline game
-survives the visit, the screen fits a 390 pixel viewport, and the icon
-actions keep their accessible name, their hover label and a visible focus.
+survives the visit, the screen fits a 390 pixel viewport, the icon actions
+keep their accessible name, their hover label and a visible focus, and the
+offline game keeps its draw and resign icons.
+
+`tests/e2e/online-ui.spec.ts` drives the rendered guest friend flow and the
+queue fallback against the **real** online service of the operations fixture
+(two Chromium contexts, real fetch, real server-sent events, no fetch double).
+It needs the fixture descriptor (`ONLINE_FIXTURE_DESCRIPTOR`) and a build that
+points at the fixture origin. It is **authored but not yet run**: the fixture
+startup had a TLS failure that the operations worker is fixing, so no result
+of that spec is claimed here.
+
+## The final dispositions of the review rounds
+
+| Finding | Disposition |
+| --- | --- |
+| B-1 the board gate contradicted the service clock | **Fixed** — `src/online/turn.ts` is the single rule; the interface, the engine seat and the agent runner use it. |
+| B-2 a committed match was never attached | **Fixed** — the composition attaches and focuses it, and the registry is resumed. |
+| B-3 the readiness lease was never renewed | **Fixed** — the background poll heartbeats and reads the entry; the expiry is re-armed with the ready route. |
+| B-4 a failed creation poisoned the intent | **Fixed** — a definitive refusal releases the intent, an unknown answer keeps it, a settings change resolves the previous entry first. Regression: "keeps the intent when the answer of the creation is unknown". |
+| B-5 a second explicit entry was impossible | **Fixed** — every entry owns a controller, a state and a poll timer; the older entry keeps waiting and can be cancelled on its own. |
+| B-6 an account notification destroyed the guest authority | **Fixed** — only the account identity is fenced, a guest seat fails closed, and a re-minted credential replaces the old session. |
+| B-7 the entry was never polled | **Fixed** — the poll feeds the controller. |
+| B-8 the production providers were never injected | **Fixed** — the real engine preparation and the connection-store readiness check are injected by both entry points. |
+| B-9, B-14 a stuck phase and a late cancellation | **Fixed** — the owner can always cancel, a not-ready entry is expired, a committed opponent is never replaced. |
+| B-10 an unnamed seat was declared human | **Fixed** — the label is `Unknown`. |
+| B-11 the interface note drifted | **Fixed** — the note publishes the real routes, the queue answers, the label rule and the peer clients. |
+| B-12 the composition had no test | **Fixed** — `src/online/composition.test.ts` (9 cases). |
+| B-13 the intent key was global | **Fixed** — the key is namespaced by the identity. |
+| B-15 the feature parser closed on an additive field | **Fixed** — unknown fields are ignored. |
+| B-16 the remaining hygiene items | **Mostly fixed** — the board refuses a move from a reviewed position, the queue mutations carry an operation identifier, a re-minted credential replaces the old session, and the signed-out account view keeps the online surface. **Not fixed:** the guest composition is disposed with the page instead of at the handover, so both compositions live until the page ends. |
+| P2-2 the lease client dropped the uncertainty fields | **Fixed** — the shared builders and the shared parser are used. |
+| P2-4 the engine seat orphaned its lease | **Fixed** — the lease is released before the requester goes away. |
+| P1-1, P1-2, P1-3, P2-3, P3-* | **Not mine** — the internals of the provider runner belong to the provider worker. The composition supplies the canonical per-seat epoch (`seatControlEpoch`) and the budgets of the actual wire. |
+| F2, F3, F4, F7 of the matching review r3 | **Not mine** — the friends fixes worker owns the backend of the invitation consumption, the match atomicity, the expiry and the invisible 404. The browser keeps the acceptance key and replays it, so a lost answer never needs the lost credential. |
+| Q01 to Q10 of the queue review r3 | **Not mine** — the queue worker owns the backend queue and the queue client. The composition preserves the intent on an unknown answer and replaces a rotated engine credential. |
 
 ## The limits of this evidence
 

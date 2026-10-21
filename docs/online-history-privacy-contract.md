@@ -158,9 +158,43 @@ Rules the browser must honour:
   released its gate. The service refuses to **start** while the removal ledger is not applied in
   the database, and every request is checked again while it runs. A restore releases the gate only
   after the removal ledger was replayed and the replay was verified.
-* The operator tooling (`khabackup`) seals the removal ledger into the bundle, replays it after a
-  restore, records the restore, releases the gate, and reports the removals it could not apply. A
-  ledger that cannot be read is an error, never an empty ledger.
+* The **durable restore fence** lives outside the restored database, in a file the restore writes
+  before it imports anything. The path is configured once, with `ONLINE_RESTORE_FENCE_PATH`, and
+  both the API and the restore tool use it: the API reads it in `serverapp.Load` and checks it
+  before it starts and on every request, the restore tool writes it with `--fence` (which
+  defaults to the same environment variable) and refuses an applied restore without it. The path
+  has to be a **shared persistent location**: a per container or per host path would let two
+  instances disagree about the state of a restore. The fence survives the schema replacement of
+  the restore and a crash of the restore process, so a restore that dies between the import and
+  the replay leaves the service closed instead of a restored database that lost the newest
+  removals. The fence is closed only after the ledger was replayed, verified and recorded.
+* The **subject level removal record** (`online_removal_subjects`, `subjectRef`) records that a
+  subject was removed, whatever it played and whatever private data it held. It names no match
+  and it stores the one-way reference of the subject, never the identifier. It travels in the
+  encrypted bundle with the match bound records, it is merged with the newer rotation copies and
+  it is replayed after a restore. Without it, a restore of an older backup — where the deletion
+  table of the account is absent — would bring the private data back and let the old session of
+  the account work again.
+* The operator tooling (`khabackup`) seals the removal ledger into the bundle, writes the fence,
+  restores, replays the ledger, verifies the replay, records the restore, releases the gate and
+  closes the fence. A ledger that cannot be read is an error, never an empty ledger.
+
+## The private single-owner data of a deleted account
+
+* An ordinary account deletion and an explicit removal both remove the account's **private
+  single-owner data**: its own games, their archive chunks, their archive events and its
+  operation receipts. Only the payload-free deletion tombstones and the idempotency receipts
+  remain, exactly like the private store's own delete path.
+* The unrelated owners are never touched, and the browser's own copies of the games are outside
+  the server's reach.
+* The account is **fenced**: its sessions are revoked, and the private API refuses its reads and
+  its writes through the account gate, which the private store consults inside every write
+  transaction. An old verified session token therefore cannot read or write the private archive of
+  a deleted account.
+* The removal of the private data is replayed after a restore exactly like the online removal: the
+  restored private rows are removed again, and the account is fenced again.
+* The private endpoint is never widened to guests, and the guest path of the private store stays
+  unreachable.
 
 ## Lock protocol
 
@@ -169,9 +203,10 @@ The flows that act on the same participant take the same locks, in the same orde
 1. the account scope locks, in ascending order (`backend/locks`, the shared account scope lock);
 2. the match row locks, in ascending match identifier order.
 
-* The trusted allocation of a seat, the removal of a participant and the creation of a public
-  profile take the same account scope lock, so an allocation and a removal of one participant are
-  ordered instead of racing.
+* The trusted allocation of a seat, the removal of a participant, the creation of a public
+  profile and every private write of an account take the same account scope lock, so an
+  allocation, a removal and a private write of one participant are ordered instead of racing. A
+  private write therefore cannot insert a new game after the removal committed.
 * The publication of a public replay and the removal of the same match take the same match row
   lock, so a first publication and a removal are never interleaved: either the removal is recorded
   first and the publication refuses to publish, or the publication publishes first and the removal
@@ -180,11 +215,13 @@ The flows that act on the same participant take the same locks, in the same orde
 
 ## Known limitations
 
-* The rows that predate a removal (the seat, the public profile row, the session revocation) keep
-  the identifier of the subject, because the service looks them up by it. They are service-held,
-  never public, and they are not in the public payload, the public replay or the public history.
-  The removal tables, the deletion marker, the removal ledger and the encrypted backup bundle carry
-  only the one-way reference.
+* The rows that predate a removal (the seat, the public profile row, the session revocation, the
+  private game rows) keep the identifier of the subject, because the service looks them up by it.
+  They are service-held, never public, and they are not in the public payload, the public replay
+  or the public history. The removal tables, the deletion marker, the removal ledger and the
+  encrypted backup bundle carry only the one-way reference.
+* The private game rows of a removed account keep the identifier in the tombstone, because the
+  private store looks the tombstone up by owner. The payload is gone.
 * The public profile row of a deleted account stays as an anonymous shell: the base schema keeps
   the profile identifier and the account reference immutable. The chosen name, the chosen avatar
   and every public history row of the account are removed, the profile seam refuses the deleted

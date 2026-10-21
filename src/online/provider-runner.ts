@@ -70,6 +70,8 @@ import type {
 } from '../providers/protocols/index.js';
 import { fetchProvider } from '../providers/transport.js';
 import type { OnlineAction, Receipt, Seat } from './contracts';
+import { onlineSideToMove } from './turn';
+import type { OnlineMatchView } from './updates';
 
 /** The contract version the runner speaks. */
 export const ONLINE_RUNNER_SCHEMA_VERSION = 2;
@@ -222,11 +224,36 @@ export class ProviderRunnerServiceError extends Error {
 }
 
 /**
+ * The authentication codes that mean the participant may not act any more.
+ *
+ * The participant boundary reports a stable code and no HTTP status, so the
+ * runner reads the code. A cleared or changed credential is not a lost
+ * acknowledgement: retrying it can never succeed.
+ */
+const UNAUTHORIZED_ERROR_CODES: ReadonlySet<string> = new Set([
+  'no-credential',
+  'credential-cleared',
+  'credential-expired',
+  'credential-changed',
+  'invalid-credential',
+  'wrong-scope',
+  'identity-changed',
+  'origin-mismatch',
+  'credential-in-url',
+  'credential-header-conflict',
+  'disposed',
+]);
+
+/** The authentication codes that report a broken request rather than a lost credential. */
+const REFUSED_ERROR_CODES: ReadonlySet<string> = new Set(['invalid-url', 'invalid-transport']);
+
+/**
  * Maps an unknown failure onto a service failure kind.
  *
  * The runner accepts the failures of any client: a failure that carries a
- * `kind` is taken as it is, and a failure that carries only an HTTP status is
- * mapped with the status mapping of the service.
+ * `kind` is taken as it is, a failure that carries an authentication `code` is
+ * mapped with the codes of the participant boundary, and a failure that carries
+ * only an HTTP status is mapped with the status mapping of the service.
  */
 export function classifyProviderRunnerError(error: unknown): ProviderRunnerServiceErrorKind {
   if (error instanceof ProviderRunnerServiceError) return error.kind;
@@ -235,6 +262,10 @@ export function classifyProviderRunnerError(error: unknown): ProviderRunnerServi
   if (record.kind === 'conflict' || record.kind === 'refused' || record.kind === 'not-found' ||
     record.kind === 'unauthorized' || record.kind === 'unavailable' || record.kind === 'transport') {
     return record.kind;
+  }
+  if (typeof record.code === 'string') {
+    if (UNAUTHORIZED_ERROR_CODES.has(record.code)) return 'unauthorized';
+    if (REFUSED_ERROR_CODES.has(record.code)) return 'refused';
   }
   if (typeof record.status === 'number' && Number.isFinite(record.status)) {
     if (record.status === 409) return 'conflict';
@@ -518,7 +549,14 @@ export interface ProviderRunnerState {
   readonly matchId: string;
   readonly seat: Seat;
   readonly phase: ProviderRunnerPhase;
-  /** The public label of the agent. It is the only model identity that is shared. */
+  /**
+   * The label the service publishes for the agent.
+   *
+   * The service resolves a declared label to a publishable one before it
+   * accepts it, so the published label is the identity of the agent. The
+   * runner adopts it from the receipt of a control change and from the seat
+   * view of the snapshot.
+   */
   readonly publicModelLabel: string;
   readonly leaseId: string | null;
   readonly controlEpoch: number;
@@ -526,6 +564,21 @@ export interface ProviderRunnerState {
   readonly serviceEpoch: number;
   /** The epoch of the seat binding, when the caller knows it. */
   readonly seatEpoch: number;
+  /**
+   * The control epoch of the seat the runner is bound to.
+   *
+   * The epoch of the seat is the canonical answer to the question which
+   * controller plays the seat. A runner of a superseded controller never
+   * submits a move.
+   */
+  readonly boundSeatControlEpoch: number | null;
+  /**
+   * True when another controller took the seat.
+   *
+   * The runner stops and the caller decides whether it binds a new agent to
+   * the seat.
+   */
+  readonly superseded: boolean;
   readonly turnVersion: number | null;
   /** The match version the runner acts for. */
   readonly version: number;
@@ -543,7 +596,7 @@ export interface ProviderRunnerState {
 /** The declared control of the seat the runner acts for. */
 export interface ProviderRunnerSeatControl {
   readonly kind: 'human' | 'agent' | 'engine';
-  /** The public label of the agent. It is never a route identifier. */
+  /** The label the service publishes for the agent. It is never a route identifier. */
   readonly modelLabel?: string;
 }
 
@@ -564,6 +617,14 @@ export interface ProviderRunnerSnapshot {
   readonly clock: { readonly whiteMs: number; readonly blackMs: number; readonly incrementMs: number };
   /** The declared control of the seat the runner acts for. */
   readonly seatControl: ProviderRunnerSeatControl;
+  /**
+   * The control epoch of the seat the runner acts for.
+   *
+   * The epoch of the seat changes when the control of that seat changes. It
+   * is the canonical answer to the question which controller plays the seat,
+   * and it is never a label comparison.
+   */
+  readonly seatControlEpoch: number;
   /** The illegal attempts already spent in this turn. */
   readonly illegalAttemptsSpent: number;
   /** The formatting corrections already spent in this turn. */
@@ -574,11 +635,76 @@ export interface ProviderRunnerSnapshot {
   readonly seatEpoch?: number;
 }
 
+/** The options of the canonical conversion of a match view. */
+export interface ProviderRunnerSnapshotOptions {
+  /** The service epoch of the match, when the caller knows it. */
+  readonly serviceEpoch?: number;
+  /** The epoch of the seat binding, when the caller knows it. */
+  readonly seatEpoch?: number;
+}
+
+/**
+ * Converts the canonical match view of the service into the state the runner
+ * acts on.
+ *
+ * The conversion is the one place that reads the seat view, so the control
+ * epoch of the seat, the published label of the agent and the canonical
+ * counters of the turn always come from the same seat of the same view. A
+ * caller that builds the state by hand can name the wrong epoch, and the
+ * runner would then stand down for a controller it still owns.
+ */
+export function providerRunnerSnapshotFromView(
+  view: OnlineMatchView,
+  seat: Seat,
+  options: ProviderRunnerSnapshotOptions = {},
+): ProviderRunnerSnapshot {
+  const seatView = view.seats.find((candidate) => candidate.seat === seat);
+  if (seatView === undefined) {
+    throw new Error('The match view does not carry the seat of the runner.');
+  }
+  return {
+    matchId: view.matchId,
+    version: view.version,
+    controlEpoch: view.controlEpoch,
+    status: view.status,
+    // The side that owes the move is the seat of the opening reply window
+    // while it is open, the seat whose clock runs otherwise, and the seat the
+    // canonical position names while no clock runs at all. The shared rule of
+    // the service, the interface, the engine seat and the runner is one rule.
+    sideToMove: onlineSideToMove(view),
+    positionFen: view.positionFen,
+    startingFen: view.startingFen,
+    // The provider reads the moves of the match in the notation of the
+    // offline request building, which is the notation of the game record.
+    moves: view.moves.map((move) => move.san),
+    clock: {
+      whiteMs: view.clock.whiteMs,
+      blackMs: view.clock.blackMs,
+      incrementMs: view.timeControl.incrementMs,
+    },
+    seatControl: seatView.control,
+    // The control epoch of the seat is the canonical answer to the question
+    // which controller plays the seat.
+    seatControlEpoch: seatView.controlEpoch,
+    illegalAttemptsSpent: seatView.illegalAttemptsSpent,
+    formatCorrectionsSpent: seatView.formatCorrectionsSpent,
+    ...(options.serviceEpoch === undefined ? {} : { serviceEpoch: options.serviceEpoch }),
+    ...(options.seatEpoch === undefined ? {} : { seatEpoch: options.seatEpoch }),
+  };
+}
+
 /** The options of one browser runner. */
 export interface ProviderRunnerOptions {
   readonly matchId: string;
   readonly seat: Seat;
-  /** The public label of the agent this runner plays. */
+  /**
+   * The label the owner configured for the agent.
+   *
+   * The service resolves a declared label to a publishable one before it
+   * accepts it, so the runner adopts the published label from the receipt of a
+   * control change and from the seat view of the snapshot. The declared label
+   * is only the starting point.
+   */
   readonly publicModelLabel: string;
   /** The lease client of this runner. */
   readonly leases: ProviderRunnerLeasePort;
@@ -620,6 +746,13 @@ export interface OnlineProviderRunner {
   applySnapshot(snapshot: ProviderRunnerSnapshot): void;
   /** Plays the turn when the seat is agent controlled and it is the seat's turn. */
   start(): Promise<void>;
+  /**
+   * Starts the runner again after the owner stopped it.
+   *
+   * A stopped runner is resumable. The owner may stop an agent and start it
+   * again without losing the seat, the budgets or the conversation.
+   */
+  resume(): Promise<void>;
   /** Stops the runner and releases the lease. */
   stop(): Promise<void>;
   /** Retries the uncertain work on the explicit request of the owner. */
@@ -635,6 +768,21 @@ export interface OnlineProviderRunner {
 const DEFAULT_RENEW_INTERVAL_MS = 5000;
 const DEFAULT_MAX_SUBMISSION_ATTEMPTS = 3;
 const MAX_CONVERSATION_RECORDS = 24;
+
+/**
+ * The largest factor of the renewal backoff.
+ *
+ * A transient failure of the renewal is retried with a growing delay, and
+ * the delay never grows past this factor of the renewal interval.
+ */
+const MAX_RENEWAL_BACKOFF_FACTOR = 8;
+
+/**
+ * The number of times the runner may take a new lease in one turn.
+ *
+ * A lease that is lost again and again is a seat the runner does not hold.
+ */
+const MAX_LEASE_TAKEOVERS = 3;
 
 const defaultIdFactory = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -1061,9 +1209,46 @@ function sameTurn(left: ProviderRunnerSnapshot, right: ProviderRunnerSnapshot): 
     (left.serviceEpoch ?? 0) === (right.serviceEpoch ?? 0) &&
     (left.seatEpoch ?? 0) === (right.seatEpoch ?? 0) &&
     left.seatControl.kind === right.seatControl.kind &&
-    left.seatControl.modelLabel === right.seatControl.modelLabel &&
+    seatControlEpochOf(left) === seatControlEpochOf(right) &&
     right.status === 'active';
 }
+
+/**
+ * Reports whether the accepted move of one side ended the turn.
+ *
+ * The service resets the recovery budget of a seat when the seat's own move
+ * is accepted, so the budget of the browser follows the turn and not the life
+ * of the runner. A control change or a retry keeps the budget of the turn.
+ */
+function turnEnded(left: ProviderRunnerSnapshot, right: ProviderRunnerSnapshot): boolean {
+  return left.sideToMove !== right.sideToMove || left.positionFen !== right.positionFen;
+}
+
+/**
+ * Reads the control epoch of the seat of one state.
+ *
+ * The epoch is unknown when a caller built the state without it. An unknown
+ * epoch never fences the runner, because the lease of the seat is the fence
+ * that protects the move.
+ */
+function seatControlEpochOf(snapshot: ProviderRunnerSnapshot): number | null {
+  const epoch = snapshot.seatControlEpoch;
+  return typeof epoch === 'number' && Number.isSafeInteger(epoch) && epoch > 0 ? epoch : null;
+}
+
+/** The outcome of one renewal of the lease. */
+type RenewOutcome =
+  | { readonly ok: true }
+  | {
+    readonly ok: false;
+    readonly kind: ProviderRunnerServiceErrorKind;
+    /**
+     * `lease-gone` means the lease was revoked or it expired and a new one
+     * may be taken. `unusable` means the runner has to fail closed. A
+     * `transient` failure keeps the lease and arms the next renewal.
+     */
+    readonly state: 'lease-gone' | 'unusable' | 'transient';
+  };
 
 /**
  * Creates the browser runner of one agent seat.
@@ -1094,6 +1279,8 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   let controlEpoch = 0;
   let serviceEpoch = 0;
   let seatEpoch = 0;
+  let boundSeatControlEpoch: number | null = null;
+  let superseded = false;
   let illegalSpent = 0;
   let formatSpent = 0;
   let uncertainty: ProviderRunnerUncertainty | null = null;
@@ -1104,6 +1291,8 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   let ownerDecided = false;
   let disposed = false;
   let renewHandle: number | null = null;
+  let renewalFailures = 0;
+  let leaseLosses = 0;
   let activeController: AbortController | null = null;
   let abortReason: 'stale' | 'lease-lost' | 'stopped' | null = null;
   let activeRequestId: string | null = null;
@@ -1123,6 +1312,8 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       controlEpoch,
       serviceEpoch,
       seatEpoch,
+      boundSeatControlEpoch,
+      superseded,
       turnVersion,
       version,
       illegalAttemptsSpent: illegalSpent,
@@ -1136,7 +1327,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   }
 
   function decisionsFor(state: ProviderRunnerPhase): readonly ProviderRunnerDecision[] {
-    if (state === 'uncertain' || state === 'paused' || state === 'failed') {
+    if (state === 'uncertain' || state === 'paused' || state === 'failed' || state === 'stopped') {
       return ['retry', 'switch-model', 'takeover'];
     }
     return [];
@@ -1172,17 +1363,83 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     renewHandle = null;
   }
 
-  function scheduleRenewal(): void {
+  /**
+   * The time the lease of the seat still lives, or null when the lease does
+   * not name an expiry.
+   */
+  function leaseRemainingMs(): number | null {
+    if (leaseRecord === null) return null;
+    const expiresAt = Date.parse(leaseRecord.expiresAt);
+    if (!Number.isFinite(expiresAt)) return null;
+    return expiresAt - now();
+  }
+
+  /**
+   * The margin the runner keeps between the last renewal and the expiry of
+   * the lease.
+   *
+   * The runner has to know that it lost the seat before the lease expires,
+   * because the seat belongs to another runner from that moment on. One
+   * renewal interval is the margin.
+   */
+  function expirySafetyMarginMs(): number {
+    return renewIntervalMs;
+  }
+
+  /**
+   * Reports whether the lease of the seat is about to expire.
+   *
+   * The lease of the service lives for thirty seconds. A runner that cannot
+   * renew it any more must fail closed before the lease expires, because the
+   * seat belongs to another runner from that moment on.
+   */
+  function leaseIsAboutToExpire(): boolean {
+    const remaining = leaseRemainingMs();
+    if (remaining === null) return false;
+    return remaining <= expirySafetyMarginMs();
+  }
+
+  /**
+   * The delay of the next renewal after a failed one.
+   *
+   * The backoff grows, but it never grows past the life of the lease: the
+   * next renewal has to happen before the lease expires, and the safety
+   * margin is kept. A delay of zero means that there is no time left for
+   * another renewal, so the runner has to fail closed.
+   */
+  function renewalBackoffMs(): number {
+    const factor = Math.min(2 ** renewalFailures, MAX_RENEWAL_BACKOFF_FACTOR);
+    const backoff = Math.min(renewIntervalMs * factor, renewIntervalMs * MAX_RENEWAL_BACKOFF_FACTOR);
+    const remaining = leaseRemainingMs();
+    if (remaining === null) return backoff;
+    const latest = remaining - expirySafetyMarginMs();
+    if (latest <= 0) return 0;
+    return Math.min(backoff, latest);
+  }
+
+  /**
+   * Arms the next renewal of the lease.
+   *
+   * The renewal is armed on every outcome of a renewal, so a single transient
+   * failure never ends the heartbeat of the seat.
+   */
+  function scheduleRenewal(delayMs: number = renewIntervalMs): void {
     clearRenewal();
     if (disposed || leaseRecord === null) return;
     renewHandle = timers.setTimeout(() => {
       renewHandle = null;
       void renewLease().then((outcome) => {
-        if (!outcome.ok && outcome.kind === 'conflict') {
-          handleLeaseLoss();
+        if (outcome.ok) return;
+        if (outcome.state === 'transient') {
+          // A transient failure. The renewal is armed again with a bounded
+          // backoff, and the runner fails closed when the lease is about to
+          // expire.
+          if (leaseIsAboutToExpire()) handleLeaseLoss();
+          return;
         }
+        handleLeaseLoss();
       });
-    }, renewIntervalMs);
+    }, delayMs);
   }
 
   function cancelPending(reason: 'stale' | 'lease-lost' | 'stopped'): void {
@@ -1198,6 +1455,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       cancelPending('lease-lost');
       return;
     }
+    clearRenewal();
     leaseRecord = null;
     leaseId = null;
     const durable = pendingStore.read(matchId, seat);
@@ -1231,10 +1489,17 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       leaseRecord = lease;
       leaseId = lease.leaseId;
       turnVersion = lease.turnVersion;
+      renewalFailures = 0;
       scheduleRenewal();
       return { ok: true };
     } catch (error) {
       const kind = classifyProviderRunnerError(error);
+      if (kind === 'unauthorized') {
+        // The credential may not act any more. The runner stops instead of
+        // asking for a lease on every snapshot.
+        setPhase('stopped', 'The credential of the seat was refused.');
+        return { ok: false, detail: 'The credential of the seat was refused.' };
+      }
       const detail = kind === 'conflict'
         ? 'Another runner holds the seat.'
         : 'The service refused the runner lease.';
@@ -1243,8 +1508,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     }
   }
 
-  async function renewLease(): Promise<{ ok: true } | { ok: false; kind: ProviderRunnerServiceErrorKind }> {
-    if (leaseRecord === null || leaseId === null) return { ok: false, kind: 'conflict' };
+  async function renewLease(): Promise<RenewOutcome> {
+    if (leaseRecord === null || leaseId === null) {
+      clearRenewal();
+      return { ok: false, kind: 'conflict', state: 'lease-gone' };
+    }
     try {
       const lease = await leases.renew({
         controlEpoch,
@@ -1256,14 +1524,47 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       });
       if (lease.status !== 'active') {
         leaseRecord = lease;
-        return { ok: false, kind: 'conflict' };
+        clearRenewal();
+        return { ok: false, kind: 'conflict', state: 'lease-gone' };
       }
       leaseRecord = lease;
       turnVersion = lease.turnVersion;
+      renewalFailures = 0;
+      leaseLosses = 0;
       scheduleRenewal();
       return { ok: true };
     } catch (error) {
-      return { ok: false, kind: classifyProviderRunnerError(error) };
+      const kind = classifyProviderRunnerError(error);
+      renewalFailures += 1;
+      if (kind === 'unauthorized') {
+        // The credential may not act any more. The runner fails closed.
+        clearRenewal();
+        return { ok: false, kind, state: 'unusable' };
+      }
+      if (kind === 'conflict') {
+        // The lease was revoked or it expired. The runner gives it up and
+        // takes a new one.
+        clearRenewal();
+        return { ok: false, kind, state: 'lease-gone' };
+      }
+      if (leaseIsAboutToExpire()) {
+        // The lease is about to expire and it could not be renewed. The
+        // runner fails closed before the seat belongs to another runner.
+        clearRenewal();
+        return { ok: false, kind, state: 'unusable' };
+      }
+      // A transient failure. The heartbeat of the seat is armed again with a
+      // bounded backoff, so one failed renewal never ends it. The backoff
+      // never reaches past the life of the lease.
+      const delay = renewalBackoffMs();
+      if (delay <= 0) {
+        // There is no time left for another renewal before the lease
+        // expires, so the runner fails closed.
+        clearRenewal();
+        return { ok: false, kind, state: 'unusable' };
+      }
+      scheduleRenewal(delay);
+      return { ok: false, kind, state: 'transient' };
     }
   }
 
@@ -1352,14 +1653,41 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     }
   }
 
+  /**
+   * Reports whether the runner may act on the current state of the match.
+   *
+   * The seat control epoch is the canonical answer to the question which
+   * controller plays the seat. A runner of a superseded controller never
+   * submits a move, and the published label is never compared with the
+   * declared one, because the service publishes a resolved label.
+   */
   function shouldAct(current: ProviderRunnerSnapshot): boolean {
     if (current.status !== 'active') return false;
     if (current.sideToMove !== seat) return false;
     if (current.seatControl.kind !== 'agent') return false;
-    if (current.seatControl.modelLabel !== undefined && current.seatControl.modelLabel !== publicModelLabel) {
-      return false;
+    if (superseded) return false;
+    const epoch = seatControlEpochOf(current);
+    if (boundSeatControlEpoch !== null && epoch !== null) {
+      // A snapshot of an older epoch of the seat is stale. The runner waits
+      // for the state of the seat it is bound to.
+      if (epoch < boundSeatControlEpoch) return false;
+      if (epoch > boundSeatControlEpoch) return false;
     }
     return true;
+  }
+
+  /** Reports whether another controller took the seat. */
+  function isSuperseded(current: ProviderRunnerSnapshot): boolean {
+    const epoch = seatControlEpochOf(current);
+    if (boundSeatControlEpoch === null || epoch === null) return false;
+    return epoch > boundSeatControlEpoch;
+  }
+
+  /** Binds the runner to the control epoch of the seat it plays. */
+  function bindSeatControlEpoch(current: ProviderRunnerSnapshot): void {
+    if (boundSeatControlEpoch !== null) return;
+    const epoch = seatControlEpochOf(current);
+    if (epoch !== null) boundSeatControlEpoch = epoch;
   }
 
   function positionOf(current: ProviderRunnerSnapshot): Position | null {
@@ -1384,7 +1712,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   async function submitAction(
     action: OnlineAction,
     operationId: string,
-  ): Promise<{ kind: 'accepted'; receipt: Receipt } | { kind: 'fenced' | 'refused' | 'unacknowledged'; detail: string }> {
+  ): Promise<
+    | { kind: 'accepted'; receipt: Receipt }
+    | { kind: 'fenced' | 'refused' | 'unauthorized' | 'unacknowledged'; detail: string }
+  > {
     assertSharedActionSafe(action);
     const lease = leaseId;
     // The operation identifier stays with the action while the acknowledgement
@@ -1413,6 +1744,19 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           // accepts a second move.
           continue;
         }
+        if (kind === 'unauthorized') {
+          // The credential may not act any more. The runner stops instead of
+          // sending the command again.
+          pendingSubmission = null;
+          return { kind: 'unauthorized', detail: 'The credential of the seat was refused.' };
+        }
+        if (kind === 'not-found' && lease !== null) {
+          // The service answers a fenced lease with a missing resource. The
+          // lease was revoked, expired or belongs to another turn, so the
+          // command was never a rules refusal.
+          pendingSubmission = null;
+          return { kind: 'fenced', detail: 'The lease of the seat no longer accepts commands.' };
+        }
         if (kind === 'conflict') {
           pendingSubmission = null;
           return { kind: 'fenced', detail: 'The service refused a stale version or epoch.' };
@@ -1427,7 +1771,13 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   async function reportRecoveryAttempt(attempt: 'illegal_move' | 'formatting_correction'): Promise<boolean> {
     const outcome = await submitAction({ kind: 'record_recovery_attempt', attempt }, nextOperationId('recovery'));
     if (outcome.kind === 'accepted') return true;
+    if (outcome.kind === 'unauthorized') {
+      await releaseLease();
+      setPhase('stopped', outcome.detail);
+      return false;
+    }
     if (outcome.kind === 'fenced') {
+      dropLease();
       setPhase('idle', outcome.detail);
       return false;
     }
@@ -1438,6 +1788,14 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     for (;;) {
       const current = snapshot;
       if (current === null || !shouldAct(current)) {
+        if (current !== null && isSuperseded(current)) {
+          // Another controller took the seat. The runner gives the seat back
+          // and waits for the caller to bind a new agent.
+          superseded = true;
+          await releaseLease();
+          setPhase('idle', 'Another controller took the seat.');
+          return;
+        }
         setPhase('idle');
         return;
       }
@@ -1446,15 +1804,32 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         if (phase !== 'uncertain') setPhase('waiting-lease', leased.detail);
         return;
       }
+      // The lease is bound to the control epoch of the seat. The epoch is the
+      // canonical answer to the question which controller plays the seat.
+      bindSeatControlEpoch(current);
       const renewed = await renewLease();
       if (!renewed.ok) {
-        // The lease is not live any more. The runner gives it up and takes a
-        // new one. A seat that another runner holds is never taken.
-        dropLease();
-        const reacquired = await ensureLease();
-        if (!reacquired.ok) {
-          if (phase !== 'uncertain') setPhase('waiting-lease', reacquired.detail);
+        if (renewed.state === 'unusable') {
+          // The runner fails closed. It never asks for a lease in a loop.
+          dropLease();
+          setPhase('waiting-lease', 'The lease of the seat could not be kept alive.');
           return;
+        }
+        if (renewed.state === 'lease-gone') {
+          // The lease was revoked or it expired. The runner gives it up and
+          // takes a new one. A seat that another runner holds is never taken.
+          dropLease();
+          leaseLosses += 1;
+          if (leaseLosses > MAX_LEASE_TAKEOVERS) {
+            setPhase('waiting-lease', 'The lease of the seat was lost again.');
+            return;
+          }
+          const reacquired = await ensureLease();
+          if (!reacquired.ok) {
+            if (phase !== 'uncertain') setPhase('waiting-lease', reacquired.detail);
+            return;
+          }
+          bindSeatControlEpoch(current);
         }
       }
       const position = positionOf(current);
@@ -1477,11 +1852,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           });
         } catch (error) {
           const kind = classifyProviderRunnerError(error);
+          activeController = null;
+          activeRequestId = null;
           if (kind === 'conflict') {
             // The request never started, so it was never billed. The runner
             // gives the lease up and takes a new one.
-            activeController = null;
-            activeRequestId = null;
             dropLease();
             const reacquired = await ensureLease();
             if (!reacquired.ok) {
@@ -1490,6 +1865,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
             }
             continue;
           }
+          if (kind === 'unauthorized') {
+            setPhase('stopped', 'The credential of the seat was refused.');
+            return;
+          }
+          // The request was not recorded, so it is not sent. A billable
+          // request without a record would hide the uncertainty of a lost
+          // runner from the next runner of the seat.
+          setPhase('failed', 'The service could not record the provider request.');
+          return;
         }
       }
       // The pending record is written after the service recorded the request,
@@ -1526,7 +1910,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           return;
         }
         if (controller.signal.aborted && abortReason === 'stopped') {
-          setPhase('stopped');
+          // The owner stopped the runner. An uncertainty that is already open
+          // is never swallowed, because the uncertain work has to stay
+          // recoverable.
+          if (uncertainty === null) setPhase('stopped');
           return;
         }
         // The request may have reached the provider and been billed. The
@@ -1558,7 +1945,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           });
           return;
         }
-        setPhase('stopped');
+        // The owner stopped the runner. An uncertainty that is already open is
+        // never swallowed, because the uncertain work has to stay recoverable.
+        if (uncertainty === null) setPhase('stopped');
         return;
       }
       if (answer.uncertain) {
@@ -1592,7 +1981,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // revoked or that expired while the request ran cannot accept the move,
       // and the billable work of this turn is then uncertain.
       const submitted = await renewLease();
-      if (!submitted.ok) {
+      if (!submitted.ok && submitted.state !== 'transient') {
         enterUncertainty({
           kind: 'provider-request',
           requestId,
@@ -1613,6 +2002,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         lastMove = uci;
         const outcome = await submitAction({ kind: 'submit_move', move: uci }, nextOperationId('move'));
         if (outcome.kind === 'accepted') {
+          // An accepted move ends the turn, and the service resets the
+          // recovery budget of the seat with it.
+          illegalSpent = 0;
+          formatSpent = 0;
+          rejectedMoves = [];
           await releaseLease();
           setPhase('idle');
           return;
@@ -1627,8 +2021,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           });
           return;
         }
-        if (outcome.kind === 'fenced') {
+        if (outcome.kind === 'unauthorized') {
           await releaseLease();
+          setPhase('stopped', outcome.detail);
+          return;
+        }
+        if (outcome.kind === 'fenced') {
+          // The lease fenced the command. The state moved on, so the runner
+          // waits for the next snapshot instead of spending an attempt.
+          dropLease();
           setPhase('idle', outcome.detail);
           return;
         }
@@ -1662,6 +2063,16 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           });
           return;
         }
+        if (outcome.kind === 'unauthorized') {
+          await releaseLease();
+          setPhase('stopped', outcome.detail);
+          return;
+        }
+        if (outcome.kind === 'fenced') {
+          dropLease();
+          setPhase('idle', outcome.detail);
+          return;
+        }
         await releaseLease();
         setPhase('idle', outcome.detail);
         return;
@@ -1670,7 +2081,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         const uci = coordinateMoveToUci(decision.record.move);
         const reported = await reportRecoveryAttempt('illegal_move');
         if (!reported) {
-          if (phase !== 'uncertain') setPhase('idle', 'The spent attempt was not accepted.');
+          if (phase === 'generating') setPhase('idle', 'The spent attempt was not accepted.');
           return;
         }
         // The service counts the attempt. The runner adopts the count only
@@ -1717,7 +2128,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
       const reported = await reportRecoveryAttempt('formatting_correction');
       if (!reported) {
-        if (phase !== 'uncertain') setPhase('idle', 'The spent correction was not accepted.');
+        if (phase === 'generating') setPhase('idle', 'The spent correction was not accepted.');
         return;
       }
       formatSpent = decision.budgets.formatCorrections;
@@ -1803,8 +2214,20 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
       if (next.serviceEpoch !== undefined) serviceEpoch = next.serviceEpoch;
       if (next.seatEpoch !== undefined) seatEpoch = next.seatEpoch;
-      if (next.illegalAttemptsSpent > illegalSpent) illegalSpent = next.illegalAttemptsSpent;
-      if (next.formatCorrectionsSpent > formatSpent) formatSpent = next.formatCorrectionsSpent;
+      // The service publishes a resolved label, so the published label of the
+      // seat is the identity of the agent. The runner adopts it.
+      if (next.seatControl.modelLabel !== undefined) publicModelLabel = next.seatControl.modelLabel;
+      if (previous !== null && turnEnded(previous, next)) {
+        // The turn ended. The service resets the recovery budget of the seat
+        // with the accepted move, so the budget of the browser follows the
+        // canonical counts of the new turn.
+        illegalSpent = next.illegalAttemptsSpent;
+        formatSpent = next.formatCorrectionsSpent;
+        rejectedMoves = [];
+      } else {
+        if (next.illegalAttemptsSpent > illegalSpent) illegalSpent = next.illegalAttemptsSpent;
+        if (next.formatCorrectionsSpent > formatSpent) formatSpent = next.formatCorrectionsSpent;
+      }
       if (previous !== null && !sameTurn(previous, next)) {
         // The turn changed under the runner. The pending answer is stale and
         // is dropped instead of submitted.
@@ -1812,6 +2235,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         if (activeController === null && phase === 'generating') {
           setPhase('idle', 'The answer of a superseded turn was dropped.');
         }
+      }
+      if (next.status !== 'active') {
+        // The match is over. The pending answer is useless, the lease of the
+        // seat is given back and the heartbeat stops, so a finished match
+        // keeps no lease.
+        cancelPending('stale');
+        void releaseLease();
+        setPhase('idle', 'The match is over.');
+        return;
       }
       publish();
       if (running) {
@@ -1821,6 +2253,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
     },
     async start() {
+      if (disposed) return;
+      // A stopped runner is resumable. The owner may stop an agent and start
+      // it again without losing the seat.
+      if (phase === 'stopped' && uncertainty === null) setPhase('idle');
+      schedule();
+    },
+    async resume() {
+      if (disposed) return;
+      if (phase === 'stopped' && uncertainty === null) setPhase('idle');
       schedule();
     },
     async stop() {
@@ -1844,7 +2285,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     },
     async retry() {
       if (disposed) return;
-      if (phase !== 'uncertain' && phase !== 'paused' && phase !== 'failed') return;
+      if (phase !== 'uncertain' && phase !== 'paused' && phase !== 'failed' && phase !== 'stopped') return;
       const operation = pendingSubmission;
       uncertainty = null;
       // The owner decided. The uncertain work may be paid twice, and the
@@ -1892,7 +2333,13 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         setPhase(phase, 'The service refused the model switch.');
         return;
       }
-      publicModelLabel = label;
+      // The service resolves the declared label to a publishable one, so the
+      // runner adopts the published label of the receipt. The seat control
+      // epoch of the receipt is the epoch of the seat after the change.
+      const published = outcome.receipt.event?.control?.modelLabel;
+      if (published !== undefined) publicModelLabel = published;
+      boundSeatControlEpoch = outcome.receipt.controlEpoch;
+      superseded = false;
       uncertainty = null;
       ownerDecided = true;
       await releaseLease();
@@ -1914,6 +2361,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         setPhase(phase, 'The service refused the takeover.');
         return;
       }
+      boundSeatControlEpoch = outcome.receipt.controlEpoch;
       uncertainty = null;
       ownerDecided = true;
       await releaseLease();

@@ -81,6 +81,14 @@ type OnlineConfig struct {
 	HistoryPublishInterval time.Duration
 	// HistoryPublishBatch bounds one publishing pass.
 	HistoryPublishBatch int
+	// RestoreFencePath is the path of the durable restore fence.
+	//
+	// The fence lives outside the restored database, so it survives the
+	// schema replacement of a restore and a crash of the restore process. The
+	// service and the restore tool have to use the same path, and the path
+	// has to be a shared persistent location: a per container or per host
+	// path would let two instances disagree about the state of a restore.
+	RestoreFencePath string
 }
 
 // flag reads an optional boolean setting. A missing or malformed value keeps
@@ -114,6 +122,7 @@ func Load(getenv func(string) string) (Config, error) {
 			QueueSweepBatch:        positiveInt(getenv, "ONLINE_QUEUE_SWEEP_BATCH", DefaultQueueSweepBatch),
 			HistoryPublishInterval: duration(getenv, "ONLINE_HISTORY_PUBLISH_INTERVAL", history.DefaultPublishInterval),
 			HistoryPublishBatch:    positiveInt(getenv, "ONLINE_HISTORY_PUBLISH_BATCH", history.DefaultPublishBatch),
+			RestoreFencePath:       strings.TrimSpace(getenv("ONLINE_RESTORE_FENCE_PATH")),
 		},
 	}
 	if cfg.DatabaseURL == "" || len(cfg.Clerk.AllowedOrigins) == 0 {
@@ -142,11 +151,6 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	if err = pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, nil, errors.New("database is unavailable")
-	}
-	store, err := storage.Open(ctx, pool)
-	if err != nil {
-		pool.Close()
-		return nil, nil, errors.New("storage initialization failed")
 	}
 	evaluator, closeWorker, err := openEvaluator(cfg.Online.RulesWorkerEntry)
 	if err != nil {
@@ -190,6 +194,43 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		}
 		pool.Close()
 		return nil, nil, errors.New("online authorization initialization failed")
+	}
+	// The privacy service owns the removal ledger, the restore gate and the
+	// fence of a deleted account.
+	privacyService, err := privacy.Open(ctx, pool, authorizer, privacy.Options{FencePath: cfg.Online.RestoreFencePath})
+	if err != nil {
+		if closeWorker != nil {
+			closeWorker()
+		}
+		pool.Close()
+		return nil, nil, errors.New("privacy service initialization failed")
+	}
+	// The admission check runs before any background work starts, so a
+	// database that may not serve traffic never starts a worker or a sweep.
+	allowed, err := privacyService.ServingAllowed(ctx)
+	if err != nil {
+		if closeWorker != nil {
+			closeWorker()
+		}
+		pool.Close()
+		return nil, nil, errors.New("the removal ledger could not be verified")
+	}
+	if !allowed {
+		if closeWorker != nil {
+			closeWorker()
+		}
+		pool.Close()
+		return nil, nil, errors.New("the restored database has an unreplayed removal ledger")
+	}
+	// The private store consults the account gate inside its write
+	// transactions, so a deleted account cannot write again.
+	store, err := storage.Open(ctx, pool, storage.WithAccountGate(privacyService))
+	if err != nil {
+		if closeWorker != nil {
+			closeWorker()
+		}
+		pool.Close()
+		return nil, nil, errors.New("storage initialization failed")
 	}
 	// The authorization service is the participant authorizer. The writer
 	// re-checks it inside every acceptance transaction.
@@ -297,11 +338,6 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// The privacy API is mounted under its own prefix. It carries the account
 	// and the guest credential header, and the private single-owner sync API
 	// is never widened to accept them.
-	privacyService, err := privacy.Open(ctx, pool, authorizer, privacy.Options{})
-	if err != nil {
-		pool.Close()
-		return nil, nil, errors.New("privacy service initialization failed")
-	}
 	root.Handle("/v1/privacy/", httpapi.CORSWithMethods(cfg.Clerk.AllowedOrigins, httpapi.PrivacyRequestHeaders, "GET, POST, OPTIONS", httpapi.NewPrivacy(privacyService, historyService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins})))
 	// The public profile API is mounted under its own prefixes so it never
 	// widens the private single-owner sync API.
@@ -309,7 +345,9 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	root.Handle("/v1/profiles/", profileHandler)
 	root.Handle("/v1/account/", profileHandler)
 	root.Handle("/v1/guest-seats/", profileHandler)
-	root.Handle("/", httpapi.CORS(cfg.Clerk.AllowedOrigins, httpapi.NewAuthenticated(store, verifier)))
+	// The private single-owner sync API is fenced: a deleted account cannot
+	// read or write its own private archive any more.
+	root.Handle("/", httpapi.CORS(cfg.Clerk.AllowedOrigins, httpapi.NewAuthenticatedWithFence(store, verifier, privacyService)))
 	// The trusted deadline reconciliation loop settles the matches whose
 	// opening reply window or main clock has passed, without waiting for a
 	// participant command. It is bound to the server context and to the
@@ -341,18 +379,9 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	})
 	// The serving gate is the admission state of the restored database. A
 	// restore that has not replayed the newest removal ledger keeps the
-	// service closed, so an erased game is never served again. The check runs
-	// before the service starts, and every request is checked again while it
-	// runs.
-	allowed, err := privacyService.ServingAllowed(ctx)
-	if err != nil {
-		pool.Close()
-		return nil, nil, errors.New("the removal ledger could not be verified")
-	}
-	if !allowed {
-		pool.Close()
-		return nil, nil, errors.New("the restored database has an unreplayed removal ledger")
-	}
+	// service closed, so an erased game is never served again. The check ran
+	// before the background work started, and every request is checked again
+	// while the service runs.
 	handler := httpapi.WithServingGate(privacyService, root)
 	release := func() {
 		// The loops stop before the pool closes, so no background sweep can

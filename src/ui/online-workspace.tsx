@@ -323,10 +323,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     if (!invitation) return;
     setBusy(true);
     try {
-      const accepted = await composition.friends.accept(invitation.invitationId, {
-        acceptanceKey: `accept${invitation.invitationId}`,
-        control: { kind: 'human' },
-      });
+      const accepted = await composition.friends.accept(invitation.invitationId, { kind: 'human' });
       if (accepted.guestCredential) {
         composition.registerGuestCredential(createGuestCredential({
           guestId: accepted.guestCredential.guestId,
@@ -377,12 +374,12 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     }
   }
 
-  /** Erases the shared replays of the owner. */
-  async function eraseSharedReplays(): Promise<void> {
+  /** Erases the shared replays of the whole account. The scope is explicit. */
+  async function eraseEverySharedReplay(): Promise<void> {
     setBusy(true);
     try {
       await composition.privacy.removeAccount();
-      setMessage('Shared replays erased.');
+      setMessage('Every shared replay of this account was erased.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The replays were not erased.');
     } finally {
@@ -411,10 +408,11 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
           onClick={() => setClockIndex(index)}>{choice.minutes}+{choice.increment}</button>)}
       </div>
       <div className="button-row">
-        <button className="button primary" type="button" disabled={busy || !composition.features.queue} onClick={() => void enterQueue({ kind: 'human' })}>Play yourself</button>
-        <button className="button" type="button" disabled={busy || !composition.features.queue || !agentLabel} onClick={() => void enterQueue({ kind: 'agent', modelLabel: agentLabel ?? 'Agent' })}>Watch agent</button>
-        <button className="button quiet" type="button" disabled={busy || !composition.features.queue} onClick={() => void enterQueue({ kind: 'human' }, 'new')}>Another entry</button>
+        <button className="button primary" type="button" disabled={busy || !composition.features.queue || !composition.accountSignedIn} onClick={() => void enterQueue({ kind: 'human' })}>Play yourself</button>
+        <button className="button" type="button" disabled={busy || !composition.features.queue || !composition.accountSignedIn || !agentLabel} onClick={() => void enterQueue({ kind: 'agent', modelLabel: agentLabel ?? 'Agent' })}>Watch agent</button>
+        <button className="button quiet" type="button" disabled={busy || !composition.features.queue || !composition.accountSignedIn} onClick={() => void enterQueue({ kind: 'human' }, 'new')}>Another entry</button>
       </div>
+      {composition.features.queue && !composition.accountSignedIn && <p role="status">Sign in to join the queue. Friend games work without an account.</p>}
       {queue.detail && <p role="status">{queue.detail}</p>}
       {queue.options.length > 0 && <div className="button-row">
         {queue.options.includes('retry') && <button className="button" type="button" onClick={() => queueOption('retry')}>Retry</button>}
@@ -424,6 +422,14 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
         {queue.options.includes('cancel') && <button className="button quiet" type="button" onClick={() => queueOption('cancel')}>Cancel</button>}
       </div>}
       {queue.assignment && <p role="status">Matched. {queue.assignment.opponentLabel}</p>}
+
+      {composition.queueEntries.length > 0 && <ul className="online-entries" aria-label="Queue entries">
+        {composition.queueEntries.map(entry => <li key={entry.id}>
+          <span className="online-entry-state">{entry.state.detail || entry.state.phase}</span>
+          <IconButton icon="moves" label={`Show queue entry ${entry.id}`} onClick={() => entry.focus()} />
+          <IconButton icon="close" label={`Cancel queue entry ${entry.id}`} disabled={busy} onClick={() => void entry.cancel()} />
+        </li>)}
+      </ul>}
 
       <h3>Friend</h3>
       <div className="button-row">
@@ -467,7 +473,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       </label>
       <div className="button-row">
         <button className="button quiet" type="button" disabled={busy} onClick={() => void readHistory()}>Public history</button>
-        <button className="button quiet" type="button" disabled={busy} onClick={() => void eraseSharedReplays()}>Erase shared replays</button>
+        <button className="button quiet" type="button" disabled={busy} onClick={() => void eraseEverySharedReplay()}>Erase every shared replay of this account</button>
       </div>
       {history && <p role="status">{history.totals.wins} wins · {history.totals.draws} draws · {history.totals.losses} losses</p>}
       {view && view.result !== null && <div className="button-row">

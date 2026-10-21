@@ -17,7 +17,7 @@
  * - The runner of one seat is per match and per seat. Two games run at the
  *   same time with two runners and two leases.
  */
-import { createOnlineProviderRunner, createProtocolProviderPort } from './provider-runner';
+import { createOnlineProviderRunner, createProtocolProviderPort, providerRunnerSnapshotFromView } from './provider-runner';
 import type {
   OnlineProviderRunner,
   ProviderRunnerCommandPort,
@@ -32,45 +32,27 @@ import type { ConnectionNamespace, ConnectionStore } from '../providers/connecti
 import type { ConnectionProtocol } from '../providers/connections/types.js';
 import type { ProviderProtocol } from '../providers/protocols/types.js';
 import type { ModelSelection } from '../controller/index.js';
+import { onlineSideToMove } from './turn';
 import type { Seat } from './contracts';
 import type { OnlineMatchView } from './updates';
 
 /**
  * Maps the canonical match state onto the runner snapshot.
  *
- * The side to move is the seat that owes the opening reply, else the seat the
- * active clock names, else the side the canonical position names. The runner
- * acts on the same turn the service does.
+ * The mapping itself belongs to the provider runner: it owns the epochs, the
+ * spent budgets and the declared control of the seat. The workspace adds one
+ * thing: the side to move of the opening.
+ *
+ * The service arms no main clock before the first move and no clock at all
+ * during the opening reply window, so the canonical answer can be empty in
+ * both moments. The turn rule of `src/online/turn.ts` is the same rule the
+ * interface and the browser engine use, so the runner, the interface and the
+ * engine always agree about whose turn it is.
  */
 export function providerRunnerSnapshot(view: OnlineMatchView, seat: Seat): ProviderRunnerSnapshot {
-  const seatView = view.seats.find(candidate => candidate.seat === seat);
-  const replySeat = view.clock.replySeat;
-  const activeSeat = view.clock.activeSeat;
-  const positionSide = view.positionFen.split(' ')[1] === 'b' ? 'black' : 'white';
-  const sideToMove = replySeat ?? activeSeat ?? positionSide;
-  return {
-    matchId: view.matchId,
-    version: view.version,
-    controlEpoch: view.controlEpoch,
-    status: view.status,
-    sideToMove,
-    positionFen: view.positionFen,
-    startingFen: view.startingFen,
-    moves: view.moves.map(move => move.uci),
-    clock: {
-      whiteMs: view.clock.whiteMs,
-      blackMs: view.clock.blackMs,
-      incrementMs: view.timeControl.incrementMs,
-    },
-    seatControl: {
-      kind: seatView?.control.kind ?? 'agent',
-      ...(seatView?.control.kind === 'agent' || seatView?.control.kind === 'engine'
-        ? { modelLabel: seatView.control.modelLabel ?? 'Agent' }
-        : {}),
-    },
-    illegalAttemptsSpent: seatView?.illegalAttemptsSpent ?? 0,
-    formatCorrectionsSpent: seatView?.formatCorrectionsSpent ?? 0,
-  };
+  const snapshot = providerRunnerSnapshotFromView(view, seat);
+  const sideToMove = snapshot.sideToMove ?? onlineSideToMove(view);
+  return { ...snapshot, sideToMove };
 }
 
 export interface OnlineAgentProviderOptions {

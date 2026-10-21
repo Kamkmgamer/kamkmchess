@@ -82,7 +82,13 @@ type Manifest struct {
 	RemovalCount int `json:"removalCount"`
 	// RemovalLedgerSHA is the digest of the online removal ledger.
 	RemovalLedgerSHA string `json:"removalLedgerSha256"`
-	RestoredFrom     string `json:"restoredFromLabel,omitempty"`
+	// SubjectRemovalCount is the number of subject level removals the bundle
+	// carries.
+	SubjectRemovalCount int `json:"subjectRemovalCount"`
+	// SubjectRemovalLedgerSHA is the digest of the subject level removal
+	// ledger.
+	SubjectRemovalLedgerSHA string `json:"subjectRemovalLedgerSha256"`
+	RestoredFrom            string `json:"restoredFromLabel,omitempty"`
 }
 
 func validatePassphrase(passphrase string) error {

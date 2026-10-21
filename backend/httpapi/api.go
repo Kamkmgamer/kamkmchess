@@ -56,6 +56,17 @@ func NewAuthenticated(store Store, verifier *auth.Verifier) http.Handler {
 	return verifier.Middleware(New(store))
 }
 
+// NewAuthenticatedWithFence installs Clerk verification and the account fence
+// of the private store.
+//
+// The verification runs first, because the fence needs the verified owner of
+// the request. The fence then refuses the private requests of a deleted
+// account, so an old session token cannot read or write the private archive of
+// an account whose data was removed.
+func NewAuthenticatedWithFence(store Store, verifier *auth.Verifier, fence AccountFence) http.Handler {
+	return verifier.Middleware(WithAccountFence(fence, New(store)))
+}
+
 func (a *API) list(w http.ResponseWriter, r *http.Request) {
 	owner, ok := auth.Owner(r.Context())
 	if !ok {

@@ -35,12 +35,15 @@ const online = onlineOrigin
     checkModel,
   })
   : null;
+// The service owns the rollout of the online surfaces. The browser asks
+// once, without a credential, and keeps the answer for the page lifetime.
+void online?.loadFeatures();
 const rootView = createRoot(root);
 void composition.openActiveGame().then(async (session) => {
   const snapshot = await session.controller.initialize();
   if (publicConfig.accountsEnabled) {
     const { AccountWorkspace } = await import('./AccountWorkspace.js');
-    rootView.render(<StrictMode><AccountWorkspace composition={composition} initialSession={session} initialSnapshot={snapshot} /></StrictMode>);
+    rootView.render(<StrictMode><AccountWorkspace composition={composition} initialSession={session} initialSnapshot={snapshot} online={online} /></StrictMode>);
     return;
   }
   rootView.render(

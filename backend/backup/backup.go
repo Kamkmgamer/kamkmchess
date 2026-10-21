@@ -36,7 +36,11 @@ type ExportPayload struct {
 	// record that an erased shared game or a removed identity must not come
 	// back when an older backup is restored.
 	Removals []RemovalRecord `json:"removals"`
-	SQL      []byte          `json:"-"`
+	// SubjectRemovals is the subject level removal ledger read at seal time.
+	// It is the record that a removed subject stays removed, whatever it
+	// played and whatever private data it held.
+	SubjectRemovals []SubjectRemovalRecord `json:"subjectRemovals"`
+	SQL             []byte                 `json:"-"`
 }
 
 // EncodeExport renders the payload as its documented one-line header followed
@@ -51,13 +55,18 @@ func EncodeExport(payload ExportPayload) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	subjectRemovals, err := json.Marshal(payload.SubjectRemovals)
+	if err != nil {
+		return nil, err
+	}
 	header, err := json.Marshal(struct {
-		Format   int    `json:"format"`
-		Tool     string `json:"tool"`
-		Ledger   string `json:"ledger"`
-		Removals string `json:"removals"`
-		SQLBytes int    `json:"sqlBytes"`
-	}{ExportFormat, payload.Tool, base64.StdEncoding.EncodeToString(ledger), base64.StdEncoding.EncodeToString(removals), len(payload.SQL)})
+		Format          int    `json:"format"`
+		Tool            string `json:"tool"`
+		Ledger          string `json:"ledger"`
+		Removals        string `json:"removals"`
+		SubjectRemovals string `json:"subjectRemovals"`
+		SQLBytes        int    `json:"sqlBytes"`
+	}{ExportFormat, payload.Tool, base64.StdEncoding.EncodeToString(ledger), base64.StdEncoding.EncodeToString(removals), base64.StdEncoding.EncodeToString(subjectRemovals), len(payload.SQL)})
 	if err != nil {
 		return nil, err
 	}
@@ -77,11 +86,12 @@ func DecodeExport(plaintext []byte) (ExportPayload, error) {
 		return ExportPayload{}, ErrMalformedContainer
 	}
 	var header struct {
-		Format   int    `json:"format"`
-		Tool     string `json:"tool"`
-		Ledger   string `json:"ledger"`
-		Removals string `json:"removals"`
-		SQLBytes int    `json:"sqlBytes"`
+		Format          int    `json:"format"`
+		Tool            string `json:"tool"`
+		Ledger          string `json:"ledger"`
+		Removals        string `json:"removals"`
+		SubjectRemovals string `json:"subjectRemovals"`
+		SQLBytes        int    `json:"sqlBytes"`
 	}
 	if json.Unmarshal(plaintext[len(ExportMagic)+1:end], &header) != nil || header.Format != ExportFormat {
 		return ExportPayload{}, ErrMalformedContainer
@@ -100,6 +110,17 @@ func DecodeExport(plaintext []byte) (ExportPayload, error) {
 			return ExportPayload{}, ErrMalformedContainer
 		}
 		if len(removalsJSON) > 0 && json.Unmarshal(removalsJSON, &payload.Removals) != nil {
+			return ExportPayload{}, ErrMalformedContainer
+		}
+	}
+	// The subject level ledger is newer than the match bound one, so a bundle
+	// without it simply carries none.
+	if header.SubjectRemovals != "" {
+		subjectJSON, err := base64.StdEncoding.DecodeString(header.SubjectRemovals)
+		if err != nil {
+			return ExportPayload{}, ErrMalformedContainer
+		}
+		if len(subjectJSON) > 0 && json.Unmarshal(subjectJSON, &payload.SubjectRemovals) != nil {
 			return ExportPayload{}, ErrMalformedContainer
 		}
 	}
@@ -183,12 +204,20 @@ func Create(ctx context.Context, request CreateRequest) (Manifest, error) {
 		return Manifest{}, err
 	}
 	var removals []RemovalRecord
+	var subjectRemovals []SubjectRemovalRecord
 	if request.Removals != nil {
 		removals, err = request.Removals.ListRemovalRecords(ctx)
 		if err != nil {
 			return Manifest{}, err
 		}
 		if _, err = MergeRemovalLedgers(removals, nil); err != nil {
+			return Manifest{}, err
+		}
+		subjectRemovals, err = request.Removals.ListSubjectRemovalRecords(ctx)
+		if err != nil {
+			return Manifest{}, err
+		}
+		if _, err = MergeSubjectRemovalLedgers(subjectRemovals, nil); err != nil {
 			return Manifest{}, err
 		}
 	}
@@ -206,7 +235,7 @@ func Create(ctx context.Context, request CreateRequest) (Manifest, error) {
 		}
 		return Manifest{}, err
 	}
-	plaintext, err := EncodeExport(ExportPayload{Tool: tool, Tombstone: ledger, Removals: removals, SQL: limited.buffer.Bytes()})
+	plaintext, err := EncodeExport(ExportPayload{Tool: tool, Tombstone: ledger, Removals: removals, SubjectRemovals: subjectRemovals, SQL: limited.buffer.Bytes()})
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -218,15 +247,21 @@ func Create(ctx context.Context, request CreateRequest) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
+	subjectRemovalsJSON, err := json.Marshal(subjectRemovals)
+	if err != nil {
+		return Manifest{}, err
+	}
 	sealed := Manifest{
-		Label:              request.Label,
-		CreatedAt:          request.CreatedAt.UTC(),
-		DumpTool:           tool,
-		TombstoneCount:     len(ledger),
-		TombstoneLedgerSHA: digestHex(ledgerJSON),
-		RemovalCount:       len(removals),
-		RemovalLedgerSHA:   digestHex(removalsJSON),
-		RestoredFrom:       request.RestoredFrom,
+		Label:                   request.Label,
+		CreatedAt:               request.CreatedAt.UTC(),
+		DumpTool:                tool,
+		TombstoneCount:          len(ledger),
+		TombstoneLedgerSHA:      digestHex(ledgerJSON),
+		RemovalCount:            len(removals),
+		RemovalLedgerSHA:        digestHex(removalsJSON),
+		SubjectRemovalCount:     len(subjectRemovals),
+		SubjectRemovalLedgerSHA: digestHex(subjectRemovalsJSON),
+		RestoredFrom:            request.RestoredFrom,
 	}
 	container, sealedManifest, err := Seal(sealed, plaintext, request.Passphrase)
 	if err != nil {
@@ -277,6 +312,16 @@ func Verify(path string, passphrase []byte) (Verified, error) {
 		return Verified{}, ErrLedgerDigest
 	}
 	if len(payload.Removals) > 0 && manifest.RemovalLedgerSHA != digestHex(removalsJSON) {
+		return Verified{}, ErrLedgerDigest
+	}
+	subjectRemovalsJSON, err := json.Marshal(payload.SubjectRemovals)
+	if err != nil {
+		return Verified{}, err
+	}
+	if manifest.SubjectRemovalCount != len(payload.SubjectRemovals) {
+		return Verified{}, ErrLedgerDigest
+	}
+	if len(payload.SubjectRemovals) > 0 && manifest.SubjectRemovalLedgerSHA != digestHex(subjectRemovalsJSON) {
 		return Verified{}, ErrLedgerDigest
 	}
 	return Verified{Manifest: manifest, Payload: payload, SQLBytes: int64(len(payload.SQL)), PlainBytes: manifest.PlaintextBytes}, nil
@@ -350,6 +395,9 @@ type RestoreRequest struct {
 	// NewerRemovalLedgers carries the removal ledgers of the newer rotation
 	// copies.
 	NewerRemovalLedgers [][]RemovalRecord
+	// NewerSubjectRemovalLedgers carries the subject level removal ledgers of
+	// the newer rotation copies.
+	NewerSubjectRemovalLedgers [][]SubjectRemovalRecord
 }
 
 // RestoreResult reports what a completed restore actually did.
@@ -366,6 +414,12 @@ type RestoreResult struct {
 	// before the restored database serves traffic. It is only filled when no
 	// removal sink was supplied.
 	RemovalsPending []RemovalRecord `json:"removalsPending,omitempty"`
+	// SubjectRemovalsApplied counts the subject level removals that were
+	// replayed after the restore.
+	SubjectRemovalsApplied int `json:"subjectRemovalsApplied"`
+	// SubjectRemovalsPending lists the subject level removals that still have
+	// to be applied before the restored database serves traffic.
+	SubjectRemovalsPending []SubjectRemovalRecord `json:"subjectRemovalsPending,omitempty"`
 }
 
 // Restore authenticates the bundle, loads the logical export in one
@@ -395,6 +449,10 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err != nil {
 		return RestoreResult{}, err
 	}
+	subjectRemovals, err := mergeSubjectRemovals(ctx, verified.Payload.SubjectRemovals, request.Removals, request.NewerSubjectRemovalLedgers)
+	if err != nil {
+		return RestoreResult{}, err
+	}
 	if err = request.Restorer.Restore(ctx, bytes.NewReader(verified.Payload.SQL)); err != nil {
 		return RestoreResult{}, err
 	}
@@ -413,20 +471,53 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 		TombstonesApplied: len(ledger),
 		TombstonesKept:    SummarizeRecovery(actions)[RecoveryKeep],
 	}
-	if len(removals) == 0 {
+	if len(removals) == 0 && len(subjectRemovals) == 0 {
 		return result, nil
 	}
 	if request.Removals == nil {
 		// The removals are reported, not applied. The restored database must
 		// not serve traffic before they are applied.
 		result.RemovalsPending = removals
+		result.SubjectRemovalsPending = subjectRemovals
 		return result, nil
 	}
-	if err = request.Removals.ApplyRemovalRecords(ctx, removals); err != nil {
-		return RestoreResult{}, err
+	if len(removals) > 0 {
+		if err = request.Removals.ApplyRemovalRecords(ctx, removals); err != nil {
+			return RestoreResult{}, err
+		}
+		result.RemovalsApplied = len(removals)
 	}
-	result.RemovalsApplied = len(removals)
+	if len(subjectRemovals) > 0 {
+		if err = request.Removals.ApplySubjectRemovalRecords(ctx, subjectRemovals); err != nil {
+			return RestoreResult{}, err
+		}
+		result.SubjectRemovalsApplied = len(subjectRemovals)
+	}
 	return result, nil
+}
+
+// mergeSubjectRemovals merges the subject level removal ledger of a bundle
+// with the newer rotation ledgers and the live ledger.
+func mergeSubjectRemovals(ctx context.Context, bundle []SubjectRemovalRecord, sink RemovalLedgerSource, newer [][]SubjectRemovalRecord) ([]SubjectRemovalRecord, error) {
+	merged, err := MergeSubjectRemovalLedgers(bundle, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, set := range newer {
+		if merged, err = MergeSubjectRemovalLedgers(merged, set); err != nil {
+			return nil, err
+		}
+	}
+	if sink != nil {
+		live, err := sink.ListSubjectRemovalRecords(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if merged, err = MergeSubjectRemovalLedgers(merged, live); err != nil {
+			return nil, err
+		}
+	}
+	return merged, nil
 }
 
 // mergeRemovals merges the removal ledger of a bundle with the newer removal

@@ -171,6 +171,16 @@ func (s *Service) createMatchInTx(ctx context.Context, tx pgx.Tx, cmd Command, s
 	if err = s.requireParticipants(ctx, tx, setup); err != nil {
 		return CommandResult{}, err
 	}
+	// The match may already exist from another operation. The match scope
+	// lock orders the allocations, so the check is exact, and the caller
+	// learns that the match exists instead of a service failure.
+	var exists bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_matches WHERE match_id=$1)`, cmd.MatchID).Scan(&exists); err != nil {
+		return CommandResult{}, err
+	}
+	if exists {
+		return CommandResult{}, ErrAlreadyExists
+	}
 	var decision time.Time
 	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&decision); err != nil {
 		return CommandResult{}, err

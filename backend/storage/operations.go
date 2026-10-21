@@ -181,6 +181,11 @@ func (s *Store) Takeover(ctx context.Context, owner string, r CASRequest) (Game,
 		return Game{}, e
 	}
 	defer tx.Rollback(ctx)
+	// The account gate is consulted inside the transaction, so a fenced
+	// account cannot take a game over.
+	if e = s.allowAccount(ctx, tx, owner); e != nil {
+		return Game{}, e
+	}
 	g, e := scanGame(tx.QueryRow(ctx, `SELECT `+gameCols+` FROM games WHERE owner_id=$1 AND game_id=$2 FOR UPDATE`, owner, r.GameID))
 	if errors.Is(e, pgx.ErrNoRows) {
 		return Game{}, ErrNotFound

@@ -9,11 +9,13 @@ import (
 
 // fakeRemovalLedger is the online removal ledger of a database.
 type fakeRemovalLedger struct {
-	entries      []RemovalRecord
-	applied      []RemovalRecord
-	appliedCalls int
-	listErr      error
-	applyErr     error
+	entries        []RemovalRecord
+	applied        []RemovalRecord
+	appliedCalls   int
+	subjects       []SubjectRemovalRecord
+	subjectApplied []SubjectRemovalRecord
+	listErr        error
+	applyErr       error
 }
 
 func (l *fakeRemovalLedger) ListRemovalRecords(context.Context) ([]RemovalRecord, error) {
@@ -23,12 +25,27 @@ func (l *fakeRemovalLedger) ListRemovalRecords(context.Context) ([]RemovalRecord
 	return append([]RemovalRecord(nil), l.entries...), nil
 }
 
+func (l *fakeRemovalLedger) ListSubjectRemovalRecords(context.Context) ([]SubjectRemovalRecord, error) {
+	if l.listErr != nil {
+		return nil, l.listErr
+	}
+	return append([]SubjectRemovalRecord(nil), l.subjects...), nil
+}
+
 func (l *fakeRemovalLedger) ApplyRemovalRecords(_ context.Context, records []RemovalRecord) error {
 	l.appliedCalls++
 	if l.applyErr != nil {
 		return l.applyErr
 	}
 	l.applied = append([]RemovalRecord(nil), records...)
+	return nil
+}
+
+func (l *fakeRemovalLedger) ApplySubjectRemovalRecords(_ context.Context, records []SubjectRemovalRecord) error {
+	if l.applyErr != nil {
+		return l.applyErr
+	}
+	l.subjectApplied = append([]SubjectRemovalRecord(nil), records...)
 	return nil
 }
 

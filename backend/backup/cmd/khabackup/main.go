@@ -99,7 +99,9 @@ type commonFlags struct {
 	daily          int
 	weekly         int
 	apply          bool
-	asJSON         bool
+	// fence is the path of the durable restore fence.
+	fence  string
+	asJSON bool
 }
 
 type stringList []string
@@ -126,6 +128,7 @@ func parseFlags(name string, arguments []string, configure func(*flag.FlagSet, *
 	set.IntVar(&options.daily, "daily", backup.DefaultDailyCopies, "daily copies to keep")
 	set.IntVar(&options.weekly, "weekly", backup.DefaultWeeklyCopies, "weekly copies to keep")
 	set.BoolVar(&options.apply, "apply", false, "actually apply the plan; without it nothing is written or deleted")
+	set.StringVar(&options.fence, "fence", os.Getenv("ONLINE_RESTORE_FENCE_PATH"), "path of the durable restore fence; the service refuses to serve while it is open (defaults to ONLINE_RESTORE_FENCE_PATH)")
 	set.BoolVar(&options.asJSON, "json", false, "print a machine-readable report")
 	if configure != nil {
 		configure(set, &options)
@@ -208,7 +211,7 @@ func createCommand(ctx context.Context, arguments []string) error {
 		return fmt.Errorf("--class must be daily or weekly, not %q", options.class)
 	}
 	tools := pgTools{dumpBinary: options.pgDump, loaderBinary: options.psql, environment: childEnvironment(connections)}
-	removals, err := openRemovalLedger(ctx, pool)
+	removals, err := openRemovalLedger(ctx, pool, options.fence)
 	if err != nil {
 		return err
 	}
@@ -235,8 +238,8 @@ func createCommand(ctx context.Context, arguments []string) error {
 //
 // The ledger is optional: a database without the online tables has no
 // removals, and the private single-owner backup tooling keeps working.
-func openRemovalLedger(ctx context.Context, pool *pgxpool.Pool) (postgresRemovalLedger, error) {
-	removals, err := privacy.Open(ctx, pool, nil, privacy.Options{})
+func openRemovalLedger(ctx context.Context, pool *pgxpool.Pool, fencePath string) (postgresRemovalLedger, error) {
+	removals, err := privacy.Open(ctx, pool, nil, privacy.Options{FencePath: fencePath})
 	if err != nil {
 		return postgresRemovalLedger{}, err
 	}
@@ -364,7 +367,7 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 	}
 	defer pool.Close()
 	tools := pgTools{dumpBinary: options.pgDump, loaderBinary: options.psql, environment: childEnvironment(connections)}
-	removals, err := openRemovalLedger(ctx, pool)
+	removals, err := openRemovalLedger(ctx, pool, options.fence)
 	if err != nil {
 		return err
 	}
@@ -380,26 +383,73 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 		printPlan(plan)
 		return errors.New("restore refused without --apply; no database change was made")
 	}
+	// The durable fence is written before the import touches the database.
+	//
+	// The fence lives outside the restored database, so it survives the schema
+	// replacement and a crash of this process. A restore that dies between the
+	// import and the replay of the removal ledger therefore leaves the service
+	// closed, instead of a restored database that lost the newest removals.
+	//
+	// A restore without a configured fence is refused: the fence is the only
+	// control that survives the schema replacement, and a restore without it
+	// could leave a served database with a lost removal.
+	if options.fence == "" {
+		return errors.New("a restore needs a durable restore fence; set --fence or ONLINE_RESTORE_FENCE_PATH")
+	}
+	verified, err := backup.Verify(options.file, secret)
+	if err != nil {
+		return err
+	}
+	merged, err := backup.MergeRemovalLedgers(verified.Payload.Removals, nil)
+	if err != nil {
+		return err
+	}
+	for _, set := range request.NewerRemovalLedgers {
+		if merged, err = backup.MergeRemovalLedgers(merged, set); err != nil {
+			return err
+		}
+	}
+	mergedSubjects, err := backup.MergeSubjectRemovalLedgers(verified.Payload.SubjectRemovals, nil)
+	if err != nil {
+		return err
+	}
+	for _, set := range request.NewerSubjectRemovalLedgers {
+		if mergedSubjects, err = backup.MergeSubjectRemovalLedgers(mergedSubjects, set); err != nil {
+			return err
+		}
+	}
+	restoreID := "restore-" + time.Now().UTC().Format("20060102T150405Z")
+	digest, err := privacy.RemovalLedgerDigestOf(merged, mergedSubjects)
+	if err != nil {
+		return err
+	}
+	if err = removals.WriteFence(restoreID, digest); err != nil {
+		return err
+	}
 	result, err := backup.Restore(ctx, request)
 	if err != nil {
+		// The fence stays open: the restored data must not serve traffic
+		// before the removal ledger was replayed.
 		return err
 	}
 	if len(result.RemovalsPending) > 0 {
 		// The removals were not applied, so the restored database must not
-		// serve traffic. The service refuses to start while the removal
-		// ledger is not applied, so the operator replays the ledger and
-		// releases the gate before the service starts.
+		// serve traffic. The fence stays open and the service refuses to
+		// start while the removal ledger is not applied.
 		return fmt.Errorf("the online removal ledger has %d records that were not applied; the restored database must not serve traffic", len(result.RemovalsPending))
 	}
 	// The restore is recorded and the gate is released only after the removal
-	// ledger was replayed and the replay was verified. A gate that is not
-	// released keeps the service closed.
-	restoreID := "restore-" + time.Now().UTC().Format("20060102T150405Z")
+	// ledger was replayed and the replay was verified.
 	if _, err = removals.RecordRestore(ctx, restoreID); err != nil {
 		return err
 	}
 	if err = removals.ReleaseRestoreGate(ctx, restoreID); err != nil {
 		return fmt.Errorf("the restore gate stays closed: %w", err)
+	}
+	// The durable fence is closed last: the service may serve traffic only
+	// after the ledger was replayed, verified and recorded.
+	if err = removals.ClearFence(); err != nil {
+		return err
 	}
 	report := map[string]any{
 		"command":           "restore",
