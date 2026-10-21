@@ -30,7 +30,54 @@ pnpm run online:fixture -- --clean
 
 The fixture enables the friend surface for the run (`ONLINE_FRIEND_ENABLED`)
 and leaves the queue closed, so a run cannot reach the public queue by
-accident.
+accident. The queue is opened for a run that needs it with
+`pnpm run online:fixture -- --queue-enabled`.
+
+## Signed-in account build
+
+The account surfaces need a signed-in browser. The hosted identity provider is
+not reachable from a local run, so a fixture run uses a synthetic account
+session. The seam is a test build only.
+
+```sh
+# 1. the fixture of the run (its descriptor holds the base URL and the accounts)
+pnpm run online:fixture -- --queue-enabled
+
+# 2. the account build of that fixture
+export KAMKM_BUILD_FLAVOR=fixture
+export KAMKM_PUBLIC_ACCOUNTS_ENABLED=true
+export KAMKM_PUBLIC_TEST_SESSION=true
+export KAMKM_PUBLIC_API_BASE_URL=http://127.0.0.1:<the port of the descriptor>
+node scripts/prepare-engines.mjs
+npx vite build
+
+# 3. the rendered signed-in cases
+export ONLINE_FIXTURE_DESCRIPTOR=.scratch/onlinefixture/descriptor.json
+export ONLINE_FIXTURE_STRICT=1
+npx playwright test tests/e2e/account-online.spec.ts
+```
+
+- `KAMKM_PUBLIC_TEST_SESSION` is refused unless `KAMKM_BUILD_FLAVOR=fixture`.
+  An ordinary release build never carries the flag, and the branch that loads
+  the bridge is removed from its bundle, so the bridge is not in an ordinary
+  build at all.
+- The bridge carries no credential. The page receives the identity and its
+  session token at run time:
+  `window.__KAMKM_TEST_SESSION__ = { accountId, token }`. The token is minted
+  for the run with the fixture's own signing key, so the service verifies it
+  with its ordinary code path. No API check is bypassed and no token is
+  printed.
+- A running page changes its signed-in account with the
+  `kamkm:test-session` window event:
+  `window.dispatchEvent(new CustomEvent('kamkm:test-session', { detail: { accountId, token } }))`.
+  The change fences the work of the departing account and restores the
+  durable games of the next one.
+- The bridge refuses to act for a service that is not the loopback fixture, so
+  it can never weaken the authorization of a hosted service.
+- The rendered cases live in `tests/e2e/account-online.spec.ts`. They skip
+  without a descriptor and fail with `ONLINE_FIXTURE_STRICT=1` and no
+  descriptor.
+
 
 ## Least-privilege runtime grants
 

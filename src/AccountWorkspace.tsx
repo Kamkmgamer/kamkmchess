@@ -1,7 +1,7 @@
 import { IconButton } from './ui/Icon.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { accountGameDatabaseName, createAccountSession, createIndexedDbAccountData, readClerkRuntimeConfig } from './accounts/index.js';
-import type { AccountIdentity, AccountSession, GuestGameSummary } from './accounts/index.js';
+import type { AccountIdentity, AccountSession, GuestGameSummary, IdentityFence } from './accounts/index.js';
 import { createCloudCoordination, createCloudSyncManager, createIndexedDbCloudLocal, GoCloudClient, readCloudRuntimeConfig } from './cloud/index.js';
 import { openGameStore } from './storage/index.js';
 import type { ControllerSnapshotV1 } from './controller/index.js';
@@ -23,6 +23,14 @@ import { createBrowserEnginePreparation } from './online/engine-preparation.js';
 import type { GuestOnlineCredential } from './online/auth.js';
 import { publicConfig } from './public-config.js';
 import './account-workspace.css';
+
+/**
+ * The compile-time flag of the synthetic account session.
+ *
+ * The build defines the constant, so the branch that loads the bridge is
+ * removed from an ordinary bundle instead of only being switched off.
+ */
+declare const __KAMKM_TEST_SESSION__: boolean;
 
 interface WorkspaceView {
   /** The online composition of the guest workspace. */
@@ -94,21 +102,32 @@ export function AccountWorkspace(initialView: WorkspaceView) {
     };
     void (async () => {
       const credentials = await guestView.composition.connectionStore;
-      const created = await createAccountSession({
-        config: readClerkRuntimeConfig({ publishableKey: publicConfig.clerkPublishableKey }),
-        credentials,
-        fence: {
-          async fencePendingRequests() {
-            clearProfileIdentity();
-            identityGeneration.current += 1;
-            for (const request of activeRequests.current) request.abort();
-            activeRequests.current.clear();
-            await releaseAccountCompositions();
-          },
-          clearInMemoryIdentity() { if (!cancelled) { setIdentity(null); clearProfileIdentity(); } },
-          hidePrivateViews() { if (!cancelled) { setGames([]); setView(guestResumeView.current); } },
+      const fence: IdentityFence = {
+        async fencePendingRequests() {
+          clearProfileIdentity();
+          identityGeneration.current += 1;
+          for (const request of activeRequests.current) request.abort();
+          activeRequests.current.clear();
+          await releaseAccountCompositions();
         },
-      });
+        clearInMemoryIdentity() { if (!cancelled) { setIdentity(null); clearProfileIdentity(); } },
+        hidePrivateViews() { if (!cancelled) { setGames([]); setView(guestResumeView.current); } },
+      };
+      let created: AccountSession;
+      if (__KAMKM_TEST_SESSION__) {
+        // A fixture build signs in with the synthetic session of the local
+        // fixture. The bridge is only reachable in a build that was flagged
+        // for it, it reads the identity from the page and it never acts for a
+        // service that is not the local fixture.
+        const { createTestAccountSession } = await import('./accounts/test-session.js');
+        created = createTestAccountSession({ credentials, fence, apiBaseUrl: publicConfig.apiBaseUrl });
+      } else {
+        created = await createAccountSession({
+          config: readClerkRuntimeConfig({ publishableKey: publicConfig.clerkPublishableKey }),
+          credentials,
+          fence,
+        });
+      }
       if (cancelled) { created.dispose(); return; }
       initialized = created;
       accountSession.current = created;
@@ -127,7 +146,11 @@ export function AccountWorkspace(initialView: WorkspaceView) {
           return;
         }
         if (onlineRef.current) {
+          // The identity changed under the same composition. The composition
+          // fences the previous identity and restores the durable games of the
+          // new one, so the browser follows the account that is signed in now.
           onlineRef.current.resume();
+          onlineRef.current.resumeMatches();
           guestOnline?.suspend();
           return;
         }
@@ -394,7 +417,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
         {message && <p role="status">{busy ? 'Syncing…' : message.startsWith('Complete game') ? 'Synced.' : message.startsWith('Cloud history') ? 'Sync conflict. Choose continuation.' : message.startsWith('Account game opened') || message.startsWith('Guest workspace opened') || message.startsWith('The accepted cloud game') ? 'Opened.' : 'Sync failed. Retry.'}</p>}
       </>}
     </section>}
-    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} onOpenAccount={() => setAccountPage('account')} online={accountOnline ?? guestOnline} onOpenProfile={() => setAccountPage('profile')} /></div>
+    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} onOpenAccount={() => setAccountPage('account')} online={accountOnline ?? guestOnline} onOpenProfile={() => setAccountPage('profile')} onlineNamespace={guestView.composition.namespace} /></div>
   </>;
 }
 

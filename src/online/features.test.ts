@@ -8,8 +8,8 @@ import {
 } from './features';
 import type { PublicConfig } from '../public-config.js';
 
-const deployed: PublicConfig = { accountsEnabled: true, clerkPublishableKey: 'pk_test_x', apiBaseUrl: 'https://api.example.test' };
-const loopback: PublicConfig = { accountsEnabled: true, clerkPublishableKey: 'pk_test_x', apiBaseUrl: 'http://127.0.0.1:8080' };
+const deployed: PublicConfig = { accountsEnabled: true, clerkPublishableKey: 'pk_test_x', apiBaseUrl: 'https://api.example.test', testSession: false };
+const loopback: PublicConfig = { accountsEnabled: true, clerkPublishableKey: 'pk_test_x', apiBaseUrl: 'http://127.0.0.1:8080', testSession: false };
 
 describe('the feature answer is public and strict', () => {
   it('reads the two independent switches', () => {
@@ -57,7 +57,7 @@ describe('the local opt-in is a loopback-only test switch', () => {
   });
 
   it('ignores the opt-in without a service origin', () => {
-    expect(readLocalOptIn('?online=1', { accountsEnabled: false, clerkPublishableKey: null, apiBaseUrl: null })).toEqual(ONLINE_FEATURES_DISABLED);
+    expect(readLocalOptIn('?online=1', { accountsEnabled: false, clerkPublishableKey: null, apiBaseUrl: null, testSession: false })).toEqual(ONLINE_FEATURES_DISABLED);
   });
 
   it('recognizes the loopback origins', () => {
