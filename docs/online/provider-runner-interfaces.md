@@ -76,6 +76,21 @@ the control changes and the spent recovery attempts.
   the acknowledgement of the first attempt was lost. The generation of the
   lifecycle fences the same actions: a decision that waits while the match
   ends is `unknown` as well, because the outcome could not be established.
+- Every command of the runner belongs to a fence. The command of an owner
+  action belongs to the token of that action, and the command of the runner's
+  own work belongs to the generation of the lifecycle the turn was started in.
+  The fence decides whether the command may be sent again after a lost
+  acknowledgement: a move of a turn the owner stopped, and a command of a
+  decision that a newer decision superseded, are never sent again. A
+  superseded command changes nothing: it spends no attempt, writes no phase
+  and gives no lease back.
+- The bookkeeping of a command belongs to that command. The runner keeps the
+  operation identifier of the command whose acknowledgement is missing, so
+  the owner may send it again. A command that answers late never clears the
+  bookkeeping of a newer command that is still waiting, so the newer unknown
+  command stays retriable. The version and the control epoch of a receipt are
+  facts of the service: they move on even when the receipt arrives late,
+  because the next command of the runner has to carry them.
 - The decision of the owner is bound to the request it settled. The guard of
   the turn asks whether the record in the store is one of them: that record
   may be passed once, and every other record fences the runner again. The
@@ -508,6 +523,11 @@ seat with an accepted move, exactly like the service does.
 | — | A superseded decision does not send its command again after a lost acknowledgement |
 | — | A decision that waits while the match ends reports an unknown outcome |
 | — | A superseded settlement settles no newer record and leaves no authorization behind |
+| — | The command of a superseded decision is not sent again when the owner retries a lost command |
+| — | The move of a stopped runner is not sent again after a lost acknowledgement |
+| — | The command of a newer unknown decision stays retriable when an older command answers late |
+| — | The takeover that waits while the match ends reports an unknown outcome |
+| — | The acquisition of a lease settles no record the owner never decided about |
 | — | The service fences a command that presents a lease and accepts the command of the owner |
 | — | The decision of the owner authorises one request, so a dropped turn is not billed twice |
 | — | The late rejection of an aborted request does not swallow the decision of the owner |

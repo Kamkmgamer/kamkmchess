@@ -725,10 +725,13 @@ export interface HoldableLeasePort {
   holdClear(): void;
   /** Holds the next record of a request. */
   holdBegin(): void;
+  /** Holds the next release of the lease. */
+  holdRelease(): void;
   readonly acquires: readonly HeldLeaseAnswer[];
   readonly renews: readonly HeldLeaseAnswer[];
   readonly clears: readonly HeldLeaseAnswer[];
   readonly begins: readonly HeldLeaseAnswer[];
+  readonly releases: readonly HeldLeaseAnswer[];
 }
 
 /**
@@ -742,10 +745,12 @@ export function createHoldableLeasePort(base: ProviderRunnerLeasePort): Holdable
   const renews: HeldLeaseAnswer[] = [];
   const clears: HeldLeaseAnswer[] = [];
   const begins: HeldLeaseAnswer[] = [];
+  const releases: HeldLeaseAnswer[] = [];
   let holdAcquire = false;
   let holdRenew = false;
   let holdClear = false;
   let holdBegin = false;
+  let holdRelease = false;
 
   function hold(list: HeldLeaseAnswer[]): Promise<ProviderRunnerLease> {
     let resolve!: (value: ProviderRunnerLease) => void;
@@ -759,10 +764,12 @@ export function createHoldableLeasePort(base: ProviderRunnerLeasePort): Holdable
     renews,
     clears,
     begins,
+    releases,
     holdAcquire() { holdAcquire = true; },
     holdRenew() { holdRenew = true; },
     holdClear() { holdClear = true; },
     holdBegin() { holdBegin = true; },
+    holdRelease() { holdRelease = true; },
     port: {
       runnerId: base.runnerId,
       async acquire(input) {
@@ -775,7 +782,11 @@ export function createHoldableLeasePort(base: ProviderRunnerLeasePort): Holdable
         holdRenew = false;
         return hold(renews);
       },
-      async release(input) { return base.release(input); },
+      async release(input) {
+        if (!holdRelease) return base.release(input);
+        holdRelease = false;
+        return hold(releases);
+      },
       async beginRequest(input) {
         if (!holdBegin) return base.beginRequest(input);
         holdBegin = false;
@@ -811,6 +822,12 @@ export interface HoldableCommandPort {
   release(index: number): Promise<void>;
   /** Answers the held command with a failure, as a lost transport would. */
   fail(index: number, error: unknown): void;
+  /**
+   * Fails every attempt of the commands that follow, as a lost transport
+   * would. The command never reaches the service, so the runner never learns
+   * whether it was applied.
+   */
+  failEveryAttempt(error: unknown | null): void;
 }
 
 /**
@@ -822,8 +839,10 @@ export interface HoldableCommandPort {
 export function createHoldableCommandPort(base: ProviderRunnerCommandPort): HoldableCommandPort {
   const held: HeldCommand[] = [];
   let armed = false;
+  let failEvery: unknown | null = null;
   const port: ProviderRunnerCommandPort = {
     async submit(action, options) {
+      if (failEvery !== null) throw failEvery;
       if (!armed) return base.submit(action, options);
       armed = false;
       return new Promise<Receipt>((resolve, reject) => {
@@ -851,6 +870,9 @@ export function createHoldableCommandPort(base: ProviderRunnerCommandPort): Hold
       const entry = held[index];
       if (entry === undefined) throw new Error('The command was not held.');
       entry.reject(error);
+    },
+    failEveryAttempt(error) {
+      failEvery = error;
     },
   };
 }

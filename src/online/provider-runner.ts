@@ -1337,7 +1337,12 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   let activeController: AbortController | null = null;
   let abortReason: 'stale' | 'lease-lost' | 'stopped' | null = null;
   let activeRequestId: string | null = null;
-  let pendingSubmission: { action: OnlineAction; operationId: string } | null = null;
+  let pendingSubmission: {
+    action: OnlineAction;
+    operationId: string;
+    /** Whether the command presents the lease of the runner. */
+    presentLease: boolean;
+  } | null = null;
   let rejectedMoves: { move: string; reason: string }[] = [];
   let operationCounter = 0;
   let operationToken: string | null = null;
@@ -1812,13 +1817,14 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     kind: string,
   ): Promise<SubmitOutcome> {
     const operationId = nextOperationId(kind);
-    let outcome = await submitAction(command, operationId, owner, { presentLease: false });
+    const fence: SubmitFence = { token: owner.token, generation: owner.generation };
+    let outcome = await submitAction(command, operationId, fence, { presentLease: false });
     if (outcome.kind === 'fenced' && ownerActionIsCurrent(owner.token, owner.generation)) {
       // The service refused the command because the version of the match moved
       // on: an older decision of the owner was accepted first. The newest
       // decision wins, so the command is sent again with the version the
       // runner knows now.
-      outcome = await submitAction(command, operationId, owner, { presentLease: false });
+      outcome = await submitAction(command, operationId, fence, { presentLease: false });
     }
     return outcome;
   }
@@ -2016,7 +2022,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   async function submitAction(
     action: OnlineAction,
     operationId: string,
-    owner?: { readonly token: number; readonly generation: number },
+    fence?: SubmitFence,
     options?: { readonly presentLease?: boolean },
   ): Promise<
     | { kind: 'accepted'; receipt: Receipt }
@@ -2032,14 +2038,17 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     const lease = options?.presentLease === false ? null : leaseId;
     // The operation identifier stays with the action while the acknowledgement
     // is missing, so a retry is the same operation and never a second move.
-    if (owner === undefined || ownerActionIsCurrent(owner.token, owner.generation)) {
-      pendingSubmission = { action, operationId };
+    // The bookkeeping belongs to the command that is in flight: a command of a
+    // decision that was superseded never overwrites the bookkeeping of a newer
+    // command that is still waiting for its acknowledgement.
+    if (fence === undefined || submitFenceIsCurrent(fence)) {
+      pendingSubmission = { action, operationId, presentLease: lease !== null };
     }
     for (let attempt = 0; attempt < maxSubmissionAttempts; attempt += 1) {
-      if (owner !== undefined && !ownerActionIsCurrent(owner.token, owner.generation)) {
-        // The decision of the owner was superseded or the match ended. The
-        // command is not sent again and the shared state of the runner is not
-        // changed any more.
+      if (fence !== undefined && !submitFenceIsCurrent(fence)) {
+        // The decision of the owner was superseded, the runner was stopped or
+        // the match ended. The command is not sent again and the shared state
+        // of the runner is not changed any more.
         return { kind: 'superseded', detail: 'A newer decision of the owner ended the command.' };
       }
       try {
@@ -2048,22 +2057,29 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           expectedVersion: version,
           ...(lease === null ? {} : { leaseId: lease }),
         });
+        // The receipt is a fact of the service: the version and the control
+        // epoch of the match move on even when the command was sent by a
+        // decision that was superseded in the meantime. The next command of
+        // the runner has to carry them.
         if (receipt.version > version) version = receipt.version;
         if (receipt.controlEpoch > controlEpoch) {
           controlEpoch = receipt.controlEpoch;
           commands.setControlEpoch?.(controlEpoch);
         }
         commands.setVersion?.(version);
-        pendingSubmission = null;
+        // The bookkeeping of the command is only cleared when it still names
+        // this command. A newer command that lost its acknowledgement keeps
+        // its own record, so the owner may still send it again.
+        clearPendingSubmission(operationId);
         return { kind: 'accepted', receipt };
       } catch (error) {
         const kind = classifyProviderRunnerError(error);
         if (kind === 'transport' || kind === 'unavailable') {
           // The acknowledgement was lost. The operation identifier stays the
           // same, so the service answers with the original receipt and never
-          // accepts a second move. A decision of the owner that was superseded
+          // accepts a second move. A command of a decision that was superseded
           // in the meantime is not sent again.
-          if (owner !== undefined && !ownerActionIsCurrent(owner.token, owner.generation)) {
+          if (fence !== undefined && !submitFenceIsCurrent(fence)) {
             return { kind: 'superseded', detail: 'A newer decision of the owner ended the command.' };
           }
           continue;
@@ -2071,21 +2087,21 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         if (kind === 'unauthorized') {
           // The credential may not act any more. The runner stops instead of
           // sending the command again.
-          pendingSubmission = null;
+          clearPendingSubmission(operationId);
           return { kind: 'unauthorized', detail: 'The credential of the seat was refused.' };
         }
         if (kind === 'not-found' && lease !== null) {
           // The service answers a fenced lease with a missing resource. The
           // lease was revoked, expired or belongs to another turn, so the
           // command was never a rules refusal.
-          pendingSubmission = null;
+          clearPendingSubmission(operationId);
           return { kind: 'fenced', detail: 'The lease of the seat no longer accepts commands.' };
         }
         if (kind === 'conflict') {
-          pendingSubmission = null;
+          clearPendingSubmission(operationId);
           return { kind: 'fenced', detail: 'The service refused a stale version or epoch.' };
         }
-        pendingSubmission = null;
+        clearPendingSubmission(operationId);
         return { kind: 'refused', detail: 'The service refused the command.' };
       }
     }
@@ -2096,7 +2112,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     attempt: 'illegal_move' | 'formatting_correction',
     lifecycle: number,
   ): Promise<boolean> {
-    const outcome = await submitAction({ kind: 'record_recovery_attempt', attempt }, nextOperationId('recovery'));
+    const outcome = await submitAction(
+      { kind: 'record_recovery_attempt', attempt },
+      nextOperationId('recovery'),
+      { token: null, generation: lifecycle },
+    );
     if (outcome.kind === 'accepted') return true;
     if (lifecycle !== lifecycleGeneration) return false;
     if (outcome.kind === 'unauthorized') {
@@ -2107,6 +2127,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     if (outcome.kind === 'fenced') {
       dropLease();
       if (mayChangePhase(lifecycle)) setPhase('idle', outcome.detail);
+      return false;
+    }
+    if (outcome.kind === 'superseded') {
+      // The turn was superseded while the command was in flight. The attempt
+      // is not spent, and the owner decides what happens next.
       return false;
     }
     return false;
@@ -2390,7 +2415,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       if (decision.kind === 'accepted-move') {
         const uci = coordinateMoveToUci(decision.move);
         lastMove = uci;
-        const outcome = await submitAction({ kind: 'submit_move', move: uci }, nextOperationId('move'));
+        const outcome = await submitAction(
+          { kind: 'submit_move', move: uci },
+          nextOperationId('move'),
+          { token: null, generation: lifecycle },
+        );
         if (outcome.kind === 'accepted') {
           // An accepted move ends the turn, and the service resets the
           // recovery budget of the seat with it.
@@ -2423,6 +2452,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           if (mayChangePhase(lifecycle)) setPhase('idle', outcome.detail);
           return;
         }
+        if (outcome.kind === 'superseded') {
+          // The turn was superseded while the command was in flight. The owner
+          // decides what happens to the lease and to the phase of the runner.
+          return;
+        }
         // The service refused a move the browser believed to be legal. The
         // state moved on, so the runner waits for the next snapshot instead of
         // spending an attempt.
@@ -2432,7 +2466,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
       if (decision.kind === 'model-resignation') {
         appendConversation('agent', decision.statement);
-        const outcome = await submitAction({ kind: 'resign' }, nextOperationId('resign'));
+        const outcome = await submitAction(
+          { kind: 'resign' },
+          nextOperationId('resign'),
+          { token: null, generation: lifecycle },
+        );
         if (outcome.kind === 'accepted') {
           await releaseLease();
           if (mayChangePhase(lifecycle)) setPhase('idle');
@@ -2456,6 +2494,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         if (outcome.kind === 'fenced') {
           dropLease();
           if (mayChangePhase(lifecycle)) setPhase('idle', outcome.detail);
+          return;
+        }
+        if (outcome.kind === 'superseded') {
+          // The turn was superseded while the command was in flight. The owner
+          // decides what happens to the lease and to the phase of the runner.
           return;
         }
         await releaseLease();
@@ -2577,6 +2620,39 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   }
 
   /**
+   * The fence of one command of the runner.
+   *
+   * A command of an owner action belongs to the token of that action, and a
+   * command of the runner's own work belongs to the generation of the
+   * lifecycle it was started in. The fence decides whether the command may be
+   * sent again after a lost acknowledgement: a command of a decision that was
+   * superseded is never sent again, and the shared state of the runner is
+   * never changed for it.
+   */
+  interface SubmitFence {
+    /** The token of the owner action, or null for the work of the runner. */
+    readonly token: number | null;
+    /** The generation of the lifecycle the command belongs to. */
+    readonly generation: number;
+  }
+
+  /**
+   * Reports whether a command may still be sent.
+   *
+   * The token orders the decisions of the owner, and the generation of the
+   * lifecycle fences the work of a turn that the match ended or that the
+   * owner stopped. Both fences are needed: a newer decision supersedes the
+   * older one, and the end of the match ends every decision that is still in
+   * flight. A disposed runner holds nothing at all.
+   */
+  function submitFenceIsCurrent(fence: SubmitFence): boolean {
+    if (disposed) return false;
+    if (fence.generation !== lifecycleGeneration) return false;
+    if (fence.token !== null && fence.token !== ownerActionToken) return false;
+    return true;
+  }
+
+  /**
    * Reports whether an owner action is still the newest decision.
    *
    * An action that is not the newest one was superseded: it must not write a
@@ -2584,14 +2660,20 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
    * A disposed runner holds nothing at all.
    */
   function ownerActionIsCurrent(token: number, generation: number): boolean {
-    if (disposed) return false;
-    // The token orders the decisions of the owner, and the generation of the
-    // lifecycle fences the work of a turn that the match ended or that the
-    // owner stopped. Both fences are needed: a newer decision supersedes the
-    // older one, and the end of the match ends every decision that is still in
-    // flight.
-    if (token !== ownerActionToken) return false;
-    return generation === lifecycleGeneration;
+    return submitFenceIsCurrent({ token, generation });
+  }
+
+  /**
+   * Clears the bookkeeping of a command that is answered or refused.
+   *
+   * The bookkeeping is only cleared when it still names the command: a newer
+   * command that lost its acknowledgement keeps its own record, so the owner
+   * may still send it again.
+   */
+  function clearPendingSubmission(operationId: string): void {
+    if (pendingSubmission !== null && pendingSubmission.operationId === operationId) {
+      pendingSubmission = null;
+    }
   }
 
   /** Starts the turn without waiting for the provider answer. */
@@ -2763,7 +2845,12 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         // The operation identifier stays the same, so the service answers with
         // the original receipt instead of accepting a second move. The command
         // is only sent while the decision of the owner is the newest one.
-        const outcome = await submitAction(operation.action, operation.operationId);
+        const outcome = await submitAction(
+          operation.action,
+          operation.operationId,
+          { token: owner.token, generation: owner.generation },
+          { presentLease: operation.presentLease },
+        );
         if (!ownerActionIsCurrent(owner.token, owner.generation)) {
           return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
         }
@@ -2914,8 +3001,13 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // the billable request of the agent, and the record keeps the seat
       // honest until a decision of the owner closes it.
       advanceLifecycle();
+      // The generation of this decision is captured here. The check after the
+      // release compares the decision with the generation it belongs to, so a
+      // terminal change of the match while the release is in flight ends the
+      // decision instead of passing it.
+      const owner = { token, generation: lifecycleGeneration };
       await releaseLease();
-      if (!ownerActionIsCurrent(token, lifecycleGeneration)) {
+      if (!ownerActionIsCurrent(owner.token, owner.generation)) {
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the takeover.' };
       }
       setPhase('stopped', 'The seat belongs to the human owner now.');

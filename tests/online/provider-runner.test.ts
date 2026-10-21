@@ -1980,6 +1980,262 @@ describe('the competing owner actions of the runner', () => {
     expect(provider.prompts).toHaveLength(1);
   });
 
+  it('does not send the command of a superseded decision again when the owner retries a lost command', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = createHoldableCommandPort(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: commands.port,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    // The acknowledgement of the move is lost. The runner does not learn
+    // whether the service applied it, and the owner decides.
+    commands.failEveryAttempt(new Error('The network failed.'));
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+
+    // The owner retries. The command of the lost move is sent again with the
+    // same operation identifier.
+    commands.failEveryAttempt(null);
+    commands.arm();
+    const retrying = runner.retry();
+    await until(() => commands.held.length === 1, 'the resubmission is in flight');
+
+    // The owner decides again before the resubmission answered.
+    commands.arm();
+    const taking = runner.takeover();
+    await until(() => commands.held.length === 2, 'the command of the takeover is in flight');
+
+    // The resubmission is answered with a lost transport. The retry of the
+    // command belongs to a decision that is no longer the newest one.
+    commands.fail(0, new Error('The network failed.'));
+    const retried = await retrying;
+    await commands.release(1);
+    await taking;
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    // The move never reached the service after the owner decided again, and
+    // the newest decision of the owner is the one that counts.
+    const moves = service.recordedCommands.filter((command) => command.action.kind === 'submit_move');
+    expect(moves).toHaveLength(0);
+    expect(retried.kind).toBe('unknown');
+    expect(service.match.control.kind).toBe('human');
+  });
+
+  it('does not send the move of a stopped runner again after a lost acknowledgement', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = createHoldableCommandPort(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: commands.port,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+
+    // The move is on its way to the service when the owner stops the runner.
+    commands.arm();
+    await until(() => commands.held.length === 1, 'the move is in flight');
+    await runner.stop();
+
+    // The acknowledgement of the move is lost. The move belongs to a turn the
+    // owner ended, so it is not sent again.
+    commands.fail(0, new Error('The network failed.'));
+    await new Promise((resolve) => { setTimeout(resolve, 40); });
+
+    const moves = service.recordedCommands.filter((command) => command.action.kind === 'submit_move');
+    expect(moves).toHaveLength(0);
+    expect(runner.state.phase).toBe('stopped');
+  });
+
+  it('keeps the command of a newer unknown decision retriable when an older command answers late', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = createHoldableCommandPort(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: commands.port,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+
+    // The owner switches the model. Its command waits for the service.
+    commands.arm();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => commands.held.length === 1, 'the command of the older switch is in flight');
+
+    // The owner switches the model again. The acknowledgement of the newer
+    // command is lost, so its outcome stays unknown and the command waits for
+    // the owner.
+    commands.failEveryAttempt(new Error('The network failed.'));
+    const newer = await runner.switchModel('Test Agent');
+    expect(newer.kind).toBe('unknown');
+
+    // The command of the older decision answers now. It was sent before the
+    // newer decision, so it may not clear the bookkeeping of the newer
+    // command that is still waiting for its acknowledgement.
+    commands.failEveryAttempt(null);
+    await commands.release(0);
+    const older = await switching;
+    expect(older.kind).toBe('unknown');
+
+    // The owner retries the unknown command.
+    const retried = await runner.retry();
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    // The newer decision is the one the service applied, and the unknown
+    // command was sent again instead of being lost.
+    expect(retried.kind).toBe('accepted');
+    expect(service.match.control.modelLabel).toBe('Test Agent');
+    const switches = service.recordedCommands.filter((command) =>
+      command.action.kind === 'set_control' &&
+      command.action.control.modelLabel === 'Test Agent');
+    expect(switches).toHaveLength(1);
+  });
+
+  it('ends the takeover when the match ends while the lease is released', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+
+    // The owner takes the seat over. The release of the lease waits for the
+    // service.
+    held.holdRelease();
+    const taking = runner.takeover();
+    await until(() => held.releases.length === 1, 'the release is in flight');
+
+    // The match ends while the decision of the owner waits.
+    service.match.result = { kind: 'win', winner: 'black', reason: 'timeout' };
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // The release answers now. The decision of the owner may not report a
+    // success of a match that is over.
+    held.releases[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-contract-01',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    const outcome = await taking;
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    expect(outcome.kind).toBe('unknown');
+    expect(runner.state.phase).not.toBe('stopped');
+  });
+
+  it('settles no pending record of the service that the owner never decided about', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const pending = createMemoryPendingStore();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+    const uncertain = pending.read(service.match.matchId, service.match.seat)?.requestId;
+    expect(uncertain).toBeDefined();
+
+    // The owner stops the runner, so the lease of the seat is given back, and
+    // the owner takes the seat over. The acquisition of the lease waits for
+    // the service.
+    await runner.stop();
+    held.holdAcquire();
+    const taking = runner.takeover();
+    await until(() => held.acquires.length === 1, 'the acquisition is in flight');
+    expect(service.lease?.pendingRequestId).toBe(uncertain);
+
+    // The acquisition answers now.
+    held.acquires[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-contract-01',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 2,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await taking;
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    // The takeover settled nothing: the record of the uncertain work of the
+    // service and the record of the browser stay open, and the seat belongs
+    // to the owner.
+    expect(service.lease?.pendingRequestId).toBe(uncertain);
+    expect(pending.read(service.match.matchId, service.match.seat)?.requestId).toBe(uncertain);
+    expect(service.match.control.kind).toBe('human');
+  });
+
   it('keeps the decision of the owner when the rejection of the request arrives later', async () => {
     const service = createFakeOnlineService();
     const prompts: unknown[] = [];
