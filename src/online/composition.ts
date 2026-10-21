@@ -34,7 +34,7 @@ import { createOnlineWorkspace } from './workspace';
 import type { OnlineWorkspace, OnlineSeatBinding } from './workspace';
 import { createOnlineQueueController } from './readiness';
 import type { OnlineQueueController, OnlineQueueState, OnlineQueueAssignment } from './readiness';
-import { createQueueClient, queueOperationBody } from './queue';
+import { createQueueClient, queueOperationBody, isAssignedEntry } from './queue';
 import type { QueueAssignment, QueueClient } from './queue';
 import { createOnlineMatchCommandClient } from './match-client';
 import type { OnlineMatchCommandClient } from './match-client';
@@ -106,6 +106,15 @@ interface QueueIntent {
    * owner picks later never replaces the agent of a waiting entry.
    */
   readonly selection: ModelSelection | null;
+  /**
+   * The game the entry produced with a browser engine.
+   *
+   * It is set when the entry is assigned to the browser engine, so the
+   * recovery of the engine credential only asks the service about an entry
+   * that already produced its game. An entry that is still searching, or a
+   * game with a human opponent, never carries it.
+   */
+  readonly engineMatchId: string | null;
 }
 
 /** The interval of the background poll of a waiting entry. */
@@ -403,6 +412,9 @@ function readIntents(storage: OnlineCompositionOptions['storage'], identity: str
         entryId: typeof record.entryId === 'string' ? record.entryId : null,
         recordId: typeof record.recordId === 'string' ? record.recordId : '',
         selection: parseModelSelection(record.selection),
+        // An intent of an older build carries no game: the recovery reads the
+        // state of the entry first.
+        engineMatchId: typeof record.engineMatchId === 'string' ? record.engineMatchId : null,
       });
     }
     return intents;
@@ -1022,6 +1034,8 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
           // is asked. A model the owner picks later never replaces the agent
           // of this entry.
           selection: request.control.kind === 'agent' ? agent?.selection ?? null : null,
+          // The entry has no game yet.
+          engineMatchId: null,
         };
         writeIntents(storage, identity, [
           ...current.filter(existing => existing.key !== intent.key),
@@ -1157,6 +1171,8 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
 
   const queueRecords = new Map<string, QueueRecord>();
   let activeQueueId: string | null = null;
+  /** The entries whose engine credential is being recovered right now. */
+  const recoveringEntries = new Set<string>();
 
   function createQueueRecord(): QueueRecord {
     const id = `queue-${queueRecords.size + 1}`;
@@ -1194,9 +1210,16 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         // A committed assignment is attached and shown. The seat keeps the
         // private selection the entry was created with.
         if (state.phase === 'matched' && state.assignment) {
-          const intent = readIntents(storage, queueIdentity())
+          const identity = queueIdentity();
+          const intent = readIntents(storage, identity)
             .filter(candidate => candidate.recordId === id)
             .slice(-1)[0] ?? null;
+          // The game of a browser engine fallback is remembered with the
+          // intent, so the recovery of the engine credential only ever asks
+          // the service about an entry that already produced its game.
+          if (intent && state.assignment.control?.kind === 'engine' && intent.engineMatchId !== state.assignment.matchId) {
+            upsertIntent(intent.key, { ...intent, engineMatchId: state.assignment.matchId });
+          }
           attachAndFocus(state.assignment.matchId, state.assignment.seat, undefined, intent?.selection ?? null);
         }
         notify();
@@ -1284,6 +1307,13 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * identity returns, the browser holds no usable credential of the engine
    * seat of its games, and the queue client asks for the explicit recovery
    * once. A routine retry never rotates a credential the browser still has.
+   *
+   * Only an entry that already produced a game is recovered. The fallback
+   * route of the service is the authoritative allocation of the browser
+   * engine, so a waiting entry must never be sent to it: the engine would be
+   * committed before the deadline of the search, without the readiness flow
+   * and without an owner action. The state of the entry is read first, and
+   * the read never allocates.
    */
   function recoverEngineCredentials(): void {
     if (disposed) return;
@@ -1294,20 +1324,89 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     const generation = identityGeneration;
     const owner: 'account' | 'guest' = accountParticipant?.accountId ? 'account' : 'guest';
     for (const intent of readIntents(storage, identityKey)) {
-      if (!intent.entryId) continue;
-      void queueClient.fallback(intent.entryId).then(assignment => {
-        if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
-        if (!assignment.guestCredential) return;
-        registerGuestCredential(createGuestCredential({
-          guestId: assignment.guestCredential.guestId,
-          matchId: assignment.guestCredential.matchId,
-          seat: assignment.guestCredential.seat,
-          token: assignment.guestCredential.token,
-        }), owner);
-      }).catch(() => {
-        // The service has no engine seat for the entry, or the entry is gone.
+      const entryId = intent.entryId;
+      if (!entryId) continue;
+      // One recovery per entry at a time. A reload and an identity change in
+      // the same moment never rotate the same credential twice, so the engine
+      // seat is never replaced while its turn runs.
+      if (recoveringEntries.has(entryId)) continue;
+      recoveringEntries.add(entryId);
+      void recoverEngineCredential(intent, identityKey, generation, owner).finally(() => {
+        recoveringEntries.delete(entryId);
       });
     }
+  }
+
+  /**
+   * Recovers the engine credential of one entry.
+   *
+   * The entry is read first. Only an assigned entry is recovered, and only
+   * when its game has an engine seat: a game with a human opponent owns no
+   * engine credential.
+   */
+  async function recoverEngineCredential(
+    intent: QueueIntent,
+    identityKey: string,
+    generation: number,
+    owner: 'account' | 'guest',
+  ): Promise<void> {
+    const entryId = intent.entryId;
+    if (!entryId) return;
+    let entry: QueueEntry;
+    try {
+      entry = await queueClient.readEntry(entryId);
+    } catch {
+      // The entry is gone, or the service cannot answer.
+      return;
+    }
+    if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
+    // A waiting, a cancelled or an expired entry never produced a game.
+    if (!isAssignedEntry(entry)) return;
+    const matchId = entry.assignedMatchId;
+    if (!matchId) return;
+    // The match of the entry is the match the intent knows.
+    if (intent.engineMatchId && intent.engineMatchId !== matchId) return;
+    // The game must have an engine seat. A game with a human opponent owns no
+    // engine credential, so the service must not be asked for one.
+    if (!(await hasEngineSeat(matchId, identityKey, generation))) return;
+    let assignment: QueueAssignment;
+    try {
+      // The entry already produced its game, so the fallback route only
+      // rotates the credential of the engine seat.
+      assignment = await queueClient.fallback(entryId);
+    } catch {
+      // The service has no engine seat for the entry, or the entry is gone.
+      return;
+    }
+    if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
+    if (!assignment.guestCredential) return;
+    registerGuestCredential(createGuestCredential({
+      guestId: assignment.guestCredential.guestId,
+      matchId: assignment.guestCredential.matchId,
+      seat: assignment.guestCredential.seat,
+      token: assignment.guestCredential.token,
+    }), owner);
+  }
+
+  /**
+   * True when the game of a match has an engine seat.
+   *
+   * The match is read with the credential of the account, so the read never
+   * allocates and never rotates a credential.
+   */
+  async function hasEngineSeat(matchId: string, identityKey: string, generation: number): Promise<boolean> {
+    const requester = accountRequester();
+    if (!requester) return false;
+    let view: OnlineMatchView;
+    try {
+      const result = await requester.request({ kind: 'account' }, { path: `/v1/online/matches/${encodeURIComponent(matchId)}` });
+      if (!result.ok) return false;
+      view = parseOnlineMatchView(result.data, matchId);
+    } catch {
+      return false;
+    }
+    if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return false;
+    return view.seats.some(seat => seat.control.kind === 'engine');
   }
 
   /**

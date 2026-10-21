@@ -69,6 +69,7 @@ interface Wire {
  */
 function createFetchDouble(answers: {
   entry?: (body: Record<string, unknown> | null) => { status: number; data: unknown };
+  entryRead?: (path: string) => { status: number; data: unknown };
   match?: { status: number; data: unknown };
   fallback?: { status: number; data: unknown };
   matchView?: { status: number; data: unknown };
@@ -87,6 +88,9 @@ function createFetchDouble(answers: {
       result = { status: 200, data: { ...entryAnswer(null), status: 'cancelled' } };
     } else if (path.includes('/queue/entries') && method === 'POST' && path.endsWith('/entries')) {
       result = answers.entry?.(body) ?? { status: 201, data: entryAnswer(body) };
+    } else if (path.includes('/queue/entries') && method === 'GET') {
+      // The read of an entry never allocates.
+      result = answers.entryRead?.(path) ?? { status: 200, data: entryAnswer(null) };
     } else if (path.endsWith('/fallback')) {
       result = answers.fallback ?? { status: 200, data: fallbackAnswer() };
     } else if (path.endsWith('/match')) {
@@ -494,6 +498,177 @@ describe('the engine seat of a match plays one turn at a time', () => {
   });
 });
 
+describe('the engine credential recovery only touches a committed engine game (R6-01)', () => {
+  /** Stores one intent of the account, with the entry id of a queue entry. */
+  function storeIntent(storage: Storage, entryId: string, engineMatchId: string | null): void {
+    storage.setItem('kamkmchess.online.queue.intent.v1:account%3Aaccount-1', JSON.stringify([{
+      key: 'intent-00000001',
+      settings: 'human|300000|2000',
+      control: { kind: 'human' },
+      timeControl,
+      entryId,
+      recordId: 'queue-1',
+      selection: null,
+      engineMatchId,
+    }]));
+  }
+
+  /** The requests of the fallback route. */
+  function fallbacks(wires: readonly Wire[]): Wire[] {
+    return wires.filter(wire => wire.path.endsWith('/fallback'));
+  }
+
+  it('never asks the service to commit the engine of a waiting entry', async () => {
+    // The fallback route of the service is the authoritative allocation of
+    // the browser engine. A waiting entry must never reach it, or the engine
+    // would be committed before the deadline of the search.
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: { ...entryAnswer(null), status: 'waiting' } }),
+    });
+    const storage = createStorage();
+    storeIntent(storage, 'qe_waiting0001', null);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    await settle();
+    await settle();
+    // The state of the entry was read, and the fallback route was never
+    // asked.
+    expect(wires.some(wire => wire.path.includes('/queue/entries/qe_waiting0001') && wire.method === 'GET')).toBe(true);
+    expect(fallbacks(wires)).toHaveLength(0);
+    composition.dispose();
+  });
+
+  it('never asks the service to commit the engine of a cancelled entry', async () => {
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: { ...entryAnswer(null), status: 'cancelled' } }),
+    });
+    const storage = createStorage();
+    storeIntent(storage, 'qe_cancelled01', null);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    await settle();
+    await settle();
+    expect(fallbacks(wires)).toHaveLength(0);
+    composition.dispose();
+  });
+
+  it('rotates the credential of a committed engine game exactly once', async () => {
+    // The entry already produced its game with the browser engine, so the
+    // service rotates the credential of the engine seat. A reload and an
+    // identity change in the same moment never rotate it twice.
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: { ...entryAnswer(null), status: 'assigned', assignedMatchId: 'match-00000001' } }),
+      matchView: { status: 200, data: matchView() },
+      fallback: {
+        status: 200,
+        data: {
+          ...fallbackAnswer(),
+          guestCredential: { guestId: 'guest-engine', matchId: 'match-00000001', seat: 'black', token: 'engine-token' },
+        },
+      },
+    });
+    const storage = createStorage();
+    storeIntent(storage, 'qe_assigned01', 'match-00000001');
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    composition.resumeMatches();
+    await settle();
+    await settle();
+    expect(fallbacks(wires)).toHaveLength(1);
+    composition.dispose();
+  });
+
+  it('never rotates an engine credential for a game with a human opponent', async () => {
+    // The game of the entry has no engine seat, so the service must not be
+    // asked for an engine credential.
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: { ...entryAnswer(null), status: 'assigned', assignedMatchId: 'match-00000001' } }),
+      matchView: {
+        status: 200,
+        data: matchView({
+          seats: [
+            { seat: 'white', publicLabel: 'Owner', control: { kind: 'human' }, controlEpoch: 1, illegalAttemptsSpent: 0, formatCorrectionsSpent: 0 },
+            { seat: 'black', publicLabel: 'Guest', control: { kind: 'human' }, controlEpoch: 1, illegalAttemptsSpent: 0, formatCorrectionsSpent: 0 },
+          ],
+        }),
+      },
+    });
+    const storage = createStorage();
+    storeIntent(storage, 'qe_assigned02', null);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    await settle();
+    await settle();
+    expect(fallbacks(wires)).toHaveLength(0);
+    composition.dispose();
+  });
+
+  it('ignores the answer of a recovery that belongs to an older identity', async () => {
+    // The identity changed while the service was asked. The answer of the
+    // older identity never reaches the current one.
+    const listeners = new Set<(identity: { accountId: string; token: () => Promise<string> } | null) => void>();
+    let identity: { accountId: string; token: () => Promise<string> } | null = { accountId: 'account-1', token: async () => 'token' };
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: { ...entryAnswer(null), status: 'assigned', assignedMatchId: 'match-00000001' } }),
+      matchView: { status: 200, data: matchView() },
+      fallback: {
+        status: 200,
+        data: {
+          ...fallbackAnswer(),
+          guestCredential: { guestId: 'guest-engine', matchId: 'match-00000001', seat: 'black', token: 'engine-token' },
+        },
+      },
+    });
+    const storage = createStorage();
+    storeIntent(storage, 'qe_assigned03', 'match-00000001');
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: {
+        get identity() { return identity; },
+        subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      },
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    await settle();
+    // The identity changed while the recovery was running.
+    identity = { accountId: 'account-2', token: async () => 'token' };
+    for (const listener of listeners) listener(identity);
+    await settle();
+    await settle();
+    // The answer of the older identity was ignored: the seat of the new
+    // identity owns no engine credential.
+    expect(fallbacks(wires)).toHaveLength(1);
+    composition.dispose();
+  });
+});
+
 describe('the agent binding follows the seat, never the public label (B-26)', () => {
   it('binds the exact private selection of the chosen label and keeps it in the browser', () => {
     const storage = createStorage();
@@ -711,6 +886,10 @@ describe('the deferred claims of the friend flow (r9)', () => {
     // explicit recovery once.
     const { fetcher, wires } = createFetchDouble({
       entry: () => ({ status: 201, data: entryAnswer(null) }),
+      // The entry already produced its game with the browser engine, so the
+      // recovery of the credential is allowed to ask the service.
+      entryRead: () => ({ status: 200, data: { ...entryAnswer(null), status: 'assigned', assignedMatchId: 'match-00000030' } }),
+      matchView: { status: 200, data: matchView({ matchId: 'match-00000030' }) },
       fallback: {
         status: 200,
         data: {
