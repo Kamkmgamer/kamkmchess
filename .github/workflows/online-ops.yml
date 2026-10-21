@@ -77,8 +77,13 @@ jobs:
       - run: go mod download
       - name: Start the fixture database of the proofs
         run: |
+          # The helpers of the proofs reach the fixture through
+          # host.docker.internal, which a Linux engine maps to the gateway of
+          # the bridge network. A port that is published on the loopback of
+          # the host is not reachable from there, so the fixture is published
+          # on every interface.
           docker run --detach --name "$ONLINE_FIXTURE_CONTAINER" \
-            --publish 127.0.0.1:55467:5432 \
+            --publish 55467:5432 \
             --env POSTGRES_USER=postgres \
             --env POSTGRES_PASSWORD=fixture-only \
             --env POSTGRES_DB=kamkmchess_online_test \

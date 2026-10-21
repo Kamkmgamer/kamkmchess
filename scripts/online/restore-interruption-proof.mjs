@@ -157,6 +157,15 @@ export const REQUIRED_STEPS = [
   'the-repeated-recovery-refuses',
   'the-take-over-replays-the-owed-ledger',
   'the-service-admits-after-the-replay',
+  'the-evidence-of-the-owed-ledger-is-written-before-the-import',
+  'the-restore-of-the-copied-evidence-is-killed-after-the-commit',
+  'the-record-of-the-owed-ledger-is-copied-to-a-protected-place',
+  'the-evidence-directory-of-the-run-is-lost',
+  'the-recovery-proves-the-owed-ledger-with-the-copied-record',
+  'the-obligation-of-the-restore-is-still-owed',
+  'the-marker-of-the-recovery-is-truthful',
+  'the-next-import-without-a-sink-is-refused',
+  'the-unrelated-control-survives-the-lost-evidence',
   'the-private-payload-is-in-the-bundle-and-in-the-restored-database',
   'the-private-payload-of-the-removed-subject-is-gone',
   'the-tombstone-of-the-removed-private-game-is-retained',
@@ -594,6 +603,30 @@ export async function runInterruptionProof(options = {}) {
       const collected = await run('docker', ['logs', id]);
       return (collected.stdout + collected.stderr).trim().split('\n').slice(-4).join(' | ');
     };
+    // The state of the marker of the lifecycle.
+    const fenceMarkerState = async () => {
+      const marker = await run('docker', [
+        'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
+        '--mount', `type=volume,source=${VOLUME},target=/backups`,
+        endpoint.image, 'sh', '-c',
+        `test -e ${FENCE}/restore-fence/owner && echo open || echo closed`,
+      ]);
+      return (marker.stdout || '').trim() || 'unknown';
+    };
+    const waitForRequirement = async () => {
+      for (let attempt = 0; attempt < 45; attempt += 1) {
+        const listed = await run('docker', [
+          'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
+          '--mount', `type=volume,source=${VOLUME},target=/backups`,
+          endpoint.image, 'sh', '-c',
+          `ls ${FENCE}/restore-requirements 2>/dev/null | head -n 1`,
+        ]);
+        const name = (listed.stdout || '').trim();
+        if (name) return { found: true, detail: name, name };
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
+      }
+      return { found: false, detail: 'the requirements directory holds no record' };
+    };
     const waitForCommit = async () => {
       for (let attempt = 0; attempt < 45; attempt += 1) {
         const marker = await run('docker', [
@@ -836,6 +869,131 @@ export async function runInterruptionProof(options = {}) {
     });
     await run('docker', ['rm', '--force', gateAfter.id]);
     containers.splice(containers.indexOf(gateAfter.id), 1);
+
+    // ---- the copied protected evidence ---------------------------------
+    // A case of its own: the restore binds the ledger it owes, the import is
+    // killed after the commit, the record of the run is copied to a
+    // protected place, the evidence directory of the run is lost, and the
+    // recovery proves the owed ledger with the copy alone, without the
+    // bundle of the restore.
+    const evidenceDatabase = `kamkmchess_interruption_evidence_${RUN}`;
+    await createDatabase(evidenceDatabase);
+    await migrate(evidenceDatabase);
+    await seed(evidenceDatabase);
+    await seedRemovals(evidenceDatabase);
+    await seedLiveOnly(evidenceDatabase);
+    await seedPrivatePayload(evidenceDatabase);
+    const evidenceContainer = await startRestore(evidenceDatabase, 'restore-evidence', 'after');
+    // The record of the owed ledger is written before the import, so the
+    // proof waits for it before it lets the import go on.
+    const record = await waitForRequirement();
+    steps.push({
+      id: 'the-evidence-of-the-owed-ledger-is-written-before-the-import',
+      passed: record.found,
+      detail: record.found
+        ? `the record of the owed ledger of this run is on the disk before the import (${record.detail})`
+        : `the record of the owed ledger was not written before the import: ${record.detail}`,
+    });
+    const evidenceCommitted = await waitForCommit();
+    const evidenceOwner = await fenceOwnerId();
+    await run('docker', ['kill', evidenceContainer]);
+    await run('docker', ['rm', '--force', evidenceContainer]);
+    containers.splice(containers.indexOf(evidenceContainer), 1);
+    steps.push({
+      id: 'the-restore-of-the-copied-evidence-is-killed-after-the-commit',
+      passed: evidenceCommitted && evidenceOwner.length > 0,
+      detail: `the import of this restore committed (${evidenceCommitted}) and the restore ${evidenceOwner || 'of no name'} was killed before the removals were replayed`,
+    });
+    // The record of this run is copied to a protected place: a directory of
+    // mode 0700 and a record of mode 0600, both owned by the restore user.
+    // The content of the record is never printed.
+    const copy = `/backups/protected/${RUN}.evidence`;
+    const copied = await run('docker', [
+      'run', '--rm', '--user', '65532:65532', '--network', endpoint.network,
+      '--mount', `type=volume,source=${VOLUME},target=/backups`,
+      endpoint.image, 'sh', '-c',
+      `mkdir -p /backups/protected && chmod 700 /backups/protected && cp ${FENCE}/restore-requirements/${record.name} ${copy} && chmod 600 ${copy} && stat -c '%a %u' ${copy} && stat -c '%a %u' /backups/protected`,
+    ]);
+    const copyText = (copied.stdout + copied.stderr).trim();
+    steps.push({
+      id: 'the-record-of-the-owed-ledger-is-copied-to-a-protected-place',
+      passed: copied.code === 0 && /\b600 65532\b/.test(copyText) && /\b700 65532\b/.test(copyText),
+      detail: `the record of the owed ledger of this run was copied to a protected place of the run, owned by the restore user: ${copyText}`,
+    });
+    // The evidence directory of this run is lost. Only the directory of this
+    // run is removed, and the path of it is verified before it is removed.
+    const lost = await run('docker', [
+      'run', '--rm', '--user', '65532:65532', '--network', endpoint.network,
+      '--mount', `type=volume,source=${VOLUME},target=/backups`,
+      endpoint.image, 'sh', '-c',
+      `test -d ${FENCE}/restore-requirements && rm -rf ${FENCE}/restore-requirements && echo lost`,
+    ]);
+    steps.push({
+      id: 'the-evidence-directory-of-the-run-is-lost',
+      passed: lost.code === 0 && (lost.stdout || '').includes('lost'),
+      detail: lost.code === 0
+        ? 'the evidence directory of this run was removed, and only that directory'
+        : `the evidence directory of this run could not be removed: ${(lost.stdout + lost.stderr).trim()}`,
+    });
+    // The recovery with the copy alone: no bundle of the restore, so the
+    // copy of the record is the only description of what the restore owed.
+    const recoveredWithCopy = await tool([
+      'recover',
+      '--restore-id', evidenceOwner,
+      '--evidence', copy,
+      '--fence', FENCE,
+      '--database-url-env', 'DATABASE_URL',
+      '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, evidenceDatabase), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    const recreated = await run('docker', [
+      'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
+      '--mount', `type=volume,source=${VOLUME},target=/backups`,
+      endpoint.image, 'sh', '-c',
+      `stat -c '%a %u' ${FENCE}/restore-requirements 2>&1; ls ${FENCE}/restore-requirements 2>&1 | head -n 2`,
+    ]);
+    const recreatedText = (recreated.stdout + recreated.stderr).trim();
+    const pendingGate = await sql(evidenceDatabase, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed = false`);
+    const markerAfter = await fenceMarkerState();
+    steps.push({
+      id: 'the-recovery-proves-the-owed-ledger-with-the-copied-record',
+      passed: recoveredWithCopy.code !== 0
+        && /not applied in the database|is not applied/i.test(recoveredWithCopy.stderr + recoveredWithCopy.stdout),
+      detail: `the recovery took the copied record alone, proved the owed ledger against it and kept the service closed: ${(recoveredWithCopy.stderr + recoveredWithCopy.stdout).trim().split('\n').slice(-1)[0] ?? ''}`,
+    });
+    steps.push({
+      id: 'the-obligation-of-the-restore-is-still-owed',
+      passed: markerAfter === 'open' && !/\b700 65532\b/.test(recreatedText),
+      detail: `the obligation of the restore is still owed: the marker of the crashed restore is still there, the evidence of the run was not recreated by the refused recovery (${recreatedText.split('\n').join(' | ')}) and the restore gates of the database are ${pendingGate.text}`,
+    });
+    steps.push({
+      id: 'the-marker-of-the-recovery-is-truthful',
+      passed: markerAfter === 'open',
+      detail: `the marker of the crashed restore is still there (${markerAfter}), so the service stays closed by the fence as well as by the gate`,
+    });
+    // The next import has no sink: the target does not carry the removal
+    // tables, so the tool refuses before it imports anything.
+    const noSinkDatabase = `kamkmchess_interruption_nosink_${RUN}`;
+    await createDatabase(noSinkDatabase);
+    const noSink = await tool([
+      'restore',
+      '--file', oldBundle,
+      '--fence', FENCE,
+      '--database-url-env', 'DATABASE_URL',
+      '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
+      '--psql', '/fixtures/psql-none.sh',
+      '--apply',
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, noSinkDatabase), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    steps.push({
+      id: 'the-next-import-without-a-sink-is-refused',
+      passed: noSink.code !== 0,
+      detail: `a restore into a database without the removal tables is refused: ${(noSink.stderr + noSink.stdout).trim().split('\n').slice(-1)[0] ?? ''}`,
+    });
+    const controlAfterCopy = await sql(evidenceDatabase, `SELECT count(*) FROM games WHERE game_id = 'proof_control_game' AND length(checkpoint_json) > 2`);
+    steps.push({
+      id: 'the-unrelated-control-survives-the-lost-evidence',
+      passed: controlAfterCopy.text === '1',
+      detail: `the private payload of the unrelated subject survived the loss of the evidence (${controlAfterCopy.text})`,
+    });
 
     // ---- the private payload of the removed subject ---------------------
     const emptied = await sql(targetAfter, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND checkpoint_json = '{}'::bytea AND deleted_at IS NOT NULL`);

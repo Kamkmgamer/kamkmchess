@@ -222,6 +222,25 @@ owed. The file of one restore can also be restored on its own, and the
 recovery then proves the ledger it owes against the digest the marker names
 (`--evidence`).
 
+The protected copy of the evidence is made while the service is stopped and
+drained, so the record on the disk is the record of a restore that is not
+running any more, and it is owned by the restore user:
+
+```sh
+# The API is stopped and drained first, so no restore is writing.
+docker compose -f postgres.compose.yml -f api.compose.yml stop api
+
+# The destination is private to the restore user and holds one record.
+docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
+  install -d -m 700 -o 65532 -g 65532 /var/lib/kamkmchess/restore-evidence &&
+  install -m 600 -o 65532 -g 65532 \
+    /var/lib/kamkmchess/restore-fence/restore-requirements/"$RESTORE_ID".evidence \
+    /var/lib/kamkmchess/restore-evidence/"$RESTORE_ID".evidence'
+
+# The protected copy is in the backup of the deployment, with the bundles,
+# and it is restored to the same private path before a recovery that needs it.
+```
+
 A restore that was killed leaves the marker of the lifecycle behind and the
 service stays closed, and the procedure is:
 
@@ -231,15 +250,23 @@ service stays closed, and the procedure is:
 # commit after the ledgers were read, and the import can lose it.
 docker compose -f postgres.compose.yml -f api.compose.yml stop api
 
-# The recovery of a restore that crashed: it names the restore from the
-# marker of the lifecycle, replays the removal ledger the restore owed from
-# the durable evidence, releases the gate and closes the fence. A database
-# that lost the removals is not released: the recovery refuses and the gate
-# stays closed.
+# The recovery of a restore that crashed. It does **not** replay anything:
+# it verifies that the removal ledger the restore owed is applied and erased
+# in the database, releases the gate and closes the fence. A database that
+# lost the removals is not released: the recovery refuses and the gate stays
+# closed, and only the take-over below imports and replays.
+#
+# The identifier of the restore is the one the marker of the lifecycle names.
+# The command line of the restore cannot name it, so the operator reads it:
+#
+#   RESTORE_ID=$(docker compose -f postgres.compose.yml -f api.compose.yml \
+#     exec -T postgres sh -c 'cat /var/lib/kamkmchess/restore-fence/restore-fence/owner' \
+#     | sed -n 's/.*"restoreId":"\([^"]*\)".*/\1/p')
+#   test -n "$RESTORE_ID"
 docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
   set -a; . /run/secrets/backup.env; set +a
   exec gosu 65532:65532 /opt/kamkmchess/khabackup recover --file /backups/weekly-2026-W42.kha \
-    --restore-id <the restore of the marker> \
+    --restore-id "$RESTORE_ID" \
     --fence /var/lib/kamkmchess/restore-fence \
     --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE'
 
@@ -249,8 +276,8 @@ docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
 docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
   set -a; . /run/secrets/backup.env; set +a
   exec gosu 65532:65532 /opt/kamkmchess/khabackup recover --file /backups/weekly-2026-W42.kha \
-    --restore-id <the restore of the marker> \
-    --evidence /var/lib/kamkmchess/restore-requirements/<the restore>.json \
+    --restore-id "$RESTORE_ID" \
+    --evidence /var/lib/kamkmchess/restore-evidence/"$RESTORE_ID".evidence \
     --fence /var/lib/kamkmchess/restore-fence \
     --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE'
 
@@ -284,7 +311,11 @@ the rotation expires them, and reapplying tombstones through the rotation is
 what stops an older copy from bringing it back. There is no application age
 purge: an account is retained until the owner deletes it.
 
-If a restore fails at any step before step 4, the target database is unchanged.
+If a restore fails before the import commits, the target database is
+unchanged. A restore that fails **after** the import committed and before the
+removal ledger was replayed leaves the restored database without the removals
+that only the live database carried: the recovery refuses it, the gate stays
+closed, and the take-over replays the owed ledger from the durable evidence.
 
 ### Recovery situations and what to do
 
