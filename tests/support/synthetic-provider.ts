@@ -20,6 +20,8 @@ import { Chess } from 'chess.js';
 export interface SyntheticProviderRequest {
   readonly path: string;
   readonly body: string;
+  /** The authorization the request carried, if any. */
+  readonly authorization: string | null;
 }
 
 export interface SyntheticProvider {
@@ -39,6 +41,13 @@ export interface SyntheticProviderOptions {
   readonly models?: readonly string[];
   /** The name the catalog gives every model. */
   readonly displayName?: string;
+  /**
+   * The credential every request has to carry.
+   *
+   * A request without it is refused, so a case can prove that the request of
+   * the account carried the credential of the account.
+   */
+  readonly credential?: string;
 }
 
 /** The first legal move of a position, in the coordinate form the product uses. */
@@ -81,15 +90,29 @@ export async function startSyntheticProvider(options: SyntheticProviderOptions =
     request.on('end', () => {
       const body = Buffer.concat(chunks).toString('utf8');
       const path = request.url ?? '/';
-      requests.push({ path, body });
+      const authorization = typeof request.headers.authorization === 'string' ? request.headers.authorization : null;
+      requests.push({ path, body, authorization });
       const headers = {
         'access-control-allow-origin': '*',
-        'access-control-allow-headers': '*',
+        // The authorization header is a request header that a wildcard does
+        // not cover, so the preflight of a request that carries the
+        // credential of the connection has to name it.
+        'access-control-allow-headers': 'authorization, content-type',
         'access-control-allow-methods': 'GET,POST,OPTIONS',
       };
       if (request.method === 'OPTIONS') {
         response.writeHead(204, headers);
         response.end();
+        return;
+      }
+      if (!path.endsWith('/models')) generationRequests.push({ path, body, authorization });
+      // A generation request that does not carry the credential of the
+      // connection is refused, so the credential of the account is proven by
+      // the request that reaches the provider. The catalog is public.
+      if (options.credential !== undefined && !path.includes('/models') &&
+        authorization !== `Bearer ${options.credential}`) {
+        response.writeHead(401, { ...headers, 'content-type': 'application/json' });
+        response.end(JSON.stringify({ error: 'the credential of the connection is missing' }));
         return;
       }
       if (path.endsWith('/models')) {
@@ -100,7 +123,6 @@ export async function startSyntheticProvider(options: SyntheticProviderOptions =
         }));
         return;
       }
-      generationRequests.push({ path, body });
       const frames = [
         { model: models[0] ?? 'synthetic', choices: [{ index: 0, delta: { content: answerFor(body) }, finish_reason: null }] },
         { choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 25, completion_tokens: 8, prompt_tokens_details: { cached_tokens: 0 } } },

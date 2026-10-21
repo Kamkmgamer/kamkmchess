@@ -167,45 +167,56 @@ The unit regressions of this slice:
 | fixture build (`KAMKM_PUBLIC_TEST_SESSION=true`, `KAMKM_BUILD_FLAVOR=fixture`) | present as its own lazily loaded chunk `test-session-*.js` |
 | `KAMKM_PUBLIC_TEST_SESSION=true` without `KAMKM_BUILD_FLAVOR=fixture` | the build fails: `The synthetic account session needs KAMKM_BUILD_FLAVOR=fixture.` |
 
-### The rendered cases (final state, current root)
+### The historical rendered cases before the latest integration
 
-The run of the record against the **current root** (`d0f9d0b` with the
-provider contracts and the workspace r9 merged in): the fixture base URL
-`http://127.0.0.1:51323`, the preview server of the build on
-`http://127.0.0.1:5341`, real Chromium, real Go API, real PostgreSQL schema,
-real rules worker, real browser engine, real local provider.
+The earlier run recorded below used a single fresh fixture
+(the real Go API, a real PostgreSQL schema, the pinned rules worker, the real
+authorization code, the real browser engine and a real local provider):
 
 ```
 Running 7 tests using 1 worker
 
-  ok 1 the built account app reaches the fixture of the run (1.9s)
-  ok 2 a signed-in browser enters the queue and the cutoff commits the browser engine (20.6s)
+  ok 1 the built account app reaches the fixture of the run (1.3s)
+  ok 2 a signed-in browser enters the queue and the cutoff commits the browser engine (20.5s)
      the committed moves of the fallback game: e4 e6
-  ok 3 two explicit entries of one signed-in browser are visible at the same time (1.8s)
-  ok 4 the account change hides the games of the first account and restores the registry of the next (25.1s)
-  x  5 the first account gets its game back when it signs in again   (the game comes back, the engine seat cannot play)
-  ok 6 a late seat change never writes into the next account
-  ok 7 the owner switches the own agent between two private models and the provider answers
-     the models the local provider answered: synthetic-a, synthetic-a, synthetic-a
-     the models the local provider answered: synthetic-a, synthetic-a, synthetic-a, synthetic-b
+  ok 3 two explicit entries of one signed-in browser are visible at the same time (3.0s)
+  ok 4 the account change hides the games of the first account and restores the registry of the next (25.8s)
+  x  5 the first account gets its game back when it signs in again   (the engine seat of the restored game answers 404)
+  ok 6 a late seat change never writes into the next account (17.9s)
+  x  7 the owner switches the own agent between two private models and the provider answers
+     the models the local provider answered: synthetic-a, synthetic-a
 
-  6 passed, 1 failed
+  5 passed, 2 failed
 ```
 
 | case | what it shows |
 | --- | --- |
-| the built account app reaches the fixture of the run | the build under test is the build of this repository (the case refuses a preview server that serves another build) and the signed-in browser reaches the service |
-| a signed-in browser enters the queue and the cutoff commits the browser engine | the signed-in entry waits for the ten second cutoff, the fallback commits it and the **browser engine answers through the canonical snapshot**: the committed moves of the game are `e4 e6` |
+| the built account app reaches the fixture of the run | the build under test is the build of this repository and the signed-in browser reaches the service |
+| a signed-in browser enters the queue and the cutoff commits the browser engine | the signed-in entry waits for the ten second cutoff, the fallback commits it and the **browser engine answers through the canonical snapshot**: the committed moves are `e4 e6` |
 | two explicit entries of one signed-in browser are visible at the same time | two explicit entries of one browser are listed at the same time |
 | the account change hides the games of the first account and restores the registry of the next | the first account plays on a five minute clock and the second on a three minute clock; after the identity change the board shows the **three** minute game |
-| the first account gets its game back when it signs in again | the durable list of an account that leaves survives and the game of the first account comes back **with its moves** (the workspace r9 owns this and it works). The **browser engine seat of the restored game cannot play**: the engine command answers `404` and the committed moves stay at the move of the owner. The engine credential of a game whose account returns is not usable yet. The case is unskipped and red on that last step, and it is the proof of that gap for the workspace |
-| a late seat change never writes into the next account | the answer of the service is **held** (a deferred barrier on the lease and the command route of the fixture) while the account changes. The pending state of the change is gone afterwards: the answer belonged to the identity that left |
-| the owner switches the own agent between two private models and the provider answers | two private models of one connection **without an advertised name**, so both carry the neutral public name and only the private id keeps them apart. The owner rebinds the seat of the running game to the second model (`synthetic-b` reaches the provider) and then puts the model of the new games back on the seat |
+| the first account gets its game back when it signs in again | the durable list of an account that leaves survives (the workspace r9 owns it and it works): the game comes back **with its moves**. The **engine seat of the restored game cannot play** (the engine command answers `404`) — the workspace (r13) owns the engine recovery |
+| a late seat change never writes into the next account | the answer of the service is **held** (a deferred barrier on the lease and the command route of the fixture) while the account changes, and the pending state of the change is gone afterwards |
+| the owner switches the own agent between two private models and the provider answers | the agent seat of the owner plays with the model of the **account** (`synthetic-a` reaches the local provider). The rebind of the seat to the other private model is **refused by the service with `409 Conflict`**, so the seat keeps its model and the interface reports the refusal. The refusal of the switch is the provider/workspace scope |
 
-The model of the case is connected in the namespace of the **signed-in
-account** (an account game), because the connections of an account live in the
-namespace of that account and the online agent resolves its provider from the
-same namespace.
+### The account catalog, proved in the browser
+
+The rendered case reads the rows of the connection store of the browser and
+asserts them:
+
+```
+profiles   : [{"key":"account:user_fixtureowner0000aaaa","id":"…"}]
+credentials: [{"key":"account:user_fixtureowner0000aaaa","profileId":"…"}]
+catalogs   : [{"key":"account:user_fixtureowner0000aaaa","profileId":"…","entries":["synthetic-a","synthetic-b"]}]
+```
+
+The guest namespace holds **no** profile, the account namespace holds the
+profile, its credential and the two advertised models, and the panel of
+**Your agents** lists the two models of the account. The account id is shaped
+like the id of a hosted identity provider, because the connection store of an
+account only accepts such an id; the session token is minted for the same
+subject with the key of the fixture, so the service verifies it with its
+ordinary code path.
 
 ## 5. The corrections of the second, third and fourth rounds
 
@@ -230,6 +241,36 @@ each with a regression, except the ones that belong to another owner.
 | the account route never opened the invitation | the shell of the account build opens the online screen for a published link (the composition's `pendingInvitation` and the address of the page) |
 
 The hosted Clerk path (`src/accounts/clerk.ts`) is untouched.
+
+### The bearer credential of the account: the causal chain
+
+The synthetic provider of the rendered cases refuses a generation request
+that does not carry exactly `Bearer <the synthetic key of the account>`, and
+the case asks for the exact authorization of **every** generation request
+(no request is filtered out). The catalog of the connection stays public.
+
+Two causes were found and fixed:
+
+1. The preflight of a request that carries the credential of the connection
+   was refused: the provider answered `access-control-allow-headers: *`, and a
+   wildcard does not cover the `authorization` request header. The provider
+   now answers `authorization, content-type` and keeps the `OPTIONS` handling
+   without a credential.
+2. The account id of the fixture was not a valid account id, so the
+   connection store threw for the account namespace and the interface read the
+   guest namespace instead. The rendered cases sign in with an id that the
+   store accepts and mint the session token for the same subject.
+
+The later bearer run reached the catalog and made four generation requests
+with the account credential. The earlier no-request failure had two causes
+in the test interaction. Selecting authentication cleared the key, and the
+asynchronous creation of the account game remounted the form. The case now
+waits for the opened game, selects authentication, then fills the key. It
+asserts the account profile, credential and two catalog entries while the
+guest profile store stays empty. That run still failed at the later model
+switch with a 409. A full run against the assembled provider and workspace
+corrections remains required; the historical results above are not final
+assembled evidence.
 
 ## 6. The open items and the coordination
 

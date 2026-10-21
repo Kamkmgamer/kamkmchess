@@ -27,9 +27,18 @@ import { readdir } from 'node:fs/promises';
 import { fixtureAccountId, readOnlineFixtureDescriptor, signInWithFixtureAccount, signInWithFixtureAccounts, switchFixtureAccount } from '../support/online-account-fixture';
 import type { OnlineFixtureDescriptor } from '../support/online-account-fixture';
 import { startSyntheticProvider } from '../support/synthetic-provider';
+import type { SyntheticProvider } from '../support/synthetic-provider';
 
 const descriptorPath = process.env.ONLINE_FIXTURE_DESCRIPTOR ?? '';
 const strict = process.env.ONLINE_FIXTURE_STRICT === '1';
+/**
+ * The synthetic credential of the account connection.
+ *
+ * It is a harmless constant of the fixture: the local provider expects it and
+ * the case proves that the request of the account carries exactly it. It is
+ * never a real secret and it is never logged.
+ */
+const ACCOUNT_CREDENTIAL = 'synthetic-account-credential';
 
 let descriptor: OnlineFixtureDescriptor | null = null;
 /** The entry script of the build of this repository. */
@@ -182,33 +191,123 @@ async function onlineClock(page: Page): Promise<string> {
  * Connects the local provider in the namespace of the signed-in account.
  *
  * The connections of an account live in the namespace of that account, so
- * the model is connected in an account game. The online agent resolves its
- * provider from the same namespace.
+ * the model is connected in an account game. The guest store stays empty, and
+ * the credential of the connection is the account one, so every request of
+ * the provider carries it.
  */
-async function connectLocalModel(page: Page, baseUrl: string, model: string): Promise<void> {
+async function connectLocalModel(page: Page, baseUrl: string, model: string, provider?: SyntheticProvider): Promise<void> {
   await page.getByRole('button', { name: 'Account and saved games' }).click();
   await page.getByRole('button', { name: 'Games', exact: true }).click();
   await page.getByRole('button', { name: 'New account game' }).click();
+  // The account game is created asynchronously and the application remounts
+  // when it is ready. The form of the setup panel is filled after that, or the
+  // panel would start again with its default provider.
+  await expect(page.getByRole('status').filter({ hasText: 'Opened.' })).toBeVisible({ timeout: 30_000 });
   await page.getByRole('button', { name: 'Close account' }).click();
   // The setup panel of the account game is opened from the top bar.
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('ai');
   await page.getByLabel('Provider').selectOption('custom');
   await page.getByLabel('Base URL', { exact: true }).fill(baseUrl);
+  // The authentication is chosen first: choosing it clears the credential
+  // field, so the key is written after the choice and not before it.
   await page.getByRole('button', { name: 'Advanced connection settings', exact: true }).click();
-  await page.getByLabel('Authentication').selectOption('none');
+  await page.getByLabel('Authentication').selectOption('bearer');
   await page.getByRole('button', { name: 'Done', exact: true }).click();
+  // The credential of the connection belongs to the account. The local
+  // provider expects exactly this key, so a request that does not carry it is
+  // refused.
+  await page.getByLabel('API key', { exact: true }).fill(ACCOUNT_CREDENTIAL);
+  // The state of the form, without the credential itself: the values of the
+  // selects and the length of every field.
+  const state = await formState(page);
+  console.log('the form before the connect:', JSON.stringify(state));
+  const credential = (state.inputs as Array<{ label: string | null; length: number }>)
+    .find(input => input.label?.startsWith('API key'));
+  expect(credential?.length).toBe(ACCOUNT_CREDENTIAL.length);
+  expect((state.selects as string[]).includes('custom')).toBe(true);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
   const panel = page.getByRole('region', { name: 'AI model', exact: true });
   await expect(panel).toHaveAttribute('aria-busy', 'false');
+  // The requests the local provider saw, without the credential itself.
+  console.log('the requests of the local provider:', JSON.stringify(provider?.requests.map(request => ({
+    path: request.path,
+    authorized: request.authorization !== null,
+  }))));
+  console.log('the message of the setup panel:', (await panel.textContent())?.replace(/\s+/g, ' ').slice(0, 240));
   await panel.getByLabel('Available models').selectOption(model);
-  // The connection needs the owner's consent before it may be used.
+  // The owner consents to the connection before it may be used.
   const allow = page.getByRole('button', { name: 'Allow', exact: true });
-  if (await allow.isVisible().catch(() => false)) await allow.click();
+  await expect(allow).toBeVisible({ timeout: 15_000 });
+  await allow.click();
   await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 20_000 });
   // The setup panel is closed, so it never covers the online screen.
   await page.getByRole('dialog').getByRole('button', { name: 'Close' }).click();
   await expect(page.getByRole('dialog')).toHaveCount(0);
+}
+
+/**
+ * The state of the connection form of the setup panel.
+ *
+ * The credential itself is never read: only whether the field carries one.
+ */
+async function formState(page: Page): Promise<Record<string, unknown>> {
+  return page.evaluate(() => ({
+    selects: Array.from(document.querySelectorAll('select')).map(select => (select as HTMLSelectElement).value),
+    // The length of every field, never the value of the credential.
+    inputs: Array.from(document.querySelectorAll('input')).map(input => ({
+      label: input.getAttribute('aria-label') ?? input.closest('label')?.textContent?.slice(0, 12) ?? null,
+      length: (input as HTMLInputElement).value.length,
+    })),
+  }));
+}
+
+/**
+ * The rows of the connection store of the browser.
+ *
+ * The guest store and the store of the account are told apart, so a case can
+ * prove that the model of the account was never written to the guest store
+ * and that the credential of the account is the one the provider saw.
+ */
+async function connectionRows(page: Page): Promise<{
+  readonly guestProfiles: number;
+  readonly accountProfiles: number;
+  readonly accountCredentials: number;
+  readonly accountModels: number;
+}> {
+  const rows = await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('kamkmchess-connections');
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const read = (store: string) => new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
+      const request = database.transaction(store, 'readonly').objectStore(store).getAll();
+      request.onsuccess = () => resolve(request.result as Array<Record<string, unknown>>);
+      request.onerror = () => reject(request.error);
+    });
+    try {
+      return {
+        profiles: await read('profiles'),
+        credentials: await read('credentials'),
+        catalogs: await read('catalogs'),
+      };
+    } finally {
+      database.close();
+    }
+  });
+  const guest = rows.profiles.filter(row => row.namespaceKey === 'guest');
+  const account = rows.profiles.filter(row => String(row.namespaceKey).startsWith('account:'));
+  const accountCredentials = rows.credentials.filter(row => String(row.namespaceKey).startsWith('account:'));
+  const models = rows.catalogs
+    .filter(row => String(row.namespaceKey).startsWith('account:'))
+    .flatMap(row => ((row.snapshot as { entries?: unknown[] } | undefined)?.entries ?? []) as Array<{ id?: string }>);
+  return {
+    guestProfiles: guest.length,
+    accountProfiles: account.length,
+    accountCredentials: accountCredentials.length,
+    accountModels: models.length,
+  };
 }
 
 test('the built account app reaches the fixture of the run', async ({ page }) => {
@@ -379,11 +478,11 @@ test('a late seat change never writes into the next account', async ({ page }) =
   expect(loaded).not.toBeNull();
   const second = fixtureAccountId(1);
   if (!second) throw new Error('the fixture has fewer than two accounts');
-  const provider = await startSyntheticProvider({ models: ['synthetic-a', 'synthetic-b'] });
+  const provider = await startSyntheticProvider({ models: ['synthetic-a', 'synthetic-b'], credential: ACCOUNT_CREDENTIAL });
   try {
     await signInWithFixtureAccount(page, loaded!, await firstAccount());
     await page.goto('/play?online=1');
-    await connectLocalModel(page, provider.baseUrl, 'synthetic-a');
+    await connectLocalModel(page, provider.baseUrl, 'synthetic-a', provider);
     await openOnline(page);
     await page.getByRole('button', { name: 'Watch agent' }).click();
     await waitForAssignment(page);
@@ -420,20 +519,33 @@ test('the owner switches the own agent between two private models and the provid
   expect(loaded).not.toBeNull();
   // Two models of one connection without an advertised name. They carry the
   // same public label, so only their private identity keeps them apart.
-  const provider = await startSyntheticProvider({ models: ['synthetic-a', 'synthetic-b'] });
+  const provider = await startSyntheticProvider({ models: ['synthetic-a', 'synthetic-b'], credential: ACCOUNT_CREDENTIAL });
   const modelsOf = () => provider.generationRequests
     .map(request => /"model"\s*:\s*"([^"]+)"/.exec(request.body)?.[1] ?? 'unknown');
   try {
     await signInWithFixtureAccount(page, loaded!, await firstAccount());
     await page.goto('/play?online=1');
-    await connectLocalModel(page, provider.baseUrl, 'synthetic-a');
+    await connectLocalModel(page, provider.baseUrl, 'synthetic-a', provider);
     // Both models of the connection are in the private catalog of the owner.
     await page.getByRole('button', { name: 'Your agents' }).click();
     const agents = page.getByRole('region', { name: 'Your agents' });
-    // Both models of the connection are in the private catalog of the owner,
-    // and they carry the same public label.
-    await expect(agents.getByRole('button', { name: 'Use for new games' })).toHaveCount(2);
-    await expect(agents).toContainText('Custom model');
+    await expect(agents.getByRole('button', { name: 'Use for new games' })).toHaveCount(2, { timeout: 20_000 });
+    await expect(agents).toContainText('synthetic-a');
+    // The model belongs to the account: the guest store is empty and the
+    // credential of the account is the one the provider saw.
+    const rows = await connectionRows(page);
+    expect(rows.guestProfiles).toBe(0);
+    expect(rows.accountProfiles).toBe(1);
+    expect(rows.accountCredentials).toBe(1);
+    expect(rows.accountModels).toBe(2);
+    // Every generation request of the provider carries exactly the credential
+    // of the account: the provider refuses a request without it, and the case
+    // asks for the exact header of every one of them.
+    expect(provider.generationRequests.length).toBeGreaterThan(0);
+    for (const request of provider.generationRequests) {
+      expect(request.authorization).toBe(`Bearer ${ACCOUNT_CREDENTIAL}`);
+    }
+    expect(provider.requests.some(request => request.path.includes('/models'))).toBe(true);
     await agents.getByRole('button', { name: 'Close' }).click();
 
     // The owner watches its own agent play. The fallback opponent is the
@@ -446,6 +558,9 @@ test('the owner switches the own agent between two private models and the provid
       await waitForAssignment(page);
       await showGames(page);
       await expect(page.getByRole('region', { name: 'Online match board' })).toBeVisible({ timeout: 60_000 });
+      // The seat declares the neutral public label: the private name of the
+      // model never reaches the service.
+      await expect(page.getByRole('region', { name: 'Online match board' })).toContainText('Custom model');
       // The agent seat of the owner is bound to a private selection and the
       // driver asks the provider through the lease of the seat.
       played = await expect.poll(async () => committedMoves(page).count(), { timeout: 45_000 })
