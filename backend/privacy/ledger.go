@@ -369,7 +369,7 @@ func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required
 	if err = s.releaseRestoreGate(ctx, tx, restoreID); err != nil {
 		return err
 	}
-	if err = s.releaseProvenGates(ctx, tx, required); err != nil {
+	if _, err = s.releaseProvenGates(ctx, tx, required); err != nil {
 		return err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -423,32 +423,94 @@ func (s *Service) releaseRestoreGate(ctx context.Context, tx pgx.Tx, restoreID s
 // The release runs under the ownership of the lifecycle and inside the
 // transaction of the recovery, so it never happens outside the protocol and
 // never on facts that a concurrent import could invalidate.
-func (s *Service) releaseProvenGates(ctx context.Context, tx pgx.Tx, candidate backup.AppliedRemovalLedger) error {
+func (s *Service) releaseProvenGates(ctx context.Context, tx pgx.Tx, candidate backup.AppliedRemovalLedger) (int, error) {
 	digest := gateDigest(requirementDigest(candidate))
 	rows, err := tx.Query(ctx, `SELECT restore_id FROM online_restore_gates WHERE serving_allowed=false AND ledger_digest=$1`, digest)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	gates := make([]string, 0)
 	for rows.Next() {
 		var gate string
 		if err = rows.Scan(&gate); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		gates = append(gates, gate)
 	}
 	if err = rows.Err(); err != nil {
 		rows.Close()
-		return err
+		return 0, err
 	}
 	rows.Close()
+	released := 0
 	for _, gate := range gates {
 		if _, err = tx.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE restore_id=$1 AND serving_allowed=false`, gate); err != nil {
-			return err
+			return released, err
 		}
+		released++
 	}
-	return nil
+	return released, nil
+}
+
+// ReleaseRestoreGateWithProof releases the restore gates whose awaited
+// removal ledger the candidate proves.
+//
+// The proof is a one way commitment: the gate names the digest of the removal
+// ledger it waits for, and the only proof is a removal ledger whose own
+// digest is exactly the one the gate names. A newer or larger ledger is not
+// the same commitment and never proves one, and a candidate that proves
+// nothing releases nothing.
+//
+// The release is a supported path of its own, so it takes the ownership of
+// the lifecycle first: it refuses to act while a restore is alive, and it
+// never takes that ownership again inside an ownership that is already held.
+// The recovery that owns the lifecycle proves the gates itself.
+//
+// The release runs in one transaction with the facts it depends on: the
+// applied removal ledger, the global state of the erasures and the release
+// itself. A gate is released only when the database holds the removal ledger
+// it waits for and every recorded removal is really erased, exactly like the
+// ordinary release of a gate.
+func (s *Service) ReleaseRestoreGateWithProof(ctx context.Context, candidate backup.AppliedRemovalLedger) (int, error) {
+	if s.fenceParent() == "" {
+		return 0, errors.New("privacy: no restore fence path is configured")
+	}
+	lock, err := acquireFenceLock(s.fenceLockPath())
+	if err != nil {
+		return 0, err
+	}
+	if lock == nil {
+		return 0, ErrFenceLive
+	}
+	defer lock.release()
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	applied, err := s.appliedRemovalLedger(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	if !backup.RemovalLedgerContains(applied, candidate) {
+		return 0, ErrLedgerNotApplied
+	}
+	erased, err := s.ledgerErased(ctx, tx)
+	if err != nil {
+		return 0, err
+	}
+	if !erased {
+		return 0, ErrLedgerNotApplied
+	}
+	released, err := s.releaseProvenGates(ctx, tx, candidate)
+	if err != nil {
+		return released, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return released, err
+	}
+	return released, nil
 }
 
 // ledgerErased reports whether every recorded removal is erased in the
