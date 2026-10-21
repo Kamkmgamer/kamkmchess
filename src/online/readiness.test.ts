@@ -122,6 +122,7 @@ function createHarness(overrides: Partial<OnlineQueuePorts> = {}): Harness {
   const controller = createOnlineQueueController({
     ports: ports as unknown as OnlineQueuePorts,
     timers,
+    now: () => Date.parse('2026-10-21T10:00:00.000Z'),
   });
   return {
     controller,
