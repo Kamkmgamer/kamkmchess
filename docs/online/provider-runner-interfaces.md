@@ -86,7 +86,11 @@ the control changes and the spent recovery attempts.
   billable work stays open at the service, so the seat asks the owner about it
   instead of playing with work that may be paid twice, and the runner keeps
   the envelope of the accepted command: the owner may send the very same
-  command again and read the receipt the service already earned.
+  command again and read the receipt the service already earned. The switch
+  itself stays the decision of the owner, because the receipt of the accepted
+  command proves the control change: its outcome is `accepted` and the detail
+  names what the settlement had to leave out. A retry stays `unknown` in that
+  case, because the decision of the owner was to let the runner play again.
 - The authorization of the owner is recorded only when the settlement reached
   its end while the decision was still the decision of the owner. A superseded
   decision leaves no authorization behind and sends no command, so the next

@@ -3361,6 +3361,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
               // The receipt of the accepted command is not lost: the owner may
               // send the very same command again and read it at the service.
               keepAcceptedEnvelope();
+              // The decision of the owner was to let the runner play again, and
+              // the record of the billable work is still open, so the decision
+              // is not complete and the outcome names the reason.
               return { kind: 'unknown', detail: settlement.detail };
             }
           }
@@ -3485,6 +3488,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       if (settlement.kind === 'superseded') {
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
       }
+      // The receipt of the command is the proof of the control change, so the
+      // decision of the owner survives a settlement the service refused.
+      const control = provenControl(outcome.receipt, command);
       if (settlement.kind === 'not-settled') {
         // The record of the request stays open at the service, so the seat asks
         // the owner about it instead of playing with billable work that may be
@@ -3499,7 +3505,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         // The receipt of the accepted command is not lost: the owner may send
         // the very same command again and read it at the service.
         keepAcceptedEnvelope();
-        return { kind: 'unknown', detail: settlement.detail };
+        // The control change was applied at the service, so the decision of the
+        // owner is the decision the caller may bind. The detail names what the
+        // settlement had to leave out.
+        return {
+          kind: 'accepted',
+          publicModelLabel,
+          detail: withLeaseNote(settlement.detail, leaseNote),
+          ...(control === null ? {} : { control }),
+        };
       }
       if (!await settleUncertainWork(owner, decided)) {
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
@@ -3512,7 +3526,6 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
       }
       setPhase('idle');
-      const control = provenControl(outcome.receipt, command);
       return {
         kind: 'accepted', publicModelLabel,
         ...(leaseNote === undefined ? {} : { detail: leaseNote }),

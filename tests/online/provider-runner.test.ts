@@ -3142,8 +3142,36 @@ describe('the settlement of a switch that interrupted a billable request', () =>
     expect(settlementClears(service, oldLeaseId)).toHaveLength(0);
   });
 
-  it('settles the request of the old epoch when the owner retries a switch whose command never reached the service', async () => {
-    const service = createFakeOnlineService();
+  it('reports the switch of the owner when the service refuses the lease of the settlement', async () => {
+    const { service, provider, held, runner } = createSettlementHarness();
+    const { uncertain, oldLeaseId } = await uncertainRunner(service, provider, runner);
+
+    // The lease of the new epoch waits for the service.
+    held.holdAcquire();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => held.acquires.length === 1, 'the lease of the new epoch is in flight');
+
+    // The service answers with a lease of another epoch, so the settlement
+    // cannot close the record of the request under it.
+    held.acquires[0]?.resolve({
+      ...newEpochLease(service, uncertain),
+      controlEpoch: service.match.controlEpoch - 1,
+    });
+    const outcome = await switching;
+
+    // The control change was applied at the service, so the decision of the
+    // owner is the decision the caller may bind. The detail names what the
+    // settlement had to leave out, and the seat asks the owner about the
+    // record that is still open.
+    expect(outcome.kind).toBe('accepted');
+    expect(outcome.detail).toBe('The service refused the lease of the seat.');
+    expect(runner.state.phase).toBe('uncertain');
+    expect(runner.state.decisions).toEqual(['retry', 'switch-model', 'takeover']);
+    // The record of the service keeps its request: no clearing was sent.
+    expect(settlementClears(service, oldLeaseId)).toHaveLength(0);
+  });
+
+  it('settles the request of the old epoch when the owner retries a switch whose command never reached the service', async () => {    const service = createFakeOnlineService();
     const provider = createFakeProvider();
     const commands = createHoldableCommandPort(service.commands);
     const runner = createOnlineProviderRunner({
