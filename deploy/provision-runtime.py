@@ -71,6 +71,9 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO kamkmchess_runtime;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
 ''')
     # The runtime grants come from the reviewed policy. Every table is listed
     # explicitly, so a later migration cannot widen the role by accident and a
@@ -85,6 +88,15 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
         statements.append('REVOKE ALL ON TABLE public.' + table + ' FROM kamkmchess_runtime;')
         statements.append('GRANT ' + ', '.join(sorted(privileges)) +
                           ' ON TABLE public.' + table + ' TO kamkmchess_runtime;')
+    for sequence, privileges in sorted(policy.get('sequences', {}).items()):
+        if not sequence.replace('_', '').isalnum():
+            raise RuntimeError('Runtime grant policy names an unexpected sequence')
+        if not privileges or any(verb not in {'USAGE', 'SELECT', 'UPDATE'} for verb in privileges):
+            raise RuntimeError('Runtime grant policy names an unexpected sequence privilege')
+        statements.append('REVOKE ALL ON SEQUENCE public.' + sequence + ' FROM PUBLIC;')
+        statements.append('REVOKE ALL ON SEQUENCE public.' + sequence + ' FROM kamkmchess_runtime;')
+        statements.append('GRANT ' + ', '.join(sorted(privileges)) +
+                          ' ON SEQUENCE public.' + sequence + ' TO kamkmchess_runtime;')
     sql('\n'.join(statements))
     # The online migrations create two more application roles and grant them
     # broad table privileges. The deployment connects as kamkmchess_runtime,
@@ -96,6 +108,8 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
         revokes = []
         for role in unused:
             revokes.append('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ' + role + ';')
+            revokes.append('REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM ' + role + ';')
+            revokes.append('REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM ' + role + ';')
             revokes.append('REVOKE ALL ON SCHEMA public FROM ' + role + ';')
         sql('\n'.join(revokes))
     # A function that is not a trigger function can be called directly, and

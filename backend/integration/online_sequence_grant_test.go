@@ -28,6 +28,17 @@ import (
 // proves the grants the deployment really applies and not a hand-written
 // approximation of them.
 func TestOnlineTheRuntimeRoleCanWriteACheckpointWithTheOrderOfTheSequence(t *testing.T) {
+	runSequenceGrantProof(t, generatedGrantSQL(t), false, false)
+}
+
+func TestOnlineTheProvisionedRuntimeRoleCanWriteACheckpoint(t *testing.T) {
+	generated := generatedProvisionGrantSQL(t)
+	t.Run("fresh", func(t *testing.T) { runSequenceGrantProof(t, generated, true, false) })
+	t.Run("stale", func(t *testing.T) { runSequenceGrantProof(t, generated, true, true) })
+}
+
+func runSequenceGrantProof(t *testing.T, generated string, provisioned, stale bool) {
+	t.Helper()
 	fixture := newPresenceFixture(t)
 	ctx := context.Background()
 	var schema string
@@ -39,7 +50,12 @@ func TestOnlineTheRuntimeRoleCanWriteACheckpointWithTheOrderOfTheSequence(t *tes
 	suffix := randomSchemaSuffix()
 	runtimeRole := "kha_test_runtime_" + suffix
 	rulesRole := "kha_test_rules_" + suffix
-	for _, role := range []string{runtimeRole, rulesRole} {
+	apiRole := "kha_test_api_" + suffix
+	roles := []string{runtimeRole, rulesRole}
+	if provisioned {
+		roles = append(roles, apiRole)
+	}
+	for _, role := range roles {
 		if _, err := fixture.pool.Exec(ctx, `CREATE ROLE `+role); err != nil {
 			t.Fatalf("create the role %s: %v", role, err)
 		}
@@ -55,11 +71,10 @@ func TestOnlineTheRuntimeRoleCanWriteACheckpointWithTheOrderOfTheSequence(t *tes
 
 	// The generated grant SQL of the deployment, with the schema of the test
 	// in place of the schema of the policy.
-	generated := generatedGrantSQL(t)
 	var statements []string
 	for _, line := range strings.Split(generated, "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.Contains(line, "SEQUENCE") {
+		if strings.Contains(line, "ON DATABASE") || (!provisioned && !strings.Contains(line, "SEQUENCE")) {
 			continue
 		}
 		statements = append(statements, strings.ReplaceAll(line, "public.", schema+"."))
@@ -75,12 +90,50 @@ func TestOnlineTheRuntimeRoleCanWriteACheckpointWithTheOrderOfTheSequence(t *tes
 	if _, err := fixture.pool.Exec(ctx, `GRANT SELECT, INSERT ON TABLE `+schema+`.online_service_health TO `+runtimeRole); err != nil {
 		t.Fatalf("grant the health table: %v", err)
 	}
+	if provisioned {
+		// Seed stale direct and PUBLIC privileges. Provisioning must remove
+		// them, including the unused roles' function and sequence privileges.
+		for _, role := range []string{rulesRole, apiRole} {
+			if _, err := fixture.pool.Exec(ctx, `GRANT USAGE ON SCHEMA `+schema+` TO `+role+`;
+GRANT ALL ON ALL TABLES IN SCHEMA `+schema+` TO `+role+`;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA `+schema+` TO `+role+`;
+GRANT ALL ON ALL FUNCTIONS IN SCHEMA `+schema+` TO `+role); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if stale {
+			if _, err := fixture.pool.Exec(ctx, `GRANT ALL ON SEQUENCE online_service_health_order TO PUBLIC, `+runtimeRole); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Execute whole SQL blocks, including the function DO block.
+		statements = []string{strings.Join(statements, "\n")}
+	}
 	for _, statement := range statements {
 		// The statements of the deployment name the role of the policy; the
 		// role of this test takes its place.
 		statement = strings.ReplaceAll(statement, "kamkmchess_runtime", runtimeRole)
+		statement = strings.ReplaceAll(statement, "kamkm_online_rules", rulesRole)
+		statement = strings.ReplaceAll(statement, "kamkm_online_api", apiRole)
+		statement = strings.ReplaceAll(statement, "SCHEMA public", "SCHEMA "+schema)
+		statement = strings.ReplaceAll(statement, "'public'", "'"+schema+"'")
 		if _, err := fixture.pool.Exec(ctx, statement); err != nil {
 			t.Fatalf("the generated grant failed: %v (%s)", err, statement)
+		}
+	}
+	if provisioned {
+		for _, role := range []string{rulesRole, apiRole} {
+			var held bool
+			if err := fixture.pool.QueryRow(ctx, `SELECT
+has_schema_privilege($1,current_schema(),'USAGE') OR
+EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema() AND CASE WHEN c.relkind='S' THEN has_sequence_privilege($1,c.oid,'USAGE,SELECT,UPDATE') ELSE false END) OR
+EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema() AND CASE WHEN c.relkind='r' THEN has_table_privilege($1,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') ELSE false END) OR
+EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=current_schema() AND has_function_privilege($1,p.oid,'EXECUTE'))`, role).Scan(&held); err != nil {
+				t.Fatal(err)
+			}
+			if held {
+				t.Errorf("unused role %s still holds SQL privileges", role)
+			}
 		}
 	}
 
@@ -287,6 +340,61 @@ func runLiveSequenceAudit(t *testing.T, config *pgx.ConnConfig, role, schema str
 		t.Fatalf("read the live rights of the sequences: %v (%s)", err, stderr.String())
 	}
 	return output
+}
+
+// generatedProvisionGrantSQL captures SQL from the actual provisioning routine.
+func generatedProvisionGrantSQL(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	for name, body := range map[string][]byte{
+		"runtime.env": []byte("DATABASE_URL=unused-fixture-url\n"),
+		"api.env":     {},
+		"backup.env":  []byte("DATABASE_URL=unused-fixture-url\n"),
+	} {
+		if err := os.WriteFile(filepath.Join(directory, name), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy, err := os.ReadFile(filepath.Join(root, "deploy", "runtime-grants.policy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "runtime-grants.policy.json"), policy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Call the actual main routine. Only external execution, directory changes
+	// and credential files are isolated; no grant-rendering logic is copied.
+	const script = `import contextlib, importlib.util, io, json, sys
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location('provision_runtime', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+statements = []
+def capture(statement, database='kamkmchess'):
+    if statement.startswith('SELECT 1'):
+        return '1'
+    statements.append(statement)
+    return ''
+module.sql = capture
+with patch.object(module.os, 'chdir'), patch.object(module.subprocess, 'run'), contextlib.redirect_stdout(io.StringIO()):
+    module.main()
+print(json.dumps(statements))
+`
+	command := exec.Command("python", "-B", "-c", script, filepath.Join(root, "deploy", "provision-runtime.py"))
+	command.Dir = directory
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run the actual provisioning routine: %v (%s)", err, output)
+	}
+	var statements []string
+	if err := json.Unmarshal(output, &statements); err != nil {
+		t.Fatalf("read the provisioning SQL: %v (%s)", err, output)
+	}
+	return strings.Join(statements, "\n")
 }
 
 // generatedGrantSQL renders the grant SQL of the deployment.
