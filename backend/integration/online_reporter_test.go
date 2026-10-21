@@ -71,6 +71,23 @@ func TestOnlineTheOrderMigrationPreservesExistingOrdersAndSequence(t *testing.T)
 	}
 }
 
+func TestOnlineTheLastCheckpointFollowsTheObservationOrder(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	if _, err := fixture.pool.Exec(ctx, `INSERT INTO online_service_health(checkpoint_id,dependency,state,detail,recorded_at) VALUES
+('chk-last-01','rules','degraded','first','2026-01-01'),
+('chk-last-02','rules','healthy','second','2025-01-01')`); err != nil {
+		t.Fatal(err)
+	}
+	last, err := fixture.health.LastCheckpoint(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last.State != online.HealthHealthy || last.Detail != "second" {
+		t.Fatalf("last checkpoint = %s/%s, want healthy/second", last.State, last.Detail)
+	}
+}
+
 // The durable reporter of the health boundary.
 //
 // The reporter is written by the observations of the instance, and the

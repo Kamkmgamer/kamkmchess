@@ -126,13 +126,6 @@ type HealthReporter struct {
 	mu           sync.RWMutex
 	dependencies map[string]DependencyHealth
 	order        []string
-	// written is the durable state of every dependency: the state of the
-	// last checkpoint that was written.
-	//
-	// The checkpoint is written when the durable state differs from the
-	// observation, so a report that failed is written again by the next
-	// observation, and a healthy service does not grow a checkpoint row.
-	written map[string]HealthState
 	// pending is the observation of every dependency that is not durable
 	// yet.
 	//
@@ -170,7 +163,6 @@ func NewHealthReporter(db *pgxpool.Pool) *HealthReporter {
 	return &HealthReporter{
 		db:           db,
 		dependencies: map[string]DependencyHealth{},
-		written:      map[string]HealthState{},
 		pending:      map[string]pendingReport{},
 		revision:     map[string]uint64{},
 	}
@@ -222,16 +214,13 @@ func (h *HealthReporter) Flush(ctx context.Context) {
 	}
 	h.mu.Unlock()
 	for dependency, report := range pending {
-		persisted, err := h.writeCheckpointIfChanged(ctx, dependency, report.state, report.detail, report.revision)
+		_, err := h.writeCheckpointIfChanged(ctx, dependency, report.state, report.detail, report.revision)
 		if err != nil {
 			// The observation stays pending, so the next flush writes it
 			// again.
 			continue
 		}
 		h.mu.Lock()
-		if persisted {
-			h.written[dependency] = report.state
-		}
 		current, known := h.pending[dependency]
 		if known && current.revision == report.revision {
 			// The observation was not replaced while the write ran, so
@@ -322,9 +311,6 @@ func (h *HealthReporter) writeCheckpointIfChanged(ctx context.Context, dependenc
 	if h.db == nil {
 		// Without a database there is no durable state, so the observation
 		// is the state.
-		h.mu.Lock()
-		h.written[dependency] = state
-		h.mu.Unlock()
 		return true, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, ReportBudget)
@@ -356,9 +342,6 @@ func (h *HealthReporter) writeCheckpointIfChanged(ctx context.Context, dependenc
 		if err = tx.Commit(ctx); err != nil {
 			return false, err
 		}
-		h.mu.Lock()
-		h.written[dependency] = state
-		h.mu.Unlock()
 		return true, nil
 	case err != nil && !errors.Is(err, pgx.ErrNoRows):
 		return false, err
@@ -374,9 +357,6 @@ func (h *HealthReporter) writeCheckpointIfChanged(ctx context.Context, dependenc
 	if err = tx.Commit(ctx); err != nil {
 		return false, err
 	}
-	h.mu.Lock()
-	h.written[dependency] = state
-	h.mu.Unlock()
 	if !h.OverallHealthy() {
 		// The service is not healthy, so it is not alive. The liveness
 		// record keeps its last value, and the recovery locates the
@@ -399,7 +379,7 @@ func (h *HealthReporter) latestRevision(dependency string) uint64 {
 }
 
 // RefreshDependency writes a checkpoint of a dependency when the shared state
-// is worse than the given state.
+// differs from the current local observation supplied by the caller.
 //
 // The shared state is the newest persisted observation of every dependency, so
 // a healthy instance that answers again restores it and the claim path of the
@@ -577,17 +557,17 @@ func (h *HealthReporter) Current() HealthReport {
 	return report
 }
 
-// LastCheckpoint returns the newest durable checkpoint.
+// LastCheckpoint returns the durable checkpoint with the greatest observation
+// order across all dependencies. RecordedAt is its write time, not its order.
 //
-// A service that never recorded a checkpoint has ErrNotFound, which the
-// recovery path reads as "no known interruption".
+// A service that never recorded a checkpoint has ErrNotFound.
 func (h *HealthReporter) LastCheckpoint(ctx context.Context) (HealthReport, error) {
 	if h == nil || h.db == nil {
 		return HealthReport{}, ErrNotFound
 	}
 	var report HealthReport
 	var state string
-	err := h.db.QueryRow(ctx, `SELECT state,detail,recorded_at FROM online_service_health ORDER BY recorded_at DESC, checkpoint_id DESC LIMIT 1`).
+	err := h.db.QueryRow(ctx, `SELECT state,detail,recorded_at FROM online_service_health ORDER BY observation_order DESC LIMIT 1`).
 		Scan(&state, &report.Detail, &report.RecordedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return HealthReport{}, ErrNotFound
