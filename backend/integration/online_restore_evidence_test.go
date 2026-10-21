@@ -1083,11 +1083,6 @@ func TestPostgresTheCloseKeepsTheOwnershipWhileTheEvidenceIsDischarged(t *testin
 		t.Fatalf("bind the fence of the crashed restore: %v", err)
 	}
 	crashed.Release()
-	// The close of the next restore cannot discharge that evidence.
-	evidenceDirectory := filepath.Join(directory, "restore-requirements")
-	if _, err = evidenceHoldRemoval(t, evidenceDirectory, "evidence-close-crashed.json"); err != nil {
-		t.Skipf("the removal of the evidence cannot be refused on this host: %v", err)
-	}
 	handle, err := removals.BeginFence("evidence-close-order", true)
 	if err != nil {
 		t.Fatalf("open the fence: %v", err)
@@ -1095,6 +1090,14 @@ func TestPostgresTheCloseKeepsTheOwnershipWhileTheEvidenceIsDischarged(t *testin
 	defer handle.Release()
 	if err = handle.Bind(live); err != nil {
 		t.Fatalf("bind the fence: %v", err)
+	}
+	// The close of the next restore cannot discharge that evidence. The
+	// refusal is arranged after the bind of this restore, because the bind
+	// writes its own evidence into the same directory and has to succeed:
+	// the close is what has to fail, not the bind.
+	evidenceDirectory := filepath.Join(directory, "restore-requirements")
+	if _, err = evidenceHoldRemoval(t, evidenceDirectory, "evidence-close-crashed.json"); err != nil {
+		t.Skipf("the removal of the evidence cannot be refused on this host: %v", err)
 	}
 	if err = handle.Finish(live); err == nil {
 		t.Fatal("the close reported success although the evidence could not be discharged")
