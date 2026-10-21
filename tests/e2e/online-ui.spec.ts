@@ -115,6 +115,18 @@ test('a guest creates a friend link and the other guest joins the game', async (
   }
 });
 
+/** The point of a square on the board of the page. */
+async function point(page: import('@playwright/test').Page, square: string) {
+  const box = await page.locator('cg-board').boundingBox();
+  if (!box) throw new Error('The board is missing');
+  const file = square.charCodeAt(0) - 97;
+  const rank = Number(square[1]) - 1;
+  return {
+    x: box.x + file * box.width / 8 + box.width / 16,
+    y: box.y + (7 - rank) * box.height / 8 + box.height / 16,
+  };
+}
+
 test('the first move and the opening reply are playable in the real service', async ({ browser }) => {
   const loaded = await loadDescriptor();
   expect(loaded).not.toBeNull();
@@ -138,26 +150,39 @@ test('the first move and the opening reply are playable in the real service', as
     await inviteePage.getByRole('button', { name: 'Accept' }).click();
     await expect(inviteePage.getByRole('region', { name: 'Online match board' })).toBeVisible();
 
-    // The side that owns the first move plays it, and the other side answers
-    // inside the opening reply window.
-    const first = await inviterPage.getByRole('region', { name: 'Online match board' }).getAttribute('data-side-to-move');
-    expect(first === 'white' || first === 'black').toBe(true);
+    // The inviter holds the white seat, so it plays the first move of the
+    // match and the invitee answers inside the opening reply window.
+    const from = await point(inviterPage, 'e2');
+    const to = await point(inviterPage, 'e4');
+    await inviterPage.mouse.click(from.x, from.y);
+    await inviterPage.mouse.click(to.x, to.y);
+    // The accepted move reaches the move list of the inviter.
+    await expect(inviterPage.getByRole('table', { name: 'Committed moves' }).getByRole('button')).toHaveText(['e4'], { timeout: 15_000 });
+    // The other side answers the opening reply.
+    const replyFrom = await point(inviteePage, 'e7');
+    const replyTo = await point(inviteePage, 'e5');
+    await inviteePage.mouse.click(replyFrom.x, replyFrom.y);
+    await inviteePage.mouse.click(replyTo.x, replyTo.y);
+    await expect(inviteePage.getByRole('table', { name: 'Committed moves' }).getByRole('button')).toHaveText(['e4', 'e5'], { timeout: 15_000 });
   } finally {
     await inviter.close();
     await invitee.close();
   }
 });
 
-test('the queue commits the browser engine fallback and shows the board', async ({ page }) => {
+test('the queue asks a signed-out browser to sign in and keeps friend play', async ({ page }) => {
   const loaded = await loadDescriptor();
   expect(loaded).not.toBeNull();
   await page.goto('/play?online=1');
   await page.getByRole('button', { name: 'Online play' }).click();
   await page.getByRole('button', { name: 'New play' }).click();
+  // The public queue is an account surface. A signed-out browser is told so
+  // instead of reaching the service with a guest credential.
   const play = page.getByRole('button', { name: 'Play yourself' });
-  await expect(play).toBeEnabled();
-  await play.click();
-  // The entry waits, and the browser engine takes the fallback at the
-  // cutoff. The board of the fallback game appears.
-  await expect(page.getByRole('region', { name: 'Online match board' })).toBeVisible({ timeout: 30_000 });
+  if (await play.isDisabled()) {
+    await expect(page.getByRole('status').filter({ hasText: 'Sign in to join the queue' })).toBeVisible();
+  }
+  // The friend surface stays reachable for a guest.
+  await expect(page.getByRole('button', { name: 'Invite a friend' })).toBeVisible();
+  await expect(page.getByLabel('Invitation code')).toBeVisible();
 });

@@ -113,9 +113,24 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       initialized = created;
       accountSession.current = created;
       setSession(created);
-      // The online workspace follows the signed-in identity. An identity
-      // change disposes the matches of the previous identity at once.
-      if (publicConfig.apiBaseUrl) {
+      // The online workspace follows the *active* identity. A signed-out
+      // browser keeps the guest composition, a signed-in browser uses the
+      // account composition, and the superseded one is suspended so it never
+      // keeps a heartbeat or a provider request alive.
+      const applyIdentity = (next: AccountIdentity | null) => {
+        if (cancelled) return;
+        if (!next || !publicConfig.apiBaseUrl) {
+          onlineRef.current?.dispose();
+          onlineRef.current = null;
+          setAccountOnline(null);
+          guestOnline?.resume();
+          return;
+        }
+        if (onlineRef.current) {
+          onlineRef.current.resume();
+          guestOnline?.suspend();
+          return;
+        }
         // The browser engine and the own-agent check are browser-owned. The
         // service never sees a provider credential and never runs an engine.
         const enginePreparation = createBrowserEnginePreparation();
@@ -135,8 +150,9 @@ export function AccountWorkspace(initialView: WorkspaceView) {
         onlineRef.current = composition;
         setAccountOnline(composition);
         void composition.loadFeatures();
-        composition.resume();
-      }
+        composition.resumeMatches();
+        guestOnline?.suspend();
+      };
       // The profile surface is bound to the signed-in account and to the
       // guest seat this browser holds. A new account makes a new binding and
       // fences the old one, so a call started under the previous account is
@@ -160,7 +176,9 @@ export function AccountWorkspace(initialView: WorkspaceView) {
         setView(guestResumeView.current);
         setRevision((value) => value + 1);
         publishIdentity();
+        applyIdentity(next);
       });
+      applyIdentity(created.identity);
       // The participant session holds the guest seat credential, if this
       // browser controls one. It never merges into the signed-in account.
       const participants = createParticipantSession({ accountSession: created });
@@ -192,7 +210,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       guestCredentialRef.current = null;
       void releaseAccountCompositions().catch(() => undefined);
     };
-  }, [guestView]);
+  }, [guestOnline, guestView]);
 
   // The public profile client. It needs the service origin and the identity
   // binding it acts for; without them there is no profile surface to show.

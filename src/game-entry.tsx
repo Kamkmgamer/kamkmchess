@@ -35,6 +35,9 @@ const online = onlineOrigin
     checkModel,
   })
   : null;
+// The service owns the rollout of the online surfaces. The browser asks
+// once, without a credential, and keeps the answer for the page lifetime.
+void online?.loadFeatures();
 const rootView = createRoot(root);
 void composition.openActiveGame().then(async (session) => {
   const snapshot = await session.controller.initialize();

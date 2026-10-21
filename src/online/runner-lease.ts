@@ -26,7 +26,7 @@
  * - A released or revoked lease stops the runner. The runner never submits an
  *   answer under a lease it no longer holds.
  */
-import { buildRunnerLeaseBody, buildRunnerRequestBody, parseRunnerLeaseAnswer } from './provider-runner';
+import { buildRunnerLeaseBody, buildRunnerRequestBody, classifyProviderRunnerError, parseRunnerLeaseAnswer, ProviderRunnerServiceError } from './provider-runner';
 import type { ProviderRunnerLease, ProviderRunnerLeasePort } from './provider-runner';
 import type { AuthorizedRequester } from './request';
 import type { ParticipantSession } from './session';
@@ -88,7 +88,14 @@ export function createOnlineRunnerLeaseClient(options: OnlineRunnerLeaseOptions)
       }),
     });
     if (!result.ok) {
-      throw new Error(`The service refused the runner lease (${result.status}).`);
+      // The failure carries the real status, so the runner classifies it as a
+      // refusal, a conflict, a missing lease or a refused credential instead
+      // of reading a message.
+      throw new ProviderRunnerServiceError(
+        classifyProviderRunnerError({ status: result.status }),
+        `The service refused the runner lease (${result.status}).`,
+        result.status,
+      );
     }
     return parseRunnerLeaseAnswer(result.data, matchId, seat);
   }
@@ -111,7 +118,11 @@ export function createOnlineRunnerLeaseClient(options: OnlineRunnerLeaseOptions)
       }),
     });
     if (!result.ok) {
-      throw new Error(`The service refused the runner request (${result.status}).`);
+      throw new ProviderRunnerServiceError(
+        classifyProviderRunnerError({ status: result.status }),
+        `The service refused the runner request (${result.status}).`,
+        result.status,
+      );
     }
     return parseRunnerLeaseAnswer(result.data, matchId, seat);
   }
@@ -141,7 +152,11 @@ export function createOnlineRunnerLeaseClient(options: OnlineRunnerLeaseOptions)
       });
       if (result.status === 404) return null;
       if (!result.ok) {
-        throw new Error(`The service refused the runner lease (${result.status}).`);
+        throw new ProviderRunnerServiceError(
+          classifyProviderRunnerError({ status: result.status }),
+          `The service refused the runner lease (${result.status}).`,
+          result.status,
+        );
       }
       return parseRunnerLeaseAnswer(result.data, matchId, seat);
     },

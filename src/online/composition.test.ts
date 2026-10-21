@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createOnlineComposition } from './composition';
+import type { QueueEntry } from './contracts';
+import type { ModelSelection } from '../controller/index.js';
 import type { OnlineComposition } from './composition';
 import { createGuestCredential } from './auth';
 import type { OnlineMatchView } from './updates';
@@ -278,6 +280,53 @@ describe('the online composition wires the product (B-2, B-5, B-7, B-12)', () =>
     expect(wires.length).toBeGreaterThan(0);
   });
 
+  it('keeps the intent of a newer entry when an older entry ends (B-4, scoped)', async () => {
+    // The older entry A expires while the newer entry B is created, commits
+    // and its answer is lost. The intent of B survives and its retry reuses
+    // the same key.
+    let lost = false;
+    const { fetcher, wires } = createFetchDouble({
+      entry: (body) => {
+        const control = body?.control as { kind?: string } | undefined;
+        if (control?.kind === 'agent' && !lost) {
+          lost = true;
+          throw new Error('The connection was lost.');
+        }
+        return { status: 201, data: entryAnswer(body) };
+      },
+    });
+    const storage = createStorage();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      checkModel: async () => ({ ready: true, detail: '' }),
+    });
+    // The older entry A waits and then expires.
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    // The owner has an own agent, so the agent seat may enter the queue.
+    composition.setAgent({
+      label: 'GPT-4o',
+      selection: { connectionId: 'c1', modelRoutingId: 'm1', protocol: 'chat-completions', configurationRevision: 'r1', diagnostic: 'passed-current-session' } as unknown as ModelSelection,
+    });
+    // The newer entry B commits, but its answer is lost.
+    await composition.enterQueue({ control: { kind: 'agent', modelLabel: 'GPT-4o' }, timeControl }, { intent: 'new' })
+      .catch(() => undefined);
+    // The terminal state of the older entry A does not release the intent of B.
+    composition.queueEntries[0]?.observe({ ...entryAnswer(null), status: 'waiting', readyAt: null } as unknown as QueueEntry);
+    // The retry of B reuses the key of B, and never the key of the older
+    // entry A.
+    const before = wires.filter(wire => wire.path.endsWith('/entries') && wire.method === 'POST').length;
+    await composition.queue.retry().catch(() => undefined);
+    const creates = wires.filter(wire => wire.path.endsWith('/entries') && wire.method === 'POST');
+    expect(creates.length).toBe(before + 1);
+    const keys = creates.map(wire => String(wire.body?.clientRequestId));
+    expect(keys[1]).toBe(keys[2]);
+    expect(keys[0]).not.toBe(keys[1]);
+    composition.dispose();
+  });
   it('keeps the intent when the answer of the creation is unknown (B-4)', async () => {
     // The service committed the entry, but the answer never reached the
     // browser. The retry has to reach the same entry.
@@ -299,8 +348,8 @@ describe('the online composition wires the product (B-2, B-5, B-7, B-12)', () =>
     await composition.enterQueue({ control: { kind: 'human' }, timeControl });
     expect(committed).toBe(true);
     const stored = [...storage.data.values()][0] ?? '';
-    expect(stored).toContain('clientRequestId');
-    const key = JSON.parse(stored) as { clientRequestId: string; entryId: string | null };
+    expect(stored).toContain('"key"');
+    const key = JSON.parse(stored) as { key: string; entryId: string | null };
     // A new composition of the same identity and the same settings reuses
     // the key, so the service answers with the same entry.
     const retry = createOnlineComposition({
@@ -310,8 +359,8 @@ describe('the online composition wires the product (B-2, B-5, B-7, B-12)', () =>
       accountSession: accountSession(),
     });
     await retry.enterQueue({ control: { kind: 'human' }, timeControl });
-    const second = JSON.parse([...storage.data.values()][0] ?? '{}') as { clientRequestId: string };
-    expect(second.clientRequestId).toBe(key.clientRequestId);
+    const second = JSON.parse([...storage.data.values()][0] ?? '{}') as { key: string };
+    expect(second.key).toBe(key.key);
     const creates = wires.filter(wire => wire.path.endsWith('/entries') && wire.method === 'POST');
     expect(creates).toHaveLength(2);
     expect(creates[0]?.body?.clientRequestId).toBe(creates[1]?.body?.clientRequestId);
@@ -332,8 +381,24 @@ describe('the online composition wires the product (B-2, B-5, B-7, B-12)', () =>
   });
 });
 
-describe('the composition keeps the guest authority (B-6)', () => {
-  it('never drives a guest seat with the account credential', async () => {
+describe('the agent binding follows the seat, never the public label (B-26)', () => {
+  it('resolves the private selection of a switch and never relabels the old one', async () => {
+    const { composition } = createComposition();
+    const first = { connectionId: 'c1', modelRoutingId: 'm1', protocol: 'chat-completions', configurationRevision: 'r1', diagnostic: 'passed-current-session' } as unknown as ModelSelection;
+    const second = { connectionId: 'c2', modelRoutingId: 'm2', protocol: 'chat-completions', configurationRevision: 'r2', diagnostic: 'passed-current-session' } as unknown as ModelSelection;
+    composition.setAgent({ label: 'Custom model', selection: first });
+    composition.setAgentCatalog([{ label: 'Custom model', selection: first }, { label: 'Other model', selection: second }]);
+    // A switch to a label of the catalog resolves the private selection of
+    // that label.
+    await expect(composition.agentDecision('match-00000001', 'white', 'switch-model', 'Other model')).resolves.toBeUndefined();
+    // A switch to a label the owner never connected is refused.
+    await expect(composition.agentDecision('match-00000001', 'white', 'switch-model', 'Unknown model'))
+      .rejects.toThrow(/not connected/);
+    composition.dispose();
+  });
+});
+
+describe('the composition keeps the guest authority (B-6)', () => {  it('never drives a guest seat with the account credential', async () => {
     const { composition, wires } = createComposition();
     composition.registerGuestCredential(createGuestCredential({
       guestId: 'guest-1',

@@ -30,13 +30,14 @@ workspace never sends a credential in a URL, a query string or a body.
 
 The browser sends and receives the shared contracts of
 `src/online/contracts.ts` (`QueueEntry`, `SeatControl`, `TimeControl`). The
-workspace expects these routes; the matching worker owns their implementation
-and may rename them once, in which case only
-`src/online/queue-client.ts` changes.
+routes and their answers are published by the queue worker in
+`docs/online/queue-contract.md`, and the browser calls them through its typed
+client `src/online/queue.ts`. The queue worker owns the HTTP adapter
+`src/online/queue-client.ts`; the workspace does not use a second client.
 
 | Route | Method | Request body | Answer |
 | --- | --- | --- | --- |
-| `/v1/online/queue/entries` | POST | `{ schemaVersion: 2, control, timeControl }` | `QueueEntry` |
+| `/v1/online/queue/entries` | POST | `{ schemaVersion: 2, control, timeControl, clientRequestId? }` | `QueueEntry` |
 | `/v1/online/queue/entries/{entryID}` | GET | - | `QueueEntry` |
 | `/v1/online/queue/entries/{entryID}/ready` | POST | `{ schemaVersion: 2 }` | `QueueEntry` with `readyAt` and `cutoffAt` set |
 | `/v1/online/queue/entries/{entryID}/cancel` | POST | `{ schemaVersion: 2 }` | `QueueEntry` with status `cancelled` |

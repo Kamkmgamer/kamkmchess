@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createOnlineRunnerLeaseClient, onlineRunnerLeasePath, onlineRunnerRequestPath } from './runner-lease';
-import { parseRunnerLeaseAnswer } from './provider-runner';
+import { parseRunnerLeaseAnswer, ProviderRunnerServiceError } from './provider-runner';
 import { createParticipantSession } from './session';
 import { createAuthorizedRequester } from './request';
 import { createGuestCredential } from './auth';
@@ -115,5 +115,17 @@ describe('the runner lease wire', () => {
   it('refuses a lease without an identity', () => {
     expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, leaseId: '' }, 'match-00000001', 'black')).toThrow(/no lease/);
     expect(() => parseRunnerLeaseAnswer({ ...leaseAnswer, status: 'unknown' }, 'match-00000001', 'black')).toThrow(/no state/);
+  });
+
+  it('classifies a refused credential, a held lease and a missing lease', async () => {
+    // The failure carries the real status, so the runner tells a refused
+    // credential, a held lease and a missing lease apart.
+    for (const [status, kind] of [[401, 'unauthorized'], [409, 'conflict'], [404, 'not-found']] as const) {
+      const { client } = createClient(() => ({ status, data: {} }));
+      const failure = await client.acquire({ controlEpoch: 1, turnVersion: 1 }).catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(ProviderRunnerServiceError);
+      expect((failure as ProviderRunnerServiceError).kind).toBe(kind);
+      expect((failure as ProviderRunnerServiceError).status).toBe(status);
+    }
   });
 });
