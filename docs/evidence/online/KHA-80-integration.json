@@ -1,7 +1,7 @@
 {
   "tool": "scripts/online/integration-suite.mjs",
-  "generatedAt": "2026-10-21T00:12:39.692Z",
-  "commit": "9c6bc799253c68f5ef4ca92ee1cd07a9c9dc9411",
+  "generatedAt": "2026-10-21T01:35:12.082Z",
+  "commit": "e283d271952e6014d0f502a5926455716b0f4314",
   "versions": {
     "go": "go version go1.26.5 windows/amd64",
     "node": "v24.22.0",
@@ -150,7 +150,7 @@
     },
     {
       "test": "TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight",
-      "action": "pass"
+      "action": "fail"
     },
     {
       "test": "TestPostgresOnlinePendingSessionRevocationRejectsTheWaitingCreateReplay",
@@ -343,330 +343,6 @@
     {
       "test": "TestPostgresPublicReplayIsAllowlistedAndReadableWithoutSigningIn",
       "action": "pass"
-    },
-    {
-      "test": "TestPostgresProjectionIsIdempotentAndCountsEachResultOnce",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresAbortIsPublishedAsUnscored",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresPrivateModelLabelNeverReachesTheSharedTables",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOwnerChosenPublicLabelIsPublished",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresMixedControlAttributesEveryMoveAndTheTerminalAction",
-      "action": "fail"
-    },
-    {
-      "test": "TestPostgresControlChangeAnswersWithThePublishableLabel",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresPublicHistoryExcludesPrivateLocalSaves",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresFallbackGameIsNamedAfterTheBrowserEngine",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresLegacyReplayRouteServesTheAllowlistedReplay",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineTakebackConsentIsBoundToTheExactOffer",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineTakebackConsentRefusesAConsumedOrUnknownOffer",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineDrawConsentIsBoundToTheExactOffer",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineOfferAdvancesTheVersionAndRecordsAnEvent",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineTakebackRemovesTheDiscardedIncrement",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineTakebackIsRefusedDuringTheOpeningExchange",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineTakebackIsRefusedDuringTheBlackStartOpening",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineTakebackDoesNotReopenTheOpeningPhase",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineAcceptanceRetryReturnsTheStoredReceipt",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineAcceptanceFingerprintCoversTheOfferIdentity",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineOpeningClockRunsNoMainBankBeforeTheFirstMove",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineOpeningClockAppliesToBlackToMovePositions",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineUnansweredOpeningReplyAbortsTheMatch",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineRejectedIntentsDoNotAdvanceStateOrMintIncrements",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineIllegalMoveIsRefusedByTheRulesProcess",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineCancellationAbortsBeforeTheFirstMoveAndResignsAfter",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineCancellationAfterATakebackStillResigns",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineDrawOfferNeedsMutualConsent",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineTakebackRestoresThePositionWithoutRefunding",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineStaleTakebackOfferCannotRewindLaterPlay",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineTakebackOfferRejectsAPositionOutsideTheLine",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineRecoveryBudgetsSurviveControlChangesAndTakebacks",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineFourthIllegalAttemptLosesTheMatch",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineControlChangeKeepsTheClockRunning",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineClockKeepsRunningWhileNoIntentArrives",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineAcceptedMoveWithdrawsAPendingDrawOffer",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineFinishedMatchHasNoPendingOffer",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineExpiredClockSettlesEvenWhenTheIntentIsRefused",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineCancellationIsRecordedAsItsOwnEvent",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineFinalResultCannotBeOverwritten",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineLateRulesCandidateCannotChangeThePositionAfterATakeback",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlineOfferReceiptsAreIdempotent",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresOnlinePendingOffersAreVisibleToBothParticipants",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlinePresenceConnectedOpponentNeverOffersClaim",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlinePresenceLeaseExpiryMarksTheSeatOffline",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlinePresenceClaimBoundaryAtSixtySeconds",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlinePresenceKeepWaitingPreservesTheOption",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlinePresenceReconnectClearsTheClaim",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlinePresenceClaimFirstStaysFinal",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlinePresenceServiceUnavailableSuppressesTheClaim",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlinePresenceClaimCannotBypassTheOpeningAbort",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlinePresenceClaimIsSerializedWithTheClockExpiry",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresAccountDeletionAnonymizesTheSharedGameInBothHistories",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresExplicitRemovalErasesTheReplayFromBothHistories",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresGuestRemovalUsesTheRetainedSeatCredential",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresRemovalLedgerReplaysAfterAnOlderRestore",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresPrivacyRoutesSeparateDeletionFromRemoval",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresServingIsBlockedUntilTheRemovalLedgerIsReplayed",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresPublicProfileIsPublishedWithoutTheAccountIdentity",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresPublicUsernameLookupIsCaseInsensitive",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresPublicUsernameUniquenessIsCaseInsensitiveAndRaceSafe",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresPublicProfileNameCanBeRemoved",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresPublicProfileEditsAreOwnershipChecked",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresPublicAvatarIsABoundedChoice",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresExplicitGuestLinkBindsTheSeatAndKeepsTheOriginalActor",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresGuestLinkRejectsAnotherSeatAndAnotherOwner",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresGuestLinkRejectsADeadProofAndADeadCredential",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresGuestLinkRejectsARevokedAccountSession",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresProfileLinkLedgerRefusesAForeignSeat",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresProfileUpdateRacesAreSerialized",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresProfileUsernameRulesRejectReservedAndUnsafeNames",
-      "action": "pass"
-    },
-    {
-      "test": "TestPostgresProfileTablesHoldNoPrivateIdentity",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlineRecoveryHealthyJoinDoesNotOpenAnEpoch",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlineRecoveryAdjustsTheDeadlineOfAnUnfinishedMatch",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlineRecoveryReplaysABoundaryOnlyOnce",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlineRecoveryPreservesTerminalResults",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlineRunnerLeaseDuplicateTabIsRefused",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlineRunnerLeaseIsPerSeatAndPerGame",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlineRunnerLeaseExpiryFencesMoves",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlineRunnerControlChangeRevokesTheLease",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlineRunnerUncertainRequestSurvivesTheLeaseChange",
-      "action": "pass"
-    },
-    {
-      "test": "TestOnlineRunnerLeaseIsBoundToTheTurn",
-      "action": "pass"
     }
   ],
   "coverage": [
@@ -690,12 +366,12 @@
     },
     {
       "scenarioId": "MAT-11",
-      "status": "passed",
+      "status": "not_run",
       "tests": [
         "TestPostgresOnlineDrawConsentIsBoundToTheExactOffer",
         "TestPostgresOnlineTakebackConsentIsBoundToTheExactOffer"
       ],
-      "detail": "TestPostgresOnlineDrawConsentIsBoundToTheExactOffer, TestPostgresOnlineTakebackConsentIsBoundToTheExactOffer passed"
+      "detail": "TestPostgresOnlineDrawConsentIsBoundToTheExactOffer, TestPostgresOnlineTakebackConsentIsBoundToTheExactOffer did not run"
     },
     {
       "scenarioId": "ARC-02",
@@ -717,13 +393,13 @@
     },
     {
       "scenarioId": "ARC-04",
-      "status": "passed",
+      "status": "not_run",
       "tests": [
         "TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt",
         "TestPostgresOnlineAcceptanceRetryReturnsTheStoredReceipt",
         "TestPostgresOnlineExpiredCredentialCannotReplayAnAcceptedOperation"
       ],
-      "detail": "TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt, TestPostgresOnlineAcceptanceRetryReturnsTheStoredReceipt, TestPostgresOnlineExpiredCredentialCannotReplayAnAcceptedOperation passed"
+      "detail": "TestPostgresOnlineAcceptanceRetryReturnsTheStoredReceipt did not run"
     },
     {
       "scenarioId": "ARC-05",
@@ -746,12 +422,12 @@
     },
     {
       "scenarioId": "ARC-08",
-      "status": "passed",
+      "status": "failed",
       "tests": [
         "TestPostgresGuestSeatKeepsOneLiveCredentialAndOneOwner",
         "TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight"
       ],
-      "detail": "TestPostgresGuestSeatKeepsOneLiveCredentialAndOneOwner, TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight passed"
+      "detail": "TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight failed"
     },
     {
       "scenarioId": "ARC-09",
@@ -790,9 +466,9 @@
     }
   ],
   "browser": {
-    "status": "passed",
-    "exitCode": 0,
-    "output": "Running 5 tests using 1 worker\n\n[1/5] [chromium] › tests\\e2e\\online-clients.spec.ts:117:3 › online clients against the local fixture › the feature switch route reports exactly the two switches\n[2/5] [chromium] › tests\\e2e\\online-clients.spec.ts:133:3 › online clients against the local fixture › a guest accepts a friend invitation and both browser clients observe the same accepted move\n[3/5] [chromium] › tests\\e2e\\online-clients.spec.ts:294:3 › online clients against the local fixture › a consumed invitation cannot be accepted twice and a guest without a credential is refused\n[4/5] [chromium] › tests\\e2e\\online-clients.spec.ts:353:3 › online clients against the local fixture › the production interface renders the invitation link\n[5/5] [chromium] › tests\\e2e\\online-clients.spec.ts:390:3 › online clients against the local fixture › the rendered workspace reflects the real service state\n  1 skipped\n  4 passed (47.5s)"
+    "status": "failed",
+    "exitCode": 1,
+    "output": "\n      328 |\n      329 |     await ownerContext.close();\n    > 330 |     await guestContext.close();\n          |     ^\n      331 |   });\n      332 |\n      333 |   test('a consumed invitation cannot be accepted twice and a guest without a credential is refused', async ({ browser }) => {\n        at C:\\Users\\Lenovo\\.t3\\worktrees\\kamkmchess\\t3-0b2f50f8\\tests\\e2e\\online-clients.spec.ts:330:5\n\n    Test timeout of 45000ms exceeded.\n\n    attachment #1: screenshot (image/png) ──────────────────────────────────────────────────────────\n    test-results\\online-clients-online-clie-080f4-erve-the-same-accepted-move-chromium\\test-failed-1.png\n    ────────────────────────────────────────────────────────────────────────────────────────────────\n\n    attachment #2: screenshot (image/png) ──────────────────────────────────────────────────────────\n    test-results\\online-clients-online-clie-080f4-erve-the-same-accepted-move-chromium\\test-failed-2.png\n    ────────────────────────────────────────────────────────────────────────────────────────────────\n\n    Error Context: test-results\\online-clients-online-clie-080f4-erve-the-same-accepted-move-chromium\\error-context.md\n\n\n[3/5] [chromium] › tests\\e2e\\online-clients.spec.ts:333:3 › online clients against the local fixture › a consumed invitation cannot be accepted twice and a guest without a credential is refused\n[4/5] [chromium] › tests\\e2e\\online-clients.spec.ts:392:3 › online clients against the local fixture › the production interface renders the invitation link\n[5/5] [chromium] › tests\\e2e\\online-clients.spec.ts:429:3 › online clients against the local fixture › the rendered workspace reflects the real service state\n  1 failed\n    [chromium] › tests\\e2e\\online-clients.spec.ts:133:3 › online clients against the local fixture › a guest accepts a friend invitation and both browser clients observe the same accepted move \n  1 skipped\n  3 passed (2.8m)"
   },
   "limits": [
     "This run proves local behaviour against a real database and the pinned rules worker.",

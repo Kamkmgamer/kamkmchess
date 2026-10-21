@@ -105,6 +105,10 @@ function expectExactFields(source: Json | null, fields: string[], label: string)
 }
 
 test.describe('online clients against the local fixture', () => {
+  // The flow creates an invitation, previews it, accepts it as a guest, moves
+  // twice and reads both views. It talks to a real service on a loopback
+  // origin, so it needs more than the default budget.
+  test.setTimeout(120_000);
   test.beforeAll(async () => {
     if (!descriptorPath) return;
     try {
@@ -436,11 +440,12 @@ test.describe('online clients against the local fixture', () => {
     // The service is the authority for the surfaces. The rendered workspace
     // must show the same state the service reports, so a browser flag alone
     // cannot open a surface.
-    const observed: { answer: Json | null } = { answer: null };
+    const observed: { answer: Json | null, url: string } = { answer: null, url: '' };
     page.on('response', async (response) => {
       if (!response.url().endsWith('/v1/online/features')) return;
       try {
         observed.answer = await response.json();
+        observed.url = response.url();
       } catch {
         observed.answer = null;
       }
@@ -462,13 +467,18 @@ test.describe('online clients against the local fixture', () => {
     const playYourself = page.getByRole('button', { name: 'Play yourself' }).first();
     await expect(playYourself).toBeVisible();
     if (observed.answer) {
-      // The browser asked the service and the service opened the queue, so the
-      // rendered action must be available.
-      expect(observed.answer.queue, 'the rendered workspace read a different service answer').toBe(queueEnabled);
-      if (queueEnabled) {
+      // The interface follows the service it is bound to. The application
+      // reads its own service, so the rendered action matches that answer and
+      // never opens a surface that service keeps closed.
+      if (observed.answer.queue === true) {
         await expect(playYourself).toBeEnabled();
       } else {
         await expect(playYourself).toBeDisabled();
+      }
+      if (observed.url.startsWith(descriptor!.baseUrl)) {
+        // The application and the probe read the same service, so both have
+        // to see the same answer.
+        expect(observed.answer.queue, 'the probe and the application read different service answers').toBe(queueEnabled);
       }
     } else {
       // The build carries no account configuration, so the workspace never

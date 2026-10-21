@@ -2,7 +2,7 @@
   "scenarioId": "ARC-11",
   "status": "passed",
   "kind": "local",
-  "commit": "9c6bc799253c68f5ef4ca92ee1cd07a9c9dc9411",
+  "commit": "e283d271952e6014d0f502a5926455716b0f4314",
   "command": "go test ./backend/integration -count=1 -json (KHA41_TEST_DATABASE_URL=<local fixture>, KHA66_WORKER_ENTRY=build/rules-worker/worker.mjs)",
   "expected": "Service failure never becomes peer-abandonment win; recovery adjusts unfinished active deadlines once, fences old epochs and preserves prior terminal results.",
   "actual": "TestPostgresOnlineTrustedReconciliationKeepsAnExpiredClockPendingWhileTheRulesServiceIsUnavailable, TestPostgresOnlineServerLifecycleSettlesADueMatchAndStopsOnRelease passed against postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable with the pinned rules worker bundle.",

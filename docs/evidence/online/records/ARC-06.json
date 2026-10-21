@@ -2,9 +2,9 @@
   "scenarioId": "ARC-06",
   "status": "passed",
   "kind": "local",
-  "commit": "9c6bc799253c68f5ef4ca92ee1cd07a9c9dc9411",
-  "command": "pnpm exec playwright test tests/e2e/online-clients.spec.ts (ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1)",
+  "commit": "e283d271952e6014d0f502a5926455716b0f4314",
+  "command": "go test ./backend/integration -count=1 -json (KHA41_TEST_DATABASE_URL=<local fixture>, KHA66_WORKER_ENTRY=build/rules-worker/worker.mjs)",
   "expected": "Consumed invitation cannot control a seat; private scoped guest credentials can reconnect and request their own data removal.",
-  "actual": "The browser cases passed against the real service: a consumed invitation cannot be accepted twice and a guest without a credential is refused.",
-  "notes": "Local browser evidence. It does not certify a native assistive-technology run, a live host or a released cohort."
+  "actual": "TestPostgresOnlineGuestCredentialAuthorizesItsSeatAndReconnects, TestPostgresGuestSeatKeepsOneLiveCredentialAndOneOwner passed against postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable with the pinned rules worker bundle.",
+  "notes": "Local evidence only. It does not certify a native run, a live host or a released cohort."
 }

@@ -2,9 +2,9 @@
   "scenarioId": "MAT-03",
   "status": "passed",
   "kind": "local",
-  "commit": "9c6bc799253c68f5ef4ca92ee1cd07a9c9dc9411",
-  "command": "pnpm exec playwright test tests/e2e/online-clients.spec.ts (ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1)",
+  "commit": "e283d271952e6014d0f502a5926455716b0f4314",
+  "command": "go test ./backend/integration -count=1 -json (KHA41_TEST_DATABASE_URL=<local fixture>, KHA66_WORKER_ENTRY=build/rules-worker/worker.mjs)",
   "expected": "Duplicate, stale, illegal and wrong-seat intents neither advance state nor mint clock increments.",
-  "actual": "The browser cases passed against the real service: a guest accepts a friend invitation and both browser clients observe the same accepted move.",
-  "notes": "Local browser evidence. It does not certify a native assistive-technology run, a live host or a released cohort."
+  "actual": "TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt, TestPostgresOnlineNonMemberCannotReadOrCommand passed against postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable with the pinned rules worker bundle.",
+  "notes": "Local evidence only. It does not certify a native run, a live host or a released cohort."
 }

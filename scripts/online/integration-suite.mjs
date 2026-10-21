@@ -196,7 +196,11 @@ async function writeBrowserRecords(root, report) {
  */
 async function runBrowserClients(root, databaseUrl) {
   const descriptorPath = join(root, '.scratch', 'onlinefixture', 'descriptor.json');
-  const fixture = spawn('node', [join(root, 'scripts', 'online', 'fixture-server.mjs'), '--descriptor', descriptorPath], {
+  // The browser build points at a fixed loopback origin, so the fixture uses
+  // the same fixed port. The application and the suite then talk to one
+  // service instead of two.
+  const apiPort = process.env.ONLINE_FIXTURE_API_PORT ?? '18099';
+  const fixture = spawn('node', [join(root, 'scripts', 'online', 'fixture-server.mjs'), '--descriptor', descriptorPath, '--api-port', apiPort], {
     cwd: root,
     windowsHide: true,
     env: { ...process.env, ONLINE_FIXTURE_DATABASE_URL: databaseUrl },
