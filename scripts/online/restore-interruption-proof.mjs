@@ -156,6 +156,11 @@ export const REQUIRED_STEPS = [
   'the-repeated-recovery-refuses',
   'the-take-over-replays-the-owed-ledger',
   'the-service-admits-after-the-replay',
+  'the-private-payload-is-in-the-bundle-and-in-the-restored-database',
+  'the-private-payload-of-the-removed-subject-is-gone',
+  'the-tombstone-of-the-removed-private-game-is-retained',
+  'the-unrelated-private-payload-survives',
+  'the-session-of-the-removed-subject-is-fenced',
   'the-removed-data-does-not-come-back',
   'the-control-survives',
 ];
@@ -414,6 +419,31 @@ export async function runInterruptionProof(options = {}) {
     await seed(sourceDatabase);
     await seed(targetDuring);
     await seed(targetAfter);
+    // The private payload of the removed subject and of an unrelated
+    // subject. The bundle carries both, the import brings both into the
+    // target, and the removal of the subject erases only its own payload.
+    const seedPrivatePayload = async (database) => {
+      const payload = `'\\x${Buffer.from('{"private":"payload"}', 'utf8').toString('hex')}'::bytea`;
+      const chunk = `'\\x${Buffer.from('{"chunk":1}', 'utf8').toString('hex')}'::bytea`;
+      const event = `'\\x${Buffer.from('{"event":1}', 'utf8').toString('hex')}'::bytea`;
+      const result = `'\\x${Buffer.from('{"result":1}', 'utf8').toString('hex')}'::bytea`;
+      for (const [game, owner, body] of [['proof_private_game', 'proof_owner_private', payload], ['proof_control_game', 'proof_owner_control', chunk]]) {
+        const inserted = await sql(database, `INSERT INTO games (game_id, owner_id, revision, ownership_epoch, checkpoint_json) VALUES ('${game}', '${owner}', 1, 1, ${body})`);
+        if (inserted.code !== 0) throw new Error(`the private game ${game} could not be seeded: ${inserted.error}`);
+      }
+      const seededChunk = await sql(database, `INSERT INTO archive_chunks (game_id, sequence, item_id, raw_json, sha256) VALUES ('proof_private_game', 0, 'proof_private_item', ${chunk}, encode(sha256(convert_to('{"chunk":1}','UTF8')), 'hex'))`);
+      if (seededChunk.code !== 0) throw new Error(`the private archive chunk could not be seeded: ${seededChunk.error}`);
+      const seededEvent = await sql(database, `INSERT INTO archive_events (game_id, sequence, item_id, raw_json) VALUES ('proof_private_game', 0, 'proof_private_event', ${event})`);
+      if (seededEvent.code !== 0) throw new Error(`the private archive event could not be seeded: ${seededEvent.error}`);
+      const seededOperation = await sql(database, `INSERT INTO operations (owner_id, game_id, operation_id, request_hash, revision, ownership_epoch, accepted_at, result_json) VALUES ('proof_owner_private', 'proof_private_game', 'proof_private_operation', decode(repeat('11',32),'hex'), 1, 1, clock_timestamp(), ${result})`);
+      if (seededOperation.code !== 0) throw new Error(`the private operation receipt could not be seeded: ${seededOperation.error}`);
+      const controlChunk = await sql(database, `INSERT INTO archive_chunks (game_id, sequence, item_id, raw_json, sha256) VALUES ('proof_control_game', 0, 'proof_control_item', ${chunk}, encode(sha256(convert_to('{"chunk":1}','UTF8')), 'hex'))`);
+      if (controlChunk.code !== 0) throw new Error(`the archive chunk of the control could not be seeded: ${controlChunk.error}`);
+      const controlEvent = await sql(database, `INSERT INTO archive_events (game_id, sequence, item_id, raw_json) VALUES ('proof_control_game', 0, 'proof_control_event', ${event})`);
+      if (controlEvent.code !== 0) throw new Error(`the archive event of the control could not be seeded: ${controlEvent.error}`);
+    };
+    await seedPrivatePayload(sourceDatabase);
+
     // The live only row of the target is the snapshot of the import: the
     // bundle does not carry it, the import replaces it, and a rollback
     // leaves it where it was.
@@ -461,6 +491,12 @@ export async function runInterruptionProof(options = {}) {
 
     // The live only removals: one match bound removal and one subject
     // removal of a subject that played no match at all.
+    //
+    // The fixture is deliberate and it is not a removal the service made:
+    // the request is marked verified and the ledger carries the removal,
+    // but the rows of the database are still unsanitized. The proof shows
+    // that the replay of the owed ledger sanitizes them, not that the
+    // service created them.
     //
     // The identifiers of the two removals are independent, the way the
     // identifiers of a live database are independent: the request of a
@@ -650,6 +686,13 @@ export async function runInterruptionProof(options = {}) {
     const afterImport = await removalState(context, targetAfter);
     const replayAfterImport = await replayState(context, targetAfter, matchId);
     const liveOnlyAfterImport = await replayState(context, targetAfter, 'proof_match_live_only');
+    const payloadInSource = await sql(sourceDatabase, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND length(checkpoint_json) > 2`);
+    const payloadAfterImport = await sql(targetAfter, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND length(checkpoint_json) > 2`);
+    steps.push({
+      id: 'the-private-payload-is-in-the-bundle-and-in-the-restored-database',
+      passed: payloadInSource.text === '1' && payloadAfterImport.text === '1',
+      detail: `the bundle carries the private payload of the removed subject (${payloadInSource.text}) and the import brought it into the target (${payloadAfterImport.text})`,
+    });
     steps.push({
       id: 'the-import-was-committed',
       passed: replayAfterImport.present && !replayAfterImport.revoked && !liveOnlyAfterImport.present,
@@ -761,6 +804,36 @@ export async function runInterruptionProof(options = {}) {
     });
     await run('docker', ['rm', '--force', gateAfter.id]);
     containers.splice(containers.indexOf(gateAfter.id), 1);
+
+    // ---- the private payload of the removed subject ---------------------
+    const emptied = await sql(targetAfter, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND checkpoint_json = '{}'::bytea AND deleted_at IS NOT NULL`);
+    const chunks = await sql(targetAfter, `SELECT count(*) FROM archive_chunks WHERE game_id = 'proof_private_game'`);
+    const events = await sql(targetAfter, `SELECT count(*) FROM archive_events WHERE game_id = 'proof_private_game'`);
+    const operation = await sql(targetAfter, `SELECT count(*) FROM operations WHERE game_id = 'proof_private_game' AND result_json = '{}'::bytea`);
+    const tombstone = await sql(targetAfter, `SELECT count(*) FROM deletion_tombstones WHERE game_id = 'proof_private_game'`);
+    const controlPayload = await sql(targetAfter, `SELECT count(*) FROM games WHERE game_id = 'proof_control_game' AND length(checkpoint_json) > 2`);
+    const controlChunks = await sql(targetAfter, `SELECT count(*) FROM archive_chunks WHERE game_id = 'proof_control_game'`);
+    const session = await sql(targetAfter, `SELECT count(*) FROM online_session_revocations WHERE subject_id = 'proof_owner_private'`);
+    steps.push({
+      id: 'the-private-payload-of-the-removed-subject-is-gone',
+      passed: emptied.text === '1' && chunks.text === '0' && events.text === '0' && operation.text === '1',
+      detail: `the checkpoint of the removed subject is empty (${emptied.text}), its archive chunk (${chunks.text}) and its archive event (${events.text}) are gone and its operation receipt is emptied (${operation.text})`,
+    });
+    steps.push({
+      id: 'the-tombstone-of-the-removed-private-game-is-retained',
+      passed: tombstone.text === '1',
+      detail: `the payload free tombstone of the removed game is retained (${tombstone.text})`,
+    });
+    steps.push({
+      id: 'the-unrelated-private-payload-survives',
+      passed: controlPayload.text === '1' && controlChunks.text === '1',
+      detail: `the private payload of the unrelated subject survived (${controlPayload.text} game, ${controlChunks.text} archive chunk)`,
+    });
+    steps.push({
+      id: 'the-session-of-the-removed-subject-is-fenced',
+      passed: session.text >= '1',
+      detail: `the sessions of the removed subject are fenced (${session.text} revocation)`,
+    });
 
     // ---- the removed data and the control -------------------------------
     const revoked = await replayState(context, targetAfter, matchId);
