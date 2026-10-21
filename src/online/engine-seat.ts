@@ -142,9 +142,10 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
   /**
    * The turn that runs in this seat.
    *
-   * The seat plays one turn at a time. A turn that starts while another turn
-   * runs cancels that turn first, so the search of the seat and the lease of
-   * the seat never belong to two turns at once.
+   * The seat plays one turn at a time. The record of a turn is installed
+   * before its first await and stays installed until its cleanup ends, so a
+   * later turn waits for the whole chain of older turns and never starts
+   * while the search or the lease of an older turn is still running.
    */
   let running: { readonly controller: AbortController; readonly done: Promise<void>; readonly ticket: number } | null = null;
   /**
@@ -169,7 +170,7 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
     }
   }
 
-  /** Cancels the turn that runs, if any, and waits for its end. */
+  /** Cancels the turn that runs, if any, and waits for the whole chain. */
   async function cancelRunningTurn(): Promise<void> {
     const current = running;
     if (!current) return;
@@ -295,14 +296,6 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
       // once: the older turn loses the seat and stops.
       const ticket = newestTicket + 1;
       newestTicket = ticket;
-      const previous = running;
-      running = null;
-      previous?.controller.abort();
-      // The cancelled turn ends before this turn starts, so the search and the
-      // lease of the seat never belong to two turns at once.
-      await previous?.done;
-      if (ticket !== newestTicket) return { kind: 'stopped' };
-      if (stopped || signal?.aborted) return { kind: 'stopped' };
       // The search of the turn runs under a controller of the turn, so a
       // disposed seat or a newer turn stops it and never holds the shared
       // engine worker.
@@ -311,11 +304,22 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
       signal?.addEventListener('abort', abort, { once: true });
       let settle: () => void = () => undefined;
       const done = new Promise<void>(resolve => { settle = resolve; });
+      // The record of the turn is installed before the first await and stays
+      // installed until the cleanup of the turn ends. A later turn therefore
+      // waits for this turn and never starts while its search or its lease is
+      // still running.
+      const predecessor = running;
       running = { controller, done, ticket };
+      predecessor?.controller.abort();
       // The lease belongs to this turn. A turn that ends late releases its own
       // lease and never the lease of the turn that runs now.
       let lease: ProviderRunnerLease | null = null;
       try {
+        // The cleanup of the whole chain of older turns ends before this turn
+        // acts, so the search and the lease of the seat belong to one turn.
+        await predecessor?.done;
+        if (!ownsSeat(ticket, controller)) return { kind: 'stopped' };
+        if (stopped || signal?.aborted) return { kind: 'stopped' };
         if (!prepared && options.prepareEngine) {
           await options.prepareEngine();
           prepared = true;
