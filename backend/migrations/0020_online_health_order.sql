@@ -8,13 +8,44 @@
 -- one with the greatest order, whatever the clock of the host or of the
 -- database did.
 --
--- The order is allocated before the commit, so a write that completes after
--- a newer one does not become the newest checkpoint: the shared read takes
--- the greatest order, and a write with a smaller order is history.
+-- The existing rows are backfilled by their recorded_at and their identity,
+-- so the newest of them stays the newest, and the sequence continues above
+-- the backfilled orders. The column is not nullable: a checkpoint without an
+-- order would sort before every ordered checkpoint and would be read as the
+-- newest one for ever.
 
 CREATE SEQUENCE IF NOT EXISTS online_service_health_order;
 
 ALTER TABLE online_service_health ADD COLUMN IF NOT EXISTS observation_order bigint;
 
+-- The backfill of the rows that existed before the order existed. The order
+-- follows the recorded_at and the identity, so it is the order in which the
+-- checkpoints were written.
+WITH backfill AS (
+  SELECT checkpoint_id, row_number() OVER (ORDER BY recorded_at, checkpoint_id) AS ordinal
+  FROM online_service_health
+)
+UPDATE online_service_health AS checkpoint
+SET observation_order = backfill.ordinal
+FROM backfill
+WHERE checkpoint.checkpoint_id = backfill.checkpoint_id;
+
+-- The sequence continues above the backfilled orders.
+SELECT setval('online_service_health_order', COALESCE((SELECT max(observation_order) FROM online_service_health), 0) + 1, false);
+
+ALTER TABLE online_service_health ALTER COLUMN observation_order SET DEFAULT nextval('online_service_health_order');
+ALTER TABLE online_service_health ALTER COLUMN observation_order SET NOT NULL;
+
 CREATE INDEX IF NOT EXISTS online_service_health_newest
   ON online_service_health(dependency, observation_order DESC);
+
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kamkm_online_api') THEN
+    GRANT USAGE ON SEQUENCE online_service_health_order TO kamkm_online_api;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kamkm_online_rules') THEN
+    GRANT USAGE ON SEQUENCE online_service_health_order TO kamkm_online_rules;
+  END IF;
+END
+$$;

@@ -285,6 +285,12 @@ writes them, with the context of the monitor and a short internal budget. A
 request never waits for a checkpoint or for the liveness, and a write that
 failed leaves the observation pending, so the next tick writes it again.
 
+The decision, the order and the write of a checkpoint are one transaction, and
+the advisory lock of the dependency serializes them with the other instances:
+two writers cannot both read an old shared state and write their answers in
+the wrong order. The episode guard is released before the write, so a request
+never waits for the write of the monitor.
+
 ## The runner fence
 
 - A command that presents a runner lease may only act while the lease is
