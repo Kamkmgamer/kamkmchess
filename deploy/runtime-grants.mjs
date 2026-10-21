@@ -446,7 +446,7 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
       stripped ? 'migration-grant-stripped-role' : 'migration-grants-unreviewed-role',
       `The migrations grant ${[...reached].sort().join(', ')} on ${tables.size} ${objectKind} to ${role}, a role the deployment does not connect as.`,
       stripped
-        ? `The deployment connects as ${policy.role}. Provisioning revokes the privileges of ${role} and the grant probe proves it holds nothing on a real database.`
+        ? `The deployment connects as ${policy.role}. Provisioning revokes the tables, the sequences, the functions and the schema of ${role}. The grant probe proves that ${role} holds no table privilege in the schema of the probe; it reads no sequence right of ${role}.`
         : `The deployment connects as ${policy.role}. List ${role} in the unused roles of the policy so the deployment strips it, or remove the grant from the migration.`,
     ));
   }

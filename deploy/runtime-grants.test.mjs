@@ -123,6 +123,28 @@ test('the tree loader finds the migration tables and the writer statements', asy
   assert.ok(usage.get('online_events').has('INSERT'));
 });
 
+test('the remediation of a stripped role names what the grant probe proves', () => {
+  const policy = parsePolicy({
+    role: 'kamkmchess_runtime',
+    unusedRoles: ['kamkm_online_rules'],
+    privileges: { alpha: ['SELECT'] },
+  });
+  const findings = auditGrants({
+    policy,
+    tables: ['alpha'],
+    usage: new Map(),
+    migrationGrants: [{ role: 'kamkm_online_rules', table: 'alpha', privileges: ['SELECT'] }],
+  });
+  const reported = findings.find((finding) => finding.code === 'migration-grant-stripped-role');
+  assert.ok(reported);
+  // The probe reads the table privileges of the unused role, so the claim
+  // names the tables. It reads no sequence right of the role, so the claim
+  // does not say that the role holds nothing.
+  assert.match(reported.remediation, /no table privilege/);
+  assert.match(reported.remediation, /reads no sequence right/);
+  assert.doesNotMatch(reported.remediation, /holds nothing/);
+});
+
 test('comment stripping leaves executable statements alone', () => {
   const stripped = stripGoLiterals('a := "text" // note\nb := 2');
   assert.ok(!stripped.includes('"text"'));
