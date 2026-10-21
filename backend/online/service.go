@@ -156,6 +156,16 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 	if s.evaluator == nil {
 		return CommandResult{}, ErrUnavailable
 	}
+	// The gate is checked before the rules process runs.
+	//
+	// The authoritative check stays inside the acceptance transaction, so a
+	// creation that raced a suspension is still refused there. The early
+	// check only keeps the refused traffic away from the worker: a closed
+	// gate must not start a worker, and it must not hold the slot that the
+	// repair of the closed gate needs.
+	if state, gateErr := s.gateState(ctx, s.db); gateErr != nil || !state.Open {
+		return CommandResult{}, ErrUnavailable
+	}
 	// Validate the immutable setup with no transaction or database lock held.
 	if err = s.evaluator.ValidateSetup(ctx, BuildRulesInput(match, match.Moves, "")); err != nil {
 		if errors.Is(err, ErrInvalidContract) || errors.Is(err, ErrActionNotAllowed) {
