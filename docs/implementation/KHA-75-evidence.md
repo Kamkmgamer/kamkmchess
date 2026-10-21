@@ -291,6 +291,10 @@ The focused regressions of this round, one by one:
 --- PASS: TestPostgresFriendSurvivingGuestKeepsItsOwnSeatCredential
 --- PASS: TestPostgresFriendSurvivingGuestRecoversItsAcceptanceCredential
 --- PASS: TestPostgresFriendAnonymousBearerResumeRecoversTheSurvivorSeat
+--- PASS: TestPostgresFriendAnonymousRetryOfAnUncommittedAcceptanceResumesTheStoredAcceptor
+--- PASS: TestPostgresFriendRemovalIsOrderedAgainstTheCredentialRotationOfTheAcceptor
+--- PASS: TestPostgresFriendAnAccountNeverResumesTheAcceptanceOfAGuest
+--- PASS: TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor
 --- PASS: TestPostgresFriendRestoredSeatIdentityIsRefused
 --- PASS: TestPostgresFriendLegacyAcceptingOfferIsReadWithoutAnError
 --- PASS: TestPostgresFriendRemovedInviterDoesNotTakeTheAcceptorSeatAway
@@ -299,6 +303,25 @@ The focused regressions of this round, one by one:
 --- PASS: TestPostgresFriendDeadRematchOfferIsNotPublished
 --- PASS: TestPostgresFriendRemovedParticipantCannotCancelItsInvitation
 --- PASS: TestPostgresFriendRemovedGuestNeverGetsAFreshCredential
+```
+
+The restart regression is a **red/green** proof, not a timing assumption. The
+first request is held inside its transaction (its acceptance is written but not
+committed), the retry of the same key starts and is observed waiting for the
+scope of the inviter in `pg_stat_activity`, and the test queues for the scope
+of the stored acceptor while the first request still holds it. When the first
+request commits, the test holds that scope and the retry has to start again;
+the restart waits for the scope of the stored acceptor, which the test proves
+by the not granted row of that exact advisory key in `pg_locks`.
+
+```
+# against the branch without the restart (4b88c77)
+--- FAIL: TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor (39.02s)
+    online_friends_removal_test.go:1342: no transaction waits for the account scope lock
+
+# against the branch with the restart
+--- PASS: TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor (6.57s)
+--- PASS: TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor (6.98s)
 ```
 
 The accept path of the surface was run as well, because the scope of the
@@ -611,6 +634,10 @@ outcome:
   row of the match names that participant)
 * `TestPostgresFriendRemovedInviterDoesNotTakeTheAcceptorSeatAway` (the
   resumed acceptance answers the match of the surviving acceptor)
+* `TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor` (the
+  restart of an acceptance whose stored acceptor was never locked takes the
+  scope of that acceptor: the test holds that scope at the resumption, so the
+  restart blocks on it)
 * `TestPostgresFriendRemovedParticipantCannotCancelItsInvitation` (the
   cancellation of a removed participant is refused and the invitation is not
   cancelled)

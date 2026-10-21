@@ -1178,6 +1178,177 @@ func TestPostgresFriendAnAccountNeverResumesTheAcceptanceOfAGuest(t *testing.T) 
 	}
 }
 
+// friendScopeKey returns the key of the account scope lock a transaction
+// holds.
+//
+// The lock is a transaction advisory lock, so the key is in pg_locks. The
+// transaction finds its own row, so the test never has to repeat the private
+// prefix of the locks package.
+func friendScopeKey(t *testing.T, tx pgx.Tx) (int64, int64) {
+	t.Helper()
+	var classid, objid int64
+	err := tx.QueryRow(context.Background(), `SELECT classid::bigint,objid::bigint FROM pg_locks
+		WHERE locktype='advisory' AND granted AND pid=pg_backend_pid()`).Scan(&classid, &objid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return classid, objid
+}
+
+// friendScopeWaiter reports whether a transaction waits for the account scope
+// lock with that key.
+//
+// The waiter is the row of the same key that is not granted, so the
+// observation is exact: a concurrent test never contributes a waiter.
+func friendScopeWaiter(t *testing.T, pool *pgxpool.Pool, classid, objid int64) bool {
+	t.Helper()
+	var waiting int
+	err := pool.QueryRow(context.Background(), `SELECT count(*) FROM pg_locks
+		WHERE locktype='advisory' AND NOT granted AND classid::bigint=$1 AND objid::bigint=$2`, classid, objid).Scan(&waiting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return waiting > 0
+}
+
+// waitForScopeWaiter waits until a transaction waits for the account scope
+// lock with that key.
+//
+// The wait is proved by the state of the database, never by a sleep.
+func waitForScopeWaiter(t *testing.T, pool *pgxpool.Pool, classid, objid int64) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if friendScopeWaiter(t, pool, classid, objid) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("no transaction waits for the account scope lock")
+}
+
+// friendAdvisoryWaiter reports whether a transaction of the named pool waits
+// for an advisory lock.
+//
+// The account scope lock is a transaction advisory lock, so the waiter is
+// visible in pg_stat_activity with the query of the lock and the state of the
+// wait. The name of the pool keeps the observation of the test itself, so a
+// concurrent test never contributes a waiter.
+func friendAdvisoryWaiter(t *testing.T, pool *pgxpool.Pool, name string) bool {
+	t.Helper()
+	var waiting int
+	err := pool.QueryRow(context.Background(), `SELECT count(*) FROM pg_stat_activity
+		WHERE application_name = $1
+		  AND wait_event_type = 'Lock'
+		  AND query LIKE '%pg_advisory_xact_lock%'`, name).Scan(&waiting)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return waiting > 0
+}
+
+// waitForAdvisoryWaiter waits until a transaction of the named pool waits for
+// an advisory lock.
+//
+// The wait is proved by the state of the database, never by a sleep.
+func waitForAdvisoryWaiter(t *testing.T, pool *pgxpool.Pool, name string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		if friendAdvisoryWaiter(t, pool, name) {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("no transaction of the test waits for an account scope lock")
+}
+
+// TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor covers
+// the restart of an acceptance whose stored acceptor was never locked.
+//
+// The first request is held inside its transaction, so its acceptance is
+// written but not committed. The retry of the same key reads the acceptance
+// before the locks and misses that row, so it waits for the scope of the
+// inviter, which the first request holds. The first request commits, the
+// authoritative lookup finds the acceptance whose acceptor was never locked,
+// and the write has to start again.
+//
+// The scope of the stored acceptor is held by the test at that moment, so the
+// restart blocks on it: the old behaviour, which continued without the scope
+// of the stored acceptor, answers the request and never waits.
+func TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor(t *testing.T) {
+	const poolName = "kha75-restart-barrier"
+	pool := friendNamedTestPool(t, 4, poolName)
+	fixture := newFriendRemovalFixtureWithPool(t, pool)
+	ctx := context.Background()
+	created := friendRemovalCreate(t, fixture, "user_inviter")
+	key := acceptanceKey("restart-barrier")
+	const guestID = "guest_restart_barrier"
+	guest := &invite.Identity{Participant: online.ParticipantRef{Kind: online.ParticipantGuest, ID: guestID}, PublicLabel: invite.GuestLabel}
+	// The first request is held inside its transaction.
+	locker := friendLockSeats(t, pool)
+	firstDone := make(chan error, 1)
+	go func() {
+		_, acceptErr := fixture.friends.Accept(ctx, invite.AcceptRequest{
+			InvitationID:  created.Invitation.InvitationID,
+			AcceptanceKey: key,
+			Acceptor:      guest,
+			Control:       online.SeatControl{Kind: online.ControlHuman},
+			Origin:        friendOrigin,
+		})
+		firstDone <- acceptErr
+	}()
+	waitForBlockedSeatInsert(t, pool)
+	// The retry of the same key starts while the first request is still
+	// uncommitted: its read of the acceptance misses the row and it waits for
+	// the scope of the inviter, which the first request holds.
+	retryDone := make(chan error, 1)
+	go func() {
+		_, acceptErr := fixture.friends.Accept(ctx, invite.AcceptRequest{
+			InvitationID:  created.Invitation.InvitationID,
+			AcceptanceKey: key,
+			Acceptor:      nil,
+			Control:       online.SeatControl{Kind: online.ControlHuman},
+			Origin:        friendOrigin,
+		})
+		retryDone <- acceptErr
+	}()
+	waitForAdvisoryWaiter(t, pool, poolName)
+	// The test asks for the scope of the stored acceptor while the first
+	// request still holds it, so the request is queued and granted before the
+	// restart of the retry asks for it.
+	held, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Rollback(ctx)
+	scopeReady := make(chan error, 1)
+	go func() {
+		scopeReady <- locks.LockAccountScope(ctx, held, locks.AccountScope(string(online.ParticipantGuest), guestID))
+	}()
+	// The first request commits and the test holds the scope of the stored
+	// acceptor.
+	locker.release(t)
+	if err = <-firstDone; err != nil {
+		t.Fatalf("the first acceptance: %v", err)
+	}
+	if err = <-scopeReady; err != nil {
+		t.Fatal(err)
+	}
+	classid, objid := friendScopeKey(t, held)
+	// The retry continues: its first attempt finds the acceptance whose
+	// acceptor was never locked, so it starts again, and the restart waits
+	// for the scope of the stored acceptor, which the test holds.
+	waitForScopeWaiter(t, pool, classid, objid)
+	// The test releases the scope and the retry answers.
+	if err = held.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err = <-retryDone; err != nil {
+		t.Fatalf("the retry of the uncommitted acceptance: %v", err)
+	}
+}
+
 // TestPostgresFriendRemovedParticipantCannotCancelItsInvitation covers the
 // cancellation of a removed participant.
 //

@@ -31,6 +31,15 @@ const friendOrigin = "https://app.example"
 // connection would starve the winner of the race.
 func friendTestPool(t *testing.T, maxConns int32) *pgxpool.Pool {
 	t.Helper()
+	return friendNamedTestPool(t, maxConns, "")
+}
+
+// friendNamedTestPool builds an isolated pool whose connections carry a name.
+//
+// The name lets a test observe its own transactions in pg_stat_activity, so a
+// lock order is proved by the state of the database and never by a sleep.
+func friendNamedTestPool(t *testing.T, maxConns int32, name string) *pgxpool.Pool {
+	t.Helper()
 	dsn := os.Getenv(databaseEnv)
 	if dsn == "" {
 		if os.Getenv("KHA41_REQUIRE_POSTGRES") == "1" {
@@ -59,6 +68,9 @@ func friendTestPool(t *testing.T, maxConns int32) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	if name != "" {
+		cfg.ConnConfig.RuntimeParams["application_name"] = name
+	}
 	cfg.MaxConns = maxConns
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
