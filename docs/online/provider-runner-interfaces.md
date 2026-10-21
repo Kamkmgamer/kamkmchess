@@ -57,6 +57,36 @@ the control changes and the spent recovery attempts.
   the record the uncertainty names. A record that another tab of the same
   browser writes while the decision waits for the service is a different
   request: it is neither settled nor authorized by that decision.
+- The settlement of a switch runs under the epoch of the seat now. The service
+  revokes the lease of the seat with a control change, so the request of the
+  old epoch cannot be closed under the lease it was recorded on. The runner
+  takes a lease of the new epoch for the settlement alone: the lease is never
+  installed, it arms no heartbeat, and it is given back right after the
+  settlement, because the runner of the old selection never plays the seat
+  again. Only the request the decision captured is closed, and only when the
+  new lease still carries exactly that request. A newer request of another
+  runner keeps its record, and the record of the old epoch is not open at the
+  service any more.
+- The lease of a settlement carries its own envelope. The control epoch and
+  the turn of the request that closes a record are the epoch and the turn of
+  the lease it is closed under, never the facts the runner knows in the
+  meantime. A lease of another epoch is not the lease of this seat, and a
+  release never presents the epoch of another decision either.
+- The settlement belongs to the decision of the owner that started it. After
+  every await the runner checks that decision again: a newer decision of the
+  owner, a stop or a dispose ends the settlement, and the record of the
+  service keeps its state. The lease of the settlement is given back, and only
+  that lease: a decision that adopted the very same lease owns the seat now,
+  so the settlement never revokes it.
+- The runner remembers the billable request the service recorded on the lease
+  of the seat. The record of the service survives the change of the lease, so
+  a decision of the owner settles exactly that request, even when the
+  uncertainty of the browser names another one.
+- A settlement the service refuses is a recoverable outcome. The record of the
+  billable work stays open at the service, so the seat asks the owner about it
+  instead of playing with work that may be paid twice, and the runner keeps
+  the envelope of the accepted command: the owner may send the very same
+  command again and read the receipt the service already earned.
 - The authorization of the owner is recorded only when the settlement reached
   its end while the decision was still the decision of the owner. A superseded
   decision leaves no authorization behind and sends no command, so the next
@@ -469,6 +499,15 @@ selections may share one published label, the neutral label of an
 unregistered route included. The caller that has to know which model plays
 the seat compares the private selection it bound, never the published label.
 
+The caller publishes the binding of a seat by its private identity. Two
+private models of one connection carry the same public label, so a label can
+never name the model that plays the seat: `agentBindingFor` answers with the
+private identity of the binding and `agentBindingLabelFor` answers with its
+public label, which is what the interface shows. The identity is the identity
+of the catalog entry of the selection, so the interface resolves the seat to
+exactly one model, and it stays in the browser: it never leaves the device and
+never reaches the shared data of a match.
+
 A public label is a chosen name. `isPublicModelLabel` refuses a label that
 could name a route, and `assertSharedActionSafe` refuses a shared action with
 an unknown field.
@@ -630,6 +669,11 @@ seat with an accepted move, exactly like the service does.
 | — | A refused credential stops the runner instead of retrying |
 | — | A finished match keeps no lease |
 | — | A fenced command is reported as a fence and spends no attempt |
+| — | A switch settles the request of the old epoch with a lease of the new epoch |
+| — | The record of a newer request of another runner survives the settlement of a switch |
+| — | A newer decision of the owner ends the settlement and settles nothing |
+| — | A stop or a dispose while the lease of the new epoch is acquired settles nothing |
+| — | The retry of a switch whose command never reached the service proves the switch and settles the record |
 
 The fixtures send no provider request and need no credential, no account and no
 paid request. They are deterministic evidence of the behaviour, not of the
@@ -648,6 +692,13 @@ live readiness of the service.
 - A new lease carries the pending request of the previous lease of the seat.
   That is the honest record of uncertain billable work, and the runner honours
   it.
+- The service revokes the lease of the seat with a control change, so the
+  request of the old epoch cannot be closed under the lease it was recorded
+  on. The runner settles it with a lease of the new epoch: the lease is taken
+  for the settlement alone, it is never installed, and it is given back right
+  after the settlement. The request that closes a record carries the control
+  epoch and the turn of the lease it is closed under, so a settlement of the
+  old epoch is never smuggled under the facts of a newer one.
 - The service fences every command that presents a lease: the lease must be
   live, of the match and the seat of the command, of the current control
   epoch, of the current service epoch and bound to the turn the command acts

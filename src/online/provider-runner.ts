@@ -1,4 +1,4 @@
-﻿/**
+/**
  * The browser-owned online agent runner (KHA-73).
  *
  * One agent seat of one online match is played by a browser runner. The runner

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * The browser-owned online agent runner (KHA-73).
  *
  * The fixtures drive the runner through its public API with a deterministic

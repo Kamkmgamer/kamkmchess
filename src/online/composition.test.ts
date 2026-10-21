@@ -1,4 +1,4 @@
-﻿import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createOnlineComposition } from './composition';
 import type { QueueEntry } from './contracts';
 import type { ModelSelection } from '../controller/index.js';
