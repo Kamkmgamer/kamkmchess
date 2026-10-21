@@ -202,10 +202,15 @@ type evidenceRestorer struct {
 	subjects []backup.SubjectRemovalRecord
 	// fail makes the import fail, which is the crash of the restore.
 	fail bool
+	// imports counts the imports that ran.
+	imports *int
 }
 
 func (r evidenceRestorer) Restore(ctx context.Context, sql io.Reader) error {
 	_, _ = io.Copy(io.Discard, sql)
+	if r.imports != nil {
+		*r.imports++
+	}
 	if r.pool == nil {
 		if r.fail {
 			return errors.New("the import of the bundle failed")
@@ -1229,6 +1234,190 @@ func TestPostgresTheEvidenceOfTheNextRestoreSurvivesTheClose(t *testing.T) {
 		return
 	}
 	t.Fatal("the second restore never took the lifecycle")
+}
+
+// TestPostgresTheRestoreWithoutARemovalSinkIsRefusedWhileRemovalsAreOwed
+// covers a restore that has a fence and no removal ledger sink.
+//
+// The removals that the restores which did not finish still owe are destroyed
+// by the import of a restore, and their durable evidence lives with the
+// fence. A restore without the sink cannot replay them, so it is refused
+// before the import: the database is not touched and the evidence stays
+// pending.
+func TestPostgresTheRestoreWithoutARemovalSinkIsRefusedWhileRemovalsAreOwed(t *testing.T) {
+	fixture, removals, directory := evidenceFixture(t)
+	ctx := context.Background()
+	historyService := historyServiceFor(t, fixture)
+	matchID := "evidence-sink-match"
+	privacyCompletedMatch(t, fixture, historyService, matchID)
+	state := evidenceCapture(t, fixture.pool, [2]string{matchID, "black"})
+	if _, err := removals.RemoveAccount(ctx, accountPrincipal("user_b", "session-user_b"), authTestOrigin); err != nil {
+		t.Fatalf("remove the opponent: %v", err)
+	}
+	bundle := evidenceBundle(t, t.TempDir(), nil, nil)
+	// The restore crashes during its import: the evidence of the removals it
+	// owed stays pending.
+	if _, err := backup.Restore(ctx, backup.RestoreRequest{
+		Path:           bundle,
+		Passphrase:     []byte("evidence-passphrase-0001"),
+		Restorer:       evidenceRestorer{pool: fixture.pool, state: state, fail: true},
+		Tombstones:     evidenceTombstones{},
+		Removals:       evidenceLedger{service: removals},
+		AdmissionFence: evidenceLedger{service: removals},
+		RestoreID:      "evidence-sink-crashed",
+	}); err == nil {
+		t.Fatal("the crashing restore reported success")
+	}
+	pending, err := removals.PendingRemovalRequirements(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending.Matches) != 1 {
+		t.Fatalf("the pending evidence holds %d removals", len(pending.Matches))
+	}
+	// The restore without the removal sink is refused, and the import never
+	// runs.
+	imports := 0
+	_, err = backup.Restore(ctx, backup.RestoreRequest{
+		Path:           bundle,
+		Passphrase:     []byte("evidence-passphrase-0001"),
+		Restorer:       evidenceRestorer{pool: fixture.pool, state: state, imports: &imports},
+		Tombstones:     evidenceTombstones{},
+		AdmissionFence: evidenceLedger{service: removals},
+		RestoreID:      "evidence-sink-refused",
+		Takeover:       true,
+	})
+	if err == nil {
+		t.Fatal("a restore without a removal ledger sink was accepted while removals were owed")
+	}
+	if imports != 0 {
+		t.Fatalf("the refused restore imported %d times", imports)
+	}
+	// The evidence is still pending: the refusal did not discharge it.
+	pending, err = removals.PendingRemovalRequirements(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending.Matches) != 1 {
+		t.Fatalf("the pending evidence holds %d removals after the refusal", len(pending.Matches))
+	}
+	// The control: the same restore with the removal sink replays the owed
+	// removals, and the evidence of the crashed restore is discharged. The
+	// evidence of the closing restore is kept on purpose: the next restore
+	// discharges it.
+	result, err := backup.Restore(ctx, backup.RestoreRequest{
+		Path:           bundle,
+		Passphrase:     []byte("evidence-passphrase-0001"),
+		Restorer:       evidenceRestorer{pool: fixture.pool, state: state},
+		Tombstones:     evidenceTombstones{},
+		Removals:       evidenceLedger{service: removals},
+		AdmissionFence: evidenceLedger{service: removals},
+		RestoreID:      "evidence-sink-control",
+		Takeover:       true,
+	})
+	if err != nil {
+		t.Fatalf("the restore with the removal sink failed: %v", err)
+	}
+	if result.RemovalsApplied != 1 {
+		t.Fatalf("the restore with the removal sink replayed %d removals", result.RemovalsApplied)
+	}
+	if _, err = os.Stat(filepath.Join(directory, "restore-requirements", "evidence-sink-crashed.json")); err == nil {
+		t.Fatal("the evidence of the crashed restore was not discharged")
+	}
+}
+
+// TestPostgresTheGateOfAMissingEvidenceIsReleasedByAProof covers the
+// supported recovery of a gate whose durable evidence is gone.
+//
+// The gate names the digest of the removal ledger it waits for, and that
+// digest is one way: the only proof of the commitment is a removal ledger
+// whose own digest is exactly the one the gate names. A supplied ledger that
+// proves the commitment releases the gate when the database holds it, and a
+// supplied ledger that proves nothing leaves the gate closed.
+func TestPostgresTheGateOfAMissingEvidenceIsReleasedByAProof(t *testing.T) {
+	fixture, removals, directory := evidenceFixture(t)
+	ctx := context.Background()
+	historyService := historyServiceFor(t, fixture)
+	matchID := "evidence-proof-match"
+	privacyCompletedMatch(t, fixture, historyService, matchID)
+	if _, err := removals.RemoveAccount(ctx, accountPrincipal("user_b", "session-user_b"), authTestOrigin); err != nil {
+		t.Fatalf("remove the opponent: %v", err)
+	}
+	live, err := removals.AppliedRemovalLedger(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The restore bound the removal ledger it had to apply and recorded its
+	// gate. The removal is applied in the database, so the gate waits for a
+	// ledger the database holds.
+	handle, err := removals.BeginFence("evidence-proof-restore", false)
+	if err != nil {
+		t.Fatalf("open the fence: %v", err)
+	}
+	if err = handle.Bind(live); err != nil {
+		t.Fatalf("bind the fence: %v", err)
+	}
+	handle.Release()
+	if _, err = removals.RecordRestore(ctx, "evidence-proof-restore"); err != nil {
+		t.Fatalf("record the restore: %v", err)
+	}
+	// The durable evidence of the restore is lost.
+	if err = os.Remove(filepath.Join(directory, "restore-requirements", "evidence-proof-restore.json")); err != nil {
+		t.Fatalf("remove the durable evidence: %v", err)
+	}
+	// The release of the gate needs the evidence, so it is refused: the gate
+	// waits and the removals it waits for stay owed.
+	if err = removals.ReleaseRestoreGate(ctx, "evidence-proof-restore"); err == nil {
+		t.Fatal("the release of a gate whose evidence is missing was accepted")
+	}
+	var pending int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed=false`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatalf("the database holds %d pending gates, want the one of the restore", pending)
+	}
+	// A supplied ledger that is not the ledger the gate waits for proves
+	// nothing: the gate stays closed.
+	other := live
+	other.Matches = append(append([]backup.RemovalRecord{}, live.Matches...), backup.RemovalRecord{
+		RemovalID: "rm_evidence_proof_other", SubjectKind: "account", SubjectID: privacy.SubjectReference("user_a"), MatchID: "evidence-proof-other-match", Scope: "explicit_removal", RemovedAt: time.Now().UTC(),
+	})
+	released, err := removals.ReleaseRestoreGateWithProof(ctx, other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released != 0 {
+		t.Fatalf("a supplied ledger that is not the awaited one released %d gates", released)
+	}
+	// The supported recovery: the operator supplies the removal ledger the
+	// gate waits for, its digest is exactly the one the gate names, and the
+	// database holds it, so the gate is released.
+	released, err = removals.ReleaseRestoreGateWithProof(ctx, live)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released != 1 {
+		t.Fatalf("the proof released %d gates, want the one of the restore", released)
+	}
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed=false`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 0 {
+		t.Fatalf("the database holds %d pending gates after the proof", pending)
+	}
+	// The recovery of the restore names the supplied ledger as well, so the
+	// fence of the crashed restore is closed and the service serves again.
+	if err = removals.RecoverRestore(ctx, "evidence-proof-restore", live); err != nil {
+		t.Fatalf("the recovery with the supplied ledger failed: %v", err)
+	}
+	allowed, err := removals.ServingAllowed(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed {
+		t.Fatal("the service does not serve after the proof and the recovery")
+	}
 }
 
 // evidenceDigest renders the digest of a removal ledger the way the marker of
