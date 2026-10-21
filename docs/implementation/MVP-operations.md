@@ -184,13 +184,17 @@ go run ./backend/backup/cmd/khabackup plan --file /backups/weekly-2026-W42.kha
 # would be a *different* fence: the restore would hold a fence the API never
 # observes, and the API would keep serving during the import.
 docker compose -f postgres.compose.yml -f api.compose.yml stop api
-docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
   set -a; . /run/secrets/backup.env; set +a
   exec gosu 65532:65532 /opt/kamkmchess/khabackup restore --file /backups/weekly-2026-W42.kha \
     --newer-ledger /backups/daily-2026-10-18.kha \
     --fence /var/lib/kamkmchess/restore-fence \
     --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE --apply'
 docker compose -f postgres.compose.yml -f api.compose.yml start api
+
+# The restore names itself: the command line of the restore cannot name it,
+# and the identifier of the restore is the one the marker of the lifecycle
+# carries. The operator reads it there when a restore has to be recovered.
 
 # The API is stopped and drained before the restore, and it is started again
 # after the removal ledger was replayed and the fence was closed.
@@ -209,6 +213,11 @@ destroyed by the import itself; the evidence lives outside the database, is
 written before the import starts, and is readable by its owner only
 (`0700` for the directory, `0600` for the records).
 
+The record of a restore is named after the restore:
+`<parent>/restore-requirements/<restore-id>.json`. There is no other suffix
+and no other name. The recovery reads the record of the restore it names, and
+a record with another name is a record of another restore.
+
 That directory is **never cleaned by hand**, and neither is the gate of a
 restore. The newest record is retained on purpose: it is the evidence that
 the last restore closed the fence it owed, and the next restore discharges
@@ -222,24 +231,72 @@ owed. The file of one restore can also be restored on its own, and the
 recovery then proves the ledger it owes against the digest the marker names
 (`--evidence`).
 
-The protected copy of the evidence is made while the service is stopped and
-drained, so the record on the disk is the record of a restore that is not
-running any more, and it is owned by the restore user:
+### The identifier of the restore
+
+The identifier of a restore is the one the marker of the lifecycle names. The
+command line of the restore cannot name it, so the operator reads it from
+`<parent>/restore-fence/owner` and **validates it before it is used in a
+path**: the identifier becomes the name of a file, so a name that carries a
+path separator is refused.
 
 ```sh
-# The API is stopped and drained first, so no restore is writing.
+# The marker of the lifecycle names the restore that crashed.
+RESTORE_ID=$(docker compose -f postgres.compose.yml -f api.compose.yml \
+  exec -T postgres sh -c 'cat /var/lib/kamkmchess/restore-fence/restore-fence/owner' \
+  | sed -n 's/.*"restoreId":"\([^"]*\)".*/\1/p')
+
+# The identifier is a name and not a path, and it is checked before it is
+# used to build one.
+case "$RESTORE_ID" in
+  ''|*[!A-Za-z0-9._-]*) echo "the marker of the lifecycle names no usable restore" >&2; exit 1 ;;
+esac
+[ "${#RESTORE_ID}" -ge 8 ] || { echo "the identifier of the restore is too short" >&2; exit 1; }
+```
+
+The identifier is handed to the container as a **positional argument** of the
+shell. It is never an environment variable of the host and never a part of a
+path that the container builds, and `sh -c 'program' name argument` sets `$0`
+to `name` and `$1` to the argument, so the program inside the container reads
+the identifier from its own argument.
+
+### The protected copy of the evidence
+
+The copy of a record is made **while the lock of the lifecycle is held**.
+Stopping the API stops the service, not a restore: the restore is a separate
+process of the database container and it writes the evidence directory
+itself. The lock of the lifecycle (`<parent>/restore-fence.lock`) is held by
+a running restore for the whole lifecycle of the restore and is released by
+the operating system when the restore dies, so it is the proof that no
+restore is running.
+
+```sh
+# The API is stopped and drained, so the service admits nothing while the
+# copy is made.
 docker compose -f postgres.compose.yml -f api.compose.yml stop api
 
-# The destination is private to the restore user and holds one record.
-docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
-  install -d -m 700 -o 65532 -g 65532 /var/lib/kamkmchess/restore-evidence &&
+# The copy is made under the lock of the lifecycle, and the destination is
+# private to the restore user and is **outside** the fence parent, so the
+# loss of the evidence directory never takes the copy with it.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -eu
+  FENCE=/var/lib/kamkmchess/restore-fence
+  DEST=/var/lib/kamkmchess/restore-evidence
+  ID="$1"
+  exec 9>"$FENCE/restore-fence.lock"
+  if ! flock -n 9; then
+    echo "a restore holds the lifecycle; the copy is not made" >&2
+    exit 1
+  fi
+  install -d -m 700 -o 65532 -g 65532 "$DEST"
   install -m 600 -o 65532 -g 65532 \
-    /var/lib/kamkmchess/restore-fence/restore-requirements/"$RESTORE_ID".evidence \
-    /var/lib/kamkmchess/restore-evidence/"$RESTORE_ID".evidence'
+    "$FENCE/restore-requirements/$ID.json" "$DEST/$ID.json"
+' khabackup "$RESTORE_ID"
 
 # The protected copy is in the backup of the deployment, with the bundles,
 # and it is restored to the same private path before a recovery that needs it.
 ```
+
+### The recovery of a restore that crashed
 
 A restore that was killed leaves the marker of the lifecycle behind and the
 service stays closed, and the procedure is:
@@ -255,35 +312,36 @@ docker compose -f postgres.compose.yml -f api.compose.yml stop api
 # in the database, releases the gate and closes the fence. A database that
 # lost the removals is not released: the recovery refuses and the gate stays
 # closed, and only the take-over below imports and replays.
-#
-# The identifier of the restore is the one the marker of the lifecycle names.
-# The command line of the restore cannot name it, so the operator reads it:
-#
-#   RESTORE_ID=$(docker compose -f postgres.compose.yml -f api.compose.yml \
-#     exec -T postgres sh -c 'cat /var/lib/kamkmchess/restore-fence/restore-fence/owner' \
-#     | sed -n 's/.*"restoreId":"\([^"]*\)".*/\1/p')
-#   test -n "$RESTORE_ID"
-docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
   set -a; . /run/secrets/backup.env; set +a
   exec gosu 65532:65532 /opt/kamkmchess/khabackup recover --file /backups/weekly-2026-W42.kha \
-    --restore-id "$RESTORE_ID" \
+    --restore-id "$1" \
     --fence /var/lib/kamkmchess/restore-fence \
-    --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE'
+    --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE' \
+  khabackup "$RESTORE_ID"
 
 # The recovery of a restore whose evidence directory was lost: the evidence
-# of the restore is read from the protected copy of the file, and the recovery
-# proves the ledger it owes against the digest the marker names.
-docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
+# of the restore is read from the protected copy of the record, and the
+# recovery proves the ledger it owes against the digest the marker names.
+#
+# The recovery reads **no bundle and no passphrase**: the copy of the record
+# is the only description of what the restore owed. The command carries no
+# --file and no --passphrase-env, and the passphrase is removed from the
+# environment before the privileges are dropped, so the restore user never
+# has it.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
   set -a; . /run/secrets/backup.env; set +a
-  exec gosu 65532:65532 /opt/kamkmchess/khabackup recover --file /backups/weekly-2026-W42.kha \
-    --restore-id "$RESTORE_ID" \
-    --evidence /var/lib/kamkmchess/restore-evidence/"$RESTORE_ID".evidence \
+  unset KHA_BACKUP_PASSPHRASE
+  exec gosu 65532:65532 /opt/kamkmchess/khabackup recover \
+    --restore-id "$1" \
+    --evidence "$2" \
     --fence /var/lib/kamkmchess/restore-fence \
-    --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE'
+    --database-url-env DATABASE_URL' \
+  khabackup "$RESTORE_ID" "/var/lib/kamkmchess/restore-evidence/$RESTORE_ID.json"
 
 # The take-over of a restore that crashed before the evidence was written: it
 # re-imports the bundle and replays the removal ledger again.
-docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
   set -a; . /run/secrets/backup.env; set +a
   exec gosu 65532:65532 /opt/kamkmchess/khabackup restore --file /backups/weekly-2026-W42.kha \
     --fence /var/lib/kamkmchess/restore-fence --takeover \
@@ -291,6 +349,11 @@ docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
 
 docker compose -f postgres.compose.yml -f api.compose.yml start api
 ```
+
+A take-over that is refused before its import gives the lifecycle back and
+puts the marker of the crashed restore back byte for byte, so the crashed
+restore stays recoverable and the operator resolves it with the recovery
+above.
 
 The order inside a restore is fixed and tested:
 

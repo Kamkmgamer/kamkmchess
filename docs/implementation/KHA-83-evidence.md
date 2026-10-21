@@ -1,12 +1,13 @@
 # KHA-83 evidence — host verification for the online service
 
-Tested tree: the **root `33a23c1`** (the privacy candidate of the
-removal ledger and the durable evidence) with the operations candidate of
-this file applied. Every number and every step id below is the output of
-the tools on that tree, and the commit that carries this file names the
-exact tree it was measured on. The measurements are **local**, against the
-fixture container of this machine; the host is not verified, and the local
-rehearsal of 2026-10-18 that
+Tested tree: the **root `f578875`** with the privacy candidate
+(`3a4aed6`, `daa2a5f`, `4e86892`, `1616aa8` — the lifecycle of a restore
+around its import, the cancellation of a refused restore and the recovery of
+the crashed marker) and the operations candidate of this file applied. Every
+number and every step id below is the output of the tools on that tree, and
+the commit that carries this file names the exact tree it was measured on.
+The measurements are **local**, against the fixture container of this
+machine; the host is not verified, and the local rehearsal of 2026-10-18 that
 [`MVP-operations.md`](MVP-operations.md) records is a separate, older
 rehearsal that is not part of this candidate.
 
@@ -134,9 +135,11 @@ measurement of a serving path is still **not run** and not claimed.
   is refused while the fence is held, a close with a digest that does not
   belong to the fence is refused, the death of the holder leaves the marker,
   the take-over finishes and closes the fence, and the service serves again
-  afterwards. The **crash of the restore during its import** is still not
-  run: that case belongs to the privacy work, and the proof says so in its
-  own limits.
+  afterwards. The **crash of the restore during its import** is run by
+  `node scripts/online/restore-interruption-proof.mjs`, which kills the real
+  restore of the real binary at a real barrier in front of the real psql and
+  measures both kill boundaries and the recovery of a copied protected
+  record.
 - The runbook, the deployment note and the rendered compose configuration name
   the **same** fence: the parent directory `/var/lib/kamkmchess/restore-fence`.
   A path below the parent is a different fence, and a restore that held it
@@ -165,44 +168,92 @@ measurement of a serving path is still **not run** and not claimed.
 
 `node scripts/online/restore-interruption-proof.mjs` kills the **real**
 restore of the real binary at a real barrier in front of the real psql, and
-it measures the two interruptions that decide whether a removed subject can
-come back.
+it measures the interruptions that decide whether a removed subject can come
+back. The report of the run on the tree named above has **48 steps, all of
+them passed**.
 
-The kill during the import transaction is **measured green**: the barrier
-holds the transaction open with a marker statement, the restore is killed
-while the transaction is active, the transaction is rolled back, the live
-removals are still in the database and the record of the removed match is
-not revoked. The recovery of that restore then **refuses**, because the
-fixture of the proof is deliberately unsanitized: the request says verified
-and the ledger carries the removal, but the rows of the database are still
-there, and the check of the privacy service sees that. The take-over of the
-same restore replays the owed ledger, sanitizes the rows and closes the
-fence.
+Every case of the proof has a fence of its own, a marker of its own, a
+database of its own and an application name of its own, so the marker, the
+lock and the evidence directory of one case can never be mistaken for the
+state of another case. The owner of the fence is read while the restore is
+alive, the identifier is validated as a name before it is used in a path,
+and the record of the owed ledger is opened with the production reader of the
+privacy service, which refuses a record that names another restore or
+another removal ledger. The content of the record is never printed.
 
-The kill after the commit and before the replay is **measured green**:
-the real psql committed the import, the restore was killed before the
-removal ledger was replayed, the import replaced the table of the live only
-row of the target, and the removals that only the live database carried are
-gone from the database. The recovery refuses that database and keeps the
-service closed, the take-over replays the exact ledger the restore owed
-from the durable evidence, and the service admits again only after the
-replay.
+The kill during the import transaction is **measured green**, and it is a
+real mid-import proof: the barrier of the "during" case waits for the
+destructive statement of the real dump (the `DROP TABLE` of the relation of
+the removal ledger), and the statements it writes then run inside the
+transaction of the real import. The first of them refuses the load when the
+relation is still there, so a barrier that did not run after the destructive
+statement aborts the import instead of pretending that it did. The second
+writes a marker from inside the transaction, and the proof reads it: the
+marker names the backend and says that the relation of the removal ledger
+is gone. The third holds the transaction open. From the outside, the proof
+reads the same backend in `pg_stat_activity` (its own application name, its
+own database, an open transaction, the marker statement) and reads the
+granted `AccessExclusiveLock` of that backend on that relation in
+`pg_locks`. The kill lands while the transaction is open and after the
+import already destroyed the removal ledger of the live database, and the
+rollback restores it: the live removals are still there, the record of the
+removed match is not revoked and the live only row of the target survived.
 
-The earlier report of this evidence named a unique violation on
-`online_removal_requests_pkey` as a defect of the product. It was not: the
-seed of the proof named the request of the match bound removal like the
-identifier the subject replay derives, and the two collided on the primary
-key of the request. The seed uses independent identifiers now, and the
-collision is kept as a separate case for the correction the privacy work is
-making.
+The recovery of that restore then **refuses**, and the refusal is the
+correct one: the fixture of the proof is deliberately unsanitized, so the
+rows of the database are not the erasure of a removal and the recovery keeps
+the service closed. The **take-over** of the same restore replays the owed
+ledger, sanitizes the rows and closes the fence. The recovery of an
+unsanitized database does not close the fence, and the proof says so.
+
+The kill after the commit and before the replay is **measured green**: the
+real psql committed the import, the restore was killed before the removal
+ledger was replayed, the import replaced the table of the live only row of
+the target, and the removals that only the live database carried are gone
+from the database. The recovery refuses that database and keeps the service
+closed, the take-over replays the exact ledger the restore owed from the
+durable evidence, and the service admits again only after the replay.
+
+The copied protected record is **measured green** in two different cases, and
+the two are told apart:
+
+* the **refusal**: the import committed and the removals are gone from the
+  database, the record of the run is copied to a protected place (a
+  directory of mode `0700` and a record of mode `0600`, both owned by the
+  restore user `65532`), the evidence directory of the run is removed (only
+  that directory, and the resolved path is verified before it is removed),
+  and the recovery takes the copy alone - **no bundle and no passphrase** -
+  and refuses, because the database lost the removals. The obligation of
+  the next import is durable: the refused recovery writes the record again,
+  so a restore that comes next replays what the crashed restore owed.
+* the **success**: the take-over applies the owed ledger, the removals are
+  applied and erased, and the lifecycle of a restore that crashed after its
+  replay is staged with the production code of the privacy service (the
+  lifecycle is opened, the removal ledger the database really holds is bound
+  to it, the durable evidence of it is written, and the helper ends without
+  closing the fence). The record of that lifecycle is copied to the
+  protected place and the evidence directory is lost again, and the real
+  binary recovers the restore from the copy alone: the fence is closed, the
+  service admits again, and the removed data is still erased.
+  **The boundary of this case is staged and not killed**: the replay is the
+  real replay of the real take-over and the close of the restore is the one
+  that never ran, but the process that died is the helper and not the
+  restore. The two kill boundaries of the restore itself are the two cases
+  above, and they are real kills.
+
+The next import without a removal ledger sink is **measured green** with the
+real library: the helper calls `backup.Restore` without the removal ledger
+sink, against a real database and a real encrypted bundle, with a counter on
+the importer. The refusal is the conflict of the owed removals, the importer
+ran **zero** times, and the authoritative ledger and the rows of the database
+are unchanged. The refusal also gives the lifecycle back and puts the marker
+of the crashed restore back byte for byte, so the crashed restore stays
+recoverable.
 
 The barrier of the proof is a program of its own for every case, with the
 mode written into it, because the environment of the loader is an explicit
 allowlist of the production code and never carries a switch of the proof.
-The proof does not change that allowlist. The kill during the transaction is
-proven at the injected barrier: the backend of the barrier waits inside the
-import transaction on the marker statement, and the owner of the lifecycle is
-read while the restore is alive and is the same after the crash.
+The proof does not change that allowlist.
 
 The durable evidence of the owed ledger is written next to the marker of the
 lifecycle, and the access proof measures it: the directory is `0700` and
@@ -247,9 +298,11 @@ removals it owed are still missing from the database.
    to be refused). The encrypted restore itself is proved by
    `node scripts/online/restore-proof.mjs`, which runs the real
    `khabackup` against the fence lifecycle of the privacy service and reports
-   18 steps, all of them passed at `d88eafc`. The one case neither proof runs
-   is a **crash of the restore during its import**: that belongs to the privacy
-   work, and both proofs say so in their limits.
+   18 steps, all of them passed at `d88eafc`. The **crash of the restore
+   during its import** is run by
+   `node scripts/online/restore-interruption-proof.mjs`, which kills the real
+   restore of the real binary at a real barrier in front of the real psql and
+   reports 48 steps, all of them passed on the tree named above.
 2. **The host has not been verified.** Apache flushing, finite stream
    delivery, the delivered CSP and CORS, the TLS chain, the private worker
    reachability and the capacity need the real host and an authorized staging
@@ -286,6 +339,16 @@ removals it owed are still missing from the database.
   numbers are not transferable.
 - The backup rotation, the private offsite copy and the restore rehearsal on
   the host are not executed here.
+- The container proofs are reproduced by the workflow `container-proofs` on a
+  Linux engine, and the fixture of that workflow is published on every
+  interface because the helpers of the proofs reach it through
+  `host.docker.internal`. The report above was measured on the local engine
+  of the developer, so the Linux run of the proofs is **not measured here**.
+- The crash **after** the replay of the removal ledger is staged with the
+  production code of the privacy service and not killed: the replay is the
+  real replay of a real take-over and the close of the restore is the one
+  that never ran, but the process that died is the helper. The two kill
+  boundaries of the restore itself are real kills.
 
 **No deployment and no feature enablement happened.** The host record
 `docs/evidence/online/KHA-83-host.json` does not exist yet, so the release
