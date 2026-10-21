@@ -78,6 +78,61 @@ async function goFiles(root) {
 }
 
 /**
+ * Extracts the body of a Go function that starts at the given offset.
+ * @param {string} text
+ * @param {number} offset
+ * @returns {string}
+ */
+function functionBodyAt(text, offset) {
+  const start = text.lastIndexOf('\nfunc ', offset);
+  if (start < 0) return '';
+  const end = text.indexOf('\n}', offset);
+  return end < 0 ? text.slice(start) : text.slice(start, end + 2);
+}
+
+/**
+ * Finds the helper that reads a switch and reports whether an unset switch
+ * leaves the surface closed.
+ *
+ * The check follows the actual read site. A read through a helper is checked
+ * in that helper, so an unwired helper cannot pass the audit by sitting
+ * somewhere else in the file.
+ * @param {string} text
+ * @param {string} name
+ * @returns {'closed'|'open'|'unknown'}
+ */
+export function switchDefaultState(text, name) {
+  const readPattern = new RegExp(`"${name}"`, 'g');
+  const match = readPattern.exec(text);
+  if (!match) return 'unknown';
+  const readSite = match.index;
+
+  // A read through a helper is decided by that helper. The helper receives
+  // the lookup function, as in flag(getenv, "ONLINE_FRIEND_ENABLED").
+  const before = text.slice(Math.max(0, readSite - 120), readSite);
+  // The helper that reads this switch is the one immediately before it.
+  /** @type {string|null} */
+  let helperName = null;
+  for (const candidate of before.matchAll(/(\w+)\(\s*getenv\s*,/g)) {
+    helperName = candidate[1] ?? null;
+  }
+  let body = functionBodyAt(text, readSite);
+  if (helperName) {
+    const helperDefinition = new RegExp(`func ${helperName}\\(`);
+    const helperMatch = helperDefinition.exec(text);
+    if (helperMatch) {
+      body = functionBodyAt(text, helperMatch.index);
+    }
+  }
+  if (!body) return 'unknown';
+  const readsTrue = /==\s*"true"/.test(body) || /EqualFold\([\s\S]{0,120}?"true"\)/.test(body);
+  const fallsBackToTrue = /\|\|\s*true\b/.test(body) || /:\s*true\b/.test(body) || /return\s+true\b/.test(body);
+  if (readsTrue && !fallsBackToTrue) return 'closed';
+  if (fallsBackToTrue) return 'open';
+  return 'unknown';
+}
+
+/**
  * Audits the production wiring.
  * @param {string} root
  * @returns {Promise<{findings: Finding[], sources: {file: string, switches: string[], featuresRoute: boolean}[]}>}
@@ -90,7 +145,8 @@ export async function auditServiceWiring(root) {
 
   let featuresRouteFiles = 0;
   const switchFiles = new Map(SERVER_SWITCHES.map((name) => [name, []]));
-  let defaultOffEvidence = 0;
+  /** @type {Record<string, 'closed'|'open'|'unknown'>} */
+  const switchState = {};
 
   for (const file of await goFiles(root)) {
     const text = await readFile(file, 'utf8');
@@ -99,12 +155,12 @@ export async function auditServiceWiring(root) {
     const featuresRoute = text.includes(FEATURES_ROUTE);
     if (switches.length > 0 || featuresRoute) sources.push({ file: id, switches, featuresRoute });
     if (featuresRoute) featuresRouteFiles += 1;
-    for (const name of switches) switchFiles.get(name).push(id);
-    // A switch that is read with a false default is closed when it is unset.
     for (const name of switches) {
-      const pattern = new RegExp(`${name}[^\\n]{0,80}?false`, 'i');
-      const inverse = new RegExp(`${name}[^\\n]{0,40}?!\\s*\\|\\|\\s*true`, 'i');
-      if (pattern.test(text) || inverse.test(text)) defaultOffEvidence += 1;
+      switchFiles.get(name).push(id);
+      const state = switchDefaultState(text, name);
+      // A read in any file counts when at least one read closes by default.
+      if (state === 'closed') switchState[name] = 'closed';
+      else if (switchState[name] !== 'closed') switchState[name] = state;
     }
   }
 
@@ -138,15 +194,21 @@ export async function auditServiceWiring(root) {
     ));
   }
 
-  if (featuresRouteFiles > 0 && defaultOffEvidence === 0) {
+  for (const name of SERVER_SWITCHES) {
+    if ((switchFiles.get(name) ?? []).length === 0) continue;
+    const state = switchState[name];
+    if (state === 'closed') {
+      findings.push(finding('info', 'switch-default-closed', `An unset ${name} leaves the surface closed.`, null));
+      continue;
+    }
     findings.push(finding(
       'blocker',
       'switch-default-not-closed',
-      `The server reads a feature switch but no read shows a closed default. An unset switch must leave the surface closed.`,
+      state === 'open'
+        ? `The read of ${name} can yield true, so an unset switch does not reliably close the surface.`
+        : `The read of ${name} has no provable closed default. An unset switch must leave the surface closed.`,
       'Read the switch as false when it is unset or unparsable.',
     ));
-  } else if (featuresRouteFiles > 0) {
-    findings.push(finding('info', 'switch-default-closed', 'A feature switch read defaults to closed.', null));
   }
 
   const conditionalMount = sources.some((source) => source.switches.length > 0);

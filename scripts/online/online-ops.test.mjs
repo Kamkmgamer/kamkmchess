@@ -14,7 +14,9 @@ import { buildLedger, familyOf, validateRecord } from './evidence-ledger.mjs';
 import { buildPacket, evaluateEvidence, GATE_SCENARIOS } from './feature-gates.mjs';
 import { mapScenarios, parseGoTestJson } from './integration-suite.mjs';
 import { percentiles } from './load-suite.mjs';
-import { auditServiceWiring } from './service-wiring.mjs';
+import { auditServiceWiring, switchDefaultState } from './service-wiring.mjs';
+import { buildProbes, evaluateProbe } from '../../deploy/runtime-grants-probe.mjs';
+import { parseMigrationGrants, parsePolicy } from '../../deploy/runtime-grants.mjs';
 
 const trees = [];
 
@@ -211,4 +213,81 @@ test('the latency percentiles are computed from the sample', () => {
   assert.equal(stats.max, 50);
   assert.equal(stats.p50, 30);
   assert.equal(percentiles([]).count, 0);
+});
+
+test('a switch that is read through a closed helper is closed by default', () => {
+  const source = [
+    'package serverapp',
+    '',
+    'func flag(getenv func(string) string, key string) bool {',
+    '\treturn strings.TrimSpace(getenv(key)) == "1" || strings.EqualFold(strings.TrimSpace(getenv(key)), "true")',
+    '}',
+    '',
+    'func Load(getenv func(string) string) Config {',
+    '\treturn Config{FriendEnabled: flag(getenv, "ONLINE_FRIEND_ENABLED")}',
+    '}',
+  ].join('\n');
+  assert.equal(switchDefaultState(source, 'ONLINE_FRIEND_ENABLED'), 'closed');
+});
+
+test('a switch whose helper can fall back to true is not closed', () => {
+  const source = [
+    'package serverapp',
+    '',
+    'func flag(getenv func(string) string, key string) bool {',
+    '\tif getenv(key) == "" {',
+    '\t\treturn true',
+    '\t}',
+    '\treturn getenv(key) == "true"',
+    '}',
+    '',
+    'func Load(getenv func(string) string) Config {',
+    '\treturn Config{QueueEnabled: flag(getenv, "ONLINE_QUEUE_ENABLED")}',
+    '}',
+  ].join('\n');
+  assert.equal(switchDefaultState(source, 'ONLINE_QUEUE_ENABLED'), 'open');
+});
+
+test('a migration that grants a privilege the policy does not grant is a blocker', () => {
+  const grants = parseMigrationGrants(
+    "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE online_events TO kamkm_online_api;",
+  );
+  assert.equal(grants.length, 1);
+  assert.equal(grants[0].role, 'kamkm_online_api');
+  assert.equal(grants[0].table, 'online_events');
+  assert.ok(grants[0].privileges.includes('DELETE'));
+});
+
+test('the grant probe writes, updates and deletes as the role it probes', () => {
+  const policy = parsePolicy({
+    privileges: {
+      online_events: ['SELECT', 'INSERT'],
+      games: ['SELECT', 'INSERT', 'UPDATE'],
+      online_public_replays: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+    },
+  });
+  const probes = buildProbes(policy, 'probe_schema', new Map([['games', 'game_id']]));
+  const ids = probes.map((probe) => probe.id);
+  assert.ok(ids.includes('insert-online_events'));
+  assert.ok(ids.includes('update-games'));
+  assert.ok(ids.includes('delete-online_public_replays'));
+  assert.ok(ids.includes('deny-delete-online_events'));
+  const insert = probes.find((probe) => probe.id === 'insert-online_events');
+  assert.match(insert.sql, /INSERT INTO probe_schema\.online_events/);
+  assert.match(insert.sql, /ROLLBACK/);
+});
+
+test('a write refused by a table rule is a permitted write, a privilege refusal is not', () => {
+  const probe = { id: 'insert-x', description: '', expectation: 'allowed', sql: '' };
+  const refused = evaluateProbe(probe, { ok: false, stderr: 'ERROR: online guest credential requires an existing seat' });
+  assert.equal(refused.passed, true);
+  const privilege = evaluateProbe(probe, { ok: false, stderr: 'ERROR: permission denied for table x' });
+  assert.equal(privilege.passed, false);
+});
+
+test('a delete the policy forbids must fail with a privilege refusal', () => {
+  const probe = { id: 'deny-delete-x', description: '', expectation: 'denied', sql: '' };
+  assert.equal(evaluateProbe(probe, { ok: false, stderr: 'ERROR: permission denied for table x' }).passed, true);
+  assert.equal(evaluateProbe(probe, { ok: false, stderr: 'ERROR: relation does not exist' }).passed, false);
+  assert.equal(evaluateProbe(probe, { ok: true, stderr: '' }).passed, false);
 });

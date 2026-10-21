@@ -48,6 +48,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net"
@@ -147,7 +148,7 @@ func run() error {
 	if err != nil {
 		return errors.New("fixture signing key could not be generated")
 	}
-	_, certPool, err := loopbackCertificate(signingKey)
+	_, certPool, keyPair, err := loopbackCertificate(signingKey)
 	if err != nil {
 		return err
 	}
@@ -161,7 +162,7 @@ func run() error {
 	jwksURL := issuer + "/.well-known/jwks.json"
 
 	jwksServer := &http.Server{
-		Handler:           http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/.well-known/jwks.json" {
 				w.WriteHeader(http.StatusNotFound)
 				return
@@ -171,10 +172,15 @@ func run() error {
 			_ = json.NewEncoder(w).Encode(jwksDocument(signingKey))
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
+		// The certificate is carried by the server. ServeTLS is called
+		// without file names, so the key has to be here.
+		TLSConfig: tlsConfig(keyPair),
 	}
+	// A server that dies must never be reported as ready.
+	jwksFailure := make(chan error, 1)
 	go func() {
 		if err := jwksServer.ServeTLS(jwksListener, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("fixture JWKS server stopped: %v", err)
+			jwksFailure <- err
 		}
 	}()
 	defer func() {
@@ -211,10 +217,8 @@ func run() error {
 	apiPortValue := apiListener.Addr().(*net.TCPAddr).Port
 
 	trustedClient := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{RootCAs: certPool, MinVersion: tls.VersionTLS12},
-		},
+		Timeout:   5 * time.Second,
+		Transport: &http.Transport{TLSClientConfig: tlsClientConfig(certPool)},
 	}
 	// The service configuration is read through the production loader, so the
 	// fixture picks up every online setting the server understands, including
@@ -266,6 +270,23 @@ func run() error {
 	}
 
 	baseURL := fmt.Sprintf("http://%s:%d", loopbackHost, apiPortValue)
+
+	// Readiness is proven, not assumed. Both servers must answer before the
+	// fixture reports itself ready: the JWKS document over HTTPS, because the
+	// API verifier needs it, and the API itself.
+	if err := waitForJWKS(ctx, trustedClient, jwksURL, jwksFailure); err != nil {
+		return err
+	}
+	if err := waitForAPI(ctx, baseURL); err != nil {
+		return err
+	}
+	// The identity document must also work for the service itself. A fixture
+	// whose verifier cannot check a signed session is not usable, so the
+	// fixture proves an authenticated request before it reports itself ready.
+	if err := probeAuthenticated(ctx, baseURL, accounts[0].Token); err != nil {
+		return err
+	}
+
 	started := time.Now()
 	result := descriptor{
 		BaseURL:        baseURL,
@@ -305,6 +326,99 @@ func run() error {
 	defer cancel()
 	_ = apiServer.Shutdown(shutdown)
 	return nil
+}
+
+// tlsConfig returns the server configuration that serves the fixture
+// certificate.
+func tlsConfig(keyPair tls.Certificate) *tls.Config {
+	return &tls.Config{Certificates: []tls.Certificate{keyPair}, MinVersion: tls.VersionTLS12}
+}
+
+// tlsClientConfig returns the client configuration that trusts the fixture
+// certificate.
+func tlsClientConfig(pool *x509.CertPool) *tls.Config {
+	return &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+}
+
+// waitForJWKS proves that the identity document is really served. A fixture
+// whose JWKS listener died must never report itself ready.
+func waitForJWKS(ctx context.Context, client *http.Client, jwksURL string, failure <-chan error) error {
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-failure:
+			return fmt.Errorf("fixture JWKS server failed: %w", err)
+		default:
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, jwksURL, nil)
+		if err != nil {
+			return errors.New("fixture JWKS request could not be built")
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK && strings.Contains(string(body), `"keys"`) {
+				return nil
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return errors.New("fixture JWKS server did not answer in time")
+}
+
+// waitForAPI proves that the composed service answers on loopback.
+func waitForAPI(ctx context.Context, baseURL string) error {
+	deadline := time.Now().Add(20 * time.Second)
+	client := &http.Client{Timeout: 2 * time.Second}
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return errors.New("fixture API did not answer in time")
+		default:
+		}
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/online/features", nil)
+		if err != nil {
+			return errors.New("fixture API request could not be built")
+		}
+		response, err := client.Do(request)
+		if err == nil {
+			_ = response.Body.Close()
+			return nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return errors.New("fixture API did not answer in time")
+}
+
+// probeAuthenticated proves that the service verifies a signed session. It
+// fails when the identity document is not served, because the verifier cannot
+// check the token then.
+func probeAuthenticated(ctx context.Context, baseURL, token string) error {
+	deadline := time.Now().Add(20 * time.Second)
+	client := &http.Client{Timeout: 3 * time.Second}
+	for time.Now().Before(deadline) {
+		request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/v1/online/features", nil)
+		if err != nil {
+			return errors.New("fixture authenticated request could not be built")
+		}
+		request.Header.Set("Authorization", "Bearer "+token)
+		response, err := client.Do(request)
+		if err == nil {
+			body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<16))
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusOK && strings.Contains(string(body), "friends") && strings.Contains(string(body), "queue") {
+				return nil
+			}
+			return errors.New("fixture API refused the authenticated probe, so the identity document is not served")
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("fixture authenticated probe did not finish")
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	return errors.New("fixture API did not answer the authenticated probe in time")
 }
 
 // stringList collects a repeatable string flag.
@@ -387,9 +501,9 @@ func dropSchema(ctx context.Context, databaseURL, schema string) {
 	}
 }
 
-// loopbackCertificate returns a self-signed certificate for 127.0.0.1 and the
-// pool that trusts it.
-func loopbackCertificate(key *rsa.PrivateKey) (*x509.Certificate, *x509.CertPool, error) {
+// loopbackCertificate returns a self-signed certificate for 127.0.0.1, the
+// pool that trusts it and the TLS key pair that serves it.
+func loopbackCertificate(key *rsa.PrivateKey) (*x509.Certificate, *x509.CertPool, tls.Certificate, error) {
 	template := &x509.Certificate{
 		SerialNumber:          big.NewInt(time.Now().UnixNano()),
 		Subject:               pkix.Name{CommonName: "online fixture loopback"},
@@ -404,15 +518,21 @@ func loopbackCertificate(key *rsa.PrivateKey) (*x509.Certificate, *x509.CertPool
 	}
 	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 	if err != nil {
-		return nil, nil, errors.New("fixture certificate could not be created")
+		return nil, nil, tls.Certificate{}, errors.New("fixture certificate could not be created")
 	}
 	certificate, err := x509.ParseCertificate(der)
 	if err != nil {
-		return nil, nil, errors.New("fixture certificate could not be parsed")
+		return nil, nil, tls.Certificate{}, errors.New("fixture certificate could not be parsed")
 	}
 	pool := x509.NewCertPool()
 	pool.AddCert(certificate)
-	return certificate, pool, nil
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	keyPair, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, nil, tls.Certificate{}, errors.New("fixture TLS key pair could not be created")
+	}
+	return certificate, pool, keyPair, nil
 }
 
 // jwksDocument renders the public JWKS the API verifier fetches.

@@ -68,7 +68,8 @@ export async function inspectBackup(root) {
   const pgtools = await readFile(join(root, 'backend', 'backup', 'cmd', 'khabackup', 'pgtools.go'), 'utf8');
   const main = await readFile(join(root, 'backend', 'backup', 'cmd', 'khabackup', 'main.go'), 'utf8');
   const backup = await readFile(join(root, 'backend', 'backup', 'backup.go'), 'utf8');
-  const restore = await readFile(join(root, 'backend', 'backup', 'restore.go').replace(/\\/g, '/'), 'utf8').catch(() => '');
+  const removals = await readFile(join(root, 'backend', 'backup', 'removals.go'), 'utf8').catch(() => '');
+  const privacy = await readFile(join(root, 'backend', 'privacy', 'ledger.go'), 'utf8').catch(() => '');
   const runbook = await readFile(join(root, 'docs', 'implementation', 'MVP-operations.md'), 'utf8').catch(() => '');
 
   const dumpArguments = pgtools.match(/arguments := \[\]string\{[^}]*\}/)?.[0] ?? '';
@@ -76,8 +77,50 @@ export async function inspectBackup(root) {
   const dumpIsFullDatabase = /pg_dump|--format=plain/.test(pgtools) && dumpFilters.length === 0;
 
   const restoresGameLedger = /deletion_tombstones/.test(pgtools) || /deletion_tombstones/.test(backup);
-  const restoresOnlineLedger = /online_deletion_markers/.test(pgtools + backup + restore + main);
-  const planRecoveryUsed = /PlanDeletionRecovery|PlanRestore/.test(main + backup + restore);
+  // The online removal ledger is reapplied when the restore path applies the
+  // removal records and the ledger itself lives in a table.
+  const appliesRemovalRecords = /ApplyRemovalRecords/.test(backup + removals + pgtools + main);
+  const removalLedgerTable = /online_removal_ledger/.test(privacy) || /online_removal_ledger/.test(pgtools);
+  const restoresOnlineLedger = appliesRemovalRecords && removalLedgerTable;
+  const planRecoveryUsed = /PlanDeletionRecovery|PlanRestore/.test(main + backup);
+
+  // The restore gate must be consulted before the restored copy serves. The
+  // gate exists in the privacy service; a gate nobody calls is not a gate.
+  const gateFunction = /func \(s \*Service\) (Serving\w+)\(/.exec(privacy)?.[1] ?? null;
+  let servingGateWired = false;
+  if (gateFunction) {
+    /** @type {string[]} */
+    const goFiles = [];
+    const walk = async (directory) => {
+      /** @type {import('node:fs').Dirent[]} */
+      let entries = [];
+      try {
+        entries = await readdir(directory, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const entry of entries) {
+        const path = join(directory, entry.name);
+        if (entry.isDirectory()) {
+          await walk(path);
+          continue;
+        }
+        if (entry.name.endsWith('.go')) goFiles.push(path);
+      }
+    };
+    await walk(join(root, 'backend'));
+    for (const file of goFiles) {
+      const id = file.slice(root.length + 1).split('\\').join('/');
+      if (id === 'backend/privacy/ledger.go') continue;
+      if (id.endsWith('_test.go')) continue;
+      const text = await readFile(file, 'utf8');
+      if (text.includes(`${gateFunction}(`)) {
+        servingGateWired = true;
+        break;
+      }
+    }
+  }
+
   const runbookMentionsLedger = /newer-ledger|ledger/i.test(runbook);
 
   return {
@@ -87,6 +130,8 @@ export async function inspectBackup(root) {
     restoresGameLedger,
     restoresOnlineLedger,
     planRecoveryUsed,
+    servingGateWired,
+    gateFunction,
     runbookMentionsLedger,
   };
 }
@@ -130,11 +175,23 @@ export function auditBackup(state) {
     findings.push(finding(
       'blocker',
       'online-removal-ledger-uncovered',
-      'The restore path does not reapply the online removal markers, so a restored copy can publish a replay whose erasure was requested.',
-      'Extend the backup ledger to the online removal markers and reapply them with the newest bundle before the restored copy serves traffic.',
+      'The restore path does not reapply the online removal ledger, so a restored copy can publish a replay whose erasure was requested.',
+      'Extend the backup ledger to the online removal records and reapply them with the newest bundle before the restored copy serves traffic.',
     ));
   } else {
-    findings.push(finding('info', 'online-removal-ledger-reapplied', 'The restore path reapplies the online removal markers.', null));
+    findings.push(finding('info', 'online-removal-ledger-reapplied', 'The restore path reapplies the online removal ledger.', null));
+  }
+  if (!state.servingGateWired) {
+    findings.push(finding(
+      'blocker',
+      'restore-gate-not-wired',
+      state.gateFunction
+        ? `The restore gate exists (${state.gateFunction}) but no production read path consults it, so a restored copy can serve traffic before the removal ledger is applied.`
+        : 'No restore gate exists, so a restored copy can serve traffic before the removal ledger is applied.',
+      'Consult the restore gate before any public read and before any mutation of a restored copy.',
+    ));
+  } else {
+    findings.push(finding('info', 'restore-gate-wired', 'A production path consults the restore gate before serving.', null));
   }
   if (!state.planRecoveryUsed) {
     findings.push(finding(

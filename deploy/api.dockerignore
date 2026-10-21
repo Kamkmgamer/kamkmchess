@@ -2,3 +2,7 @@
 !api.Dockerfile
 !bin/
 !bin/kamkmchess-api
+!rules-worker/
+!rules-worker/worker.mjs
+!rules-worker/LICENSE.txt
+!rules-worker/THIRD_PARTY_NOTICES.txt

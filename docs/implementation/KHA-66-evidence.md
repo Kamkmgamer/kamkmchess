@@ -15,6 +15,8 @@ The Go client recomputes the semantic SHA-256 fingerprint, including history and
 
 One deadline covers queue wait, process exchange and retry. Queued cancellation leaves the active request alone; an already-canceled request starts no worker. Input/output lines are bounded at 256 KiB / 1 MiB. Oversized input is discarded through its newline.
 
+> Amendment: the cold start of the worker no longer belongs to that deadline. The start and its readiness probe have their own budget, and the time they spend is added back to the exchange deadline. See [the rules worker start budget](rules-worker-start-budget.md).
+
 The worker environment uses an explicit runtime allowlist. Database credentials, provider credentials, proxy settings and private archives are not supplied. The worker has no listening socket or database writer.
 
 ## Go integration

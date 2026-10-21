@@ -493,10 +493,11 @@ func (a *friendsAPI) acceptRematch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := a.friends.AcceptRematch(r.Context(), invite.AcceptRematchRequest{
-		RematchID:        r.PathValue("rematchID"),
-		Acceptor:         principal.Participant,
-		Origin:           a.origin(r),
-		RotateCredential: body.RotateCredential,
+		RematchID:         r.PathValue("rematchID"),
+		Acceptor:          principal.Participant,
+		Origin:            a.origin(r),
+		RotateCredential:  body.RotateCredential,
+		CredentialMatchID: principal.MatchID,
 	})
 	if err != nil {
 		writeInviteError(w, err)
@@ -740,6 +741,10 @@ func optionalString(value string) *string {
 // An unknown invitation, a cancelled invitation and an invitation that is not
 // visible to the caller share one status, so a caller cannot learn whether a
 // named challenge exists.
+//
+// An expired invitation has its own status and its own code, so the browser
+// can tell the invitee that the link expired instead of reporting a generic
+// conflict.
 func writeInviteError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, invite.ErrNotFound):
@@ -748,9 +753,10 @@ func writeInviteError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "not_authorized")
 	case errors.Is(err, invite.ErrInvalidContract), errors.Is(err, invite.ErrInvalidArgument):
 		writeError(w, http.StatusBadRequest, "invalid_request")
+	case errors.Is(err, invite.ErrExpired):
+		writeError(w, http.StatusGone, "expired")
 	case errors.Is(err, invite.ErrConflict),
-		errors.Is(err, invite.ErrAlreadyConsumed),
-		errors.Is(err, invite.ErrExpired):
+		errors.Is(err, invite.ErrAlreadyConsumed):
 		writeError(w, http.StatusConflict, "conflict")
 	case errors.Is(err, invite.ErrUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable")

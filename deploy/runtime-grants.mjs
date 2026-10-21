@@ -58,6 +58,57 @@ export function parseMigrationTables(sql) {
 }
 
 /**
+ * Returns the privileges a migration grants to a role.
+ *
+ * A migration that grants privileges can widen a role without any review, so
+ * the audit reports it next to the reviewed policy.
+ * @param {string} sql
+ * @returns {{role: string, table: string, privileges: string[]}[]}
+ */
+export function parseMigrationGrants(sql) {
+  /** @type {{role: string, table: string, privileges: string[]}[]} */
+  const grants = [];
+  const pattern = /GRANT\s+([A-Za-z,\s]+?)\s+ON\s+(?:TABLE\s+)?([A-Za-z_][A-Za-z0-9_.]*)\s+TO\s+([A-Za-z_][A-Za-z0-9_]*)/gi;
+  for (const match of sql.matchAll(pattern)) {
+    const privileges = (match[1] ?? '')
+      .split(',')
+      .map((part) => part.trim().toUpperCase())
+      .filter((part) => part.length > 0);
+    const table = (match[2] ?? '').split('.').pop()?.toLowerCase() ?? '';
+    const role = match[3] ?? '';
+    if (!table || !role) continue;
+    grants.push({ role, table, privileges });
+  }
+  return grants;
+}
+
+/**
+ * Returns the sequences a migration creates.
+ * @param {string} sql
+ * @returns {string[]}
+ */
+export function parseMigrationSequences(sql) {
+  const sequences = new Set();
+  for (const match of sql.matchAll(/CREATE\s+SEQUENCE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)/gi)) {
+    sequences.add(match[1].toLowerCase());
+  }
+  return [...sequences].sort();
+}
+
+/**
+ * Returns the functions a migration creates.
+ * @param {string} sql
+ * @returns {string[]}
+ */
+export function parseMigrationFunctions(sql) {
+  const functions = new Set();
+  for (const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) {
+    functions.add(match[1].toLowerCase());
+  }
+  return [...functions].sort();
+}
+
+/**
  * Strips Go comments and interpreted string literals so a scan does not match
  * prose. Raw string literals are kept: in Go they carry the SQL statements
  * this scan is looking for.
@@ -162,11 +213,51 @@ export function parsePolicy(raw) {
  * @param {{policy: ReturnType<typeof parsePolicy>, tables: string[], usage: Map<string, Set<string>>}} input
  * @returns {Finding[]}
  */
-export function auditGrants({ policy, tables, usage }) {
+export function auditGrants({ policy, tables, usage, migrationGrants = [], sequences = [], functions = [] }) {
   /** @type {Finding[]} */
   const findings = [];
   const migrated = new Set(tables.map((table) => table.toLowerCase()));
   const known = new Set([...migrated, ...policy.privileges.keys()]);
+
+  for (const grant of migrationGrants) {
+    const granted = policy.privileges.get(grant.table);
+    if (grant.role === policy.role) {
+      const extra = grant.privileges.filter((verb) => !granted || !granted.has(verb));
+      if (extra.length > 0) {
+        findings.push(finding(
+          'blocker',
+          'migration-grant-exceeds-policy',
+          `A migration grants ${extra.join(', ')} on ${grant.table} to ${grant.role}, which the reviewed policy does not grant.`,
+          `Remove the grant from the migration or extend the policy deliberately. The policy is the reviewed least-privilege contract.`,
+        ));
+      }
+      continue;
+    }
+    findings.push(finding(
+      'blocker',
+      'migration-grants-unreviewed-role',
+      `A migration grants ${grant.privileges.join(', ')} on ${grant.table} to ${grant.role}, a role the reviewed policy does not describe.`,
+      `Grant the privileges to ${policy.role} through deploy/runtime-grants.policy.json, or remove the unreviewed role and its grants.`,
+    ));
+  }
+
+  for (const sequence of sequences) {
+    findings.push(finding(
+      'blocker',
+      'sequence-missing-grant',
+      `The migration creates the sequence ${sequence}, which the policy does not grant.`,
+      `Grant USAGE, SELECT and UPDATE on the sequence ${sequence} in the policy, or remove the sequence.`,
+    ));
+  }
+
+  if (functions.length > 0) {
+    findings.push(finding(
+      'info',
+      'trigger-functions-need-no-grant',
+      `The migrations create ${functions.length} guard function(s). PostgreSQL checks a trigger function's EXECUTE privilege when the trigger is created, so the runtime role needs no grant for them.`,
+      null,
+    ));
+  }
 
   for (const table of [...migrated].sort()) {
     if (!policy.privileges.has(table)) {
@@ -397,11 +488,19 @@ export async function loadTree(root) {
   const migrationDirectory = join(root, 'backend', 'migrations');
   /** @type {Set<string>} */
   const tables = new Set();
+  /** @type {Set<string>} */
+  const sequences = new Set();
+  /** @type {Set<string>} */
+  const functions = new Set();
+  /** @type {{role: string, table: string, privileges: string[]}[]} */
+  const migrationGrants = [];
   for (const name of await readdir(migrationDirectory)) {
     if (!name.endsWith('.sql')) continue;
-    for (const table of parseMigrationTables(await readFile(join(migrationDirectory, name), 'utf8'))) {
-      tables.add(table);
-    }
+    const sql = await readFile(join(migrationDirectory, name), 'utf8');
+    for (const table of parseMigrationTables(sql)) tables.add(table);
+    for (const sequence of parseMigrationSequences(sql)) sequences.add(sequence);
+    for (const fn of parseMigrationFunctions(sql)) functions.add(fn);
+    for (const grant of parseMigrationGrants(sql)) migrationGrants.push(grant);
   }
   const usage = new Map();
   for (const file of await goSources(root)) {
@@ -411,7 +510,7 @@ export async function loadTree(root) {
       for (const verb of verbs) usage.get(table).add(verb);
     }
   }
-  return { policy, tables: [...tables].sort(), usage };
+  return { policy, tables: [...tables].sort(), sequences: [...sequences].sort(), functions: [...functions].sort(), migrationGrants, usage };
 }
 
 /**
@@ -428,11 +527,22 @@ function printFindings(findings) {
 async function main() {
   const arguments_ = process.argv.slice(2);
   const root = process.cwd();
-  const { policy, tables, usage } = await loadTree(root);
-  const findings = auditGrants({ policy, tables, usage });
+  const { policy, tables, usage, migrationGrants, sequences, functions } = await loadTree(root);
+  const findings = auditGrants({ policy, tables, usage, migrationGrants, sequences, functions });
 
   if (arguments_.includes('--emit')) {
     process.stdout.write(renderGrantSql(policy));
+    return;
+  }
+  if (arguments_.includes('--propose')) {
+    // The proposal names the privileges the writer uses for every table the
+    // policy does not cover yet, so a new migration can be granted without
+    // guessing. A reviewer still decides whether the proposal is right.
+    for (const table of tables) {
+      if (policy.privileges.has(table)) continue;
+      const verbs = usage.get(table) ?? new Set(['SELECT']);
+      process.stdout.write(`  "${table}": [${[...verbs].map((verb) => `"${verb}"`).join(', ')}],\n`);
+    }
     return;
   }
   if (arguments_.includes('--verify')) {

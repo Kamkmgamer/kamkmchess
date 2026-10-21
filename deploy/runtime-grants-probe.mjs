@@ -46,7 +46,7 @@ const run = promisify(execFile);
  * @param {string} schema
  * @returns {Probe[]}
  */
-export function buildProbes(policy, schema) {
+export function buildProbes(policy, schema, columns = new Map()) {
   /** @type {Probe[]} */
   const probes = [];
   const qualified = (table) => `${schema}.${table}`;
@@ -60,12 +60,41 @@ export function buildProbes(policy, schema) {
         sql: `SELECT count(*) FROM ${qualified(table)};`,
       });
     }
-    if (!verbs.has('DELETE')) {
+    if (verbs.has('INSERT')) {
+      // A real insert, not a statement about the grant. The write is rolled
+      // back, and a rejected row is still proof that the write reached the
+      // table.
+      probes.push({
+        id: `insert-${table}`,
+        description: `the runtime role writes a row into ${table}`,
+        expectation: 'allowed',
+        sql: `BEGIN; INSERT INTO ${qualified(table)} DEFAULT VALUES; ROLLBACK;`,
+      });
+    }
+    if (verbs.has('UPDATE')) {
+      const column = columns.get(table);
+      if (column) {
+        probes.push({
+          id: `update-${table}`,
+          description: `the runtime role updates ${table}`,
+          expectation: 'allowed',
+          sql: `BEGIN; UPDATE ${qualified(table)} SET ${column} = ${column} WHERE false; ROLLBACK;`,
+        });
+      }
+    }
+    if (verbs.has('DELETE')) {
+      probes.push({
+        id: `delete-${table}`,
+        description: `the runtime role deletes from ${table}`,
+        expectation: 'allowed',
+        sql: `BEGIN; DELETE FROM ${qualified(table)} WHERE false; ROLLBACK;`,
+      });
+    } else {
       probes.push({
         id: `deny-delete-${table}`,
         description: `the runtime role cannot delete from ${table}`,
         expectation: 'denied',
-        sql: `DELETE FROM ${qualified(table)};`,
+        sql: `DELETE FROM ${qualified(table)} WHERE false;`,
       });
     }
   }
@@ -115,14 +144,24 @@ export function buildProbes(policy, schema) {
  * @returns {{passed: boolean, detail: string}}
  */
 export function evaluateProbe(probe, result) {
-  const denied = !result.ok && /permission denied|not allowed|denied|must be owner/i.test(result.stderr);
+  // A privilege refusal is the only failure that proves the grant is missing.
+  // Every other error means the statement reached the table and the database
+  // refused the row, which is a permitted write.
+  const privilegeRefusal = !result.ok && /permission denied|must be owner|not authorized/i.test(result.stderr);
   const allowed = result.ok;
   if (probe.expectation === 'allowed') {
-    return allowed
-      ? { passed: true, detail: 'the statement was accepted' }
-      : { passed: false, detail: `the statement was refused: ${result.stderr.trim().split('\n')[0] ?? ''}` };
+    if (allowed) {
+      return { passed: true, detail: 'the statement was accepted' };
+    }
+    if (privilegeRefusal) {
+      return { passed: false, detail: `the statement was refused by the server: ${result.stderr.trim().split('\n')[0] ?? ''}` };
+    }
+    return {
+      passed: true,
+      detail: `the write reached the table and the row was refused: ${result.stderr.trim().split('\n')[0] ?? ''}`,
+    };
   }
-  return denied
+  return privilegeRefusal
     ? { passed: true, detail: 'the statement was refused by the server' }
     : {
       passed: false,
@@ -252,7 +291,19 @@ export async function runProbe(options) {
 
   /** @type {{id: string, passed: boolean, detail: string}[]} */
   const results = [];
-  for (const probe of buildProbes(policy, schema)) {
+  /** @type {Map<string, string>} */
+  const columns = new Map();
+  for (const [table, verbs] of policy.privileges.entries()) {
+    if (!verbs.has('UPDATE')) continue;
+    const column = await postgres.query(`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = '${schema}' AND table_name = '${table}'
+      ORDER BY ordinal_position LIMIT 1;`);
+    const name = (column.stdout || '').trim().split('\n')[0]?.trim();
+    if (name) columns.set(table, name);
+  }
+
+  for (const probe of buildProbes(policy, schema, columns)) {
     const outcome = await postgres.query(`SET ROLE ${role}; SET search_path TO ${schema}; ${probe.sql}`);
     if (probe.verifySql) {
       const verification = await postgres.query(probe.verifySql);

@@ -20,48 +20,15 @@ package locks
 
 import (
 	"context"
-	"hash/fnv"
 	"sort"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// The lock scopes of the online service.
-const (
-	// LockAccount is the scope of an account participant.
-	LockAccount = "account"
-	// LockMatch is the scope of one match.
-	LockMatch = "match"
-)
-
-// advisoryKey derives a stable 64-bit advisory lock key.
-//
-// The key is derived in the service and sent as a literal, so every caller of
-// a scope takes exactly the same lock and the lock statement stays
-// observable for the race fixtures.
-func advisoryKey(parts ...string) int64 {
-	hash := fnv.New64a()
-	for _, part := range parts {
-		_, _ = hash.Write([]byte(part))
-		_, _ = hash.Write([]byte{0})
-	}
-	return int64(hash.Sum64() & 0x7fffffffffffffff)
-}
-
-// AccountKey is the advisory lock key of one account scope.
-//
-// The scope is the shared scope string, so the online writer, the
-// authorization service, the privacy service, the profile service and the
-// private store take exactly the same lock.
-func AccountKey(scope string) int64 {
-	return advisoryKey(LockAccount, scope)
-}
-
-// MatchKey is the advisory lock key of one match scope.
-func MatchKey(matchID string) int64 {
-	return advisoryKey(LockMatch, matchID)
-}
+// accountScopePrefix separates the account scope locks from every other
+// advisory lock of the service.
+const accountScopePrefix = "kamkmchess.account."
 
 // AccountScope is the account scope key of one participant.
 //
@@ -77,7 +44,7 @@ func AccountScope(kind, id string) string {
 // locks, and the scopes of one transaction are taken in ascending order, so
 // two flows that lock the same scopes cannot deadlock.
 func LockAccountScope(ctx context.Context, tx pgx.Tx, scope string) error {
-	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, AccountKey(scope))
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, accountScopePrefix+scope)
 	return err
 }
 

@@ -29,9 +29,18 @@
  *   accepted, because a guest seat credential is bound to a match that did
  *   not exist before.
  * - A rematch needs both participants. The proposal is the proposer's
- *   consent; the opponent's acceptance creates the new match.
+ *   consent; the opponent's acceptance creates the new match. A rematch is a
+ *   new match, so the credential of the finished match cannot authorize it
+ *   and a guest that lost the answer gets a fresh credential of the new
+ *   seat.
+ * - An expired link reports the `expired` state, both in the preview and in
+ *   the refused acceptance, so the interface can say that the link expired
+ *   instead of reporting a generic conflict.
  * - The preview shows the inviter's public name or Guest, the color, the
  *   clock and the custom position. It never invents a pairing.
+ * - A published model label is the canonical public label. It may be
+ *   collapsed to the neutral label, so the browser keeps its own binding of
+ *   a model opponent and never identifies a model by the published label.
  */
 import type { OnlineMatchView } from './updates';
 import type { Seat, SeatControl, TimeControl } from './contracts';
@@ -181,6 +190,24 @@ export interface FriendRematchRequest {
   readonly startingFen?: string;
 }
 
+/**
+ * The request that accepts one rematch offer.
+ *
+ * A rematch is a new match, so the credential of the finished match cannot
+ * authorize the new seat. A guest that lost the answer receives a fresh
+ * credential of the new seat, and it may ask for the replacement explicitly
+ * as well.
+ */
+export interface FriendRematchAcceptRequest {
+  /**
+   * Replaces a live guest seat credential of the new seat.
+   *
+   * The browser asks for the replacement when it holds no working
+   * credential of the new match, for example after a lost answer.
+   */
+  readonly rotateCredential?: boolean;
+}
+
 /** One request of the friend surface. */
 export interface FriendRequest {
   readonly path: string;
@@ -202,7 +229,7 @@ export interface FriendClient {
   cancelInvitation(invitationId: string, ownerToken: string): Promise<FriendInvitation>;
   claimSeatCredential(invitationId: string, ownerToken: string): Promise<FriendSeatCredential>;
   proposeRematch(request: FriendRematchRequest): Promise<FriendRematch>;
-  acceptRematch(rematchId: string): Promise<FriendRematchAccepted>;
+  acceptRematch(rematchId: string, request?: FriendRematchAcceptRequest): Promise<FriendRematchAccepted>;
   claimRematchSeatCredential(rematchId: string): Promise<FriendSeatCredential>;
   readPendingRematch(matchId: string): Promise<FriendRematch | null>;
 }
@@ -213,6 +240,7 @@ export type FriendErrorCode =
   | 'invalid-answer'
   | 'not-found'
   | 'conflict'
+  | 'expired'
   | 'not-authorized'
   | 'origin-required'
   | 'unauthorized'
@@ -300,11 +328,14 @@ export function createFriendClient(transport: FriendTransport): FriendClient {
       });
       return parseRematchAnswer(body);
     },
-    async acceptRematch(rematchId) {
+    async acceptRematch(rematchId, request) {
       const body = await transport.send({
         path: FRIENDS_REMATCH_ACCEPT_PATH.replace('{rematchId}', encodeURIComponent(rematchId)),
         method: 'POST',
-        body: { schemaVersion: ONLINE_FRIENDS_SCHEMA_VERSION },
+        body: {
+          schemaVersion: ONLINE_FRIENDS_SCHEMA_VERSION,
+          rotateCredential: request?.rotateCredential === true,
+        },
       });
       return parseRematchAccepted(body);
     },
@@ -384,6 +415,8 @@ function friendError(status: number, payload: unknown): FriendError {
       return new FriendError('not-found', 'The invitation or the match was not found.', status);
     case 409:
       return new FriendError('conflict', 'The invitation changed before the request.', status);
+    case 410:
+      return new FriendError('expired', 'The invitation link expired.', status);
     case 401:
       return new FriendError('unauthorized', 'The request needs a signed-in account.', status);
     default:
@@ -604,11 +637,34 @@ export function needsCredentialRotation(hasWorkingCredential: boolean): boolean 
 }
 
 /**
+ * True when the browser itself created the invitation.
+ *
+ * The service cannot tell that an anonymous guest who created a link is the
+ * same human who opens it later: an anonymous guest is a fresh opaque
+ * identity and the service never tracks people. The browser can avoid the
+ * case itself, because it knows which links it created and keeps their owner
+ * tokens.
+ *
+ * This is a convenience of the interface, not an identity proof. It stops one
+ * browser from accepting its own link. It does not stop a second browser of
+ * the same human, and it is no substitute for the consent of the other
+ * player.
+ */
+export function isLocallyOwnedInvitation(invitationId: string, owned: ReadonlySet<string>): boolean {
+  if (!invitationId) return false;
+  return owned.has(invitationId);
+}
+
+/**
  * Builds the acceptance key of one accept intent.
  *
  * The key is generated once and reused by every retry of the same intent. It
  * must have at least sixteen characters of letters, digits, dash or
  * underscore.
+ *
+ * The key is the only capability that resumes a guest acceptance, so the
+ * default source is a cryptographically secure one. An environment without
+ * one fails closed instead of minting a guessable capability.
  */
 export function createAcceptanceKey(random: () => string = defaultRandom): string {
   const value = random().replace(/[^A-Za-z0-9_-]/g, '');
@@ -616,15 +672,24 @@ export function createAcceptanceKey(random: () => string = defaultRandom): strin
   return `ak_${body}`;
 }
 
-/** The default entropy source of the acceptance key. */
+/** The alphabet of the acceptance key. */
+const acceptanceKeyAlphabet = 'ABCDEFGHIJKLMNOP';
+
+/**
+ * The default entropy source of the acceptance key.
+ *
+ * Twenty-four random bytes carry 192 bits, and the encoding below keeps every
+ * one of them: a byte becomes two characters of a sixteen character
+ * alphabet, so two different byte sequences never produce the same text.
+ */
 function defaultRandom(): string {
   const globalCrypto = (globalThis as { crypto?: { getRandomValues?: (array: Uint8Array) => Uint8Array } }).crypto;
-  if (globalCrypto?.getRandomValues) {
-    const bytes = new Uint8Array(24);
-    globalCrypto.getRandomValues(bytes);
-    let out = '';
-    for (const byte of bytes) out += byte.toString(36);
-    return out;
+  if (!globalCrypto?.getRandomValues) {
+    throw new FriendError('unavailable', 'This browser has no secure random source for the acceptance key.');
   }
-  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  const bytes = new Uint8Array(24);
+  globalCrypto.getRandomValues(bytes);
+  let out = '';
+  for (const byte of bytes) out += acceptanceKeyAlphabet.charAt(byte >> 4) + acceptanceKeyAlphabet.charAt(byte & 15);
+  return out;
 }

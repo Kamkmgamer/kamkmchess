@@ -21,6 +21,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify the operations tooling
         run: node --test deploy/runtime-grants.test.mjs scripts/online/online-ops.test.mjs
+      - name: Verify the local fixture
+        run: go test -tags onlinefixture -count=1 ./tools/onlinefixture
       - name: Audit the least-privilege runtime grants
         run: node deploy/runtime-grants.mjs --check
       - name: Audit the production wiring of the feature switches
@@ -33,6 +35,25 @@ jobs:
         run: node scripts/online/feature-gates.mjs evaluate --gate friend || true
       - name: Print the friend rollout packet
         run: node scripts/online/feature-gates.mjs packet --gate friend
+
+  runtime-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go mod download
+      - run: pnpm build:rules-worker
+      - name: Build and verify the deployment runtime image locally
+        run: node deploy/verify-runtime-image.mjs
 
   grant-probe:
     runs-on: ubuntu-latest

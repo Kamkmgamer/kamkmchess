@@ -6,6 +6,11 @@ services:
     image: kamkmchess-api:local
     restart: unless-stopped
     env_file: api.env
+    environment:
+      # The private rules process runs inside the API container on the pinned
+      # Node runtime. The path is fixed by the image and is not configurable
+      # per deployment, so a missing bundle cannot start the composition.
+      ONLINE_RULES_WORKER_ENTRY: /opt/kamkmchess/rules-worker/worker.mjs
     ports:
       - "127.0.0.1:18081:8080"
     depends_on:
