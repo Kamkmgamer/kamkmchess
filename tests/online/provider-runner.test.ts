@@ -34,6 +34,7 @@ import {
   createFakeOnlineService,
   createFakeProvider,
   createFakeTimers,
+  createHoldableCommandPort,
   createHoldableLeasePort,
   createMemoryPendingStore,
   deferNextRenewal,
@@ -493,47 +494,86 @@ describe('the online agent runner', () => {
     expect(buildRunnerRequestBody({
       action: 'begin',
       seat: 'black',
-      runnerId: 'runner-a',
-      leaseId: 'lease-1',
-      requestId: 'request-1',
+      runnerId: 'runner-tab-01',
+      leaseId: 'lease-contract-01',
+      requestId: 'request-contract-01',
       controlEpoch: 3,
       turnVersion: 7,
     })).toEqual({
       schemaVersion: 2,
       action: 'begin',
       seat: 'black',
-      runnerId: 'runner-a',
-      leaseId: 'lease-1',
-      requestId: 'request-1',
+      runnerId: 'runner-tab-01',
+      leaseId: 'lease-contract-01',
+      requestId: 'request-contract-01',
       controlEpoch: 3,
       turnVersion: 7,
+    });
+    // The envelope always carries the turn version. The service reads a
+    // missing version as the turn that is current now, and the shared parser of
+    // the contract requires the field.
+    expect(buildRunnerRequestBody({
+      action: 'clear',
+      seat: 'black',
+      runnerId: 'runner-tab-01',
+      leaseId: 'lease-contract-01',
+      requestId: 'request-contract-01',
+      controlEpoch: 3,
+      turnVersion: null,
+    })).toEqual({
+      schemaVersion: 2,
+      action: 'clear',
+      seat: 'black',
+      runnerId: 'runner-tab-01',
+      leaseId: 'lease-contract-01',
+      requestId: 'request-contract-01',
+      controlEpoch: 3,
+      turnVersion: 0,
     });
   });
 
   it('reads a lease answer of the service and refuses a lease of another match', () => {
     const lease = parseRunnerLeaseAnswer({
       schemaVersion: 2,
-      leaseId: 'lease-1',
-      matchId: 'match-0001',
+      leaseId: 'lease-contract-01',
+      matchId: 'match-contract-01',
       seat: 'white',
       controlEpoch: 2,
       generation: 3,
-      runnerId: 'runner-a',
+      runnerId: 'runner-tab-01',
       status: 'active',
       acquiredAt: '2026-10-21T00:00:00Z',
       expiresAt: '2026-10-21T00:00:30Z',
       revokedAt: null,
       turnVersion: 9,
       runnerEpoch: 4,
-      pendingRequestId: 'request-1',
+      pendingRequestId: 'request-contract-01',
       pendingRequestStartedAt: '2026-10-21T00:00:01Z',
       revokedReason: null,
       lastRenewedAt: '2026-10-21T00:00:02Z',
-    }, 'match-0001', 'white');
+    }, 'match-contract-01', 'white');
     expect(lease.turnVersion).toBe(9);
     expect(lease.runnerEpoch).toBe(4);
-    expect(lease.pendingRequestId).toBe('request-1');
-    expect(() => parseRunnerLeaseAnswer({ leaseId: 'lease-1' }, 'match-0002', 'white')).toThrow(ProviderRunnerServiceError);
+    expect(lease.pendingRequestId).toBe('request-contract-01');
+    expect(() => parseRunnerLeaseAnswer({
+      schemaVersion: 2,
+      leaseId: 'lease-contract-01',
+      matchId: 'match-contract-01',
+      seat: 'white',
+      controlEpoch: 2,
+      generation: 3,
+      runnerId: 'runner-tab-01',
+      status: 'active',
+      acquiredAt: '2026-10-21T00:00:00Z',
+      expiresAt: '2026-10-21T00:00:30Z',
+      revokedAt: null,
+      turnVersion: 9,
+      runnerEpoch: 4,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    }, 'match-other-01', 'white')).toThrow(ProviderRunnerServiceError);
   });
 });
 
@@ -1479,6 +1519,235 @@ describe('the owner actions of the runner', () => {
     await new Promise((resolve) => { setTimeout(resolve, 20); });
     expect(runner.state.phase).toBe('stopped');
     expect(provider.prompts).toHaveLength(0);
+  });
+});
+
+describe('the competing owner actions of the runner', () => {
+  it('applies the newest decision of the owner when a takeover competes with a switch', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = createHoldableCommandPort(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: commands.port,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+
+    // The owner switches the model and takes the seat over before the service
+    // answers the first command.
+    commands.arm();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => commands.held.length === 1, 'the command of the switch is in flight');
+    commands.arm();
+    const taking = runner.takeover();
+    await until(() => commands.held.length === 2, 'the command of the takeover is in flight');
+
+    // The service accepts the switch first and refuses the takeover with the
+    // version fence.
+    await commands.release(0);
+    await commands.release(1);
+    const switchOutcome = await switching;
+    const takeoverOutcome = await taking;
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    // The newest decision of the owner is the takeover: the seat belongs to
+    // the human owner.
+    expect(switchOutcome.kind).toBe('unknown');
+    expect(takeoverOutcome.kind).toBe('accepted');
+    expect(service.match.control.kind).toBe('human');
+    expect(runner.state.phase).toBe('stopped');
+    expect(service.match.version).toBe(3);
+    expect(provider.prompts).toHaveLength(1);
+  });
+
+  it('applies the newest decision of the owner when two switches compete', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = createHoldableCommandPort(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: commands.port,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+
+    commands.arm();
+    const first = runner.switchModel('Second Agent');
+    await until(() => commands.held.length === 1, 'the first command is in flight');
+    commands.arm();
+    const second = runner.switchModel('Test Agent');
+    await until(() => commands.held.length === 2, 'the second command is in flight');
+
+    // The service accepts the older switch first and refuses the newer one
+    // with the version fence.
+    await commands.release(0);
+    await commands.release(1);
+    const firstOutcome = await first;
+    const secondOutcome = await second;
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    // The seat plays with the model of the newest decision of the owner.
+    expect(firstOutcome.kind).toBe('unknown');
+    expect(secondOutcome.kind).toBe('accepted');
+    expect(service.match.control.modelLabel).toBe('Test Agent');
+    expect(runner.state.publicModelLabel).toBe('Test Agent');
+    expect(runner.state.phase).toBe('idle');
+    expect(provider.prompts).toHaveLength(1);
+  });
+
+  it('does not clear a newer pending record when a lease is taken', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const pending = createMemoryPendingStore();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+    const older = pending.read(service.match.matchId, service.match.seat);
+    expect(older).not.toBeNull();
+
+    // The decision of the owner waits for the service, and a second tab of the
+    // same browser records a newer request of the same seat in the meantime.
+    held.holdClear();
+    const retrying = runner.retry();
+    await until(() => held.clears.length === 1, 'the settlement is in flight');
+    pending.write({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      requestId: 'request-newer',
+      turnVersion: 1,
+      controlEpoch: 1,
+      startedAt: 99,
+    });
+    held.clears[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-contract-01',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await retrying;
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // The acquisition of a lease does not clear the newer record.
+    expect(pending.read(service.match.matchId, service.match.seat)?.requestId).toBe('request-newer');
+  });
+
+  it('asks the provider once for a turn that is dropped under the runner', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const pending = createMemoryPendingStore();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: service.commands,
+      provider,
+      pending,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+
+    // The owner decides: retry. The runner asks the provider again.
+    await runner.retry();
+    await until(() => provider.prompts.length === 2, 'the provider is asked again');
+    const second = provider.prompts[1];
+
+    // The turn changes under the runner while the second request runs. The
+    // honest record of that request stays in the store.
+    service.match.positionFen = 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1';
+    service.match.sideToMove = 'black';
+    service.match.version += 1;
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    // The decision of the owner authorised one request. The runner does not
+    // ask the provider a third time for the same turn.
+    expect(provider.prompts).toHaveLength(2);
+    expect(pending.read(service.match.matchId, service.match.seat)).not.toBeNull();
+    expect(pending.read(service.match.matchId, service.match.seat)?.requestId).toBe(second?.requestId);
+  });
+
+  it('keeps the decision of the owner when the rejection of the request arrives later', async () => {
+    const service = createFakeOnlineService();
+    const prompts: unknown[] = [];
+    // A provider that ignores the abort of the runner, so the rejection of the
+    // request arrives after the decision of the owner.
+    const provider = {
+      async run(prompt: unknown): Promise<{ answerText: string; terminal: 'complete'; uncertain: boolean }> {
+        prompts.push(prompt);
+        return new Promise((resolve) => {
+          setTimeout(() => { resolve({ answerText: '{"move":"e2e4"}', terminal: 'complete', uncertain: false }); }, 60);
+        });
+      },
+    };
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => prompts.length === 1, 'the provider is asked');
+
+    // The owner stops the runner and decides immediately. The rejection of the
+    // request arrives after that decision.
+    await runner.stop();
+    expect(runner.state.phase).toBe('uncertain');
+    await runner.retry();
+    await new Promise((resolve) => { setTimeout(resolve, 120); });
+
+    // The decision of the owner was not swallowed by the late rejection.
+    expect(runner.state.phase).not.toBe('stopped');
+    expect(prompts.length).toBeGreaterThan(1);
   });
 });
 

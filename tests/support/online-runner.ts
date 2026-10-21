@@ -25,6 +25,7 @@ import {
 } from '../../src/online/provider-runner';
 import type {
   ProviderRunnerAnswer,
+  ProviderRunnerCommandOptions,
   ProviderRunnerCommandPort,
   ProviderRunnerLease,
   ProviderRunnerLeasePort,
@@ -765,6 +766,63 @@ export function createHoldableLeasePort(base: ProviderRunnerLeasePort): Holdable
         return hold(clears);
       },
       async read() { return base.read(); },
+    },
+  };
+}
+
+/** One held command of the owner. */
+export interface HeldCommand {
+  readonly action: OnlineAction;
+  readonly options: ProviderRunnerCommandOptions | undefined;
+  resolve(receipt: Receipt): void;
+  reject(error: unknown): void;
+}
+
+/** The command client that holds one command in flight. */
+export interface HoldableCommandPort {
+  /** The command client the runner uses. */
+  readonly port: ProviderRunnerCommandPort;
+  /** The commands that wait for the answer of the test. */
+  readonly held: HeldCommand[];
+  /** Holds the next command. */
+  arm(): void;
+  /** Sends the held command to the service and answers it. */
+  release(index: number): Promise<void>;
+}
+
+/**
+ * Holds one command of the owner in flight.
+ *
+ * A test uses it to let two decisions of the owner compete and to decide which
+ * one the service answers first.
+ */
+export function createHoldableCommandPort(base: ProviderRunnerCommandPort): HoldableCommandPort {
+  const held: HeldCommand[] = [];
+  let armed = false;
+  const port: ProviderRunnerCommandPort = {
+    async submit(action, options) {
+      if (!armed) return base.submit(action, options);
+      armed = false;
+      return new Promise<Receipt>((resolve, reject) => {
+        held.push({ action, options, resolve, reject });
+      });
+    },
+    ...(base.setControlEpoch === undefined ? {} : { setControlEpoch: base.setControlEpoch.bind(base) }),
+    ...(base.setVersion === undefined ? {} : { setVersion: base.setVersion.bind(base) }),
+  };
+  return {
+    port,
+    held,
+    arm() { armed = true; },
+    async release(index) {
+      const entry = held[index];
+      if (entry === undefined) throw new Error('The command was not held.');
+      try {
+        const receipt = await base.submit(entry.action, entry.options);
+        entry.resolve(receipt);
+      } catch (error) {
+        entry.reject(error);
+      }
     },
   };
 }

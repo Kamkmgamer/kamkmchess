@@ -69,7 +69,8 @@ import type {
   ResponsesSchema,
 } from '../providers/protocols/index.js';
 import { fetchProvider } from '../providers/transport.js';
-import type { OnlineAction, Receipt, Seat } from './contracts';
+import { buildRunnerRequestEnvelope } from './contracts';
+import type { OnlineAction, Receipt, RunnerRequestEnvelope, Seat } from './contracts';
 import { onlineSideToMove } from './turn';
 import type { OnlineMatchView } from './updates';
 
@@ -106,23 +107,18 @@ export interface RunnerLeaseRequestBody {
  * identifier are always present, because the record belongs to one lease and
  * names one request.
  */
-export interface RunnerRequestRequestBody {
-  readonly schemaVersion: number;
-  readonly action: RunnerRequestAction;
-  readonly seat: Seat;
-  readonly runnerId: string;
-  readonly leaseId: string;
-  readonly requestId: string;
-  readonly controlEpoch: number;
-  readonly turnVersion?: number;
-}
+export type RunnerRequestRequestBody = RunnerRequestEnvelope;
 
 /**
  * The lease record the service answers.
  *
- * The record is the honest state of one browser runner: who holds the seat,
- * which turn the lease is bound to, which service epoch owns it, and which
- * provider request may still be running.
+ * The lease route has its own versioned DTO, and the answer of the service
+ * may grow a field without touching the shared surfaces. The runner therefore
+ * reads the answer with its own reader, which requires every field it acts
+ * on and tolerates the fields the service may add. The required fields of the
+ * shared contract are not weakened: the lease identifier, the match, the seat,
+ * the control epoch, the generation, the runner and the state are read as
+ * strict values, and the runner refuses an answer of another match or seat.
  */
 export interface ProviderRunnerLease {
   readonly schemaVersion: number;
@@ -145,6 +141,73 @@ export interface ProviderRunnerLease {
   readonly pendingRequestStartedAt: string | null;
   readonly revokedReason: string | null;
   readonly lastRenewedAt: string | null;
+}
+
+/**
+ * Reads the lease answer of the service.
+ *
+ * The answer is read with the reader of the runner, which requires every field
+ * the runner acts on. The shared contract keeps its own strict parser for the
+ * shared surfaces.
+ */
+export function parseRunnerLeaseAnswer(value: unknown, matchId: string, seat: Seat): ProviderRunnerLease {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new ProviderRunnerServiceError('refused', 'The lease answer is not an object.');
+  }
+  const record = value as Record<string, unknown>;
+  const leaseId = record.leaseId;
+  const answerMatchId = record.matchId;
+  const answerSeat = record.seat;
+  const controlEpoch = record.controlEpoch;
+  const generation = record.generation;
+  const runnerId = record.runnerId;
+  const status = record.status;
+  if (typeof leaseId !== 'string' || leaseId.length === 0) {
+    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no lease.');
+  }
+  if (typeof answerMatchId !== 'string' || answerMatchId !== matchId) {
+    throw new ProviderRunnerServiceError('refused', 'The lease belongs to another match.');
+  }
+  if (answerSeat !== 'white' && answerSeat !== 'black') {
+    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no seat.');
+  }
+  if (answerSeat !== seat) {
+    throw new ProviderRunnerServiceError('refused', 'The lease belongs to another seat.');
+  }
+  if (typeof controlEpoch !== 'number' || !Number.isSafeInteger(controlEpoch)) {
+    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no control epoch.');
+  }
+  if (typeof generation !== 'number' || !Number.isSafeInteger(generation)) {
+    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no generation.');
+  }
+  if (typeof runnerId !== 'string' || runnerId.length === 0) {
+    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no runner.');
+  }
+  if (status !== 'active' && status !== 'revoked' && status !== 'expired') {
+    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no state.');
+  }
+  const turnVersion = record.turnVersion;
+  const runnerEpoch = record.runnerEpoch;
+  const pendingRequestId = record.pendingRequestId;
+  return {
+    schemaVersion: typeof record.schemaVersion === 'number' ? record.schemaVersion : ONLINE_RUNNER_SCHEMA_VERSION,
+    leaseId,
+    matchId: answerMatchId,
+    seat: answerSeat,
+    controlEpoch,
+    generation,
+    runnerId,
+    status,
+    acquiredAt: typeof record.acquiredAt === 'string' ? record.acquiredAt : '',
+    expiresAt: typeof record.expiresAt === 'string' ? record.expiresAt : '',
+    revokedAt: typeof record.revokedAt === 'string' ? record.revokedAt : null,
+    turnVersion: typeof turnVersion === 'number' && Number.isSafeInteger(turnVersion) ? turnVersion : null,
+    runnerEpoch: typeof runnerEpoch === 'number' && Number.isSafeInteger(runnerEpoch) ? runnerEpoch : 0,
+    pendingRequestId: typeof pendingRequestId === 'string' ? pendingRequestId : null,
+    pendingRequestStartedAt: typeof record.pendingRequestStartedAt === 'string' ? record.pendingRequestStartedAt : null,
+    revokedReason: typeof record.revokedReason === 'string' ? record.revokedReason : null,
+    lastRenewedAt: typeof record.lastRenewedAt === 'string' ? record.lastRenewedAt : null,
+  };
 }
 
 /** Builds the exact lease request body. */
@@ -172,7 +235,14 @@ export function buildRunnerLeaseBody(input: {
   };
 }
 
-/** Builds the exact uncertain provider request body. */
+/**
+ * Builds the exact uncertain provider request body.
+ *
+ * The body is the shared envelope of the contract, so the browser and the
+ * service read one shape. The envelope always carries the turn version: the
+ * service reads a missing version as the turn that is current now, and the
+ * shared parser of the contract requires the field.
+ */
 export function buildRunnerRequestBody(input: {
   readonly action: RunnerRequestAction;
   readonly seat: Seat;
@@ -181,18 +251,16 @@ export function buildRunnerRequestBody(input: {
   readonly requestId: string;
   readonly controlEpoch: number;
   readonly turnVersion?: number | null;
-}): RunnerRequestRequestBody {
-  const turnVersion = input.turnVersion ?? 0;
-  return {
-    schemaVersion: ONLINE_RUNNER_SCHEMA_VERSION,
+}): RunnerRequestEnvelope {
+  return buildRunnerRequestEnvelope({
     action: input.action,
     seat: input.seat,
     runnerId: input.runnerId,
     leaseId: input.leaseId,
     requestId: input.requestId,
     controlEpoch: input.controlEpoch,
-    ...(turnVersion > 0 ? { turnVersion } : {}),
-  };
+    turnVersion: input.turnVersion ?? 0,
+  });
 }
 
 /** The failure of a lease or command request. */
@@ -276,67 +344,6 @@ export function classifyProviderRunnerError(error: unknown): ProviderRunnerServi
     return 'refused';
   }
   return 'transport';
-}
-
-/** Reads a lease answer of the runner lease route. */
-export function parseRunnerLeaseAnswer(value: unknown, matchId: string, seat: Seat): ProviderRunnerLease {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new ProviderRunnerServiceError('refused', 'The lease answer is not an object.');
-  }
-  const record = value as Record<string, unknown>;
-  const leaseId = record.leaseId;
-  const answerMatchId = record.matchId;
-  const answerSeat = record.seat;
-  const controlEpoch = record.controlEpoch;
-  const generation = record.generation;
-  const runnerId = record.runnerId;
-  const status = record.status;
-  if (typeof leaseId !== 'string' || leaseId.length === 0) {
-    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no lease.');
-  }
-  if (typeof answerMatchId !== 'string' || answerMatchId !== matchId) {
-    throw new ProviderRunnerServiceError('refused', 'The lease belongs to another match.');
-  }
-  if (answerSeat !== 'white' && answerSeat !== 'black') {
-    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no seat.');
-  }
-  if (answerSeat !== seat) {
-    throw new ProviderRunnerServiceError('refused', 'The lease belongs to another seat.');
-  }
-  if (typeof controlEpoch !== 'number' || !Number.isSafeInteger(controlEpoch)) {
-    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no control epoch.');
-  }
-  if (typeof generation !== 'number' || !Number.isSafeInteger(generation)) {
-    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no generation.');
-  }
-  if (typeof runnerId !== 'string' || runnerId.length === 0) {
-    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no runner.');
-  }
-  if (status !== 'active' && status !== 'revoked' && status !== 'expired') {
-    throw new ProviderRunnerServiceError('refused', 'The lease answer carries no state.');
-  }
-  const turnVersion = record.turnVersion;
-  const runnerEpoch = record.runnerEpoch;
-  const pendingRequestId = record.pendingRequestId;
-  return {
-    schemaVersion: typeof record.schemaVersion === 'number' ? record.schemaVersion : ONLINE_RUNNER_SCHEMA_VERSION,
-    leaseId,
-    matchId: answerMatchId,
-    seat: answerSeat,
-    controlEpoch,
-    generation,
-    runnerId,
-    status,
-    acquiredAt: typeof record.acquiredAt === 'string' ? record.acquiredAt : '',
-    expiresAt: typeof record.expiresAt === 'string' ? record.expiresAt : '',
-    revokedAt: typeof record.revokedAt === 'string' ? record.revokedAt : null,
-    turnVersion: typeof turnVersion === 'number' && Number.isSafeInteger(turnVersion) ? turnVersion : null,
-    runnerEpoch: typeof runnerEpoch === 'number' && Number.isSafeInteger(runnerEpoch) ? runnerEpoch : 0,
-    pendingRequestId: typeof pendingRequestId === 'string' ? pendingRequestId : null,
-    pendingRequestStartedAt: typeof record.pendingRequestStartedAt === 'string' ? record.pendingRequestStartedAt : null,
-    revokedReason: typeof record.revokedReason === 'string' ? record.revokedReason : null,
-    lastRenewedAt: typeof record.lastRenewedAt === 'string' ? record.lastRenewedAt : null,
-  };
 }
 
 /**
@@ -553,6 +560,31 @@ export interface ProviderRunnerUncertainty {
 /** The explicit recovery decisions the owner may take. */
 export type ProviderRunnerDecision = 'retry' | 'switch-model' | 'takeover';
 
+/**
+ * The outcome of an action of the owner.
+ *
+ * The interface reads it to keep or to drop the binding of the seat: a
+ * takeover that the service refused must not delete the runner of the seat,
+ * and a decision that a newer decision superseded must not be reported as
+ * applied. The outcome carries no routing identifier, no credential and no
+ * private selection; it carries the public label the seat declares.
+ */
+export type ProviderRunnerActionOutcome =
+  /** The service applied the decision and the seat declares this label. */
+  | { readonly kind: 'accepted'; readonly publicModelLabel: string }
+  /** The service or the runner refused the decision. The seat keeps its state. */
+  | { readonly kind: 'refused'; readonly detail: string }
+  /** The outcome could not be established. The owner may retry. */
+  | { readonly kind: 'unknown'; readonly detail: string };
+
+/** The outcome of one command of the runner. */
+type SubmitOutcome =
+  | { readonly kind: 'accepted'; readonly receipt: Receipt }
+  | {
+    readonly kind: 'fenced' | 'refused' | 'unauthorized' | 'unacknowledged';
+    readonly detail: string;
+  };
+
 /** The state of one runner. */
 export interface ProviderRunnerState {
   readonly matchId: string;
@@ -764,12 +796,25 @@ export interface OnlineProviderRunner {
   resume(): Promise<void>;
   /** Stops the runner and releases the lease. */
   stop(): Promise<void>;
-  /** Retries the uncertain work on the explicit request of the owner. */
-  retry(): Promise<void>;
-  /** Switches the agent of the seat on the explicit request of the owner. */
-  switchModel(publicModelLabel: string): Promise<void>;
-  /** Hands the seat to the human owner on the explicit request of the owner. */
-  takeover(): Promise<void>;
+  /**
+   * Retries the uncertain work on the explicit request of the owner.
+   *
+   * The outcome tells the caller whether the decision reached the provider.
+   */
+  retry(): Promise<ProviderRunnerActionOutcome>;
+  /**
+   * Switches the agent of the seat on the explicit request of the owner.
+   *
+   * The outcome tells the caller whether the service applied the switch.
+   */
+  switchModel(publicModelLabel: string): Promise<ProviderRunnerActionOutcome>;
+  /**
+   * Hands the seat to the human owner on the explicit request of the owner.
+   *
+   * The outcome tells the caller whether the service applied the handoff, so
+   * the binding of the seat is only dropped when it did.
+   */
+  takeover(): Promise<ProviderRunnerActionOutcome>;
   /** Stops the runner and releases every resource it holds. */
   dispose(): Promise<void>;
 }
@@ -1319,7 +1364,25 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   let lastError: string | null = null;
   let running = false;
   let restartRequested = false;
-  let ownerDecided = false;
+  /**
+   * The requests whose settlement the owner decided.
+   *
+   * The decision of the owner is bound to the request it settled. The guard of
+   * the turn asks whether the record in the store is one of them: that record
+   * may be passed once, and every other record fences the runner again. A
+   * boolean that lives as long as the lease would open the guard for every
+   * later record.
+   */
+  const settledRequestIds = new Set<string>();
+  /**
+   * The token of the newest owner action.
+   *
+   * Every action of the owner takes a token before it sends its command. A
+   * newer action invalidates the older one, so the newest decision of the
+   * owner is the one that is applied and the older one never overwrites the
+   * state of the runner.
+   */
+  let ownerActionToken = 0;
   let disposed = false;
   let renewHandle: number | null = null;
   let renewalFailures = 0;
@@ -1707,47 +1770,94 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     allowPending = false,
   ): Promise<{ ok: true } | { ok: false; detail: string; stale: boolean }> {
     if (leaseRecord === null || leaseId === null) {
-      const acquired = await acquireLease();
-      if (!acquired.ok) return acquired;
-      const decided = allowPending || ownerDecided;
-      ownerDecided = false;
-      if (leaseRecord?.pendingRequestId) {
-        if (!decided) {
-          enterUncertainty({
-            kind: 'provider-request',
-            requestId: leaseRecord.pendingRequestId,
-            operationId: null,
-            startedAt: now(),
-            detail: 'A previous runner may still have started billable work.',
-          });
-          return { ok: false, detail: 'A previous runner may still have started billable work.', stale: false };
-        }
-        await clearPendingRequest(leaseRecord.pendingRequestId);
-      }
-      const durable = pendingStore.read(matchId, seat);
-      if (durable) {
-        if (!decided) {
-          enterUncertainty(pendingUncertainty('A previous request of this browser may still be running.'));
-          return { ok: false, detail: 'A previous request of this browser may still be running.', stale: false };
-        }
-        pendingStore.clear(matchId, seat);
-      }
-      return { ok: true };
+      return takeLeaseAndSettle(allowPending);
     }
     if (leaseRecord.turnVersion !== version) {
       const renewed = await renewLease();
-      if (!renewed.ok) {
-        if (renewed.state === 'stale') {
-          // The lease moved on while the renewal was in flight. The runner
-          // takes a new lease on the next turn.
-          return { ok: false, detail: 'The lease of the seat was taken back.', stale: true };
-        }
-        const detail = 'The lease of the seat is no longer current.';
-        lastError = detail;
-        return { ok: false, detail, stale: false };
+      if (renewed.ok) return { ok: true };
+      if (renewed.state === 'stale') {
+        // The lease moved on while the renewal was in flight. The runner
+        // takes a new lease on the next turn.
+        return { ok: false, detail: 'The lease of the seat was taken back.', stale: true };
+      }
+      // The lease is not live any more: it was revoked or it expired. It is
+      // given up and a new one is taken, so the seat keeps a lease that the
+      // service accepts.
+      dropLease();
+      return takeLeaseAndSettle(allowPending);
+    }
+    return { ok: true };
+  }
+
+  /**
+   * Takes the lease of the seat and settles the pending records.
+   *
+   * The pending record of the service belongs to the lease, and the pending
+   * record of the browser belongs to the browser. A record of either of them
+   * that the owner did not decide about holds the runner, because the billable
+   * work may still be running.
+   */
+  async function takeLeaseAndSettle(
+    allowPending: boolean,
+  ): Promise<{ ok: true } | { ok: false; detail: string; stale: boolean }> {
+    const acquired = await acquireLease();
+    if (!acquired.ok) return acquired;
+    if (leaseRecord?.pendingRequestId) {
+      if (!allowPending && !settledRequestIds.has(leaseRecord.pendingRequestId)) {
+        enterUncertainty({
+          kind: 'provider-request',
+          requestId: leaseRecord.pendingRequestId,
+          operationId: null,
+          startedAt: now(),
+          detail: 'A previous runner may still have started billable work.',
+        });
+        return { ok: false, detail: 'A previous runner may still have started billable work.', stale: false };
+      }
+      await clearPendingRequest(leaseRecord.pendingRequestId);
+    }
+    const durable = pendingStore.read(matchId, seat);
+    if (durable) {
+      if (!allowPending && !settledRequestIds.has(durable.requestId)) {
+        enterUncertainty(pendingUncertainty('A previous request of this browser may still be running.'));
+        return { ok: false, detail: 'A previous request of this browser may still be running.', stale: false };
+      }
+      // The record of the browser is only cleared when it is still the record
+      // that was read. A second tab of the same browser shares the store and
+      // may have written a newer record in the meantime.
+      const current = pendingStore.read(matchId, seat);
+      if (current !== null && current.requestId === durable.requestId) {
+        pendingStore.clear(matchId, seat);
       }
     }
     return { ok: true };
+  }
+
+  /**
+   * Sends the handoff of the seat and keeps the newest decision of the owner.
+   *
+   * Two decisions of the owner may be in flight at the same time. The service
+   * applies the one that arrives first and refuses the other one with the
+   * version fence, so the refusal of the *newest* decision is sent again with
+   * the version that the service has now. The older decision is never retried:
+   * its intent is superseded.
+   */
+  async function sendHandoff(
+    command: OnlineAction,
+    token: number,
+    kind: string,
+  ): Promise<SubmitOutcome> {
+    const operationId = nextOperationId(kind);
+    let outcome = await submitAction(command, operationId);
+    if (outcome.kind === 'fenced' && ownerActionIsCurrent(token)) {
+      // The service refused the command because the version of the match moved
+      // on: an older decision of the owner was accepted first. The newest
+      // decision wins, so the lease is bound to the version of the service and
+      // the command is sent again.
+      const leased = await ensureLease(true);
+      if (!leased.ok) return outcome;
+      outcome = await submitAction(command, operationId);
+    }
+    return outcome;
   }
 
   /** Settles the pending request record of the service. */
@@ -1780,17 +1890,21 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
    * read: a newer request may have written a new one while the service
    * answered, and that record is the honest one.
    */
-  async function settleUncertainWork(generation: number): Promise<boolean> {
+  async function settleUncertainWork(token: number): Promise<boolean> {
     const durable = pendingStore.read(matchId, seat);
     const serviceRequest = leaseRecord?.pendingRequestId ?? null;
+    if (durable !== null) {
+      // The decision of the owner is bound to this record.
+      settledRequestIds.add(durable.requestId);
+    }
     if (leaseId !== null) {
       if (durable !== null) await clearPendingRequest(durable.requestId);
-      if (!ownerActionIsCurrent(generation)) return false;
+      if (!ownerActionIsCurrent(token)) return false;
       if (serviceRequest !== null && serviceRequest !== durable?.requestId) {
         await clearPendingRequest(serviceRequest);
       }
     }
-    if (!ownerActionIsCurrent(generation)) return false;
+    if (!ownerActionIsCurrent(token)) return false;
     const current = pendingStore.read(matchId, seat);
     if (durable !== null && current !== null && current.requestId === durable.requestId) {
       pendingStore.clear(matchId, seat);
@@ -2050,9 +2164,14 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // the one exception: it settles the pending record and lets the runner
       // ask the provider again.
       if (uncertainty !== null) return;
-      if (!ownerDecided) {
-        const openRequest = pendingStore.read(matchId, seat);
-        if (openRequest !== null) {
+      const openRequest = pendingStore.read(matchId, seat);
+      if (openRequest !== null) {
+        if (settledRequestIds.has(openRequest.requestId)) {
+          // The owner decided about this request. The decision authorises one
+          // request, and it is consumed now, so every other record fences the
+          // runner again.
+          settledRequestIds.delete(openRequest.requestId);
+        } else {
           enterUncertainty(pendingUncertainty('A request of this browser may still be running.'));
           return;
         }
@@ -2363,6 +2482,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   }
 
   async function settleRequest(requestId: string): Promise<void> {
+    let settled = false;
     if (leaseId !== null) {
       try {
         await leases.clearRequest({
@@ -2371,12 +2491,21 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           leaseId,
           requestId,
         });
+        settled = true;
       } catch {
         // A lease that cannot clear the record keeps the honest pending
-        // request, which is the safer state.
+        // request, which is the safer state. The record of the browser stays
+        // as well, because the request may still be running.
       }
     }
-    pendingStore.clear(matchId, seat);
+    if (!settled) return;
+    // The record of the browser is only cleared when it is still the record
+    // that was settled: a second tab of the same browser shares the store and
+    // may have written a newer one.
+    const current = pendingStore.read(matchId, seat);
+    if (current !== null && current.requestId === requestId) {
+      pendingStore.clear(matchId, seat);
+    }
   }
 
   /**
@@ -2411,17 +2540,27 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   }
 
   /**
-   * Reports whether an owner action may still continue.
+   * Takes the token of a new owner action.
    *
-   * Every await of an owner action belongs to the generation the action
-   * started in. A newer action of the owner, a stop or a dispose moves the
-   * generation, so the older action may not write a phase, may not send a
-   * command and may not change a record any more. The newest decision of the
-   * owner is the one that counts.
+   * The token orders the actions of the owner. A newer action invalidates the
+   * older one, and a stop or a dispose invalidates every action that is still
+   * in flight.
    */
-  function ownerActionIsCurrent(generation: number): boolean {
+  function nextOwnerActionToken(): number {
+    ownerActionToken += 1;
+    return ownerActionToken;
+  }
+
+  /**
+   * Reports whether an owner action is still the newest decision.
+   *
+   * An action that is not the newest one was superseded: it must not write a
+   * phase, must not retry its command and must not change a record any more.
+   * A disposed runner holds nothing at all.
+   */
+  function ownerActionIsCurrent(token: number): boolean {
     if (disposed) return false;
-    return generation === lifecycleGeneration;
+    return token === ownerActionToken;
   }
 
   /** Starts the turn without waiting for the provider answer. */
@@ -2538,9 +2677,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       if (disposed) return;
       // The generation of the lifecycle moves, so an answer of a request that
       // is still in flight may not write a phase, start work or ask the
-      // provider for another answer.
+      // provider for another answer. The token of the stop ends every action
+      // of the owner that is still in flight: the stop wins.
       advanceLifecycle();
-      const generation = lifecycleGeneration;
+      const token = nextOwnerActionToken();
       if (activeController !== null) {
         const requestId = activeRequestId;
         cancelPending('stopped');
@@ -2558,37 +2698,48 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       await releaseLease();
       // A newer action of the owner or a dispose ends the stop: the phase of
       // the runner is the one of the newest action.
-      if (!ownerActionIsCurrent(generation)) return;
+      if (!ownerActionIsCurrent(token)) return;
       setPhase('stopped');
     },
-    async retry() {
-      if (disposed) return;
-      if (phase !== 'uncertain' && phase !== 'paused' && phase !== 'failed' && phase !== 'stopped') return;
+    async retry(): Promise<ProviderRunnerActionOutcome> {
+      if (disposed) return { kind: 'unknown', detail: 'The runner is disposed.' };
+      if (phase !== 'uncertain' && phase !== 'paused' && phase !== 'failed' && phase !== 'stopped') {
+        return { kind: 'unknown', detail: 'The runner waits for no decision.' };
+      }
+      const token = nextOwnerActionToken();
       const operation = pendingSubmission;
       uncertainty = null;
       // The owner decided. The uncertain work may be paid twice, so the pending
       // records of the browser and of the service are settled and the runner
       // may ask the provider again. The generation of the lifecycle moves, so
       // an answer of the old request cannot write a phase.
-      ownerDecided = true;
       advanceLifecycle();
-      const generation = lifecycleGeneration;
-      if (!await settleUncertainWork(generation)) return;
+      if (!await settleUncertainWork(token)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
+      }
+      if (!ownerActionIsCurrent(token)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
+      }
       setPhase('idle');
       if (operation !== null) {
         // The operation identifier stays the same, so the service answers with
         // the original receipt instead of accepting a second move. The command
         // is only sent while the decision of the owner is the newest one.
-        if (!ownerActionIsCurrent(generation)) return;
         const outcome = await submitAction(operation.action, operation.operationId);
-        if (!ownerActionIsCurrent(generation)) return;
+        if (!ownerActionIsCurrent(token)) {
+          return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
+        }
         if (outcome.kind === 'accepted') {
           await releaseLease();
-          if (!ownerActionIsCurrent(generation)) return;
+          if (!ownerActionIsCurrent(token)) {
+            return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
+          }
           setPhase('idle');
-          return;
+          return { kind: 'accepted', publicModelLabel };
         }
         if (outcome.kind === 'unacknowledged') {
+          // The acknowledgement of the command was lost. The outcome could not
+          // be established, so the owner may retry.
           enterUncertainty({
             kind: 'submission',
             requestId: null,
@@ -2596,35 +2747,49 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
             startedAt: now(),
             detail: outcome.detail,
           });
-          return;
+          return { kind: 'unknown', detail: outcome.detail };
         }
+        if (outcome.kind === 'unauthorized') {
+          setPhase('stopped', outcome.detail);
+          return { kind: 'refused', detail: outcome.detail };
+        }
+        return { kind: 'refused', detail: outcome.detail };
       }
-      if (!ownerActionIsCurrent(generation)) return;
+      if (!ownerActionIsCurrent(token)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
+      }
       schedule();
+      return { kind: 'accepted', publicModelLabel };
     },
-    async switchModel(label) {
-      if (disposed) return;
+    async switchModel(label): Promise<ProviderRunnerActionOutcome> {
+      if (disposed) return { kind: 'unknown', detail: 'The runner is disposed.' };
       if (!isPublicModelLabel(label)) {
         setPhase(phase, 'A shared model label may not name a route.');
-        return;
+        return { kind: 'refused', detail: 'A shared model label may not name a route.' };
       }
-      const generation = lifecycleGeneration;
-      const leased = await ensureLease(true);
+      const token = nextOwnerActionToken();
+      await ensureLease(true);
       // A newer action of the owner ends the switch: no control change is
       // sent for a decision that is no longer the newest one.
-      if (!ownerActionIsCurrent(generation)) return;
-      if (!leased.ok) {
-        setPhase(phase, 'The seat could not be taken for a model switch.');
-        return;
+      if (!ownerActionIsCurrent(token)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
       }
-      const outcome = await submitAction(
-        { kind: 'set_control', control: { kind: 'agent', modelLabel: label } },
-        nextOperationId('switch'),
-      );
-      if (!ownerActionIsCurrent(generation)) return;
+      // The handoff of the seat is the authority of the owner and it needs no
+      // lease, so a seat whose runner is gone can still be handed over. The
+      // lease is presented when the runner holds a live one, and the service
+      // fences a stale runner with the control epoch.
+      const command: OnlineAction = { kind: 'set_control', control: { kind: 'agent', modelLabel: label } };
+      const outcome = await sendHandoff(command, token, 'switch');
+      if (!ownerActionIsCurrent(token)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
+      }
       if (outcome.kind !== 'accepted') {
         setPhase(phase, 'The service refused the model switch.');
-        return;
+        // A lost acknowledgement leaves the outcome unproven, so the owner may
+        // retry. The interface never claims a success it cannot prove.
+        return outcome.kind === 'unacknowledged'
+          ? { kind: 'unknown', detail: outcome.detail }
+          : { kind: 'refused', detail: outcome.detail };
       }
       // The service resolves the declared label to a publishable one, so the
       // runner adopts the published label of the receipt. The seat control
@@ -2634,50 +2799,62 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       boundSeatControlEpoch = outcome.receipt.controlEpoch;
       superseded = false;
       uncertainty = null;
-      ownerDecided = true;
       // The control of the seat changed, so the work of the old turn is
       // fenced and the generation of the lifecycle moves. The decision of the
       // owner settles the pending records, so the new agent may ask the
       // provider again.
       advanceLifecycle();
-      const decided = lifecycleGeneration;
-      if (!await settleUncertainWork(decided)) return;
-      if (!ownerActionIsCurrent(decided)) return;
+      if (!await settleUncertainWork(token)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
+      }
+      if (!ownerActionIsCurrent(token)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
+      }
       await releaseLease();
-      if (!ownerActionIsCurrent(decided)) return;
+      if (!ownerActionIsCurrent(token)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
+      }
       setPhase('idle');
       schedule();
+      return { kind: 'accepted', publicModelLabel };
     },
-    async takeover() {
-      if (disposed) return;
-      const generation = lifecycleGeneration;
-      const leased = await ensureLease(true);
+    async takeover(): Promise<ProviderRunnerActionOutcome> {
+      if (disposed) return { kind: 'unknown', detail: 'The runner is disposed.' };
+      const token = nextOwnerActionToken();
+      await ensureLease(true);
       // A newer action of the owner ends the takeover: no control change is
       // sent for a decision that is no longer the newest one.
-      if (!ownerActionIsCurrent(generation)) return;
-      if (!leased.ok) {
-        setPhase(phase, 'The seat could not be taken for a takeover.');
-        return;
+      if (!ownerActionIsCurrent(token)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the takeover.' };
       }
-      const outcome = await submitAction(
-        { kind: 'set_control', control: { kind: 'human' } },
-        nextOperationId('takeover'),
-      );
-      if (!ownerActionIsCurrent(generation)) return;
+      // The handoff of the seat is the authority of the owner and it needs no
+      // lease, so a seat whose runner is gone can still be taken over. The
+      // lease is presented when the runner holds a live one, and the service
+      // fences a stale runner with the control epoch.
+      const command: OnlineAction = { kind: 'set_control', control: { kind: 'human' } };
+      const outcome = await sendHandoff(command, token, 'takeover');
+      if (!ownerActionIsCurrent(token)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the takeover.' };
+      }
       if (outcome.kind !== 'accepted') {
+        // The refusal of the service is reported to the owner. The caller keeps
+        // the binding of the seat, so the agent is not dropped silently.
         setPhase(phase, 'The service refused the takeover.');
-        return;
+        return outcome.kind === 'unacknowledged'
+          ? { kind: 'unknown', detail: outcome.detail }
+          : { kind: 'refused', detail: outcome.detail };
       }
       boundSeatControlEpoch = outcome.receipt.controlEpoch;
       uncertainty = null;
-      ownerDecided = true;
       // The seat belongs to the human owner now, so the work of the agent is
       // fenced and the generation of the lifecycle moves.
       advanceLifecycle();
-      const decided = lifecycleGeneration;
       await releaseLease();
-      if (!ownerActionIsCurrent(decided)) return;
+      if (!ownerActionIsCurrent(token)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the takeover.' };
+      }
       setPhase('stopped', 'The seat belongs to the human owner now.');
+      return { kind: 'accepted', publicModelLabel };
     },
     async dispose() {
       if (disposed) return;

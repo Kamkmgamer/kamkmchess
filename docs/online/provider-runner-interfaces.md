@@ -56,6 +56,20 @@ the control changes and the spent recovery attempts.
   no record, so the newest decision of the owner is the one that counts. The
   settlement of a pending record only clears the record it read, so a newer
   record of a billable request is never erased.
+- The owner actions have an order and a report. Every action takes a token
+  before it sends its command, so two decisions that compete reach the service
+  in the order of the owner, and the refusal of the newest one is sent again
+  with the version the service has now. An action that is not the newest one
+  is `superseded` and never retries. `retry()`, `switchModel()` and
+  `takeover()` answer with the outcome of the decision
+  (`accepted`, `refused`, `superseded`, `unauthorized`, `ignored`), so the
+  caller keeps the binding of a seat whose decision was refused.
+- The decision of the owner is bound to the request it settled. The guard of
+  the turn asks whether the record in the store is one of them: that record
+  may be passed once, and every other record fences the runner again.
+- The handoff of the seat is the authority of the owner and it needs no
+  lease. A seat whose runner is gone can still be taken over, and the service
+  fences a stale runner with the control epoch.
 - While an uncertainty is open the runner never asks the provider again. The
   browser-local pending record is checked before every request of a turn, not
   only when a lease is taken, and the check honours the decision of the owner.
@@ -127,9 +141,19 @@ a seat. The answer is the lease record: `leaseId`, `matchId`, `seat`,
 settled. The service refuses a second `begin` while another request is
 recorded, so the runner settles a request before it starts the next one.
 
-The bodies are built by `buildRunnerLeaseBody` and `buildRunnerRequestBody`, and
-the lease answer is read by `parseRunnerLeaseAnswer`. Both live in the module,
-so a change of the contract lands in one place.
+The body of that route is the shared envelope of the contract
+(`buildRunnerRequestEnvelope` of `src/online/contracts.ts`). The runner builds
+it through that builder, so the browser and the service read one shape. The
+envelope always carries the turn version: the service reads a missing version
+as the turn that is current now, and the shared parser of the contract
+requires the field.
+
+The bodies are built by `buildRunnerLeaseBody` and `buildRunnerRequestBody`,
+and the lease answer is read by `parseRunnerLeaseAnswer`. The lease route has
+its own versioned answer, so the runner reads it with its own reader, which
+requires every field it acts on and tolerates the fields the service may add.
+The shared contract keeps its strict parser for the shared surfaces, and no
+required field of the contract is weakened.
 
 ### The failures the runner reads
 
@@ -296,6 +320,26 @@ controller took the seat.
   the owner and the runner stops.
 - `start()` and `resume()` start a stopped runner again.
 
+Every one of them answers with the outcome of the decision:
+
+| Outcome | Meaning |
+| --- | --- |
+| `accepted` | The service applied the decision. The seat declares this public label |
+| `refused` | The service or the runner refused the decision. The seat keeps its state |
+| `unknown` | The outcome could not be established. The owner may retry |
+
+The outcome carries no routing identifier, no credential and no private
+selection; it carries the public label the seat declares. The caller reads it:
+a takeover that the service refused must not delete the runner of the seat, and
+a decision that a newer decision superseded must not be reported to the owner
+as applied.
+
+The public label of the outcome is **not** the identity of the model that
+plays the seat. The service publishes a resolved label, and two private
+selections may share one published label, the neutral label of an
+unregistered route included. The caller that has to know which model plays
+the seat compares the private selection it bound, never the published label.
+
 A public label is a chosen name. `isPublicModelLabel` refuses a label that
 could name a route, and `assertSharedActionSafe` refuses a shared action with
 an unknown field.
@@ -384,7 +428,12 @@ owner decides whether the work is paid twice.
    published label and the provider client owns the route.
 4. **The owner decisions.** The interface shows the decisions of the runner
    state and calls `retry`, `switchModel` or `takeover`, and it starts a
-   stopped runner again with `start()` or `resume()`.
+   stopped runner again with `start()` or `resume()`. It reads the outcome of
+   the decision: it binds the new agent to the seat and drops the old runner
+   only when the outcome is `accepted`, and it keeps the binding and the
+   runner when the outcome is `refused` or `unknown`. It must not report a
+   success it cannot prove, and it must not decide the identity of the model
+   that plays the seat by comparing published labels.
 5. **A superseded controller.** When the state of the runner reports
    `superseded`, the seat belongs to another controller. The UI binds the agent
    it wants to the seat or it leaves the seat to its owner.
@@ -427,6 +476,9 @@ seat with an accepted move, exactly like the service does.
 | — | The explicit retry of the owner asks the provider again and is not swallowed by the late answer of the aborted request |
 | — | A stop or a dispose while the pending record is settled keeps the phase of the owner and the honest record |
 | — | Two competing owner actions: the newest decision wins and the older one sends nothing |
+| — | The acquisition of a lease does not clear a newer pending record |
+| — | The decision of the owner authorises one request, so a dropped turn is not billed twice |
+| — | The late rejection of an aborted request does not swallow the decision of the owner |
 | — | A replaced credential stops the runner instead of asking for the lease on every snapshot |
 | — | A provider that answers with an error waits for the owner instead of being retried by the next snapshot |
 | — | The Go answer of the service is read by the parser of the runner and by the shared parser |
