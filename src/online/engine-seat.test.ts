@@ -55,7 +55,7 @@ interface Wire {
   readonly body: Record<string, unknown>;
 }
 
-function createSeat(respond: (wire: Wire) => { status: number; data: unknown }) {
+function createSeat(respond: (wire: Wire) => { status: number; data: unknown }, options: { prepareEngine?: () => Promise<void> } = {}) {
   const session = createParticipantSession();
   session.selectGuest(createGuestCredential({
     guestId: 'guest-engine',
@@ -85,6 +85,7 @@ function createSeat(respond: (wire: Wire) => { status: number; data: unknown }) 
     baseUrl: 'https://api.example.test',
     fetch: fetcher as unknown as typeof fetch,
     runnerId: 'runner-1',
+    ...(options.prepareEngine ? { prepareEngine: options.prepareEngine } : {}),
   });
   // The seat owns its own requester, so the test drives the wire through the
   // shared fetch implementation.
@@ -288,6 +289,85 @@ describe('the browser engine seat', () => {
     // its own lease. The first turn never released the lease of the second.
     expect(actions).toEqual(['acquire', 'release', 'acquire', 'release']);
     expect(released).toEqual(['lease-0001', 'lease-0002']);
+  });
+
+  it('runs one turn when two calls arrive in the same tick', async () => {
+    // The ownership of the seat is taken before the first await, so the
+    // older call never searches and never submits.
+    search.mockResolvedValue({ move: 'e2e4', engineName: 'Stockfish 19', elapsedMs: 5 });
+    const commands: string[] = [];
+    const { seat, wires } = createSeat(wire => {
+      if (wire.path.includes('/commands')) commands.push(String(wire.path));
+      if (!wire.path.includes('/runner/lease')) return { status: 200, data: receiptAnswer };
+      return { status: 200, data: leaseAnswer };
+    });
+    const view = matchView({
+      clock: { ...matchView().clock, activeSeat: 'black', activeSince: '2026-10-21T10:00:00.000Z' },
+    });
+    const first = seat.play(view);
+    const second = seat.play(view);
+    await expect(first).resolves.toEqual({ kind: 'stopped' });
+    await expect(second).resolves.toEqual({ kind: 'moved', move: 'e2e4' });
+    // Only the newest turn searched, took a lease and submitted its move.
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(wires.filter(wire => wire.path.includes('/runner/lease') && wire.body.action === 'acquire')).toHaveLength(1);
+    expect(commands).toHaveLength(1);
+  });
+
+  it('never searches when the turn is cancelled while the engine prepares', async () => {
+    // The preparation of the engine is deferred. The turn that is cancelled
+    // while it waits never searches and never submits.
+    let releasePreparation: () => void = () => undefined;
+    const preparation = new Promise<void>(resolve => { releasePreparation = resolve; });
+    search.mockResolvedValue({ move: 'e2e4', engineName: 'Stockfish 19', elapsedMs: 5 });
+    const commands: string[] = [];
+    const { seat, wires } = createSeat(wire => {
+      if (wire.path.includes('/commands')) commands.push(String(wire.path));
+      if (!wire.path.includes('/runner/lease')) return { status: 200, data: receiptAnswer };
+      return { status: 200, data: leaseAnswer };
+    }, { prepareEngine: async () => { await preparation; } });
+    const view = matchView({
+      clock: { ...matchView().clock, activeSeat: 'black', activeSince: '2026-10-21T10:00:00.000Z' },
+    });
+    const first = seat.play(view);
+    await vi.waitFor(() => { expect(search).not.toHaveBeenCalled(); });
+    const second = seat.play(view);
+    releasePreparation();
+    await expect(first).resolves.toEqual({ kind: 'stopped' });
+    await expect(second).resolves.toEqual({ kind: 'moved', move: 'e2e4' });
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(commands).toHaveLength(1);
+    expect(wires.filter(wire => wire.path.includes('/runner/lease') && wire.body.action === 'acquire')).toHaveLength(1);
+  });
+
+  it('never submits when the turn is cancelled while the engine searches', async () => {
+    // The search is deferred and ignores the abort. The cancelled turn never
+    // submits its answer.
+    let releaseSearch: (move: string) => void = () => undefined;
+    search
+      .mockImplementationOnce((async () => new Promise<{ move: string; engineName: string; elapsedMs: number }>(resolve => {
+        releaseSearch = move => resolve({ move, engineName: 'Stockfish 19', elapsedMs: 5 });
+      })) as unknown as typeof search)
+      .mockResolvedValue({ move: 'e2e4', engineName: 'Stockfish 19', elapsedMs: 5 });
+    const commands: string[] = [];
+    const { seat, wires } = createSeat(wire => {
+      if (wire.path.includes('/commands')) commands.push(String(wire.path));
+      if (!wire.path.includes('/runner/lease')) return { status: 200, data: receiptAnswer };
+      return { status: 200, data: leaseAnswer };
+    });
+    const view = matchView({
+      clock: { ...matchView().clock, activeSeat: 'black', activeSince: '2026-10-21T10:00:00.000Z' },
+    });
+    const first = seat.play(view);
+    await vi.waitFor(() => { expect(search).toHaveBeenCalledTimes(1); });
+    const second = seat.play(view);
+    // The cancelled turn receives its answer late.
+    releaseSearch('d2d4');
+    await expect(first).resolves.toEqual({ kind: 'stopped' });
+    await expect(second).resolves.toEqual({ kind: 'moved', move: 'e2e4' });
+    // Only the newest turn submitted a move.
+    expect(commands).toHaveLength(1);
+    expect(wires.filter(wire => wire.path.includes('/runner/lease') && wire.body.action === 'acquire')).toHaveLength(2);
   });
 
   it('waits for a busy engine worker and searches again', async () => {

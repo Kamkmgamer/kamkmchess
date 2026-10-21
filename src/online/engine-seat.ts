@@ -146,7 +146,15 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
    * runs cancels that turn first, so the search of the seat and the lease of
    * the seat never belong to two turns at once.
    */
-  let running: { readonly controller: AbortController; readonly done: Promise<void> } | null = null;
+  let running: { readonly controller: AbortController; readonly done: Promise<void>; readonly ticket: number } | null = null;
+  /**
+   * The ticket of the newest turn of the seat.
+   *
+   * The ownership of the seat is taken before the first await of a turn, so
+   * two calls in the same tick never run at once: the older ticket loses the
+   * seat and stops.
+   */
+  let newestTicket = 0;
 
   async function releaseLease(lease: ProviderRunnerLease | null): Promise<void> {
     if (!lease) return;
@@ -168,6 +176,19 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
     current.controller.abort();
     await current.done;
     if (running === current) running = null;
+  }
+
+  /**
+   * True when a turn still owns the seat.
+   *
+   * The seat belongs to the newest turn. A turn that was cancelled, a turn
+   * that lost the seat to a newer turn and a turn of a disposed seat never
+   * act again.
+   */
+  function ownsSeat(ticket: number, controller: AbortController): boolean {
+    if (stopped) return false;
+    if (controller.signal.aborted) return false;
+    return ticket === newestTicket;
   }
 
   /** Waits for the given time, unless the seat stops or the caller aborts. */
@@ -269,10 +290,18 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
       if (!onlineSeatToMove(view, options.seat)) return { kind: 'not-turn' };
       const epoch = view.controlEpoch;
       const version = view.version;
-      // The seat plays one turn at a time. A turn that starts while another
-      // turn runs cancels that turn first, so the search and the lease of the
-      // seat never belong to two turns at once.
-      await cancelRunningTurn();
+      // The seat plays one turn at a time. The ownership of the seat is taken
+      // before the first await, so two calls in the same tick never run at
+      // once: the older turn loses the seat and stops.
+      const ticket = newestTicket + 1;
+      newestTicket = ticket;
+      const previous = running;
+      running = null;
+      previous?.controller.abort();
+      // The cancelled turn ends before this turn starts, so the search and the
+      // lease of the seat never belong to two turns at once.
+      await previous?.done;
+      if (ticket !== newestTicket) return { kind: 'stopped' };
       if (stopped || signal?.aborted) return { kind: 'stopped' };
       // The search of the turn runs under a controller of the turn, so a
       // disposed seat or a newer turn stops it and never holds the shared
@@ -282,7 +311,7 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
       signal?.addEventListener('abort', abort, { once: true });
       let settle: () => void = () => undefined;
       const done = new Promise<void>(resolve => { settle = resolve; });
-      running = { controller, done };
+      running = { controller, done, ticket };
       // The lease belongs to this turn. A turn that ends late releases its own
       // lease and never the lease of the turn that runs now.
       let lease: ProviderRunnerLease | null = null;
@@ -291,8 +320,11 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
           await options.prepareEngine();
           prepared = true;
         }
+        // A turn that was cancelled while the engine prepared never acts.
+        if (!ownsSeat(ticket, controller)) return { kind: 'stopped' };
         if (stopped || signal?.aborted) return { kind: 'stopped' };
         lease = await holdLease(view, null);
+        if (!ownsSeat(ticket, controller)) return { kind: 'stopped' };
         if (!lease || lease.status !== 'active') {
           return { kind: 'failed', detail: 'The engine could not take its seat lease.' };
         }
@@ -301,10 +333,16 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
           controller,
           async () => {
             // The wait for a busy worker must not outlive the lease of the
-            // turn, so the lease is renewed while the seat waits.
+            // turn, so the lease is renewed while the seat waits. A lease
+            // that the service no longer holds ends the turn.
             lease = await holdLease(view, lease);
+            if (!lease || lease.status !== 'active') {
+              throw new Error('The engine lost its seat lease.');
+            }
           },
         );
+        // A turn that was cancelled while the engine searched never acts.
+        if (!ownsSeat(ticket, controller)) return { kind: 'stopped' };
         if (stopped || signal?.aborted) return { kind: 'stopped' };
         // A control change or a newer version fences the answer.
         if (lease.controlEpoch !== epoch) return { kind: 'stopped' };
@@ -317,6 +355,7 @@ export function createOnlineEngineSeat(options: OnlineEngineSeatOptions): Online
         await commands.move(move, { expectedVersion: version, leaseId: lease.leaseId });
         return { kind: 'moved', move };
       } catch (error) {
+        if (!ownsSeat(ticket, controller)) return { kind: 'stopped' };
         if (stopped) return { kind: 'stopped' };
         const aborted = error instanceof DOMException && error.name === 'AbortError';
         if (aborted) return { kind: 'stopped' };
