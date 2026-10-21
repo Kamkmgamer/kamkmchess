@@ -188,6 +188,21 @@ async function onlineClock(page: Page): Promise<string> {
 }
 
 /**
+ * Every request of the provider that is not the preflight and not the
+ * catalog carries exactly the credential of the account.
+ *
+ * The provider records a generation attempt before it refuses it, so an
+ * unauthorized attempt is part of the set and fails this check.
+ */
+function expectAccountCredential(provider: SyntheticProvider): void {
+  const attempts = provider.requests.filter(request => request.body.length > 0 && !request.path.includes('/models'));
+  expect(attempts.length).toBeGreaterThan(0);
+  for (const request of attempts) expect(request.authorization).toBe(`Bearer ${ACCOUNT_CREDENTIAL}`);
+  expect(provider.generationRequests.length).toBeGreaterThan(0);
+  for (const request of provider.generationRequests) expect(request.authorization).toBe(`Bearer ${ACCOUNT_CREDENTIAL}`);
+}
+
+/**
  * Connects the local provider in the namespace of the signed-in account.
  *
  * The connections of an account live in the namespace of that account, so
@@ -538,13 +553,9 @@ test('the owner switches the own agent between two private models and the provid
     expect(rows.accountProfiles).toBe(1);
     expect(rows.accountCredentials).toBe(1);
     expect(rows.accountModels).toBe(2);
-    // Every generation request of the provider carries exactly the credential
-    // of the account: the provider refuses a request without it, and the case
-    // asks for the exact header of every one of them.
-    expect(provider.generationRequests.length).toBeGreaterThan(0);
-    for (const request of provider.generationRequests) {
-      expect(request.authorization).toBe(`Bearer ${ACCOUNT_CREDENTIAL}`);
-    }
+    // Every request of the provider that is not the preflight and not the
+    // catalog carries exactly the credential of the account.
+    expectAccountCredential(provider);
     expect(provider.requests.some(request => request.path.includes('/models'))).toBe(true);
     await agents.getByRole('button', { name: 'Close' }).click();
 
@@ -575,11 +586,16 @@ test('the owner switches the own agent between two private models and the provid
       await page.getByRole('button', { name: 'Your agents' }).click();
       const panel = page.getByRole('region', { name: 'Your agents' });
       await panel.getByRole('button', { name: 'Use for this game' }).nth(1).click();
+      // The switch itself must not produce a generation request without the
+      // credential of the account.
+      expectAccountCredential(provider);
       await expect(panel.getByRole('status').filter({ hasText: 'plays this game now' })).toBeVisible();
       await panel.getByRole('button', { name: 'Close' }).click();
 
       // The next turn of the seat is played by the other private model.
       await expect.poll(() => provider.generationRequests.some(request => request.body.includes('synthetic-b')), { timeout: 180_000 }).toBe(true);
+      // The turn after the switch carries the credential of the account too.
+      expectAccountCredential(provider);
       console.log('the models the local provider answered:', modelsOf().join(', '));
 
       // The owner puts the model of the new games back on the seat. The

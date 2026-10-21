@@ -167,56 +167,47 @@ The unit regressions of this slice:
 | fixture build (`KAMKM_PUBLIC_TEST_SESSION=true`, `KAMKM_BUILD_FLAVOR=fixture`) | present as its own lazily loaded chunk `test-session-*.js` |
 | `KAMKM_PUBLIC_TEST_SESSION=true` without `KAMKM_BUILD_FLAVOR=fixture` | the build fails: `The synthetic account session needs KAMKM_BUILD_FLAVOR=fixture.` |
 
-### The historical rendered cases before the latest integration
+### The rendered cases (final state, combined content)
 
-The earlier run recorded below used a single fresh fixture
-(the real Go API, a real PostgreSQL schema, the pinned rules worker, the real
-authorization code, the real browser engine and a real local provider):
+The tested tree: the root `abb47fd` (which carries the provider candidate
+`3133c3b` and the nine account paths of this slice) **merged with** the scoped
+correction of this slice. The fixture of the run is a fresh local instance of
+the real service composition (the Go API, a real PostgreSQL schema, the pinned
+rules worker, the real authorization code, the real browser engine) with the
+queue open.
 
 ```
-Running 7 tests using 1 worker
-
-  ok 1 the built account app reaches the fixture of the run (1.3s)
-  ok 2 a signed-in browser enters the queue and the cutoff commits the browser engine (20.5s)
-     the committed moves of the fallback game: e4 e6
-  ok 3 two explicit entries of one signed-in browser are visible at the same time (3.0s)
-  ok 4 the account change hides the games of the first account and restores the registry of the next (25.8s)
-  x  5 the first account gets its game back when it signs in again   (the engine seat of the restored game answers 404)
-  ok 6 a late seat change never writes into the next account (17.9s)
-  x  7 the owner switches the own agent between two private models and the provider answers
-     the models the local provider answered: synthetic-a, synthetic-a
-
-  5 passed, 2 failed
+ONLINE_FIXTURE_DESCRIPTOR=.scratch/onlinefixture/descriptor.json
+ONLINE_FIXTURE_STRICT=1 KAMKM_E2E_PORT=5353
+npx playwright test tests/e2e/account-online.spec.ts
 ```
 
-| case | what it shows |
+| case | result |
 | --- | --- |
-| the built account app reaches the fixture of the run | the build under test is the build of this repository and the signed-in browser reaches the service |
-| a signed-in browser enters the queue and the cutoff commits the browser engine | the signed-in entry waits for the ten second cutoff, the fallback commits it and the **browser engine answers through the canonical snapshot**: the committed moves are `e4 e6` |
-| two explicit entries of one signed-in browser are visible at the same time | two explicit entries of one browser are listed at the same time |
-| the account change hides the games of the first account and restores the registry of the next | the first account plays on a five minute clock and the second on a three minute clock; after the identity change the board shows the **three** minute game |
-| the first account gets its game back when it signs in again | the durable list of an account that leaves survives (the workspace r9 owns it and it works): the game comes back **with its moves**. The **engine seat of the restored game cannot play** (the engine command answers `404`) — the workspace (r13) owns the engine recovery |
-| a late seat change never writes into the next account | the answer of the service is **held** (a deferred barrier on the lease and the command route of the fixture) while the account changes, and the pending state of the change is gone afterwards |
-| the owner switches the own agent between two private models and the provider answers | the agent seat of the owner plays with the model of the **account** (`synthetic-a` reaches the local provider). The rebind of the seat to the other private model is **refused by the service with `409 Conflict`**, so the seat keeps its model and the interface reports the refusal. The refusal of the switch is the provider/workspace scope |
+| the built account app reaches the fixture of the run | **passed** |
+| a signed-in browser enters the queue and the cutoff commits the browser engine | **passed** (`e4 e6`) |
+| two explicit entries of one signed-in browser are visible at the same time | **passed** |
+| the account change hides the games of the first account and restores the registry of the next | **passed** |
+| the first account gets its game back when it signs in again | **failed** — the engine seat of the restored game answers `404`; the durable list itself works (the game returns with its moves). Owner: workspace `13` (`da3cb1a`), not yet in the root |
+| a late seat change never writes into the next account | **passed** (the answer of the service is held while the account changes) |
+| the owner switches the own agent between two private models and the provider answers | **failed** — the service refuses the switch of the seat with `409 Conflict`, so the seat keeps its model and the interface reports the refusal. Owner: provider `fresh4` |
 
-### The account catalog, proved in the browser
-
-The rendered case reads the rows of the connection store of the browser and
-asserts them:
+The account connect, the catalog and the readiness are proven in the browser
+against the combined content:
 
 ```
-profiles   : [{"key":"account:user_fixtureowner0000aaaa","id":"…"}]
-credentials: [{"key":"account:user_fixtureowner0000aaaa","profileId":"…"}]
-catalogs   : [{"key":"account:user_fixtureowner0000aaaa","profileId":"…","entries":["synthetic-a","synthetic-b"]}]
+the requests of the local provider: [{"path":"/v1/models","authorized":false},
+                                     {"path":"/v1/models","authorized":true}]
+the models the local provider answered: synthetic-a, synthetic-a
 ```
 
-The guest namespace holds **no** profile, the account namespace holds the
-profile, its credential and the two advertised models, and the panel of
-**Your agents** lists the two models of the account. The account id is shaped
-like the id of a hosted identity provider, because the connection store of an
-account only accepts such an id; the session token is minted for the same
-subject with the key of the fixture, so the service verifies it with its
-ordinary code path.
+The credential of the account is asserted on **every** request of the provider
+that is not the preflight and not the catalog, and on **every** generation
+request (the provider records a refused attempt before it refuses it, so an
+unauthorized attempt is part of the set and fails the case). The case asserts
+the guest namespace is empty, the account namespace holds the profile, its
+credential and the two advertised models, and the seat of the owner declares
+the neutral public label.
 
 ## 5. The corrections of the second, third and fourth rounds
 
