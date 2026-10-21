@@ -190,7 +190,7 @@ npx playwright test tests/e2e/account-online.spec.ts
 | the account change hides the games of the first account and restores the registry of the next | **passed** |
 | the first account gets its game back when it signs in again | **failed** — the engine seat of the restored game answers `404`; the durable list itself works (the game returns with its moves). Owner: workspace `13` (`da3cb1a`), not yet in the root |
 | a late seat change never writes into the next account | **passed** (the answer of the service is held while the account changes) |
-| the owner switches the own agent between two private models and the provider answers | **failed** — the service refuses the switch of the seat with `409 Conflict`, so the seat keeps its model and the interface reports the refusal. Owner: provider `fresh4` |
+| the owner switches the own agent between two private models and the provider answers | **failed** — the service refuses the switch of the seat with `409 Conflict`, so the seat keeps its model and the interface reports the refusal. The refusal is the settlement of the captured request of the runner (the exact envelope is in the section below). Owner: the provider (the candidate `3133c3b` and the thread of the envelope fix) |
 
 The account connect, the catalog and the readiness are proven in the browser
 against the combined content:
@@ -263,6 +263,49 @@ switch with a 409. A full run against the assembled provider and workspace
 corrections remains required; the historical results above are not final
 assembled evidence.
 
+### The 409 of the own-agent switch: the extracted envelope
+
+The two failing rendered cases were traced (the Playwright trace of the run,
+read offline) so that the refusal can be handed to its owner as the exact
+request and the exact answer instead of a description. Only the envelope, the
+answer and the identifiers the service itself issued are reproduced; no
+credential of the account is part of it.
+
+The refusals of that run, in order:
+
+```
+POST /v1/online/queue/entries/qe_nbIi0ORYzBmn_r-3/heartbeat
+  request   {"schemaVersion":2}
+  answer    409 Conflict, body {"error":"conflict"}
+
+POST /v1/online/matches/m7e68bd00c0a3b6ddd889cdb8edc0d08/runner/request
+  request   {"schemaVersion":2,"action":"clear","seat":"black",
+             "runnerId":"m7e68bd00c0a3b6ddd889cdb8edc0d08-black-1",
+             "leaseId":"lease-17c1e06c304bafdbf33d2e8a",
+             "requestId":"bb76139849cd48169bb02aa54a6ddee4",
+             "controlEpoch":1,"turnVersion":2}
+  answer    409 Conflict, body {"error":"conflict"}
+
+POST /v1/online/matches/m7e68bd00c0a3b6ddd889cdb8edc0d08/runner/request
+  request   {"schemaVersion":2,"action":"clear","seat":"black",
+             "runnerId":"m7e68bd00c0a3b6ddd889cdb8edc0d08-black-1",
+             "leaseId":"lease-17c1e06c304bafdbf33d2e8a",
+             "requestId":"bb76139849cd48169bb02aa54a6ddee4",
+             "controlEpoch":2,"turnVersion":3}
+  answer    409 Conflict, body {"error":"conflict"}
+```
+
+What the envelope shows: the refusals are the runner **settling** its pending
+request (`action: "clear"`), not the switch command itself. The same request
+and the same lease are presented twice, first with the epoch and the turn
+version they were captured with (`controlEpoch: 1`, `turnVersion: 2`), then
+with both moved on by one (`controlEpoch: 2`, `turnVersion: 3`). The service
+refused both, so the settlement of the captured request never landed and the
+pending record of the seat stayed unsettled; that is the state the switch of
+the seat then meets, and it is refused with the same answer. The owner of the
+settlement is the provider (the thread of the envelope fix); the account slice
+does not own those files and does not work around the refusal.
+
 ## 6. The open items and the coordination
 
 1. **The engine seat of a restored game cannot play yet.** The durable list of
@@ -282,7 +325,12 @@ assembled evidence.
 3. **The outcome of a seat change is explicit now.** The composition answers
    with `accepted` / `refused` / `unknown` and the interface consumes it
    directly. The provider's runner owns the detail of a handoff that could
-   not take the lease (provider r8).
+   not take the lease (provider r8). The rendered case of the own-agent switch
+   is red on exactly that refusal: the trace of the run shows the runner
+   settling its pending request with `action: "clear"` and being answered
+   `409 {"error":"conflict"}` twice, once with the captured epoch and once
+   with the moved epoch (the exact envelope is in the section above). The
+   account slice reports it and does not work around it.
 
 4. **The unmount of the shell is fenced in the code but not yet proven in
    the browser.** The lifecycle invalidation (the cleanup of the mount effect
