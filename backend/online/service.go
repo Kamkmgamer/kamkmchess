@@ -298,6 +298,17 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 	if s.evaluator == nil {
 		return CommandResult{}, ErrUnavailable
 	}
+	// The gate is checked before the rules process runs.
+	//
+	// The authoritative check stays inside the acceptance transaction, so a
+	// command that raced a suspension is still refused there and a command
+	// that started before the gate closed may still commit. The early check
+	// only keeps the refused traffic away from the worker: a closed gate
+	// must not start a worker, and it must not hold the slot that the
+	// repair of the closed gate needs.
+	if state, gateErr := s.gateState(ctx, s.db); gateErr != nil || !state.Open {
+		return CommandResult{}, ErrUnavailable
+	}
 	input := BuildRulesInput(snapshot, snapshot.Moves, cmd.Action.SubmitMove.UCI)
 	// External rules evaluation happens with no database lock or transaction held.
 	candidate, err := s.evaluator.Evaluate(ctx, input)
