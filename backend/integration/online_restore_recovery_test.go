@@ -396,17 +396,19 @@ func TestPostgresTheRestoreWithoutASinkIsRefusedAfterASuccessfulRestore(t *testi
 	if len(applied.Matches) != 1 {
 		t.Fatalf("the database holds %d match records after the refused restore", len(applied.Matches))
 	}
-	// The control: the tooling of the private single-owner backup, which has
-	// no removal sink and no removal obligation, still works.
+	// The control: the same restore **with** the removal ledger sink is
+	// accepted, because the sink replays the removals that the evidence
+	// names. The refusal is about the restore that cannot replay them.
 	if _, err := backup.Restore(ctx, backup.RestoreRequest{
 		Path:           bundle,
 		Passphrase:     []byte("evidence-passphrase-0001"),
 		Restorer:       evidenceRestorer{pool: fixture.pool, state: state},
 		Tombstones:     evidenceTombstones{},
+		Removals:       evidenceLedger{service: removals},
 		AdmissionFence: evidenceLedger{service: removals},
-		RestoreID:      "evidence-obligation-empty",
-	}); err == nil {
-		t.Fatal("the restore with the removal sink was refused although the evidence is pending")
+		RestoreID:      "evidence-obligation-with-sink",
+	}); err != nil {
+		t.Fatalf("the restore with the removal ledger sink was refused: %v", err)
 	}
 }
 
