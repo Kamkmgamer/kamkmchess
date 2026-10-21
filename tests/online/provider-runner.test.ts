@@ -1206,6 +1206,282 @@ describe('the recovery of the owner', () => {
   });
 });
 
+describe('the owner actions of the runner', () => {
+  it('keeps the stop of the owner when the retry settles the pending record late', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const pending = createMemoryPendingStore();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+    expect(pending.read(service.match.matchId, service.match.seat)).not.toBeNull();
+
+    // The owner retries while the settlement of the pending record waits for
+    // the service.
+    held.holdClear();
+    const retry = runner.retry();
+    await until(() => held.clears.length === 1, 'the settlement is in flight');
+
+    // The owner stops the runner while the settlement waits.
+    await runner.stop();
+    expect(runner.state.phase).toBe('stopped');
+
+    // The settlement answers now. The decision of the owner that is older may
+    // not write a phase and may not start the turn again.
+    held.clears[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-late',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await retry;
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    expect(runner.state.phase).toBe('stopped');
+    expect(provider.prompts).toHaveLength(1);
+  });
+
+  it('writes nothing when the runner is disposed while the retry settles the record', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const pending = createMemoryPendingStore();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending,
+    });
+    const states: string[] = [];
+    runner.subscribe((state) => { states.push(state.phase); });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+    expect(pending.read(service.match.matchId, service.match.seat)).not.toBeNull();
+
+    held.holdClear();
+    const retry = runner.retry();
+    await until(() => held.clears.length === 1, 'the settlement is in flight');
+
+    await runner.dispose();
+    const statesAtDispose = states.length;
+
+    held.clears[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-late',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await retry;
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // Nothing is written after the dispose, the provider is not asked, and
+    // the honest record of the uncertain work survives.
+    expect(states.length).toBe(statesAtDispose);
+    expect(provider.prompts).toHaveLength(1);
+    expect(pending.read(service.match.matchId, service.match.seat)).not.toBeNull();
+  });
+
+  it('does not erase a newer pending record while an older one is settled', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const pending = createMemoryPendingStore();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+    const older = pending.read(service.match.matchId, service.match.seat);
+    expect(older).not.toBeNull();
+
+    held.holdClear();
+    const retry = runner.retry();
+    await until(() => held.clears.length === 1, 'the settlement is in flight');
+
+    // A newer request writes a new pending record while the older one is
+    // settled. The newer record is the honest one.
+    pending.write({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      requestId: 'request-newer',
+      turnVersion: 2,
+      controlEpoch: 1,
+      startedAt: 99,
+    });
+    // The owner stops the runner, so the older decision does not continue.
+    await runner.stop();
+
+    held.clears[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-late',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await retry;
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // The settlement of the older record did not erase the newer one.
+    expect(pending.read(service.match.matchId, service.match.seat)?.requestId).toBe('request-newer');
+    expect(runner.state.phase).toBe('stopped');
+  });
+
+  it('keeps the newest decision of the owner when two actions compete', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+
+    held.holdClear();
+    const retry = runner.retry();
+    await until(() => held.clears.length === 1, 'the settlement is in flight');
+
+    // The owner takes the seat over while the retry waits. The takeover is the
+    // newest decision.
+    await runner.takeover();
+    expect(runner.state.phase).toBe('stopped');
+    expect(service.match.control.kind).toBe('human');
+
+    held.clears[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-late',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    await retry;
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // The takeover stands: the retry neither writes a phase nor starts the
+    // turn again.
+    expect(runner.state.phase).toBe('stopped');
+    expect(service.match.control.kind).toBe('human');
+    expect(provider.prompts).toHaveLength(1);
+  });
+
+  it('stops the runner when the credential of the seat was replaced', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const port = service.leasePort('runner-a');
+    const replaced: ProviderRunnerLeasePort = {
+      ...port,
+      runnerId: port.runnerId,
+      async acquire() {
+        throw new OnlineAuthError('credential-changed', 'The credential was replaced.');
+      },
+    };
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: replaced,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => runner.state.phase === 'stopped', 'the runner stops');
+    expect(provider.prompts).toHaveLength(0);
+
+    // The runner does not ask for the lease again on every snapshot.
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(runner.state.phase).toBe('stopped');
+    expect(provider.prompts).toHaveLength(0);
+  });
+});
+
 describe('the published model binding of the runner', () => {
   it('converts the canonical match view into the state of the runner', () => {
     const view: OnlineMatchView = {

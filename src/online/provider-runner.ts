@@ -1773,17 +1773,29 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
    * pending record of the browser and the pending record of the service are
    * cleared. Without that, the decision of the owner would be swallowed by the
    * guard that keeps the runner from asking the provider again.
+   *
+   * The settlement belongs to the generation of the owner action that started
+   * it. A newer action of the owner, a stop or a dispose ends it, and the
+   * record of the browser is only cleared when it is still the record that was
+   * read: a newer request may have written a new one while the service
+   * answered, and that record is the honest one.
    */
-  async function settleUncertainWork(): Promise<void> {
+  async function settleUncertainWork(generation: number): Promise<boolean> {
     const durable = pendingStore.read(matchId, seat);
     const serviceRequest = leaseRecord?.pendingRequestId ?? null;
     if (leaseId !== null) {
       if (durable !== null) await clearPendingRequest(durable.requestId);
+      if (!ownerActionIsCurrent(generation)) return false;
       if (serviceRequest !== null && serviceRequest !== durable?.requestId) {
         await clearPendingRequest(serviceRequest);
       }
     }
-    pendingStore.clear(matchId, seat);
+    if (!ownerActionIsCurrent(generation)) return false;
+    const current = pendingStore.read(matchId, seat);
+    if (durable !== null && current !== null && current.requestId === durable.requestId) {
+      pendingStore.clear(matchId, seat);
+    }
+    return true;
   }
 
   /**
@@ -2398,6 +2410,20 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     lifecycleGeneration += 1;
   }
 
+  /**
+   * Reports whether an owner action may still continue.
+   *
+   * Every await of an owner action belongs to the generation the action
+   * started in. A newer action of the owner, a stop or a dispose moves the
+   * generation, so the older action may not write a phase, may not send a
+   * command and may not change a record any more. The newest decision of the
+   * owner is the one that counts.
+   */
+  function ownerActionIsCurrent(generation: number): boolean {
+    if (disposed) return false;
+    return generation === lifecycleGeneration;
+  }
+
   /** Starts the turn without waiting for the provider answer. */
   function schedule(): void {
     if (disposed) return;
@@ -2514,6 +2540,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // is still in flight may not write a phase, start work or ask the
       // provider for another answer.
       advanceLifecycle();
+      const generation = lifecycleGeneration;
       if (activeController !== null) {
         const requestId = activeRequestId;
         cancelPending('stopped');
@@ -2529,6 +2556,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         return;
       }
       await releaseLease();
+      // A newer action of the owner or a dispose ends the stop: the phase of
+      // the runner is the one of the newest action.
+      if (!ownerActionIsCurrent(generation)) return;
       setPhase('stopped');
     },
     async retry() {
@@ -2542,14 +2572,19 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // an answer of the old request cannot write a phase.
       ownerDecided = true;
       advanceLifecycle();
-      await settleUncertainWork();
+      const generation = lifecycleGeneration;
+      if (!await settleUncertainWork(generation)) return;
       setPhase('idle');
       if (operation !== null) {
         // The operation identifier stays the same, so the service answers with
-        // the original receipt instead of accepting a second move.
+        // the original receipt instead of accepting a second move. The command
+        // is only sent while the decision of the owner is the newest one.
+        if (!ownerActionIsCurrent(generation)) return;
         const outcome = await submitAction(operation.action, operation.operationId);
+        if (!ownerActionIsCurrent(generation)) return;
         if (outcome.kind === 'accepted') {
           await releaseLease();
+          if (!ownerActionIsCurrent(generation)) return;
           setPhase('idle');
           return;
         }
@@ -2564,6 +2599,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           return;
         }
       }
+      if (!ownerActionIsCurrent(generation)) return;
       schedule();
     },
     async switchModel(label) {
@@ -2572,7 +2608,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         setPhase(phase, 'A shared model label may not name a route.');
         return;
       }
+      const generation = lifecycleGeneration;
       const leased = await ensureLease(true);
+      // A newer action of the owner ends the switch: no control change is
+      // sent for a decision that is no longer the newest one.
+      if (!ownerActionIsCurrent(generation)) return;
       if (!leased.ok) {
         setPhase(phase, 'The seat could not be taken for a model switch.');
         return;
@@ -2581,6 +2621,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         { kind: 'set_control', control: { kind: 'agent', modelLabel: label } },
         nextOperationId('switch'),
       );
+      if (!ownerActionIsCurrent(generation)) return;
       if (outcome.kind !== 'accepted') {
         setPhase(phase, 'The service refused the model switch.');
         return;
@@ -2599,14 +2640,21 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // owner settles the pending records, so the new agent may ask the
       // provider again.
       advanceLifecycle();
-      await settleUncertainWork();
+      const decided = lifecycleGeneration;
+      if (!await settleUncertainWork(decided)) return;
+      if (!ownerActionIsCurrent(decided)) return;
       await releaseLease();
+      if (!ownerActionIsCurrent(decided)) return;
       setPhase('idle');
       schedule();
     },
     async takeover() {
       if (disposed) return;
+      const generation = lifecycleGeneration;
       const leased = await ensureLease(true);
+      // A newer action of the owner ends the takeover: no control change is
+      // sent for a decision that is no longer the newest one.
+      if (!ownerActionIsCurrent(generation)) return;
       if (!leased.ok) {
         setPhase(phase, 'The seat could not be taken for a takeover.');
         return;
@@ -2615,6 +2663,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         { kind: 'set_control', control: { kind: 'human' } },
         nextOperationId('takeover'),
       );
+      if (!ownerActionIsCurrent(generation)) return;
       if (outcome.kind !== 'accepted') {
         setPhase(phase, 'The service refused the takeover.');
         return;
@@ -2625,7 +2674,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // The seat belongs to the human owner now, so the work of the agent is
       // fenced and the generation of the lifecycle moves.
       advanceLifecycle();
+      const decided = lifecycleGeneration;
       await releaseLease();
+      if (!ownerActionIsCurrent(decided)) return;
       setPhase('stopped', 'The seat belongs to the human owner now.');
     },
     async dispose() {

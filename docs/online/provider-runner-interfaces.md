@@ -49,6 +49,13 @@ the control changes and the spent recovery attempts.
   record of the service, so the decision is effective: the provider is asked
   again. Without that, the guard that keeps the runner from asking the
   provider again would swallow the decision of the owner.
+- Every action of the owner belongs to a generation. `retry()`,
+  `switchModel()`, `takeover()` and `stop()` check the generation after every
+  await: a newer action of the owner, a stop or a dispose ends the older
+  action. The older action then writes no phase, sends no command and changes
+  no record, so the newest decision of the owner is the one that counts. The
+  settlement of a pending record only clears the record it read, so a newer
+  record of a billable request is never erased.
 - While an uncertainty is open the runner never asks the provider again. The
   browser-local pending record is checked before every request of a turn, not
   only when a lease is taken, and the check honours the decision of the owner.
@@ -418,6 +425,9 @@ seat with an accepted move, exactly like the service does.
 | — | A finished match keeps no lease and no heartbeat when the acquisition answers late |
 | — | The provider is not asked again while the uncertainty of a stopped request is open |
 | — | The explicit retry of the owner asks the provider again and is not swallowed by the late answer of the aborted request |
+| — | A stop or a dispose while the pending record is settled keeps the phase of the owner and the honest record |
+| — | Two competing owner actions: the newest decision wins and the older one sends nothing |
+| — | A replaced credential stops the runner instead of asking for the lease on every snapshot |
 | — | A provider that answers with an error waits for the owner instead of being retried by the next snapshot |
 | — | The Go answer of the service is read by the parser of the runner and by the shared parser |
 | — | The budget of the browser follows the canonical counts of the turn |
