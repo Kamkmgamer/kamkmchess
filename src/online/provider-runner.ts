@@ -505,8 +505,20 @@ export type ProviderRunnerDecision = 'retry' | 'switch-model' | 'takeover';
  * private selection; it carries the public label the seat declares.
  */
 export type ProviderRunnerActionOutcome =
-  /** The service applied the decision and the seat declares this label. */
-  | { readonly kind: 'accepted'; readonly publicModelLabel: string }
+  /**
+   * The runner accepted the decision.
+   *
+   * The meaning depends on the decision. `retry()` accepts the scheduling of
+   * one more request of the provider: the runner asks the provider again and
+   * the service has not applied a command. `switchModel()` and `takeover()`
+   * accept the canonical command of the service: the receipt proves that the
+   * seat declares this label and that the seat belongs to this controller.
+   *
+   * The optional detail names what the runner had to leave out, so the
+   * caller never has to guess why a decision was applied without the lease
+   * of the runner.
+   */
+  | { readonly kind: 'accepted'; readonly publicModelLabel: string; readonly detail?: string }
   /** The service or the runner refused the decision. The seat keeps its state. */
   | { readonly kind: 'refused'; readonly detail: string }
   /** The outcome could not be established. The owner may retry. */
@@ -1753,7 +1765,13 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         });
         return { ok: false, detail: 'A previous runner may still have started billable work.', stale: false };
       }
-      await clearPendingRequest(leaseRecord.pendingRequestId);
+      if (decided.has(leaseRecord.pendingRequestId)) {
+        // Only a record the owner decided about is closed. The acquisition of
+        // a lease is not a decision of the owner, so it never closes a record
+        // that the owner left open: a takeover leaves the uncertain record of
+        // the billable work, a switch settles it on purpose.
+        await clearPendingRequest(leaseRecord.pendingRequestId);
+      }
     }
     const durable = pendingStore.read(matchId, seat);
     if (durable) {
@@ -1782,6 +1800,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
    * version fence, so the refusal of the *newest* decision is sent again with
    * the version that the service has now. The older decision is never retried:
    * its intent is superseded.
+   *
+   * The handoff presents no lease. The service accepts the command of the
+   * owner without a lease and fences a stale runner with the control epoch
+   * and the version of the match, so the handoff of a seat whose lease died
+   * is still the decision of the owner.
    */
   async function sendHandoff(
     command: OnlineAction,
@@ -1789,15 +1812,13 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     kind: string,
   ): Promise<SubmitOutcome> {
     const operationId = nextOperationId(kind);
-    let outcome = await submitAction(command, operationId, owner);
+    let outcome = await submitAction(command, operationId, owner, { presentLease: false });
     if (outcome.kind === 'fenced' && ownerActionIsCurrent(owner.token, owner.generation)) {
       // The service refused the command because the version of the match moved
       // on: an older decision of the owner was accepted first. The newest
-      // decision wins, so the lease is bound to the version of the service and
-      // the command is sent again.
-      const leased = await ensureLease(true);
-      if (!leased.ok) return outcome;
-      outcome = await submitAction(command, operationId, owner);
+      // decision wins, so the command is sent again with the version the
+      // runner knows now.
+      outcome = await submitAction(command, operationId, owner, { presentLease: false });
     }
     return outcome;
   }
@@ -1818,6 +1839,36 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   }
 
   /**
+   * The records of the uncertain work that a decision of the owner settles.
+   *
+   * The capture happens in the same tick as the decision of the owner, before
+   * any await. A record that another tab of the same browser writes while the
+   * decision waits for the service is a different request, and it is neither
+   * settled nor authorized by that decision.
+   */
+  interface DecidedRecords {
+    /** The record of the browser that the owner decided about. */
+    readonly browserRequestId: string | null;
+  }
+
+  /** Captures the records of the uncertain work for a decision of the owner. */
+  function captureDecidedRecords(): DecidedRecords {
+    if (uncertainty === null && activeRequestId === null) {
+      // The owner decided without an uncertain work. There is nothing to
+      // settle, and the record of another tab is not the record of this
+      // decision.
+      return { browserRequestId: null };
+    }
+    // The uncertainty names the request the owner decided about, and a request
+    // that is still running is the work of this runner. A record that another
+    // tab wrote in the meantime is a different request: it neither inherits
+    // the authorization nor is settled by this decision.
+    return {
+      browserRequestId: uncertainty?.requestId ?? activeRequestId,
+    };
+  }
+
+  /**
    * Settles the pending records of the uncertain work.
    *
    * The decision of the owner accepts that the uncertain work may be paid
@@ -1827,31 +1878,41 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
    * guard that keeps the runner from asking the provider again.
    *
    * The settlement belongs to the generation of the owner action that started
-   * it. A newer action of the owner, a stop or a dispose ends it, and the
-   * record of the browser is only cleared when it is still the record that was
-   * read: a newer request may have written a new one while the service
-   * answered, and that record is the honest one.
+   * it. A newer action of the owner, a stop or a dispose ends it, and only
+   * the records that the decision captured are closed: a newer request of
+   * another tab keeps its record.
+   *
+   * The authorization of the owner is recorded only when the settlement
+   * reached its end while the decision was still the decision of the owner.
+   * A superseded decision leaves no authorization behind, so the next turn is
+   * fenced again by the record it could not settle. The authorization belongs
+   * to that exact record: a newer record of another tab never inherits it.
    */
   async function settleUncertainWork(
     owner: { readonly token: number; readonly generation: number },
+    decided: DecidedRecords,
   ): Promise<boolean> {
-    const durable = pendingStore.read(matchId, seat);
-    const serviceRequest = leaseRecord?.pendingRequestId ?? null;
-    if (durable !== null) {
-      // The decision of the owner is bound to this record.
-      settledRequestIds.add(durable.requestId);
-    }
-    if (leaseId !== null) {
-      if (durable !== null) await clearPendingRequest(durable.requestId);
+    // A decision that was superseded sends nothing: the record of the
+    // uncertain work stays as it is.
+    if (!ownerActionIsCurrent(owner.token, owner.generation)) return false;
+    if (leaseId !== null && decided.browserRequestId !== null) {
+      // The record of the service carries the same request as the record of
+      // the browser: the runner writes its own record after the service
+      // recorded the request.
+      await clearPendingRequest(decided.browserRequestId);
       if (!ownerActionIsCurrent(owner.token, owner.generation)) return false;
-      if (serviceRequest !== null && serviceRequest !== durable?.requestId) {
-        await clearPendingRequest(serviceRequest);
-      }
     }
     if (!ownerActionIsCurrent(owner.token, owner.generation)) return false;
-    const current = pendingStore.read(matchId, seat);
-    if (durable !== null && current !== null && current.requestId === durable.requestId) {
-      pendingStore.clear(matchId, seat);
+    if (decided.browserRequestId !== null) {
+      // The record of the browser is only cleared when it is still the record
+      // that the owner decided about: a second tab of the same browser may
+      // have written a newer one while the service answered.
+      const current = pendingStore.read(matchId, seat);
+      if (current !== null && current.requestId === decided.browserRequestId) {
+        pendingStore.clear(matchId, seat);
+      }
+      // The decision of the owner is bound to this exact record.
+      settledRequestIds.add(decided.browserRequestId);
     }
     return true;
   }
@@ -1956,6 +2017,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     action: OnlineAction,
     operationId: string,
     owner?: { readonly token: number; readonly generation: number },
+    options?: { readonly presentLease?: boolean },
   ): Promise<
     | { kind: 'accepted'; receipt: Receipt }
     | {
@@ -1964,7 +2026,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     }
   > {
     assertSharedActionSafe(action);
-    const lease = leaseId;
+    // The handoff of the seat is the authority of the owner: it presents no
+    // lease, so a lease that the service considers dead can never make the
+    // owner powerless. Every other command presents the lease of the runner.
+    const lease = options?.presentLease === false ? null : leaseId;
     // The operation identifier stays with the action while the acknowledgement
     // is missing, so a retry is the same operation and never a second move.
     if (owner === undefined || ownerActionIsCurrent(owner.token, owner.generation)) {
@@ -2675,6 +2740,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
       const token = nextOwnerActionToken();
       const operation = pendingSubmission;
+      // The records of the uncertain work are captured in the tick of the
+      // decision, before the settlement waits for the service. A record that
+      // another tab writes in the meantime is a different request, and this
+      // decision neither settles it nor authorizes it.
+      const decided = captureDecidedRecords();
       uncertainty = null;
       // The owner decided. The uncertain work may be paid twice, so the pending
       // records of the browser and of the service are settled and the runner
@@ -2682,7 +2752,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // an answer of the old request cannot write a phase.
       advanceLifecycle();
       const owner = { token, generation: lifecycleGeneration };
-      if (!await settleUncertainWork(owner)) {
+      if (!await settleUncertainWork(owner, decided)) {
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
       }
       if (!ownerActionIsCurrent(owner.token, owner.generation)) {
@@ -2740,16 +2810,25 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
       const token = nextOwnerActionToken();
       const generation = lifecycleGeneration;
-      await ensureLease(true);
+      // The records of the uncertain work are captured in the tick of the
+      // decision, before the decision waits for the service. A record that
+      // another tab writes in the meantime is a different request, and this
+      // decision neither settles it nor authorizes it.
+      const decided = captureDecidedRecords();
+      // The handoff of the seat is the authority of the owner and it needs no
+      // lease: the service accepts the command of the owner without a lease
+      // and fences a stale runner with the control epoch and the version of
+      // the match. The runner takes the lease of the seat anyway, so the
+      // pending record of the service can be closed with it. When the lease
+      // cannot be taken, the handoff goes without a lease, and the outcome
+      // names the reason instead of hiding it.
+      const leased = await ensureLease(true);
+      const leaseNote = leased.ok ? undefined : `The lease of the seat could not be taken: ${leased.detail}`;
       // A newer action of the owner ends the switch: no control change is
       // sent for a decision that is no longer the newest one.
       if (!ownerActionIsCurrent(token, generation)) {
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
       }
-      // The handoff of the seat is the authority of the owner and it needs no
-      // lease, so a seat whose runner is gone can still be handed over. The
-      // lease is presented when the runner holds a live one, and the service
-      // fences a stale runner with the control epoch.
       const command: OnlineAction = { kind: 'set_control', control: { kind: 'agent', modelLabel: label } };
       const outcome = await sendHandoff(command, { token, generation }, 'switch');
       if (!ownerActionIsCurrent(token, generation)) {
@@ -2762,8 +2841,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         // A lost acknowledgement leaves the outcome unproven, so the owner may
         // retry. The interface never claims a success it cannot prove.
         return outcome.kind === 'unacknowledged' || outcome.kind === 'superseded'
-          ? { kind: 'unknown', detail: outcome.detail }
-          : { kind: 'refused', detail: outcome.detail };      }
+          ? { kind: 'unknown', detail: withLeaseNote(outcome.detail, leaseNote) }
+          : { kind: 'refused', detail: withLeaseNote(outcome.detail, leaseNote) };
+      }
       // The service resolves the declared label to a publishable one, so the
       // runner adopts the published label of the receipt. The seat control
       // epoch of the receipt is the epoch of the seat after the change.
@@ -2778,7 +2858,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // provider again.
       advanceLifecycle();
       const owner = { token, generation: lifecycleGeneration };
-      if (!await settleUncertainWork(owner)) {
+      if (!await settleUncertainWork(owner, decided)) {
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
       }
       if (!ownerActionIsCurrent(owner.token, owner.generation)) {
@@ -2790,22 +2870,26 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
       setPhase('idle');
       schedule();
-      return { kind: 'accepted', publicModelLabel };
+      return { kind: 'accepted', publicModelLabel, ...(leaseNote === undefined ? {} : { detail: leaseNote }) };
     },
     async takeover(): Promise<ProviderRunnerActionOutcome> {
       if (disposed) return { kind: 'unknown', detail: 'The runner is disposed.' };
       const token = nextOwnerActionToken();
       const generation = lifecycleGeneration;
-      await ensureLease(true);
+      // The handoff of the seat is the authority of the owner and it needs no
+      // lease: the service accepts the command of the owner without a lease
+      // and fences a stale runner with the control epoch and the version of
+      // the match. The runner takes the lease of the seat anyway, so the
+      // pending record of the service can be closed with it. When the lease
+      // cannot be taken, the handoff goes without a lease, and the outcome
+      // names the reason instead of hiding it.
+      const leased = await ensureLease(true);
+      const leaseNote = leased.ok ? undefined : `The lease of the seat could not be taken: ${leased.detail}`;
       // A newer action of the owner ends the takeover: no control change is
       // sent for a decision that is no longer the newest one.
       if (!ownerActionIsCurrent(token, generation)) {
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the takeover.' };
       }
-      // The handoff of the seat is the authority of the owner and it needs no
-      // lease, so a seat whose runner is gone can still be taken over. The
-      // lease is presented when the runner holds a live one, and the service
-      // fences a stale runner with the control epoch.
       const command: OnlineAction = { kind: 'set_control', control: { kind: 'human' } };
       const outcome = await sendHandoff(command, { token, generation }, 'takeover');
       if (!ownerActionIsCurrent(token, generation)) {
@@ -2819,20 +2903,23 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           setPhase(phase, 'The service refused the takeover.');
         }
         return outcome.kind === 'unacknowledged' || outcome.kind === 'superseded'
-          ? { kind: 'unknown', detail: outcome.detail }
-          : { kind: 'refused', detail: outcome.detail };
+          ? { kind: 'unknown', detail: withLeaseNote(outcome.detail, leaseNote) }
+          : { kind: 'refused', detail: withLeaseNote(outcome.detail, leaseNote) };
       }
       boundSeatControlEpoch = outcome.receipt.controlEpoch;
       uncertainty = null;
       // The seat belongs to the human owner now, so the work of the agent is
-      // fenced and the generation of the lifecycle moves.
+      // fenced and the generation of the lifecycle moves. The record of the
+      // uncertain work stays open on purpose: a human owner does not pay for
+      // the billable request of the agent, and the record keeps the seat
+      // honest until a decision of the owner closes it.
       advanceLifecycle();
       await releaseLease();
       if (!ownerActionIsCurrent(token, lifecycleGeneration)) {
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the takeover.' };
       }
       setPhase('stopped', 'The seat belongs to the human owner now.');
-      return { kind: 'accepted', publicModelLabel };
+      return { kind: 'accepted', publicModelLabel, ...(leaseNote === undefined ? {} : { detail: leaseNote }) };
     },
     async dispose() {
       if (disposed) return;
@@ -2852,6 +2939,18 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   };
 
   return runner;
+}
+
+/**
+ * Names the lease that a handoff had to leave out.
+ *
+ * The handoff of the seat is the authority of the owner: it goes without a
+ * lease when the lease of the seat cannot be taken. The outcome says so, so
+ * the caller never has to guess why a decision was applied without the fence
+ * of the runner.
+ */
+function withLeaseNote(detail: string, note: string | undefined): string {
+  return note === undefined ? detail : `${detail} ${note}`;
 }
 
 /**

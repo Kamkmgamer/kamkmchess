@@ -10,7 +10,9 @@
  * - a turn version that does not match is a conflict,
  * - a live lease of another runner is a conflict,
  * - a new lease carries the pending request of the previous lease,
- * - a command of an agent seat needs the live lease of the turn,
+ * - every command that presents a lease needs a live lease of the turn,
+ * - a command without a lease is the owner acting for the seat,
+ * - the move and the spent recovery attempt of an agent seat need the lease,
  * - the fourth illegal attempt ends the match and the fourth formatting
  *   correction is refused.
  *
@@ -181,13 +183,18 @@ function parseUci(uci: string): CoordinateMove {
 /**
  * How the fixture fences the commands of an agent seat.
  *
- * The service of today fences the acceptance of a move with the runner
- * lease. The mutation that can end the match, the spent recovery attempt,
- * and the resignation are not fenced by the service yet. The fixture models
- * the service of today, so the fixtures never claim a fence the service does
- * not apply.
+ * The service fences every command that presents a lease: the lease must be
+ * live, of the match and the seat of the command, of the current control
+ * epoch and bound to the turn the command acts for. A command that presents
+ * no lease is the owner acting for the seat and stays allowed, except the
+ * move of an agent seat and the spent recovery attempt of an agent seat: both
+ * are the work of the browser runner and they need the lease of the seat.
+ *
+ * The strict fence is the default of the fixture, so a tracked case never
+ * claims a fence the service does not apply. `moves-only` is the older,
+ * permissive behaviour and stays available for the cases that need it.
  */
-export type FakeLeaseFence = 'moves-only' | 'agent-commands';
+export type FakeLeaseFence = 'strict' | 'moves-only';
 
 /** Creates the fake online service of one match. */
 export function createFakeOnlineService(options: {
@@ -202,7 +209,7 @@ export function createFakeOnlineService(options: {
   /** The clock of the fixture. A test moves it to age a lease. */
   readonly now?: () => number;
 } = {}): FakeOnlineService {
-  const leaseFence = options.leaseFence ?? 'moves-only';
+  const leaseFence = options.leaseFence ?? 'strict';
   const clock = options.now ?? ((): number => Date.now());
   const match: FakeMatch = {
     matchId: options.matchId ?? 'match-0001',
@@ -347,9 +354,11 @@ export function createFakeOnlineService(options: {
       const stored = receipts.get(operationId);
       if (stored !== undefined) return stored;
       const leaseId = submitOptions?.leaseId;
-      const fenced = leaseFence === 'agent-commands' ||
-        action.kind === 'submit_move';
-      if (fenced && leaseId !== undefined) {
+      const presented = leaseId !== undefined;
+      // The service fences every command that presents a lease: the lease
+      // must be live and bound to the turn the command acts for. A command
+      // that presents no lease is the owner acting for the seat.
+      if (leaseFence === 'strict' && presented) {
         const current = lease;
         if (current === null || current.leaseId !== leaseId || current.status !== 'active') {
           // The service answers a fenced lease with a missing resource.
@@ -359,7 +368,19 @@ export function createFakeOnlineService(options: {
           throw conflict('The lease is bound to another turn.');
         }
       }
-      if (fenced && leaseId === undefined && match.control.kind !== 'human') {
+      if (leaseFence === 'moves-only' && action.kind === 'submit_move' && presented) {
+        const current = lease;
+        if (current === null || current.leaseId !== leaseId || current.status !== 'active') {
+          throw notFound('The lease does not accept a command.');
+        }
+        if (current.turnVersion !== submitOptions?.expectedVersion) {
+          throw conflict('The lease is bound to another turn.');
+        }
+      }
+      // The move of an agent seat and the spent recovery attempt of an agent
+      // seat are the work of the browser runner, so they need the lease.
+      const runnerWork = action.kind === 'submit_move' || action.kind === 'record_recovery_attempt';
+      if (runnerWork && !presented && match.control.kind !== 'human') {
         // An agent seat acts through a browser runner, and the runner holds
         // the lease of the seat.
         throw notFound('The seat needs the lease of its runner.');

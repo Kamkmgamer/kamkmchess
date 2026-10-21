@@ -1522,6 +1522,35 @@ describe('the owner actions of the runner', () => {
   });
 });
 
+describe('the fence of the service on the commands of a runner', () => {
+  it('refuses a command that presents a lease which is not live', async () => {
+    const service = createFakeOnlineService();
+    const lease = await service.leasePort('runner-a').acquire({ controlEpoch: 1, turnVersion: 1 });
+    service.revokeLease('control_change');
+
+    // The service fences every command that presents a lease: the lease of the
+    // seat is revoked, so the command never reaches the rules of the match.
+    await expect(service.commands.submit(
+      { kind: 'set_control', control: { kind: 'human' } },
+      { expectedVersion: service.match.version, leaseId: lease?.leaseId },
+    )).rejects.toThrow(/lease/i);
+    expect(service.match.control.kind).toBe('agent');
+  });
+
+  it('accepts a command without a lease as the decision of the owner', async () => {
+    const service = createFakeOnlineService();
+
+    // The handoff of the seat is the authority of the owner: the service
+    // accepts a command that presents no lease.
+    const receipt = await service.commands.submit(
+      { kind: 'set_control', control: { kind: 'human' } },
+      { expectedVersion: service.match.version },
+    );
+    expect(receipt.outcome).toBe('accepted');
+    expect(service.match.control.kind).toBe('human');
+  });
+});
+
 describe('the competing owner actions of the runner', () => {
   it('applies the newest decision of the owner when a takeover competes with a switch', async () => {
     const service = createFakeOnlineService();
@@ -1775,14 +1804,17 @@ describe('the competing owner actions of the runner', () => {
     await new Promise((resolve) => { setTimeout(resolve, 30); });
 
     // The newer record was not decided about, so it is neither authorized nor
-    // deleted by the decision of the owner.
+    // deleted by the decision of the owner, and the handoff of the owner is
+    // the decision the service applied.
     expect(pending.read(service.match.matchId, service.match.seat)?.requestId).toBe('request-newer');
+    expect(service.match.control.kind).toBe('human');
   });
 
   it('does not send the command of a superseded decision again', async () => {
     const service = createFakeOnlineService();
     const provider = createFakeProvider();
     const commands = createHoldableCommandPort(service.commands);
+    const pending = createMemoryPendingStore();
     const runner = createOnlineProviderRunner({
       matchId: service.match.matchId,
       seat: service.match.seat,
@@ -1790,13 +1822,15 @@ describe('the competing owner actions of the runner', () => {
       leases: service.leasePort('runner-a'),
       commands: commands.port,
       provider,
-      pending: createMemoryPendingStore(),
+      pending,
     });
 
     runner.applySnapshot(fakeSnapshot(service.match));
     await provider.waitForRequest();
     provider.fail('The provider request failed.');
     await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+    const uncertain = pending.read(service.match.matchId, service.match.seat)?.requestId;
+    expect(uncertain).toBeDefined();
 
     // The owner switches the model. Its command waits for the service.
     commands.arm();
@@ -1816,19 +1850,22 @@ describe('the competing owner actions of the runner', () => {
     await new Promise((resolve) => { setTimeout(resolve, 30); });
 
     // The superseded decision did not send its command again, and the newer
-    // decision of the owner is the one that counts.
+    // decision of the owner is the one the service applied. The takeover
+    // leaves the record of the uncertain work open on purpose.
     expect(commands.held).toHaveLength(2);
     const switches = service.recordedCommands.filter((command) =>
       command.action.kind === 'set_control' &&
       command.action.control.modelLabel === 'Second Agent');
     expect(switches).toHaveLength(0);
     expect(service.match.control.kind).toBe('human');
+    expect(pending.read(service.match.matchId, service.match.seat)?.requestId).toBe(uncertain);
   });
 
   it('ends a decision that waits when the match ends', async () => {
     const service = createFakeOnlineService();
     const provider = createFakeProvider();
     const commands = createHoldableCommandPort(service.commands);
+    const pending = createMemoryPendingStore();
     const runner = createOnlineProviderRunner({
       matchId: service.match.matchId,
       seat: service.match.seat,
@@ -1836,13 +1873,14 @@ describe('the competing owner actions of the runner', () => {
       leases: service.leasePort('runner-a'),
       commands: commands.port,
       provider,
-      pending: createMemoryPendingStore(),
+      pending,
     });
 
     runner.applySnapshot(fakeSnapshot(service.match));
     await provider.waitForRequest();
     provider.fail('The provider request failed.');
     await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+    const uncertain = pending.read(service.match.matchId, service.match.seat)?.requestId;
 
     commands.arm();
     const switching = runner.switchModel('Second Agent');
@@ -1859,9 +1897,87 @@ describe('the competing owner actions of the runner', () => {
     const outcome = await switching;
     await new Promise((resolve) => { setTimeout(resolve, 20); });
 
+    // The control of the seat is the one of the service, and the record of
+    // the uncertain work survives the decision that never applied.
     expect(outcome.kind).toBe('unknown');
     expect(runner.state.leaseId).toBeNull();
     expect(service.match.control.kind).toBe('agent');
+    expect(pending.read(service.match.matchId, service.match.seat)?.requestId).toBe(uncertain);
+  });
+
+  it('settles no newer record when a superseded settlement waits for the service', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const pending = createMemoryPendingStore();
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending,
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.fail('The provider request failed.');
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+    const uncertain = pending.read(service.match.matchId, service.match.seat)?.requestId;
+    expect(uncertain).toBeDefined();
+
+    // The owner retries and the settlement of the record waits for the service.
+    held.holdClear();
+    const retrying = runner.retry();
+    await until(() => held.clears.length === 1, 'the settlement is in flight');
+
+    // A second tab of the same browser records a newer request of the seat
+    // while the settlement waits.
+    pending.write({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      requestId: 'request-newer',
+      turnVersion: 1,
+      controlEpoch: 1,
+      startedAt: 99,
+    });
+
+    // The owner decides again. The newer decision settles the record the
+    // uncertainty named, never the newer record of the other tab.
+    const switching = runner.switchModel('Second Agent');
+    await until(() => service.match.control.modelLabel === 'Second Agent', 'the agent is switched');
+
+    // The settlement of the superseded decision answers now.
+    held.clears[0]?.resolve(fakeLeaseAnswer(service.lease) ?? {
+      schemaVersion: 2,
+      leaseId: 'lease-contract-01',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: 1,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: 1,
+      runnerEpoch: 1,
+      pendingRequestId: null,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    });
+    const retried = await retrying;
+    await switching;
+    await new Promise((resolve) => { setTimeout(resolve, 40); });
+
+    // The superseded decision reports that it did not apply, the newer record
+    // of the other tab survives, and the runner does not ask the provider
+    // again: the newer record inherits no authorization.
+    expect(retried.kind).toBe('unknown');
+    expect(pending.read(service.match.matchId, service.match.seat)?.requestId).toBe('request-newer');
+    expect(provider.prompts).toHaveLength(1);
   });
 
   it('keeps the decision of the owner when the rejection of the request arrives later', async () => {

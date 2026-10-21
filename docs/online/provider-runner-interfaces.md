@@ -48,7 +48,19 @@ the control changes and the spent recovery attempts.
   `switchModel()` close the pending record of the browser and the pending
   record of the service, so the decision is effective: the provider is asked
   again. Without that, the guard that keeps the runner from asking the
-  provider again would swallow the decision of the owner.
+  provider again would swallow the decision of the owner. `takeover()` leaves
+  the record open on purpose: the seat belongs to a human owner, who does not
+  pay for the billable request of the agent, and the record keeps the seat
+  honest until a decision of the owner closes it.
+- The settlement closes exactly the record the owner decided about. The
+  record is captured in the tick of the decision, before any await, and it is
+  the record the uncertainty names. A record that another tab of the same
+  browser writes while the decision waits for the service is a different
+  request: it is neither settled nor authorized by that decision.
+- The authorization of the owner is recorded only when the settlement reached
+  its end while the decision was still the decision of the owner. A superseded
+  decision leaves no authorization behind and sends no command, so the next
+  turn is fenced again by the record it could not settle.
 - Every action of the owner belongs to a generation. `retry()`,
   `switchModel()`, `takeover()` and `stop()` check the generation after every
   await: a newer action of the owner, a stop or a dispose ends the older
@@ -71,8 +83,13 @@ the control changes and the spent recovery attempts.
   lease waits for the service, so a record of another tab that appears in the
   meantime is neither authorized nor deleted.
 - The handoff of the seat is the authority of the owner and it needs no
-  lease. A seat whose runner is gone can still be taken over, and the service
-  fences a stale runner with the control epoch.
+  lease. The handoff presents no lease at all: the service accepts the
+  command of the owner without a lease and fences a stale runner with the
+  control epoch and the version of the match, so a seat whose runner is gone
+  or whose lease died can still be handed over. The runner takes the lease of
+  the seat before the handoff anyway, so the pending record of the service can
+  be closed with it. When that lease cannot be taken, the handoff goes
+  without a lease and the outcome names the reason instead of hiding it.
 - While an uncertainty is open the runner never asks the provider again. The
   browser-local pending record is checked before every request of a turn, not
   only when a lease is taken, and the check honours the decision of the owner.
@@ -320,16 +337,24 @@ controller took the seat.
   publishable one, so the runner adopts the published label of the receipt and
   binds the new control epoch of the seat.
 - `takeover()` sends `set_control` with the human control. The seat belongs to
-  the owner and the runner stops.
+  the owner and the runner stops. The record of an uncertain billable request
+  stays open: a human owner does not pay for the request of the agent, and the
+  record keeps the seat honest until a decision of the owner closes it.
 - `start()` and `resume()` start a stopped runner again.
 
 Every one of them answers with the outcome of the decision:
 
 | Outcome | Meaning |
 | --- | --- |
-| `accepted` | The service applied the decision. The seat declares this public label |
+| `accepted` | The decision was accepted. `retry()` accepted the scheduling of one more request of the provider, `switchModel()` and `takeover()` accepted the canonical command of the service. The seat declares this public label |
 | `refused` | The service or the runner refused the decision. The seat keeps its state |
 | `unknown` | The outcome could not be established. The owner may retry |
+
+An accepted decision of a handoff may carry a detail. It names what the
+runner had to leave out, for example that the lease of the seat could not be
+taken and that the handoff therefore went without it. The detail never
+replaces the outcome: an outcome of `accepted` still means that the decision
+was applied.
 
 The outcome carries no routing identifier, no credential and no private
 selection; it carries the public label the seat declares. The caller reads it:
@@ -482,6 +507,8 @@ seat with an accepted move, exactly like the service does.
 | — | The acquisition of a lease does not clear a newer pending record |
 | — | A superseded decision does not send its command again after a lost acknowledgement |
 | — | A decision that waits while the match ends reports an unknown outcome |
+| — | A superseded settlement settles no newer record and leaves no authorization behind |
+| — | The service fences a command that presents a lease and accepts the command of the owner |
 | — | The decision of the owner authorises one request, so a dropped turn is not billed twice |
 | — | The late rejection of an aborted request does not swallow the decision of the owner |
 | — | A replaced credential stops the runner instead of asking for the lease on every snapshot |
@@ -512,9 +539,14 @@ live readiness of the service.
 - A new lease carries the pending request of the previous lease of the seat.
   That is the honest record of uncertain billable work, and the runner honours
   it.
-- The service fences the acceptance of a move with the runner lease. The
-  spent recovery attempt and the resignation are not fenced by the service yet,
-  and the fixtures do not claim a fence the service does not apply.
+- The service fences every command that presents a lease: the lease must be
+  live, of the match and the seat of the command, of the current control
+  epoch and bound to the turn the command acts for. A command that presents no
+  lease is the decision of the owner and stays allowed, except the move of an
+  agent seat and the spent recovery attempt of an agent seat: both are the
+  work of the browser runner and they need the lease of the seat. The
+  fixtures apply that fence by default, so a tracked case never claims a
+  fence the service does not apply.
 - The service resolves a declared label to a publishable one before it accepts
   it, and an unknown label resolves to a neutral label. The runner therefore
   never compares a declared label with a published one, and the control epoch
@@ -527,10 +559,10 @@ These items are outside the module. They are recorded here because the runner
 depends on them.
 
 - **The foundation fences the agent mutations.** The service checks the runner
-  lease when it accepts a move. The spent recovery attempt, which can end the
-  match with an illegal-move loss, and the resignation are not fenced. The
-  runner sends the lease with every command, and the fixtures model the
-  service of today instead of claiming a fence that does not exist.
+  lease when it accepts a move, and it fences every command that presents a
+  lease. The runner presents the lease with the commands of its own work and
+  presents no lease with the handoff of the seat, which is the authority of
+  the owner.
 - **The lease client answers the whole lease record.** The runner reads
   `pendingRequestId` to know that a previous runner may have started billable
   work, and it reads `runnerEpoch`, `revokedReason` and `lastRenewedAt` to
