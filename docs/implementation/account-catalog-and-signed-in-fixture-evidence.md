@@ -299,10 +299,11 @@ What the envelope shows: the refusals are the runner **settling** its pending
 request (`action: "clear"`), not the switch command itself. The same request
 and the same lease are presented twice, first with the epoch and the turn
 version they were captured with (`controlEpoch: 1`, `turnVersion: 2`), then
-with both moved on by one (`controlEpoch: 2`, `turnVersion: 3`). The service
-refused both, so the settlement of the captured request never landed and the
-pending record of the seat stayed unsettled; that is the state the switch of
-the seat then meets, and it is refused with the same answer. The owner of the
+with both moved on by one (`controlEpoch: 2`, `turnVersion: 3`). Both clear
+requests were refused. This trace excerpt does not establish
+whether the control command was refused or accepted before the second clear.
+The command receipt, canonical state and subsequent runner binding must be
+checked to identify the cause of the rendered failure. The owner of the
 settlement is the provider (the thread of the envelope fix); the account slice
 does not own those files and does not work around the refusal.
 
