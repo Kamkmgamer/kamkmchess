@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The browser-owned online agent runner (KHA-73).
  *
  * The fixtures drive the runner through its public API with a deterministic
@@ -26,6 +26,7 @@ import {
 import type {
   OnlineProviderRunner,
   ProviderRunnerCommandPort,
+  ProviderRunnerLease,
   ProviderRunnerLeasePort,
 } from '../../src/online/provider-runner';
 import { OnlineAuthError, createGuestCredential } from '../../src/online/auth';
@@ -46,7 +47,7 @@ import {
   fakeMatchView,
   fakeSnapshot,
 } from '../support/online-runner';
-import type { FakeOnlineService, FakeProvider } from '../support/online-runner';
+import type { FakeOnlineService, FakeProvider, HoldableLeasePort } from '../support/online-runner';
 
 async function until(condition: () => boolean, label: string): Promise<void> {
   const deadline = Date.now() + 2000;
@@ -1645,6 +1646,7 @@ describe('the competing owner actions of the runner', () => {
     // The owner switches the model and takes the seat over before the service
     // answers the first command.
     commands.arm();
+    const clearsBefore = service.recordedRequestBodies.filter(body => body.action === 'clear').length;
     const switching = runner.switchModel('Second Agent');
     await until(() => commands.held.length === 1, 'the command of the switch is in flight');
     commands.arm();
@@ -1667,6 +1669,10 @@ describe('the competing owner actions of the runner', () => {
     expect(runner.state.phase).toBe('stopped');
     expect(service.match.version).toBe(3);
     expect(provider.prompts).toHaveLength(1);
+    // The superseded switch settled nothing and the takeover leaves the
+    // record of the uncertain work open on purpose.
+    const clears = service.recordedRequestBodies.filter(body => body.action === 'clear');
+    expect(clears).toHaveLength(clearsBefore);
   });
 
   it('applies the newest decision of the owner when two switches compete', async () => {
@@ -1905,6 +1911,7 @@ describe('the competing owner actions of the runner', () => {
 
     // The owner switches the model. Its command waits for the service.
     commands.arm();
+    const clearsBefore = service.recordedRequestBodies.filter(body => body.action === 'clear').length;
     const switching = runner.switchModel('Second Agent');
     await until(() => commands.held.length === 1, 'the command of the switch is in flight');
 
@@ -1930,6 +1937,10 @@ describe('the competing owner actions of the runner', () => {
     expect(switches).toHaveLength(0);
     expect(service.match.control.kind).toBe('human');
     expect(pending.read(service.match.matchId, service.match.seat)?.requestId).toBe(uncertain);
+    // The superseded switch settled nothing and the takeover leaves the
+    // record of the uncertain work open on purpose.
+    const clears = service.recordedRequestBodies.filter(body => body.action === 'clear');
+    expect(clears).toHaveLength(clearsBefore);
   });
 
   it('ends a decision that waits when the match ends', async () => {
@@ -2955,8 +2966,81 @@ describe('the recovery of an applied control change', () => {
 });
 
 describe('the settlement of a switch that interrupted a billable request', () => {
-  it('settles the request of the old epoch with a lease of the new epoch', async () => {
-    const { service, provider, runner } = createHarness({});
+  /**
+   * The runner of a switch whose lease client can hold one request of each
+   * kind in flight.
+   *
+   * The lease of the new epoch is the only acquisition of a switch: the runner
+   * still holds the lease of the seat while it asks the service for the
+   * control change, and the lease of the settlement is taken after the service
+   * revoked that one.
+   */
+  function createSettlementHarness(): {
+    readonly service: FakeOnlineService;
+    readonly provider: FakeProvider;
+    readonly held: HoldableLeasePort;
+    readonly runner: OnlineProviderRunner;
+  } {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const held = createHoldableLeasePort(service.leasePort('runner-a'));
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: held.port,
+      commands: service.commands,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+    return { service, provider, held, runner };
+  }
+
+  /** The answer of a lease of the epoch the seat had before the switch. */
+  function oldEpochLease(service: FakeOnlineService, pendingRequestId: string | null): ProviderRunnerLease {
+    return {
+      schemaVersion: 2,
+      leaseId: 'lease-of-the-old-epoch',
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      controlEpoch: service.match.controlEpoch,
+      generation: 1,
+      runnerId: 'runner-a',
+      status: 'active',
+      acquiredAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 30000).toISOString(),
+      revokedAt: null,
+      turnVersion: service.match.version,
+      runnerEpoch: 1,
+      pendingRequestId,
+      pendingRequestStartedAt: null,
+      revokedReason: null,
+      lastRenewedAt: null,
+    };
+  }
+
+  /** The answer of a lease of the epoch the control change published. */
+  function newEpochLease(service: FakeOnlineService, pendingRequestId: string | null): ProviderRunnerLease {
+    return {
+      ...oldEpochLease(service, pendingRequestId),
+      leaseId: 'lease-of-the-new-epoch',
+      controlEpoch: service.match.controlEpoch,
+      generation: 2,
+    };
+  }
+
+  /**
+   * A runner that asks the provider and loses the seat while the request may
+   * still be running.
+   *
+   * The record of the billable request stays open at the service, so the
+   * runner asks the owner before it asks the provider again.
+   */
+  async function uncertainRunner(
+    service: FakeOnlineService,
+    provider: FakeProvider,
+    runner: OnlineProviderRunner,
+  ): Promise<{ readonly uncertain: string; readonly oldLeaseId: string | null }> {
     runner.applySnapshot(fakeSnapshot(service.match));
     await provider.waitForRequest();
     // The lease is fenced while the request may still be running, so the
@@ -2967,6 +3051,28 @@ describe('the settlement of a switch that interrupted a billable request', () =>
     const uncertain = runner.state.uncertainty?.requestId;
     expect(uncertain).toBeDefined();
     expect(service.lease?.pendingRequestId).toBe(uncertain);
+    return { uncertain: uncertain as string, oldLeaseId: service.lease?.leaseId ?? null };
+  }
+
+  /**
+   * The clearings the settlement of a switch sent.
+   *
+   * The runner settles the record of a request it answered with the lease it
+   * held then. The settlement of a switch uses a lease of the new epoch, so
+   * the clearings of the settlement are the ones that name another lease.
+   */
+  function settlementClears(service: FakeOnlineService, oldLeaseId: string | null): readonly {
+    readonly action: string;
+    readonly leaseId?: string;
+    readonly requestId: string;
+  }[] {
+    return service.recordedRequestBodies.filter(body =>
+      body.action === 'clear' && body.leaseId !== oldLeaseId);
+  }
+
+  it('settles the request of the old epoch with a lease of the new epoch', async () => {
+    const { service, provider, runner } = createHarness({});
+    const { uncertain, oldLeaseId } = await uncertainRunner(service, provider, runner);
 
     // The owner switches the model of the seat. The service accepts the change
     // and revokes the lease of the seat with it.
@@ -2977,29 +3083,174 @@ describe('the settlement of a switch that interrupted a billable request', () =>
     // the lease of the seat carries no pending request any more, so the runner
     // of the new selection may play the seat.
     expect(service.lease?.pendingRequestId).toBeNull();
+    // The settlement closed exactly the request the decision of the owner
+    // captured, and it closed it under the lease of the new epoch.
+    const clears = settlementClears(service, oldLeaseId);
+    expect(clears).toHaveLength(1);
+    expect(clears[0]?.requestId).toBe(uncertain);
+    // The lease of the settlement is given back: the runner of the old
+    // selection never plays the seat again, so it holds no lease.
+    expect(runner.state.leaseId).toBeNull();
     // The runner of the old selection never plays the seat again.
     expect(provider.prompts).toHaveLength(1);
   });
 
-  it('settles no newer request of the service when the switch of the owner settles the old one', async () => {
+  it('keeps the record of a newer request of another runner when the switch settles the old one', async () => {
     const { service, provider, runner } = createHarness({});
-    runner.applySnapshot(fakeSnapshot(service.match));
-    await provider.waitForRequest();
-    service.revokeLease('recovery');
-    provider.answer('{"move":"e2e4"}');
-    await until(() => runner.state.phase === 'uncertain', 'the runner asks the owner');
-    const uncertain = runner.state.uncertainty?.requestId;
-    expect(uncertain).toBeDefined();
+    const { oldLeaseId } = await uncertainRunner(service, provider, runner);
 
     // Another runner of the seat recorded a newer request on the lease of the
     // seat, so the request of this runner is not the one the lease carries.
     service.setPendingRequest('request-newer');
 
     const outcome = await runner.switchModel('Second Agent');
+    // The switch was applied at the service and the request of the old epoch
+    // is not open there any more, so the decision of the owner settles it.
     expect(outcome.kind).toBe('accepted');
     // The newer request keeps its record: the decision of the owner settled
     // exactly the request it captured.
     expect(service.lease?.pendingRequestId).toBe('request-newer');
+    // The settlement never closed the record of the other runner.
+    expect(settlementClears(service, oldLeaseId)).toHaveLength(0);
+  });
+
+  it('settles no request when a newer decision of the owner ends the settlement', async () => {
+    const { service, provider, held, runner } = createSettlementHarness();
+    const { uncertain, oldLeaseId } = await uncertainRunner(service, provider, runner);
+
+    // The lease of the new epoch waits for the service, so the decision of the
+    // owner can be superseded while the settlement waits.
+    held.holdAcquire();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => held.acquires.length === 1, 'the lease of the new epoch is in flight');
+
+    // The owner decides again. The older decision is superseded. A takeover
+    // leaves the record of the uncertain work open on purpose, so the count of
+    // the clearings shows that the superseded decision settled nothing.
+    const taking = runner.takeover();
+    // The lease of the new epoch answers now. The decision of the owner is no
+    // longer the newest one, so the settlement settles nothing.
+    held.acquires[0]?.resolve(newEpochLease(service, uncertain));
+    const outcome = await switching;
+    const takeoverOutcome = await taking;
+    expect(takeoverOutcome.kind).toBe('accepted');
+
+    // The superseded decision settled nothing: it sent no clearing of the
+    // record, and the outcome names the newer decision.
+    expect(outcome.kind).toBe('unknown');
+    expect(outcome.detail).toBe('A newer decision of the owner ended the switch.');
+    expect(settlementClears(service, oldLeaseId)).toHaveLength(0);
+  });
+
+  it('settles the request of the old epoch when the owner retries a switch whose command never reached the service', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = createHoldableCommandPort(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: commands.port,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+    const { uncertain, oldLeaseId } = await uncertainRunner(service, provider, runner);
+
+    // The command never reaches the service, so the owner does not learn
+    // whether the switch was applied.
+    commands.failEveryAttempt(new Error('The network failed.'));
+    const unknown = await runner.switchModel('Second Agent');
+    expect(unknown.kind).toBe('unknown');
+    // The control of the seat did not change at the service, and the record of
+    // the billable request is still open.
+    expect(service.match.control.modelLabel).toBe('Test Agent');
+    expect(service.lease?.pendingRequestId).toBe(uncertain);
+
+    // The owner retries. The command is sent again with the same operation
+    // identifier, the service applies it and answers with its receipt, so the
+    // switch is proven and the record of the old epoch is settled.
+    commands.failEveryAttempt(null);
+    const accepted = await runner.retry();
+    expect(accepted.kind).toBe('accepted');
+    expect(service.match.control.modelLabel).toBe('Second Agent');
+    expect(service.lease?.pendingRequestId).toBeNull();
+    const clears = settlementClears(service, oldLeaseId);
+    expect(clears).toHaveLength(1);
+    expect(clears[0]?.requestId).toBe(uncertain);
+  });
+
+  it('reports the decision that ended the switch when the owner stops the runner while the clearing waits', async () => {
+    const { service, provider, held, runner } = createSettlementHarness();
+    await uncertainRunner(service, provider, runner);
+
+    // The clearing of the record waits for the service.
+    held.holdClear();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => held.clears.length === 1, 'the clearing waits for the service');
+    // The runner sent the clearing of the record before the stop.
+    expect(held.clears).toHaveLength(1);
+
+    // The owner stops the runner while the settlement waits.
+    await runner.stop();
+    held.clears[0]?.resolve(newEpochLease(service, null));
+    const outcome = await switching;
+
+    // The stopped runner claims no success: the outcome names the decision
+    // that ended it. The clearing was sent before the stop, so the record of
+    // the service may be closed.
+    expect(outcome.kind).toBe('unknown');
+    expect(outcome.detail).toBe('A newer decision of the owner ended the switch.');
+  });
+
+  it('takes no lease and settles no request when the owner stops the runner while the new epoch is acquired', async () => {
+    const { service, provider, held, runner } = createSettlementHarness();
+    const { uncertain, oldLeaseId } = await uncertainRunner(service, provider, runner);
+
+    // The lease of the new epoch waits for the service.
+    held.holdAcquire();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => held.acquires.length === 1, 'the lease of the new epoch is in flight');
+
+    // The owner stops the runner while the lease of the new epoch is in flight.
+    await runner.stop();
+
+    // The lease of the new epoch answers now. The stopped runner installs no
+    // lease, arms no heartbeat and settles no record.
+    held.acquires[0]?.resolve(newEpochLease(service, uncertain));
+    const outcome = await switching;
+
+    expect(outcome.kind).toBe('unknown');
+    // The runner holds no lease of the new epoch.
+    expect(runner.state.leaseId).toBeNull();
+    // The record of the service keeps its request: no clearing was sent.
+    expect(settlementClears(service, oldLeaseId)).toHaveLength(0);
+    // The lease that arrived for the settlement is given back, and only it.
+    const releases = service.recordedLeaseBodies.filter(body => body.action === 'release');
+    expect(releases.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('takes no lease and settles no request when the runner is disposed while the new epoch is acquired', async () => {
+    const { service, provider, held, runner } = createSettlementHarness();
+    const { uncertain, oldLeaseId } = await uncertainRunner(service, provider, runner);
+
+    // The lease of the new epoch waits for the service.
+    held.holdAcquire();
+    const switching = runner.switchModel('Second Agent');
+    await until(() => held.acquires.length === 1, 'the lease of the new epoch is in flight');
+
+    // The runner is disposed while the lease of the new epoch is in flight.
+    runner.dispose();
+
+    held.acquires[0]?.resolve(newEpochLease(service, uncertain));
+    const outcome = await switching;
+
+    expect(outcome.kind).toBe('unknown');
+    expect(runner.state.leaseId).toBeNull();
+    expect(settlementClears(service, oldLeaseId)).toHaveLength(0);
+    // The lease that arrived for the settlement is given back, and only it.
+    const releases = service.recordedLeaseBodies.filter(body => body.action === 'release');
+    expect(releases.length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -3561,3 +3812,6 @@ describe('a fenced command of the runner', () => {
     expect(service.match.illegalAttemptsSpent).toBe(0);
   });
 });
+
+
+

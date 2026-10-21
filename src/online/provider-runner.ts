@@ -1,4 +1,4 @@
-/**
+﻿/**
  * The browser-owned online agent runner (KHA-73).
  *
  * One agent seat of one online match is played by a browser runner. The runner
@@ -1393,6 +1393,25 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
    * from the facts the runner knows in the meantime.
    */
   let pendingSubmission: CommandEnvelope | null = null;
+  /**
+   * The billable request the service recorded on the lease of the seat.
+   *
+   * The service keeps the record of the request that may still be running on
+   * the lease, and the record survives the change of the lease. The runner
+   * remembers it, so a decision of the owner settles exactly the request the
+   * service recorded, even when the uncertainty of the browser names another
+   * one.
+   */
+  let servicePendingRequestId: string | null = null;
+  /**
+   * The envelope of the last command the service accepted.
+   *
+   * The record lets a decision that could not finish its work hand the
+   * envelope back to the owner. The service answers the very same command with
+   * the receipt it already earned, so the proof of an accepted command is
+   * never lost.
+   */
+  let lastAcceptedEnvelope: CommandEnvelope | null = null;
   let rejectedMoves: { move: string; reason: string }[] = [];
   let operationCounter = 0;
   let operationToken: string | null = null;
@@ -1615,6 +1634,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       leaseRecord = lease;
       leaseId = lease.leaseId;
       turnVersion = lease.turnVersion;
+      // The service publishes the record it keeps on the lease, so the runner
+      // knows the billable request that may still be running.
+      servicePendingRequestId = lease.pendingRequestId;
       renewalFailures = 0;
       scheduleRenewal();
       return { ok: true };
@@ -1664,6 +1686,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       }
       leaseRecord = lease;
       turnVersion = lease.turnVersion;
+      // The service publishes the record it keeps on the lease, so the runner
+      // knows the billable request that may still be running.
+      servicePendingRequestId = lease.pendingRequestId;
       renewalFailures = 0;
       leaseLosses = 0;
       scheduleRenewal();
@@ -1879,20 +1904,112 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     return outcome;
   }
 
-  /** Settles the pending request record of the service. */
-  async function clearPendingRequest(requestId: string): Promise<void> {
-    if (leaseId === null) return;
+  /**
+   * The envelope of one lease.
+   *
+   * The service checks the control epoch and the turn of a lease against the
+   * state it holds, so a request about a lease carries the epoch and the turn
+   * of that very lease. The envelope is captured when the lease arrives and is
+   * never rebuilt from the facts the runner knows in the meantime: a decision
+   * that moved the match on may not change the envelope of a lease that is
+   * still the lease it was.
+   */
+  interface LeaseEnvelope {
+    /** The identifier of the lease at the service. */
+    readonly leaseId: string;
+    /** The control epoch the lease was taken in. */
+    readonly controlEpoch: number;
+    /** The turn the lease is bound to. */
+    readonly turnVersion: number | null;
+    /** The generation of the lease at the service. */
+    readonly generation: number;
+    /** The billable request the service records on the lease. */
+    readonly pendingRequestId: string | null;
+  }
+
+  /** The envelope of the lease the runner holds now. */
+  function currentLeaseEnvelope(): LeaseEnvelope | null {
+    if (leaseRecord === null || leaseId === null) return null;
+    return {
+      leaseId,
+      controlEpoch: leaseRecord.controlEpoch,
+      turnVersion: leaseRecord.turnVersion,
+      generation: leaseRecord.generation,
+      pendingRequestId: leaseRecord.pendingRequestId,
+    };
+  }
+
+  /**
+   * Settles the pending request record of the service.
+   *
+   * The answer tells whether the service closed the record. A refusal leaves
+   * the record open, so the caller can report it instead of pretending that the
+   * uncertain work is settled.
+   *
+   * The request carries the envelope of the lease it settles under. The service
+   * fences a request whose epoch or whose turn moved on, so a settlement of a
+   * lease of the old epoch cannot be smuggled under the facts of a newer one.
+   */
+  async function clearPendingRequest(
+    requestId: string,
+    lease: LeaseEnvelope | null = currentLeaseEnvelope(),
+  ): Promise<boolean> {
+    if (lease === null) return false;
     try {
       await leases.clearRequest({
-        controlEpoch,
-        turnVersion: version > 0 ? version : null,
-        leaseId,
+        controlEpoch: lease.controlEpoch,
+        turnVersion: lease.turnVersion,
+        leaseId: lease.leaseId,
         requestId,
       });
+      // The service closed the record of that request, so the runner knows
+      // that the billable work is settled.
+      if (servicePendingRequestId === requestId) servicePendingRequestId = null;
+      return true;
     } catch {
       // The record stays honest. The owner already decided what happens next.
+      return false;
     }
   }
+
+  /**
+   * Gives a lease back that the runner never installed.
+   *
+   * The lease of a settlement is taken for the settlement alone, so it is given
+   * back with the envelope it arrived with. A decision that adopted the very
+   * same lease owns the seat now, and the settlement may not revoke it: the
+   * runner of the old selection never plays the seat again, but the lease of a
+   * newer decision is a live lease of the seat.
+   */
+  async function releaseAcquiredLease(lease: LeaseEnvelope): Promise<void> {
+    if (leaseId !== null && leaseId === lease.leaseId) {
+      // A newer decision adopted the very same lease. It owns the seat now.
+      return;
+    }
+    try {
+      await leases.release({
+        controlEpoch: lease.controlEpoch,
+        turnVersion: lease.turnVersion,
+        leaseId: lease.leaseId,
+      });
+    } catch {
+      // A lease that cannot be released expires on its own.
+    }
+  }
+
+  /**
+   * The outcome of the settlement of the request of the old epoch.
+   *
+   * `settled` is the only outcome that closes the record. `not-settled` leaves
+   * the record open at the service, so the seat asks the owner about it
+   * instead of playing with billable work that may be paid twice.
+   * `superseded` means that a newer decision of the owner, a stop or a dispose
+   * ended the settlement.
+   */
+  type SettlementOutcome =
+    | { readonly kind: 'settled' }
+    | { readonly kind: 'not-settled'; readonly detail: string }
+    | { readonly kind: 'superseded' };
 
   /**
    * Settles the request of the service under the epoch of the seat now.
@@ -1903,22 +2020,102 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
    * taken for the settlement alone and given back right after it, because the
    * runner of the old selection never plays the seat again.
    *
-   * Only the request the owner decided about is closed, and only when the new
-   * lease still carries exactly that request. A newer request of another
-   * runner keeps its record.
+   * Only the request the owner decided about is closed. A newer request of
+   * another runner keeps its record: the lease of the new epoch carries that
+   * request, so the request of the old epoch is not open any more and the
+   * record of the other runner is left alone.
+   *
+   * The settlement belongs to the decision of the owner that started it. A
+   * newer decision of the owner, a stop or a dispose end it: the record keeps
+   * its state and the lease of the settlement is never taken or given back for
+   * a decision that is not the decision of the owner any more.
    */
-  async function settleServiceRequestOfNewEpoch(requestId: string | null): Promise<void> {
-    if (requestId === null) return;
+  async function settleServiceRequestOfNewEpoch(
+    requestId: string | null,
+    owner: { readonly token: number; readonly generation: number },
+  ): Promise<SettlementOutcome> {
+    if (requestId === null) {
+      // There is no record of the seat, so the seat is free of uncertain work.
+      return { kind: 'settled' };
+    }
     // The lease of the old epoch was revoked by the control change.
     dropLease();
-    const acquired = await acquireLease();
-    if (!acquired.ok) return;
+    // The generation of the lease is captured with the decision of the owner.
+    // Every path that takes, gives back or drops a lease moves it, so an
+    // answer of the acquisition belongs to the lease of this settlement only
+    // while nothing else touched the lease of the seat.
+    const generation = leaseGeneration;
+    let acquired: LeaseEnvelope | null = null;
     try {
-      if (leaseRecord?.pendingRequestId === requestId) {
-        await clearPendingRequest(requestId);
+      try {
+        // The lease of the settlement is never installed: the runner of the old
+        // selection never plays the seat again, so it holds no lease and arms
+        // no heartbeat.
+        const lease = await leases.acquire({ controlEpoch, turnVersion: version > 0 ? version : null });
+        acquired = {
+          leaseId: lease.leaseId,
+          controlEpoch: lease.controlEpoch,
+          turnVersion: lease.turnVersion,
+          generation: lease.generation,
+          pendingRequestId: lease.pendingRequestId,
+        };
+      } catch (error) {
+        const kind = classifyProviderRunnerError(error);
+        return {
+          kind: 'not-settled',
+          detail: kind === 'unauthorized'
+            ? 'The credential of the seat was refused.'
+            : 'The service refused the lease of the seat.',
+        };
       }
+      // The decision of the owner is checked after every await: a newer
+      // decision, a stop or a dispose ends the settlement. The lease that
+      // arrived is given back, and only that lease.
+      if (leaseResponseIsStale(generation, null, acquired.leaseId)) {
+        await releaseAcquiredLease(acquired);
+        acquired = null;
+        return { kind: 'superseded' };
+      }
+      if (!ownerActionIsCurrent(owner.token, owner.generation)) {
+        await releaseAcquiredLease(acquired);
+        acquired = null;
+        return { kind: 'superseded' };
+      }
+      // The lease of the new epoch belongs to the epoch the control change
+      // published. A lease of another epoch is not the lease of this seat.
+      if (acquired.controlEpoch !== controlEpoch) {
+        return { kind: 'not-settled', detail: 'The service refused the lease of the seat.' };
+      }
+      if (acquired.pendingRequestId === null) {
+        // The lease carries no request: the record of the uncertain work was
+        // already closed by another action, so the seat is free of it.
+        return { kind: 'settled' };
+      }
+      if (acquired.pendingRequestId !== requestId) {
+        // The lease carries another request, so the request of the old epoch
+        // is not open at the service any more. The record of the other runner
+        // is left alone: the decision of the owner settles exactly the request
+        // it captured.
+        return { kind: 'settled' };
+      }
+      const settled = await clearPendingRequest(requestId, acquired);
+      if (!ownerActionIsCurrent(owner.token, owner.generation)) {
+        // A newer decision of the owner, a stop or a dispose ended the
+        // settlement while the record was closed. The outcome names the
+        // decision that ended it.
+        return { kind: 'superseded' };
+      }
+      if (leaseResponseIsStale(generation, null, acquired.leaseId)) {
+        return { kind: 'superseded' };
+      }
+      return settled
+        ? { kind: 'settled' }
+        : { kind: 'not-settled', detail: 'The service refused to settle the request of the seat.' };
     } finally {
-      await releaseLease();
+      // The lease of the settlement is given back, and only that lease: the
+      // runner never installed it, so no newer lease of another decision is
+      // released here.
+      if (acquired !== null) await releaseAcquiredLease(acquired);
     }
   }
 
@@ -2189,6 +2386,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         // this command. A newer command that lost its acknowledgement keeps
         // its own record, so the owner may still send it again.
         clearPendingSubmission(operationId);
+        // The envelope of the accepted command is kept. A decision that could
+        // not finish its work may hand the envelope back to the owner, so the
+        // receipt of the service is never lost: the owner may send the very
+        // same command again and read the receipt it already earned.
+        lastAcceptedEnvelope = envelope;
         return { kind: 'accepted', receipt };
       } catch (error) {
         const kind = classifyProviderRunnerError(error);
@@ -2446,12 +2648,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       activeRequestId = requestId;
       if (leaseId !== null) {
         try {
-          await leases.beginRequest({
+          const begun = await leases.beginRequest({
             controlEpoch,
             turnVersion: version > 0 ? version : null,
             leaseId,
             requestId,
           });
+          // The service publishes the record it keeps on the lease, so the
+          // runner knows the billable request that may still be running.
+          servicePendingRequestId = begun.pendingRequestId;
         } catch (error) {
           const kind = classifyProviderRunnerError(error);
           activeController = null;
@@ -2772,6 +2977,9 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           leaseId,
           requestId,
         });
+        // The service closed the record of that request, so the runner knows
+        // that the billable work is settled.
+        if (servicePendingRequestId === requestId) servicePendingRequestId = null;
         settled = true;
       } catch {
         // A lease that cannot clear the record keeps the honest pending
@@ -2916,6 +3124,19 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     if (pendingSubmission !== null && pendingSubmission.operationId === operationId) {
       pendingSubmission = null;
     }
+  }
+
+  /**
+   * Keeps the envelope of the last accepted command for the owner.
+   *
+   * A decision that could not finish its work hands the envelope back, so the
+   * owner may send the very same command again. The service answers the replay
+   * with the receipt it already earned, so the proof of an accepted command is
+   * never lost and the private intent of the owner survives the failure.
+   */
+  function keepAcceptedEnvelope(): void {
+    if (lastAcceptedEnvelope === null) return;
+    pendingSubmission = lastAcceptedEnvelope;
   }
 
   /** Starts the turn without waiting for the provider answer. */
@@ -3072,7 +3293,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // The request that the service recorded for the seat is captured before
       // the settlement, so the decision of the owner settles exactly that
       // request and never a newer one.
-      const serviceRequestId = decided.browserRequestId ?? leaseRecord?.pendingRequestId ?? null;
+      const serviceRequestId = decided.browserRequestId ?? servicePendingRequestId ?? null;
       uncertainty = null;
       // The owner decided. The uncertain work may be paid twice, so the pending
       // records of the browser and of the service are settled and the runner
@@ -3122,7 +3343,26 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
             // The control change that the receipt proves revoked the lease of
             // the seat, so the request of the old epoch is settled with a lease
             // of the new epoch.
-            await settleServiceRequestOfNewEpoch(serviceRequestId);
+            const settlement = await settleServiceRequestOfNewEpoch(serviceRequestId, owner);
+            if (settlement.kind === 'superseded') {
+              return { kind: 'unknown', detail: 'A newer decision of the owner ended the retry.' };
+            }
+            if (settlement.kind === 'not-settled') {
+              // The record of the request stays open at the service, so the
+              // seat asks the owner about it instead of playing with billable
+              // work that may be paid twice.
+              enterUncertainty({
+                kind: 'provider-request',
+                requestId: serviceRequestId,
+                operationId: null,
+                startedAt: now(),
+                detail: settlement.detail,
+              });
+              // The receipt of the accepted command is not lost: the owner may
+              // send the very same command again and read it at the service.
+              keepAcceptedEnvelope();
+              return { kind: 'unknown', detail: settlement.detail };
+            }
           }
           await releaseLease();
           if (!ownerActionIsCurrent(owner.token, owner.generation)) {
@@ -3180,7 +3420,7 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // The request that the service recorded for the seat is captured before
       // the handoff, so the decision of the owner settles exactly that request
       // and never a newer one.
-      const serviceRequestId = decided.browserRequestId ?? leaseRecord?.pendingRequestId ?? null;
+      const serviceRequestId = decided.browserRequestId ?? servicePendingRequestId ?? null;
       // The handoff of the seat is the authority of the owner and it needs no
       // lease: the service accepts the command of the owner without a lease
       // and fences a stale runner with the control epoch and the version of
@@ -3241,7 +3481,26 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // The control change revoked the lease of the seat, so the request of the
       // old epoch is settled with a lease of the new epoch. The decision of the
       // owner settles exactly the request it captured.
-      await settleServiceRequestOfNewEpoch(serviceRequestId);
+      const settlement = await settleServiceRequestOfNewEpoch(serviceRequestId, owner);
+      if (settlement.kind === 'superseded') {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
+      }
+      if (settlement.kind === 'not-settled') {
+        // The record of the request stays open at the service, so the seat asks
+        // the owner about it instead of playing with billable work that may be
+        // paid twice. The interface shows the decisions of the runner.
+        enterUncertainty({
+          kind: 'provider-request',
+          requestId: serviceRequestId,
+          operationId: null,
+          startedAt: now(),
+          detail: settlement.detail,
+        });
+        // The receipt of the accepted command is not lost: the owner may send
+        // the very same command again and read it at the service.
+        keepAcceptedEnvelope();
+        return { kind: 'unknown', detail: settlement.detail };
+      }
       if (!await settleUncertainWork(owner, decided)) {
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
       }
@@ -3368,3 +3627,7 @@ function withLeaseNote(detail: string, note: string | undefined): string {
 export function coordinateMoveToUci(move: CoordinateMove): string {
   return `${move.from}${move.to}${move.promotion ?? ''}`;
 }
+
+
+
+
