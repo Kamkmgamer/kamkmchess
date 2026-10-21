@@ -173,8 +173,7 @@ export interface OnlineCompositionOptions {
   /**
    * The namespace of the connections, when it never changes.
    *
-   * The seam 
-esolveNamespace wins: the namespace of the connections
+   * The seam resolveNamespace wins: the namespace of the connections
    * follows the active identity.
    */
   readonly namespace?: ConnectionNamespace;

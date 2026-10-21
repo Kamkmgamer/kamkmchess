@@ -3673,4 +3673,3 @@ function withLeaseNote(detail: string, note: string | undefined): string {
 export function coordinateMoveToUci(move: CoordinateMove): string {
   return `${move.from}${move.to}${move.promotion ?? ''}`;
 }
-
