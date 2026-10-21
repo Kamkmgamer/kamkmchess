@@ -182,6 +182,30 @@ function settle(): Promise<void> {
   return new Promise<void>(resolve => { setTimeout(resolve, 0); });
 }
 
+/**
+ * Stores one intent of an identity, with the entry id of a queue entry.
+ *
+ * The record is the one the browser writes before it asks the service for
+ * the entry, so a reload finds the entry of the owner again.
+ */
+function storeIntent(storage: Storage, entryId: string, engineMatchId: string | null, identity = 'account%3Aaccount-1'): void {
+  storage.setItem(`kamkmchess.online.queue.intent.v1:${identity}`, JSON.stringify([{
+    key: 'intent-00000001',
+    settings: 'human||300000|2000',
+    control: { kind: 'human' },
+    timeControl,
+    entryId,
+    recordId: 'queue-1',
+    selection: null,
+    engineMatchId,
+  }]));
+}
+
+/** The requests of the fallback route. */
+function fallbacks(wires: readonly Wire[]): Wire[] {
+  return wires.filter(wire => wire.path.endsWith('/fallback'));
+}
+
 /** A signed-in account session for the queue, which is an account surface. */
 function accountSession(): { identity: { accountId: string; token: () => Promise<string> }; subscribe: (listener: (identity: { accountId: string; token: () => Promise<string> } | null) => void) => () => void } {
   return {
@@ -499,31 +523,16 @@ describe('the engine seat of a match plays one turn at a time', () => {
 });
 
 describe('the engine credential recovery only touches a committed engine game (R6-01)', () => {
-  /** Stores one intent of the account, with the entry id of a queue entry. */
-  function storeIntent(storage: Storage, entryId: string, engineMatchId: string | null): void {
-    storage.setItem('kamkmchess.online.queue.intent.v1:account%3Aaccount-1', JSON.stringify([{
-      key: 'intent-00000001',
-      settings: 'human|300000|2000',
-      control: { kind: 'human' },
-      timeControl,
-      entryId,
-      recordId: 'queue-1',
-      selection: null,
-      engineMatchId,
-    }]));
-  }
-
-  /** The requests of the fallback route. */
-  function fallbacks(wires: readonly Wire[]): Wire[] {
-    return wires.filter(wire => wire.path.endsWith('/fallback'));
-  }
-
   it('never asks the service to commit the engine of a waiting entry', async () => {
     // The fallback route of the service is the authoritative allocation of
-    // the browser engine. A waiting entry must never reach it, or the engine
-    // would be committed before the deadline of the search.
+    // the browser engine. A waiting entry must never reach it before its
+    // cutoff, or the engine would be committed before the deadline of the
+    // search. The cutoff of the entry has not arrived here.
     const { fetcher, wires } = createFetchDouble({
-      entryRead: () => ({ status: 200, data: { ...entryAnswer(null), status: 'waiting' } }),
+      entryRead: () => ({
+        status: 200,
+        data: { ...entryAnswer(null), status: 'waiting', cutoffAt: new Date(Date.now() + 60_000).toISOString() },
+      }),
     });
     const storage = createStorage();
     storeIntent(storage, 'qe_waiting0001', null);
@@ -665,6 +674,230 @@ describe('the engine credential recovery only touches a committed engine game (R
     // The answer of the older identity was ignored: the seat of the new
     // identity owns no engine credential.
     expect(fallbacks(wires)).toHaveLength(1);
+    composition.dispose();
+  });
+});
+
+describe('the waiting entry of a reload is resumed with its original cutoff (R6-01)', () => {
+  /** The answer of a waiting entry with a ready time and a cutoff. */
+  function waitingEntry(entryId: string, cutoffAt = new Date(Date.now() + 60_000).toISOString()): Record<string, unknown> {
+    return {
+      ...entryAnswer(null),
+      entryId,
+      status: 'waiting',
+      readyAt: '2026-10-21T10:00:00.000Z',
+      cutoffAt,
+      assignedMatchId: null,
+    };
+  }
+
+  it('shows the same entry again, with the cutoff the service gave it', async () => {
+    // A reload must not lose the entry of the owner, and it must not create
+    // a second one: the entry of the service is the canonical one.
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: waitingEntry('qe_waiting0002') }),
+    });
+    const storage = createStorage();
+    storeIntent(storage, 'qe_waiting0002', null);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    await settle();
+    await settle();
+    // The entry is shown again, with the original cutoff.
+    expect(composition.queueEntries).toHaveLength(1);
+    expect(composition.queueEntries[0]?.entryId).toBe('qe_waiting0002');
+    expect(composition.queueEntries[0]?.state.phase).toBe('searching');
+    expect(composition.queueEntries[0]?.state.cutoffAt).toBe(composition.queueEntries[0]?.state.entry?.cutoffAt);
+    // No entry was created, and the service was never asked to commit the
+    // engine of the waiting entry.
+    expect(wires.filter(wire => wire.path.endsWith('/entries') && wire.method === 'POST')).toHaveLength(0);
+    expect(wires.filter(wire => wire.path.endsWith('/fallback'))).toHaveLength(0);
+    composition.dispose();
+  });
+
+  it('commits the engine of a resumed entry exactly at its original cutoff', async () => {
+    // The resumed entry keeps the cutoff the service gave it. The engine
+    // prepares during the search, exactly as it does for an entry this
+    // browser created, so the cutoff can commit it - and the commit happens
+    // at the cutoff, never before it.
+    const clock = manualTimers();
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: waitingEntry('qe_waiting0005') }),
+      fallback: {
+        status: 200,
+        data: {
+          ...fallbackAnswer(),
+          guestCredential: { guestId: 'guest-engine', matchId: 'match-00000001', seat: 'black', token: 'engine-token' },
+        },
+      },
+    });
+    const storage = createStorage();
+    storeIntent(storage, 'qe_waiting0005', null);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      timers: clock.timers,
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    await settle();
+    await settle();
+    // The cutoff has not arrived: the engine was not committed.
+    expect(fallbacks(wires)).toHaveLength(0);
+    // The cutoff of the entry arrives.
+    clock.fire();
+    await settle();
+    await settle();
+    await settle();
+    expect(fallbacks(wires)).toHaveLength(1);
+    // The entry of the service was never replaced.
+    expect(wires.filter(wire => wire.path.endsWith('/entries') && wire.method === 'POST')).toHaveLength(0);
+    composition.dispose();
+  });
+
+  it('lets the owner act on a resumed entry without replacing it', async () => {
+    // The explicit action of the owner reuses the entry of the service: the
+    // same intent carries the same idempotency key, so the service answers
+    // with the same entry.
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: waitingEntry('qe_waiting0006') }),
+    });
+    const storage = createStorage();
+    storeIntent(storage, 'qe_waiting0006', null);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    await settle();
+    await settle();
+    expect(composition.queueEntries).toHaveLength(1);
+    // The owner plays the seat themselves. The entry of the service is the
+    // same one, so the idempotency key is the same too.
+    await composition.queue.playYourself();
+    await settle();
+    const creations = wires.filter(wire => wire.path.endsWith('/entries') && wire.method === 'POST');
+    expect(creations).toHaveLength(1);
+    expect(creations[0]?.body?.clientRequestId).toBe('intent-00000001');
+    composition.dispose();
+  });
+
+  it('never resumes the entry of an identity that is not the current one', async () => {
+    // The intents are namespaced by the identity, so the entry of another
+    // identity never reaches the screen of this one.
+    const { fetcher } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: waitingEntry('qe_other00001') }),
+    });
+    const storage = createStorage();
+    storeIntent(storage, 'qe_other00001', null, 'account%3Aaccount-2');
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    await settle();
+    await settle();
+    expect(composition.queueEntries).toHaveLength(0);
+    composition.dispose();
+  });
+
+  it('resumes the entry of the identity that comes back, without showing it twice', async () => {
+    // The identity change fences the state of the previous identity. The
+    // entry of the identity that returns is resumed in its own record, so
+    // the screen never shows the same entry twice.
+    const listeners = new Set<(identity: { accountId: string; token: () => Promise<string> } | null) => void>();
+    let identity: { accountId: string; token: () => Promise<string> } | null = { accountId: 'account-1', token: async () => 'token' };
+    const { fetcher } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: waitingEntry('qe_waiting0003') }),
+    });
+    const storage = createStorage();
+    storeIntent(storage, 'qe_waiting0003', null);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: {
+        get identity() { return identity; },
+        subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      },
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    await settle();
+    await settle();
+    expect(composition.queueEntries).toHaveLength(1);
+    expect(composition.queueEntries[0]?.state.phase).toBe('searching');
+    // Another identity signs in. The entry of the previous identity leaves
+    // the screen.
+    identity = { accountId: 'account-2', token: async () => 'token' };
+    for (const listener of listeners) listener(identity);
+    await settle();
+    await settle();
+    expect(composition.queueEntries.filter(entry => entry.state.phase === 'searching')).toHaveLength(0);
+    // The first identity comes back. Its entry is resumed in its own record.
+    identity = { accountId: 'account-1', token: async () => 'token' };
+    for (const listener of listeners) listener(identity);
+    await settle();
+    await settle();
+    expect(composition.queueEntries.filter(entry => entry.state.phase === 'searching')).toHaveLength(1);
+    expect(composition.queueEntries).toHaveLength(1);
+    composition.dispose();
+  });
+
+  it('ignores the answer of a restore that belongs to an older identity', async () => {
+    // The identity changed while the service was asked for the entry. The
+    // answer of the older identity never reaches the current one.
+    const listeners = new Set<(identity: { accountId: string; token: () => Promise<string> } | null) => void>();
+    let identity: { accountId: string; token: () => Promise<string> } | null = { accountId: 'account-1', token: async () => 'token' };
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: waitingEntry('qe_waiting0004') }),
+    });
+    const holding: typeof fetch = async (input, init) => {
+      const path = String(input);
+      if (path.includes('/queue/entries/qe_waiting0004')) {
+        await gate;
+      }
+      return fetcher(input, init);
+    };
+    const storage = createStorage();
+    storeIntent(storage, 'qe_waiting0004', null);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: holding as typeof fetch,
+      storage,
+      accountSession: {
+        get identity() { return identity; },
+        subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      },
+      prepareEngine: async () => undefined,
+    });
+    composition.resumeMatches();
+    await settle();
+    // The identity changed while the entry was read.
+    identity = { accountId: 'account-2', token: async () => 'token' };
+    for (const listener of listeners) listener(identity);
+    release?.();
+    await settle();
+    await settle();
+    // The entry of the older identity never reaches the screen.
+    expect(composition.queueEntries).toHaveLength(0);
+    expect(wires.filter(wire => wire.path.endsWith('/fallback'))).toHaveLength(0);
     composition.dispose();
   });
 });

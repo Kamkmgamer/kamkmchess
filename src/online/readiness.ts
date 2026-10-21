@@ -197,6 +197,17 @@ export interface OnlineQueueController {
    */
   observe(entry: QueueEntry): void;
   /**
+   * Adopts an entry that this browser already owns.
+   *
+   * A reload or an identity change finds the entry of the owner again. The
+   * entry is the same canonical entry, so the search continues with its
+   * original cutoff and the browser engine prepares during the remaining
+   * search, exactly as it does for a new entry. Nothing is created here: the
+   * entry already exists in the service, and the service is never asked to
+   * commit the engine before the cutoff of the entry.
+   */
+  adopt(entry: QueueEntry): void;
+  /**
    * Fences the current attempt and clears the local state.
    *
    * An identity change uses it: the state of the previous identity leaves the
@@ -739,6 +750,36 @@ export function createOnlineQueueController(options: OnlineQueueOptions): Online
     applyEntry(next, generation);
   }
 
+  /**
+   * Adopts an entry that this browser already owns.
+   *
+   * The entry is the same canonical entry, so the original cutoff decides
+   * when the search ends. The engine prepares during the search, exactly as
+   * it does for an entry this browser created, so the cutoff can commit it.
+   *
+   * The adoption never creates an entry, and it never asks the service to
+   * commit the engine before the cutoff: the cutoff of the entry does that,
+   * and only when it arrives. The settings of the entry are restored too, so
+   * the explicit actions of the owner work again after a reload.
+   */
+  function adopt(next: QueueEntry): void {
+    if (disposed) return;
+    // A committed opponent is never undone by a late adoption.
+    if (assignment !== null) return;
+    const ticket = (generation += 1);
+    clearCutoffTimer();
+    assignment = null;
+    // The entry carries the settings it was created with, so the explicit
+    // actions of the owner - Play yourself and Rejoin - work again.
+    request = { control: next.control, timeControl: next.timeControl };
+    applyEntry(next, ticket);
+    if (phase === 'searching') {
+      // The engine prepares during the search. Its failure never blocks the
+      // search, and the preparation never commits the engine.
+      void prepareEngine(ticket);
+    }
+  }
+
   publish();
 
   return {
@@ -760,6 +801,7 @@ export function createOnlineQueueController(options: OnlineQueueOptions): Online
     cancel,
     rejoin,
     observe,
+    adopt,
     reset() {
       // The attempt of the previous identity is fenced at once.
       generation += 1;

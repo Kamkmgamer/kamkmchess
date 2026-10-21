@@ -34,7 +34,7 @@ import { createOnlineWorkspace } from './workspace';
 import type { OnlineWorkspace, OnlineSeatBinding } from './workspace';
 import { createOnlineQueueController } from './readiness';
 import type { OnlineQueueController, OnlineQueueState, OnlineQueueAssignment } from './readiness';
-import { createQueueClient, queueOperationBody, isAssignedEntry } from './queue';
+import { createQueueClient, queueOperationBody, isAssignedEntry, isSearchingEntry } from './queue';
 import type { QueueAssignment, QueueClient } from './queue';
 import { createOnlineMatchCommandClient } from './match-client';
 import type { OnlineMatchCommandClient } from './match-client';
@@ -856,6 +856,10 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       }
       restoreTrackedInvitations();
       restorePersistedMatches();
+      // The waiting entries of the identity are shown again, with the cutoff
+      // the service gave them. The restoration reads the entries and never
+      // creates one.
+      restoreWaitingEntries();
       // The engine seats of the games of this identity need a usable
       // credential again.
       recoverEngineCredentials();
@@ -1061,6 +1065,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
           // The entry of the intent is tracked, so a later settings change can
           // resolve it instead of abandoning it.
           upsertIntent(intent.key, { ...intent, entryId: created.entryId });
+          // The record of the browser owns the entry, so a reload resumes
+          // the same record instead of showing the entry twice.
+          entryRecords.set(created.entryId, record.id);
           // The seat of the entry is the seat of the owner. The binding of
           // the private selection happens when the match is assigned, because
           // only the assignment knows the seat of the owner.
@@ -1183,6 +1190,10 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   let activeQueueId: string | null = null;
   /** The entries whose engine credential is being recovered right now. */
   const recoveringEntries = new Set<string>();
+  /** The entries whose waiting state is being restored right now. */
+  const restoringEntries = new Set<string>();
+  /** The record that owns an entry of the service. */
+  const entryRecords = new Map<string, string>();
   /** The cleanup of the engine seats, awaited by `disposeAsync()`. */
   let engineCleanup: Promise<void> = Promise.resolve();
 
@@ -1276,6 +1287,10 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     observe: (entry) => {
       const record = activeQueueId === null ? null : queueRecords.get(activeQueueId) ?? null;
       record?.controller.observe(entry);
+    },
+    adopt: (entry) => {
+      const record = activeQueueId === null ? null : queueRecords.get(activeQueueId) ?? null;
+      record?.controller.adopt(entry);
     },
     reset: () => {
       for (const record of queueRecords.values()) record.controller.reset();
@@ -1419,6 +1434,99 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     }
     if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return false;
     return view.seats.some(seat => seat.control.kind === 'engine');
+  }
+
+  /**
+   * True when the entry of the service is already shown by a record.
+   *
+   * A restored entry never joins an entry that is already shown, so a reload
+   * and an identity change in the same moment never show the same entry
+   * twice.
+   */
+  function entryIsShown(entryId: string): boolean {
+    const recordId = entryRecords.get(entryId);
+    if (recordId === undefined) return false;
+    const record = queueRecords.get(recordId);
+    if (!record) return false;
+    return record.state.phase === 'searching'
+      || record.state.phase === 'matched'
+      || record.state.phase === 'assigned';
+  }
+
+  /**
+   * Restores the waiting entries of the current identity.
+   *
+   * A reload or an identity change must show the entry the owner created.
+   * The entry is read from the service, and the read never allocates: the
+   * entry is the same canonical entry, with the same cutoff. Nothing is
+   * created here, and the service is never asked to commit the browser
+   * engine of a waiting entry - the cutoff of the entry does that, and only
+   * when it arrives.
+   */
+  function restoreWaitingEntries(): void {
+    if (disposed) return;
+    // The restoration belongs to the identity and the generation that asked
+    // for it. A later identity, even the same one again, never receives the
+    // answer of an older request.
+    const identityKey = queueIdentity();
+    const generation = identityGeneration;
+    for (const intent of readIntents(storage, identityKey)) {
+      const entryId = intent.entryId;
+      if (!entryId) continue;
+      // One restoration per entry at a time. A reload and an identity change
+      // in the same moment never restore the same entry twice.
+      if (restoringEntries.has(entryId)) continue;
+      restoringEntries.add(entryId);
+      void restoreWaitingEntry(intent, entryId, identityKey, generation).finally(() => {
+        restoringEntries.delete(entryId);
+      });
+    }
+  }
+
+  /**
+   * Restores one waiting entry of the current identity.
+   *
+   * The entry is read first, and the read never allocates. Only an entry
+   * that is still waiting is resumed: an entry that already produced its
+   * game, a cancelled entry and an expired entry never wait again.
+   */
+  async function restoreWaitingEntry(
+    intent: QueueIntent,
+    entryId: string,
+    identityKey: string,
+    generation: number,
+  ): Promise<void> {
+    let entry: QueueEntry;
+    try {
+      entry = await queueClient.readEntry(entryId);
+    } catch {
+      // The entry is gone, or the service cannot answer.
+      return;
+    }
+    if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
+    // Only a waiting entry with a ready time is resumed. The expired entry
+    // needs an explicit rejoin, and an assigned entry already produced its
+    // game.
+    if (!isSearchingEntry(entry)) return;
+    // The entry is shown already: the search of this browser continues.
+    if (entryIsShown(entryId)) return;
+    // The record of the entry may still exist: an identity change fences the
+    // state of the previous identity, and the record is resumed instead of
+    // showing the entry twice.
+    const recordId = entryRecords.get(entryId);
+    const tracked = recordId === undefined ? null : queueRecords.get(recordId) ?? null;
+    if (tracked) {
+      tracked.controller.adopt(entry);
+      return;
+    }
+    const record = createQueueRecord();
+    entryRecords.set(entryId, record.id);
+    // The intent follows the record of the entry, so the entry keeps its own
+    // intent and the recovery of its engine credential knows it.
+    upsertIntent(intent.key, { ...intent, recordId: record.id });
+    // The entry is adopted with its original cutoff. The controller never
+    // creates an entry and never asks for the fallback.
+    record.controller.adopt(entry);
   }
 
   /**
@@ -2390,6 +2498,10 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     },
     resumeMatches() {
       restorePersistedMatches();
+      // The waiting entries of the identity are shown again, with the cutoff
+      // the service gave them. The restoration reads the entries and never
+      // creates one.
+      restoreWaitingEntries();
       // The engine seats of the restored games need a usable credential. The
       // browser holds none after a reload, so the service is asked to rotate
       // it.

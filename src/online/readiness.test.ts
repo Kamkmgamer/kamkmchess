@@ -506,3 +506,60 @@ describe('the owner always leaves an entry (B-9, B-14)', () => {
     expect(harness.controller.state.phase).toBe('matched');
   });
 });
+
+describe('the controller adopts an entry that the browser already owns (R6-01)', () => {
+  it('resumes the search of the entry with the cutoff the service gave it', () => {
+    const harness = createHarness();
+    harness.controller.adopt(entry({ entryId: 'entry-0000002', cutoffAt: '2026-10-21T10:00:10.000Z' }));
+    // The entry is the same canonical entry, so the search continues with
+    // its original cutoff.
+    expect(harness.controller.state.phase).toBe('searching');
+    expect(harness.controller.state.entry?.entryId).toBe('entry-0000002');
+    expect(harness.controller.state.cutoffAt).toBe('2026-10-21T10:00:10.000Z');
+    // Nothing is created, and the fallback is never asked for.
+    expect(harness.ports.acceptReady).not.toHaveBeenCalled();
+    expect(harness.ports.commitFallback).not.toHaveBeenCalled();
+  });
+
+  it('prepares the engine of an adopted entry during the search', async () => {
+    // The fallback of the service is the authoritative allocation of the
+    // browser engine. The engine prepares during the search, exactly as it
+    // does for an entry this browser created, and the cutoff of the entry
+    // commits it.
+    const harness = createHarness();
+    harness.controller.adopt(entry({ entryId: 'entry-0000003' }));
+    await tick();
+    expect(harness.ports.prepareEngine).toHaveBeenCalled();
+    // The engine is not committed before the cutoff of the entry.
+    expect(harness.ports.commitFallback).not.toHaveBeenCalled();
+  });
+
+  it('restores the settings of the entry, so the explicit actions of the owner work again', async () => {
+    // The entry carries the control and the clock it was created with. The
+    // owner may act on it again after a reload.
+    const harness = createHarness();
+    harness.controller.adopt(entry({ entryId: 'entry-0000004', control: { kind: 'human' }, timeControl }));
+    await harness.controller.playYourself();
+    expect(harness.ports.acceptReady).toHaveBeenCalledTimes(1);
+    expect(harness.ports.acceptReady.mock.calls[0]?.[0]).toEqual({ control: { kind: 'human' }, timeControl });
+  });
+
+  it('lets the owner rejoin the adopted entry instead of creating another one', async () => {
+    const harness = createHarness();
+    harness.controller.adopt(entry({ entryId: 'entry-0000005' }));
+    await harness.controller.rejoin();
+    // The same entry is re-armed, and no other entry is created.
+    expect(harness.ports.readyEntry).toHaveBeenCalledWith('entry-0000005');
+    expect(harness.ports.acceptReady).not.toHaveBeenCalled();
+  });
+
+  it('never replaces a committed opponent with an adopted entry', async () => {
+    const harness = createHarness();
+    await harness.controller.enter({ control: agentControl, timeControl });
+    harness.fireCutoff();
+    await tick();
+    expect(harness.controller.state.phase).toBe('matched');
+    harness.controller.adopt(entry({ entryId: 'entry-0000004', status: 'assigned', assignedMatchId: 'match-00000001' }));
+    expect(harness.controller.state.assignment?.matchId).toBe('match-00000001');
+  });
+});
