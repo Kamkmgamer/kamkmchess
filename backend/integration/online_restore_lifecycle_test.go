@@ -13,7 +13,6 @@ package integration
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -436,8 +435,6 @@ func TestPostgresTheRecoverCommandRefusesAConflictingEvidence(t *testing.T) {
 	}
 }
 
-var _ = errors.Is
-
 // TestPostgresTheRestoreWithoutASinkRunsWithoutAnObligation covers the
 // tooling of the private single-owner backup.
 //
@@ -477,5 +474,85 @@ func TestPostgresTheRestoreWithoutASinkRunsWithoutAnObligation(t *testing.T) {
 	}
 	if !allowed {
 		t.Fatal("the service does not serve after a restore without an obligation")
+	}
+}
+
+// TestPostgresTheRefusedTakeOverKeepsTheCrashedRestoreRecoverable covers the
+// history of a crashed restore.
+//
+// A take-over replaces the owner marker of the lifecycle, and a take-over that
+// is refused before its import has to restore it exactly: the recovery of the
+// crashed restore has to work with the ledger it owed, and a full restore has
+// to be able to proceed afterwards.
+func TestPostgresTheRefusedTakeOverKeepsTheCrashedRestoreRecoverable(t *testing.T) {
+	fixture, removals, directory := evidenceFixture(t)
+	ctx := context.Background()
+	historyService := historyServiceFor(t, fixture)
+	matchID := "evidence-history-match"
+	privacyCompletedMatch(t, fixture, historyService, matchID)
+	state := evidenceCapture(t, fixture.pool, [2]string{matchID, "black"})
+	if _, err := removals.RemoveAccount(ctx, accountPrincipal("user_b", "session-user_b"), authTestOrigin); err != nil {
+		t.Fatalf("remove the opponent: %v", err)
+	}
+	live, err := removals.AppliedRemovalLedger(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The restore that crashed: it bound the ledger it had to apply and its
+	// marker stayed behind.
+	crashed, err := removals.BeginFence("evidence-history-crashed", false)
+	if err != nil {
+		t.Fatalf("open the fence: %v", err)
+	}
+	if err = crashed.Bind(live); err != nil {
+		t.Fatalf("bind the fence: %v", err)
+	}
+	crashed.Release()
+	marker := filepath.Join(directory, "restore-fence", "owner")
+	before, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read the owner marker: %v", err)
+	}
+	// The take-over is refused before its import: it has no removal ledger
+	// sink and removals are owed.
+	bundle := evidenceBundle(t, t.TempDir(), nil, nil)
+	imports := 0
+	if _, err = backup.Restore(ctx, backup.RestoreRequest{
+		Path:           bundle,
+		Passphrase:     []byte("evidence-passphrase-0001"),
+		Restorer:       evidenceRestorer{pool: fixture.pool, state: state, imports: &imports},
+		Tombstones:     evidenceTombstones{},
+		AdmissionFence: evidenceLedger{service: removals},
+		RestoreID:      "evidence-history-takeover",
+		Takeover:       true,
+	}); err == nil {
+		t.Fatal("the take-over without a removal ledger sink was accepted while removals were owed")
+	}
+	if imports != 0 {
+		t.Fatalf("the refused take-over imported %d times", imports)
+	}
+	// The owner marker of the crashed restore is exactly the one it left.
+	after, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("read the owner marker: %v", err)
+	}
+	if string(before) != string(after) {
+		t.Fatalf("the refused take-over changed the crashed restore: before %s, after %s", before, after)
+	}
+	// The recovery of the crashed restore still works with the ledger it owed.
+	if err = removals.RecoverRestore(ctx, "evidence-history-crashed", live); err != nil {
+		t.Fatalf("the recovery of the crashed restore failed: %v", err)
+	}
+	// A full restore can proceed afterwards.
+	if _, err = backup.Restore(ctx, backup.RestoreRequest{
+		Path:           bundle,
+		Passphrase:     []byte("evidence-passphrase-0001"),
+		Restorer:       evidenceRestorer{pool: fixture.pool, state: state},
+		Tombstones:     evidenceTombstones{},
+		Removals:       evidenceLedger{service: removals},
+		AdmissionFence: evidenceLedger{service: removals},
+		RestoreID:      "evidence-history-next",
+	}); err != nil {
+		t.Fatalf("the restore after the recovery failed: %v", err)
 	}
 }
