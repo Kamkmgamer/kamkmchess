@@ -38,13 +38,34 @@ func NewOnlineEvaluator(client *Client) (*OnlineEvaluator, error) {
 //
 // It is the optional seam for a health monitor. A probe of a worker that is
 // busy with a participant request reports `online.ErrRulesBusy` and returns
-// at once: the monitor must not spend the budget of a participant request, and
-// a busy worker is not an outage.
+// at once: the monitor must not spend the budget of a participant request,
+// and a busy worker is not an outage.
 //
-// The setup validation of a match creation keeps its waiting behaviour: a
-// creation waits for the worker instead of refusing the match.
+// A probe never starts the worker. The recovery of a worker that is gone is
+// `Repair`.
 func (e *OnlineEvaluator) Probe(ctx context.Context) error {
-	if err := e.client.Probe(ctx); err != nil {
+	return e.probe(ctx, false)
+}
+
+// Repair starts the rules process when it is not running and proves that it
+// answers.
+//
+// It is the recovery path of a closed health gate. The caller serves no
+// traffic then, so the cold start of the worker cannot delay a participant
+// request, and the dependency comes back without one.
+func (e *OnlineEvaluator) Repair(ctx context.Context) error {
+	return e.probe(ctx, true)
+}
+
+// probe is the shared body of the check and of the repair.
+func (e *OnlineEvaluator) probe(ctx context.Context, repair bool) error {
+	var err error
+	if repair {
+		err = e.client.Repair(ctx)
+	} else {
+		err = e.client.Probe(ctx)
+	}
+	if err != nil {
 		if errors.Is(err, ErrBusy) {
 			return fmt.Errorf("%w: %v", online.ErrRulesBusy, err)
 		}

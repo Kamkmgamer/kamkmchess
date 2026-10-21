@@ -110,21 +110,33 @@ function responseFor(req) {
 
 for await (const line of rl) {
   const req = JSON.parse(line);
+  // Every request is counted, so a fixture can wait for a request to have
+  // reached the worker instead of guessing a delay. The counter is written
+  // before the worker answers, so the barrier proves the request is in
+  // flight.
+  const requestCounter = join(dirname(process.argv[1]), 'requests');
+  let received = 0;
+  try { received = Number.parseInt(readFileSync(requestCounter, 'utf8').trim(), 10) || 0; } catch { received = 0; }
+  writeFileSync(requestCounter, String(received + 1));
   // A fixture can ask the worker to stop answering after a number of
-  // answers: the worker is healthy at first and broken afterwards. The
-  // marker holds that number, and it is used once, so the replacement of a
-  // broken worker behaves.
+  // readiness probes: the worker is healthy at first and broken afterwards.
+  // The count is of readiness probes, so the break point does not depend on
+  // how many other exchanges the client performs. The marker is used once, so
+  // the replacement of a broken worker behaves.
   const hangAfterReady = join(dirname(process.argv[1]), 'hang-after-ready');
   const exitAfterReady = join(dirname(process.argv[1]), 'exit-after-ready');
   const breakMarker = existsSync(hangAfterReady) ? hangAfterReady : (existsSync(exitAfterReady) ? exitAfterReady : '');
-  if (breakMarker && !existsSync(join(dirname(process.argv[1]), 'broken-used'))) {
-    const counter = join(dirname(process.argv[1]), 'request-counter');
+  if (req.requestId === '__READINESS_REQUEST_ID__' && breakMarker && !existsSync(join(dirname(process.argv[1]), 'broken-used'))) {
+    const counter = join(dirname(process.argv[1]), 'probe-counter');
     let seen = 0;
     try { seen = Number.parseInt(readFileSync(counter, 'utf8').trim(), 10) || 0; } catch { seen = 0; }
     writeFileSync(counter, String(seen + 1));
     let allowed = 1;
-    try { allowed = Number.parseInt(readFileSync(breakMarker, 'utf8').trim(), 10) || 1; } catch { allowed = 1; }
-    if (seen >= allowed) {
+    try {
+      const parsed = Number.parseInt(readFileSync(breakMarker, 'utf8').trim(), 10);
+      allowed = Number.isFinite(parsed) ? parsed : 1;
+    } catch { allowed = 1; }
+    if (seen > allowed) {
       writeFileSync(join(dirname(process.argv[1]), 'broken-used'), '1');
       if (existsSync(exitAfterReady)) {
         process.exit(9);
@@ -165,7 +177,12 @@ for await (const line of rl) {
       process.stdout.write('this is not json\n');
       continue;
     case 'slow':
+      // The barrier: the worker received the request before it stalls.
+      writeFileSync(join(dirname(process.argv[1]), 'slow-received'), '1');
       await new Promise((resolve) => setTimeout(resolve, 5000));
+      break;
+    case 'slow-brief':
+      await new Promise((resolve) => setTimeout(resolve, 1500));
       break;
     case 'late':
       await new Promise((resolve) => setTimeout(resolve, 60));
@@ -180,12 +197,27 @@ for await (const line of rl) {
         message: 'The requested move is not legal in this position.',
       }) + '\n');
       continue;
+    case 'hang': {
+      // The worker stops answering. The marker is written when it hangs, so
+      // the replacement of the broken worker behaves.
+      const used = join(dirname(process.argv[1]), 'hang-used');
+      if (existsSync(used)) { break; }
+      writeFileSync(used, '1');
+      await new Promise(() => {});
+      continue;
+    }
     case 'crash-then-hang': {
-      const counter = join(dirname(process.argv[1]), 'counter');
-      let n = 0;
-      try { n = Number.parseInt(readFileSync(counter, 'utf8').trim(), 10) || 0; } catch { n = 0; }
-      writeFileSync(counter, String(n + 1));
-      if (n === 0) { process.exit(9); }
+      // The worker dies on its first request and hangs on its second one.
+      // The marker is written when it hangs, so the replacement of the
+      // broken worker behaves.
+      const used = join(dirname(process.argv[1]), 'crash-used');
+      if (existsSync(used)) { break; }
+      const counter = join(dirname(process.argv[1]), 'crash-counter');
+      let seen = 0;
+      try { seen = Number.parseInt(readFileSync(counter, 'utf8').trim(), 10) || 0; } catch { seen = 0; }
+      writeFileSync(counter, String(seen + 1));
+      if (seen === 0) { process.exit(9); }
+      writeFileSync(used, '1');
       await new Promise(() => {});
       continue;
     }
@@ -286,18 +318,20 @@ func testEntryWithHangingProbe(t *testing.T, marker string) string {
 	return path
 }
 
-// testEntryThatBreaksAfterReadiness writes a fake worker that answers its
-// first request and then hangs or exits.
+// testEntryThatBreaksAfterReadiness writes a fake worker that answers a
+// number of readiness probes and then hangs or exits.
 //
-// The marker is used once, so the replacement of a broken worker behaves.
-func testEntryThatBreaksAfterReadiness(t *testing.T, marker string, answers int) string {
+// The number is a count of readiness probes, so the break point does not
+// depend on how many other exchanges the client performs. The marker is used
+// once, so the replacement of a broken worker behaves.
+func testEntryThatBreaksAfterReadiness(t *testing.T, marker string, probes int) string {
 	t.Helper()
 	directory := t.TempDir()
 	path := filepath.Join(directory, "worker.mjs")
 	if err := os.WriteFile(path, []byte(fakeWorkerSource()), 0o600); err != nil {
 		t.Fatalf("write fake worker: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, marker), []byte(strconv.Itoa(answers)), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, marker), []byte(strconv.Itoa(probes)), 0o600); err != nil {
 		t.Fatalf("write the probe marker: %v", err)
 	}
 	return path
@@ -677,24 +711,92 @@ func TestTheCrashSurvivesAFailedStartOfTheReplacement(t *testing.T) {
 	}
 }
 
+// testEntryThatCrashesThenHangs writes a fake worker that dies on its first
+// request of that kind and hangs on the second one.
+//
+// It also returns the path of the counter of that kind, so a fixture can wait
+// for the second request instead of guessing a delay. The counter is per kind
+// and does not depend on how many other exchanges the client performs.
+func testEntryThatCrashesThenHangs(t *testing.T) (string, string) {
+	t.Helper()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "worker.mjs")
+	if err := os.WriteFile(path, []byte(fakeWorkerSource()), 0o600); err != nil {
+		t.Fatalf("write fake worker: %v", err)
+	}
+	return path, filepath.Join(directory, "crash-counter")
+}
+
+// testEntryWithAHeldRequest writes a fake worker that signals the request it
+// holds and then stalls.
+//
+// It returns the path of the marker, so a fixture can wait for the request
+// instead of guessing a delay.
+func testEntryWithAHeldRequest(t *testing.T) (string, string) {
+	t.Helper()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "worker.mjs")
+	if err := os.WriteFile(path, []byte(fakeWorkerSource()), 0o600); err != nil {
+		t.Fatalf("write fake worker: %v", err)
+	}
+	return path, filepath.Join(directory, "slow-received")
+}
+
+// waitForCounter waits until the counter of the worker reaches the wanted
+// number of requests of that kind.
+func waitForCounter(t *testing.T, path string, wanted int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		raw, err := os.ReadFile(path)
+		if err == nil {
+			if seen, convErr := strconv.Atoi(strings.TrimSpace(string(raw))); convErr == nil && seen >= wanted {
+				return
+			}
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("the worker did not receive %d requests of that kind", wanted)
+}
+
+// waitForMarker waits until the worker wrote its marker.
+func waitForMarker(t *testing.T, path string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(path); err == nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the worker did not receive the request")
+}
+
 // TestTheCancellationWinsOverAnEarlierCrash proves that the cancellation of
 // the caller keeps its class, whatever happened before it.
 //
-// The first exchange crashes and the retry is in flight when the caller
-// goes away. The call reports the cancellation, because the caller knows
-// that it left.
+// The first exchange crashes and the retry is in flight when the caller goes
+// away. The fixture signals the second exchange, so the cancellation happens
+// at a known moment instead of after a guessed delay.
 func TestTheCancellationWinsOverAnEarlierCrash(t *testing.T) {
-	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 5 * time.Second, StartTimeout: 10 * time.Second})
+	entry, counter := testEntryThatCrashesThenHangs(t)
+	client, err := New(Config{Entry: entry, RequestTimeout: 5 * time.Second, StartTimeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	ctx, cancel := context.WithCancel(context.Background())
+	held := make(chan error, 1)
 	go func() {
-		time.Sleep(300 * time.Millisecond)
-		cancel()
+		_, requestErr := client.Evaluate(ctx, request("crash-then-hang"))
+		held <- requestErr
 	}()
-	_, err = client.Evaluate(ctx, request("crash-then-hang"))
+	// The retry is in flight when the caller goes away. The barrier is the
+	// counter of the requests of that kind, so it does not depend on how
+	// many other exchanges the client performs.
+	waitForCounter(t, counter, 2)
+	cancel()
+	err = <-held
 	if !errors.Is(err, ErrCanceled) {
 		t.Fatalf("a canceled caller got %v instead of a cancellation", err)
 	}
@@ -703,46 +805,193 @@ func TestTheCancellationWinsOverAnEarlierCrash(t *testing.T) {
 	}
 }
 
-// TestTheProbeDetectsAWorkerThatHungAfterItsReadiness proves that the
-// readiness flag is not evidence.
+// TestTheLifecycleOfOneClientIsBusyColdAndHung proves the three states of one
+// client, with process barriers instead of delays.
 //
-// The worker answers the readiness probe and then hangs. A probe of that
-// worker has to fail, the hung process has to be killed and reaped, and the
-// next probe has to prove a fresh worker.
-func TestTheProbeDetectsAWorkerThatHungAfterItsReadiness(t *testing.T) {
-	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "hang-after-ready", 2), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
+//   - **cold**: the client has no worker. A probe does not start it, so the
+//     traffic behind a probe is never held, and the first request starts the
+//     worker and succeeds.
+//   - **busy**: a request holds the worker. A probe reports the busy class at
+//     once and leaves the request intact.
+//   - **hung**: the worker stops answering. A probe reports the outage, the
+//     process is killed and reaped, and the next request of the *same* client
+//     starts a replacement and succeeds.
+func TestTheLifecycleOfOneClientIsBusyColdAndHung(t *testing.T) {
+	entry, counter := testEntryWithAHeldRequest(t)
+	// The held request stays in flight for the five seconds of the fake
+	// worker, so the probe of the busy worker has room even on a loaded
+	// host.
+	client, err := New(Config{Entry: entry, RequestTimeout: 10 * time.Second, StartTimeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	// The first probe proves the worker and leaves it ready.
+
+	// Cold: the client has no worker yet.
+	if client.proc != nil {
+		t.Fatal("a fresh client holds a worker")
+	}
+	if err = client.Probe(context.Background()); !errors.Is(err, ErrBusy) {
+		t.Fatalf("the probe of a cold client = %v, want ErrBusy", err)
+	}
+	if client.proc != nil {
+		t.Fatal("the probe started the worker of a cold client")
+	}
+	// The traffic behind a probe of a cold client is not held: the request
+	// starts the worker and succeeds.
+	started := time.Now()
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the first request of a cold client: %v", err)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("the first request of a cold client took %s", elapsed)
+	}
+
+	// Busy: a request holds the worker, and the probe says so at once.
+	held := make(chan error, 1)
+	go func() {
+		_, requestErr := client.Evaluate(context.Background(), request("slow"))
+		held <- requestErr
+	}()
+	// The barrier: the worker received the request of the held call.
+	waitForMarker(t, counter)
+	probeStarted := time.Now()
+	if err = client.Probe(context.Background()); !errors.Is(err, ErrBusy) {
+		t.Fatalf("the probe of a busy worker = %v, want ErrBusy", err)
+	}
+	if elapsed := time.Since(probeStarted); elapsed > time.Second {
+		t.Fatalf("the probe of a busy worker waited %s", elapsed)
+	}
+	// The held request is intact: it ends with its own answer.
+	if err = <-held; err != nil {
+		t.Fatalf("the held request: %v", err)
+	}
+
+	// The worker of the client is still healthy after the held request, so
+	// the probe of it succeeds.
+	if err = client.Probe(context.Background()); err != nil {
+		t.Fatalf("the probe of the healthy worker: %v", err)
+	}
+
+	// Hung: the worker stops answering. The request reports the outage, the
+	// process is killed and reaped, and the dependency comes back through
+	// the repair of a closed gate, without a participant request.
+	if _, err = client.Evaluate(context.Background(), request("hang")); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("the request against a hung worker = %v, want the timeout of the worker", err)
+	}
+	if client.proc != nil {
+		t.Fatal("the hung worker was not killed and reaped")
+	}
+	if err = client.Probe(context.Background()); !errors.Is(err, ErrBusy) {
+		t.Fatalf("the probe of a client without a worker = %v, want ErrBusy", err)
+	}
+	// The repair starts a replacement of the same client and proves it.
+	if err = client.Repair(context.Background()); err != nil {
+		t.Fatalf("the repair of the dependency: %v", err)
+	}
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the request after the repair: %v", err)
+	}
+}
+
+// TestTheRepairBringsADependencyBack proves the recovery path of a closed
+// health gate.
+//
+// The worker hangs and the probe reports the outage. The worker is killed and
+// reaped, so the client has no worker and the gate is closed. A **check**
+// cannot bring it back: it never starts a worker, so it reports the busy
+// class and the dependency stays down. The **repair** starts a replacement
+// and proves it, so the gate can open again without a participant request.
+func TestTheRepairBringsADependencyBack(t *testing.T) {
+	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "hang-after-ready", 1), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	// A request starts the worker and leaves it ready.
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the first request: %v", err)
+	}
+	// The probe of the ready worker succeeds.
 	if err = client.Probe(context.Background()); err != nil {
 		t.Fatalf("the first probe: %v", err)
 	}
-	if client.proc == nil {
-		t.Fatal("the first probe left no worker")
+	// The next probe finds the worker hung and reports the outage.
+	if err = client.Probe(context.Background()); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("the probe of a hung worker = %v, want the timeout of the worker", err)
 	}
-	// The second probe talks to the worker and finds it hung.
+	if client.proc != nil {
+		t.Fatal("the hung worker was not killed and reaped")
+	}
+	// The client has no worker now, and the gate of the service is closed.
+	// A check cannot repair that: it never starts a worker.
+	if err = client.Probe(context.Background()); !errors.Is(err, ErrBusy) {
+		t.Fatalf("the check of a client without a worker = %v, want ErrBusy", err)
+	}
+	if client.proc != nil {
+		t.Fatal("the check started a worker")
+	}
+	// The repair starts a replacement and proves it, so the gate can open.
+	if err = client.Repair(context.Background()); err != nil {
+		t.Fatalf("the repair of the dependency: %v", err)
+	}
+	if client.proc == nil {
+		t.Fatal("the repair left no worker")
+	}
+	// The dependency answers again.
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the request after the repair: %v", err)
+	}
+}
+
+// TestTheProbeDetectsAWorkerThatHungAfterItsReadiness proves that the
+// readiness flag is not evidence.
+//
+// The worker answers a request and then hangs. A probe of that worker has to
+// fail, the hung process has to be killed and reaped, and the next request
+// has to start and prove a fresh worker.
+func TestTheProbeDetectsAWorkerThatHungAfterItsReadiness(t *testing.T) {
+	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "hang-after-ready", 1), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	// A request starts the worker and leaves it ready.
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the first request: %v", err)
+	}
+	// The probe of the ready worker succeeds.
+	if err = client.Probe(context.Background()); err != nil {
+		t.Fatalf("the first probe: %v", err)
+	}
+	// The next probe talks to the worker and finds it hung.
 	if err = client.Probe(context.Background()); err == nil {
 		t.Fatal("the probe of a hung worker succeeded")
 	}
 	if client.proc != nil {
 		t.Fatal("the hung worker was not killed and reaped")
 	}
-	// The next probe starts a fresh worker and proves it.
-	if err = client.Probe(context.Background()); err != nil {
-		t.Fatalf("the probe of the replacement worker: %v", err)
+	// The worker is gone, so the probe reports that it is not ready and the
+	// next request starts a fresh one.
+	if err = client.Probe(context.Background()); !errors.Is(err, ErrBusy) {
+		t.Fatalf("the probe of a worker that is not running = %v, want ErrBusy", err)
+	}
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the request after the broken worker: %v", err)
 	}
 }
 
 // TestTheProbeDetectsAWorkerThatExitedAfterItsReadiness proves the same for a
 // worker that exits.
 func TestTheProbeDetectsAWorkerThatExitedAfterItsReadiness(t *testing.T) {
-	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "exit-after-ready", 2), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
+	client, err := New(Config{Entry: testEntryThatBreaksAfterReadiness(t, "exit-after-ready", 1), RequestTimeout: time.Second, StartTimeout: 5 * time.Second})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the first request: %v", err)
+	}
 	if err = client.Probe(context.Background()); err != nil {
 		t.Fatalf("the first probe: %v", err)
 	}
@@ -752,8 +1001,8 @@ func TestTheProbeDetectsAWorkerThatExitedAfterItsReadiness(t *testing.T) {
 	if client.proc != nil {
 		t.Fatal("the exited worker was not reaped")
 	}
-	if err = client.Probe(context.Background()); err != nil {
-		t.Fatalf("the probe of the replacement worker: %v", err)
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the request after the broken worker: %v", err)
 	}
 }
 
@@ -770,6 +1019,13 @@ func TestTheProbeKeepsTheClassOfAnEarlierCallerDeadline(t *testing.T) {
 		t.Fatalf("new client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the first request: %v", err)
+	}
+	// The first probe proves the worker; the second one finds it hung.
+	if err = client.Probe(context.Background()); err != nil {
+		t.Fatalf("the first probe: %v", err)
+	}
 	caller, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	probeErr := client.Probe(caller)
@@ -793,6 +1049,13 @@ func TestTheProbeReportsTheInternalBoundAsABareTimeout(t *testing.T) {
 		t.Fatalf("new client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the first request: %v", err)
+	}
+	// The first probe proves the worker; the second one finds it hung.
+	if err = client.Probe(context.Background()); err != nil {
+		t.Fatalf("the first probe: %v", err)
+	}
 	caller, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	probeErr := client.Probe(caller)
@@ -853,16 +1116,28 @@ func TestTheProbeReportsABusyWorkerWithoutWaiting(t *testing.T) {
 	<-held
 }
 
-// TestTheProbeOfAReadyWorkerSucceeds proves that a probe of a warm worker
-// reports the worker as ready.
+// TestTheProbeOfAReadyWorkerSucceeds proves two things about a probe of a
+// worker that is not running.
+//
+// A probe does not start the worker: a monitor must not warm the traffic
+// path, and the cold start belongs to the request that needs the worker. The
+// worker is not broken either, so the probe reports the busy class.
 func TestTheProbeOfAReadyWorkerSucceeds(t *testing.T) {
 	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 5 * time.Second, StartTimeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	if err = client.Probe(context.Background()); err != nil {
-		t.Fatalf("the probe of a cold worker: %v", err)
+	if err = client.Probe(context.Background()); !errors.Is(err, ErrBusy) {
+		t.Fatalf("the probe of a worker that is not running = %v, want ErrBusy", err)
+	}
+	if client.proc != nil {
+		t.Fatal("the probe started the worker")
+	}
+	// A request starts the worker, and the probe of the ready worker
+	// succeeds.
+	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
+		t.Fatalf("the first request: %v", err)
 	}
 	if err = client.Probe(context.Background()); err != nil {
 		t.Fatalf("the probe of a ready worker: %v", err)
@@ -902,6 +1177,24 @@ func TestTheEvaluatorReportsTheBusySignal(t *testing.T) {
 	}
 	client.Close()
 	<-held
+}
+
+// TestAnExpiredInternalBudgetIsNotTheDeadlineOfTheCaller proves the edge of
+// the classification.
+//
+// The internal budget can already be spent when the call reaches the queue.
+// That expiry belongs to the client, not to the caller, so it must not carry
+// the cause of a caller that is still waiting.
+func TestAnExpiredInternalBudgetIsNotTheDeadlineOfTheCaller(t *testing.T) {
+	internal := time.Now().Add(-time.Second)
+	expired, cancelExpired := context.WithDeadline(context.Background(), internal)
+	defer cancelExpired()
+	if err := exchangeError(internal, expired); errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("an expired internal budget was reported as the deadline of the caller: %v", err)
+	}
+	if err := exchangeError(internal, expired); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("an expired internal budget is not a timeout: %v", err)
+	}
 }
 
 func TestEvaluateReturnsValidatedMoveCandidate(t *testing.T) {

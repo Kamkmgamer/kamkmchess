@@ -164,12 +164,13 @@ The taxonomy above has one requirement for the caller: **the deadline of the
 caller must be later than the internal request budget of the client**, when
 the caller wants a failure of the worker to be reported as such.
 
-A caller whose deadline ends first learns only that it ran out of time, and
-a worker that hangs while it is idle is then indistinguishable from a caller
-that went away. A caller that probes the worker therefore has to give the
-client a deadline that is longer than the internal request budget of the
-client, so that the internal timeout is the one that fires and the outage of
-the worker is recorded.
+The two cases are distinguishable, and the client keeps them apart. A worker
+that hangs while it is idle gives the **internal** timeout, without a cause. A
+caller that went away gives its own cause: an explicit cancellation, or its
+deadline when that deadline is the earlier one. A caller that probes the
+worker therefore has to give the client a deadline that is longer than the
+internal request budget of the client, so that the internal timeout is the
+one that fires and the outage of the worker is recorded.
 
 The client does not wait past the deadline of the caller to classify the
 failure. A bounded grace was tried and removed: it extended the caller's
@@ -216,6 +217,61 @@ participant request:
 The service therefore never invents a deadline in front of the bound of the
 client: the internal bound of the client is the one that ends an exchange
 of a worker that does not answer.
+
+**A probe does not start the worker.** A monitor must not warm the traffic
+path, and the cold start belongs to the request that needs the worker. A
+probe of a worker that is not running therefore reports the busy class and
+returns at once, without starting a process and without holding the slot for
+a start.
+
+**The recovery of a worker that is gone is `Client.Repair`.** It starts the
+worker when it is not running and proves that it answers. A repair of a
+worker that is running is a plain probe: the worker is talked to, and a
+worker that does not answer is killed, reaped and reset, so that the next
+repair starts a fresh one.
+
+The two calls exist because a check that started the worker would hold the
+only worker slot for the whole cold start, and a request that arrived in that
+window would fail. The failure would look like an outage of the worker, and
+the service would refund the clocks of the unfinished matches for a worker
+that was merely cold.
+
+The recovery of a **closed** health gate is the repair: the gate is closed
+because the worker was found broken, the service serves no traffic then, and
+holding the worker slot for the cold start is safe. Without the repair, a
+closed gate could not recover: the worker is gone after the outage, a check
+reports the busy class, and no participant request can start the replacement
+because the gate refuses the traffic.
+
+The health glue of the service therefore has to use the two calls. The
+seam is the client of the rules worker, and it is called by the monitor
+through an optional interface of the service:
+
+| Seam | Package | Meaning |
+| --- | --- | --- |
+| `rulesworker.Client.Probe(ctx) error` | `backend/rulesworker` | the check: never starts a worker, `rulesworker.ErrBusy` when the worker is busy or not running |
+| `rulesworker.Client.Repair(ctx) error` | `backend/rulesworker` | the recovery: starts the worker when it is gone and proves that it answers |
+| `rulesworker.OnlineEvaluator.Probe(ctx) error` | `backend/rulesworker` | the same check for the service, with the busy signal translated to `online.ErrRulesBusy` |
+| `rulesworker.OnlineEvaluator.Repair(ctx) error` | `backend/rulesworker` | the same recovery for the service |
+
+```go
+// while the gate is closed, repair the dependency; otherwise check it.
+if repairer, ok := s.evaluator.(interface{ Repair(ctx context.Context) error }); ok && gateClosed {
+    err = repairer.Repair(ctx)
+} else if prober, ok := s.evaluator.(interface{ Probe(ctx context.Context) error }); ok {
+    err = prober.Probe(ctx)
+} else {
+    err = s.evaluator.ValidateSetup(ctx, input)
+}
+```
+
+A **failed** repair is a failure of the check: the monitor reports it and
+retries it on the next tick. A repair that only logs leaves the gate closed
+and the dependency down, which is the deadlock the composed proof measured.
+
+The boot warm of the composition stays what it is: it is the healthy boot
+path, and a failure of it does not stop the service. The dependency still
+comes back, through the repair of a closed gate.
 
 The setup validation of a match creation keeps its waiting behaviour: a
 creation waits for the worker instead of refusing the match. Only a probe
@@ -268,7 +324,7 @@ candidate and pass with the current code:
   deadline. The call reports a timeout, and the rejection never reaches the
   participant as "illegal move".
 
-Three further regressions cover the causes and the starts:
+The regressions of the causes and the starts are:
 
 - `TestTheCancellationCarriesTheCauseOfTheCaller`: the cancellation carries
   the cause of the context, and an internal timeout carries none.
@@ -276,14 +332,15 @@ Three further regressions cover the causes and the starts:
   a replacement that never becomes ready. The call still reports the crash.
 - `TestTheCancellationWinsOverAnEarlierCrash`: a crash followed by the
   cancellation of the caller. The call reports the cancellation.
-- `TestTheClassOfATimeoutFollowsTheDeadlines`: the class of a timeout
-  follows the deadlines and not the moment of the check.
 - `TestTheCallerDeadlineIsCarriedDuringTheReadiness` and
   `TestTheCallerDeadlineIsCarriedInAWarmedExchange`: the deadline of the
   caller is carried when it ends the call, in the readiness phase and in a
   warmed exchange.
 - `TestAnInternalTimeoutCarriesNoCause`: a worker that does not answer
   inside its own budget is an outage of the worker.
+- `TestAnExpiredInternalBudgetIsNotTheDeadlineOfTheCaller`: an internal
+  budget that was already spent when the call reached the queue is not the
+  deadline of the caller.
 - `TestTheEqualBoundaryBelongsToTheInternalBudget`: the boundary rule.
 - `TestACanceledCallReapsTheWorker`: a canceled call leaves no dead worker
   behind, and the next request starts a fresh one.

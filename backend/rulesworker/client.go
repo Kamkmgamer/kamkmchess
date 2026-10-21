@@ -441,8 +441,34 @@ func (c *Client) Evaluate(ctx context.Context, request Request) (Response, error
 // became ready would look healthy forever. The exchange is bounded by the
 // internal budgets of the client, so a caller deadline can never mask an
 // outage of the worker. A worker that does not answer is killed, reaped and
-// reset, and the next probe starts and proves a fresh one.
+// reset.
+//
+// A probe **does not start** a worker. A monitor must not warm the traffic
+// path, and the cold start belongs to the request that needs the worker. A
+// probe of a worker that is not running therefore reports the busy class and
+// returns at once, without starting a process and without holding the slot
+// for a start.
+//
+// The recovery of a worker that is gone is `Repair`.
 func (c *Client) Probe(ctx context.Context) error {
+	return c.probe(ctx, false)
+}
+
+// Repair starts the worker when it is not running and proves that it answers.
+//
+// It is the recovery path of a closed health gate. The caller serves no
+// traffic then, so holding the worker slot for the cold start is safe, and
+// the dependency comes back without waiting for a participant request.
+//
+// A repair of a worker that is running is a plain probe: the worker is
+// talked to, and a worker that does not answer is killed, reaped and reset,
+// so that the next repair starts a fresh one.
+func (c *Client) Repair(ctx context.Context) error {
+	return c.probe(ctx, true)
+}
+
+// probe is the shared body of the check and of the repair.
+func (c *Client) probe(ctx context.Context, repair bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -455,6 +481,12 @@ func (c *Client) Probe(ctx context.Context) error {
 	defer c.release()
 	if c.closed {
 		return ErrClosed
+	}
+	if c.proc == nil && !repair {
+		// The worker is not running. A check does not start it: a monitor
+		// must not warm the traffic path. The worker is not broken either,
+		// so this is the busy class and not an outage.
+		return ErrBusy
 	}
 	// The worker has to be running and ready. The readiness probe is
 	// itself a bounded exchange, so a worker that never becomes ready
@@ -571,7 +603,11 @@ func readinessRequest() Request {
 // in-flight request and process untouched.
 func (c *Client) acquire(ctx context.Context, internal time.Time) error {
 	if err := ctx.Err(); err != nil {
-		return callerError(ctx)
+		// The context had already ended at the entry of the call. It is
+		// classified like the same expiry in the queue: the deadline of the
+		// caller when it is the earlier one, and the internal bound
+		// otherwise.
+		return exchangeError(internal, ctx)
 	}
 	select {
 	case c.slot <- struct{}{}:
