@@ -422,13 +422,21 @@ export function parseRunnerRequestEnvelope(value: unknown): RunnerRequestEnvelop
 /**
  * The identity of a runner or of a provider request.
  *
- * The service accepts an opaque identity: it is not empty, it is bounded,
- * and it carries no control character.
+ * The service accepts an opaque identity: it is not empty, it is at most 128
+ * bytes long, and it carries no control character. The length is counted in
+ * bytes, like the service counts it, and the identity is never trimmed.
  */
 function runnerIdentity(value: unknown, path: string): string {
   const text = stringValue(value, path);
-  if (text.length < 1 || text.length > 128 || hasControlCharacter(text)) {
+  const bytes = new TextEncoder().encode(text).length;
+  if (bytes < 1 || bytes > 128) {
     throw new OnlineContractError('invalid runner identity', path);
+  }
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      throw new OnlineContractError('invalid runner identity', path);
+    }
   }
   return text;
 }
