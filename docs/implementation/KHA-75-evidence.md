@@ -315,6 +315,7 @@ go test ./backend/integration -run 'Friend|Invite|Rematch' -count=1 -v
 --- PASS: TestPostgresFriendConcurrentRematchAcceptanceCreatesOneMatch
 --- PASS: TestPostgresFriendCreationWaitsForTheAccountScopeLock
 --- PASS: TestPostgresFriendAcceptanceWaitsForTheAccountScopeLock
+--- PASS: TestPostgresFriendRematchAcceptanceWaitsForTheAccountScopeLock
 --- PASS: TestPostgresFriendRemovedAccountCannotCreateAnInvitation
 --- PASS: TestPostgresFriendRemovedAccountCannotAcceptAnInvitation
 --- PASS: TestPostgresFriendRemovedParticipantCannotProposeOrAcceptARematch
@@ -439,6 +440,8 @@ outcome:
   waits for the lock the removal holds)
 * `TestPostgresFriendAcceptanceWaitsForTheAccountScopeLock` (the acceptance
   waits for the lock the removal holds)
+* `TestPostgresFriendRematchAcceptanceWaitsForTheAccountScopeLock` (the
+  acceptance of a rematch waits for the lock the removal holds)
 * `TestPostgresFriendRemovedAccountCannotCreateAnInvitation` (no row names
   the removed account)
 * `TestPostgresFriendRemovedAccountCannotAcceptAnInvitation` (the
