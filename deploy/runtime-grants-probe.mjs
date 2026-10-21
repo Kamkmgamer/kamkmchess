@@ -289,6 +289,13 @@ export async function runProbe(options) {
     throw new Error(`the grant probe could not apply the grants: ${granted.stderr.trim().split('\n')[0] ?? ''}`);
   }
 
+  // The deployment connects as one role. The roles the migrations created are
+  // unused, so provisioning strips them and the probe checks that end state.
+  for (const unusedRole of policy.unusedRoles ?? []) {
+    await postgres.query(`REVOKE ALL ON ALL TABLES IN SCHEMA ${schema} FROM ${unusedRole};`);
+    await postgres.query(`REVOKE ALL ON SCHEMA ${schema} FROM ${unusedRole};`);
+  }
+
   /** @type {{id: string, passed: boolean, detail: string}[]} */
   const results = [];
   /** @type {Map<string, string>} */
@@ -360,6 +367,26 @@ export async function runProbe(options) {
     detail: publicRows.length === 0
       ? 'PUBLIC holds no privilege on the application tables'
       : `PUBLIC holds ${publicRows.length} privilege(s) on the application tables`,
+  });
+
+  // Only the deployment role may hold a privilege on the application tables.
+  // The table owner keeps its implicit ownership, and the migration roles
+  // must not keep a broad grant.
+  const owner = await postgres.query(`SELECT tableowner FROM pg_tables WHERE schemaname = '${schema}' LIMIT 1;`);
+  const ownerName = (owner.stdout || '').trim();
+  const otherRoles = await postgres.query(`
+    SELECT DISTINCT grantee FROM information_schema.role_table_grants
+    WHERE table_schema = '${schema}' AND grantee <> 'PUBLIC';`);
+  const unexpected = otherRoles.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && line !== role && line !== ownerName);
+  results.push({
+    id: 'only-the-deployment-role-holds-privileges',
+    passed: unexpected.length === 0,
+    detail: unexpected.length === 0
+      ? `only ${role} holds a privilege on the application tables`
+      : `${unexpected.join(', ')} still hold(s) a privilege on the application tables`,
   });
 
   for (const statement of cleanup) {

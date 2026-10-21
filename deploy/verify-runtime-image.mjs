@@ -20,7 +20,7 @@
 //   node deploy/verify-runtime-image.mjs --node-version 24.22.0
 
 import { spawn } from 'node:child_process';
-import { copyFile, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import process from 'node:process';
 
@@ -143,7 +143,8 @@ export async function verifyRuntimeImage(options) {
     intent: { kind: 'move', from: 'e2', to: 'e4' },
   };
   const worker = await run('docker', ['run', '--rm', '-i', '--entrypoint', 'node', image, entry], { input: `${JSON.stringify(request)}\n` });
-  let answered = false;
+  /** @type {boolean} */
+  let answered;
   try {
     const parsed = JSON.parse(worker.stdout.trim().split(/\r?\n/)[0] ?? '');
     answered = parsed.status === 'ok' && parsed.requestId === 'runtime-image-check' && parsed.candidate?.move?.to === 'e4';

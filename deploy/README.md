@@ -72,6 +72,36 @@ schema, create roles or databases, or bypass row security. The API uses a pool
 of at most four connections. A browser build receives only the three public
 `KAMKM_PUBLIC_*` settings from `.env.example`.
 
+## The durable restore fence
+
+A restore replaces the schema of the target database. A fence inside that
+schema would be replaced with it, so a crash between the import and the
+replay of the removal ledger would leave the restored database with the old
+ledger and nothing inside it to say so. The fence therefore lives outside the
+database, in a small file that the restore writes before it imports anything
+and that it removes only after the newest merged removal ledger was replayed
+and verified.
+
+The deployment wires it as one shared volume:
+
+- the database service mounts `restorefence` at
+  `/var/lib/kamkmchess/restore-fence`, read-write, because the restore
+  command writes and clears the fence there;
+- the API service mounts the same volume at the same path, read-only, because
+  the service only reads it;
+- the API receives `ONLINE_RESTORE_FENCE_PATH=/var/lib/kamkmchess/restore-fence/fence.json`.
+
+The volume must be the same volume for both services and it must outlive a
+container restart. A container-local file, a path inside the database schema
+or a path the two services do not share is not a fence: the service would
+never see an open fence and would serve a restored copy whose removal ledger
+was not applied.
+
+The server must load `ONLINE_RESTORE_FENCE_PATH` into its online configuration.
+`node scripts/online/service-wiring.mjs` reports it as a blocker while the
+setting is not read, so a configuration that silently disables the fence
+cannot pass the release gates.
+
 ## Runtime grants and the private rules runtime
 
 `runtime-grants.policy.json` lists the privileges of the runtime role table by

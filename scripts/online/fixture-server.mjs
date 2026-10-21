@@ -115,6 +115,9 @@ async function startFixture(arguments_) {
     '--descriptor', descriptorPath,
     '--rules-worker', rulesWorker,
     ...origins.flatMap((origin) => ['--allow-origin', origin]),
+    ...(option(arguments_, '--api-port') ? ['--api-port', option(arguments_, '--api-port')] : []),
+    ...(arguments_.includes('--queue-enabled') ? ['--queue-enabled'] : []),
+    ...(arguments_.includes('--friend-disabled') ? ['--friend-enabled=false'] : []),
   ], {
     cwd: root,
     windowsHide: true,

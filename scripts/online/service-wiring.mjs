@@ -133,6 +133,57 @@ export function switchDefaultState(text, name) {
 }
 
 /**
+ * The durable restore fence has to be shared between the service and the
+ * restore command, and the service has to load it.
+ * @param {string} root
+ * @returns {Promise<Finding[]>}
+ */
+export async function auditRestoreFence(root) {
+  /** @type {Finding[]} */
+  const findings = [];
+  const setting = 'ONLINE_RESTORE_FENCE_PATH';
+  const apiCompose = await readFile(join(root, 'deploy', 'api.compose.yml'), 'utf8').catch(() => '');
+  const postgresCompose = await readFile(join(root, 'deploy', 'postgres.compose.yml'), 'utf8').catch(() => '');
+
+  let serverReads = false;
+  for (const file of await goFiles(root)) {
+    const text = await readFile(file, 'utf8');
+    // The setting has to be read from the environment. A configuration field
+    // that nothing fills is not a fence.
+    if (/[A-Z][A-Z0-9_]*RESTORE_FENCE_PATH/.test(text)) {
+      serverReads = true;
+      break;
+    }
+  }
+  if (!serverReads) {
+    findings.push(finding(
+      'blocker',
+      'restore-fence-not-loaded',
+      `The server never reads ${setting}. The fence path stays empty, the service never sees an open fence, and a restored copy can serve traffic before the removal ledger was applied.`,
+      `Load ${setting} into the online configuration and refuse to serve while the fence is open.`,
+    ));
+  } else {
+    findings.push(finding('info', 'restore-fence-loaded', `The server reads ${setting}.`, null));
+  }
+
+  const apiMounts = /restorefence:\/var\/lib\/kamkmchess\/restore-fence/.test(apiCompose);
+  const postgresMounts = /restorefence:\/var\/lib\/kamkmchess\/restore-fence/.test(postgresCompose);
+  const apiSets = apiCompose.includes(setting);
+  if (!apiMounts || !postgresMounts || !apiSets) {
+    findings.push(finding(
+      'blocker',
+      'restore-fence-not-shared',
+      'The deployment does not share one durable fence between the service and the restore command.',
+      `Mount the same restorefence volume at /var/lib/kamkmchess/restore-fence in the API and the database service, and set ${setting} for the API.`,
+    ));
+  } else {
+    findings.push(finding('info', 'restore-fence-shared', 'The service and the restore command share one durable fence volume.', null));
+  }
+
+  return findings;
+}
+
+/**
  * Audits the production wiring.
  * @param {string} root
  * @returns {Promise<{findings: Finding[], sources: {file: string, switches: string[], featuresRoute: boolean}[]}>}
@@ -221,7 +272,7 @@ export async function auditServiceWiring(root) {
     ));
   }
 
-  return { findings, sources };
+  return { findings: [...findings, ...(await auditRestoreFence(root))], sources };
 }
 
 async function main() {

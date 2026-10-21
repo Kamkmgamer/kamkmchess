@@ -24,6 +24,11 @@ def sql(statement, database='kamkmchess'):
     return result.stdout.decode().strip()
 
 
+def role_exists(name):
+    """Reports whether a database role exists."""
+    return sql("SELECT 1 FROM pg_roles WHERE rolname='" + name + "'") == '1'
+
+
 def main():
     os.chdir(Path(__file__).resolve().parent)
     if sql("SELECT 1 FROM pg_database WHERE datname='kamkmchess'", 'postgres') != '1':
@@ -81,6 +86,18 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
         statements.append('GRANT ' + ', '.join(sorted(privileges)) +
                           ' ON TABLE public.' + table + ' TO kamkmchess_runtime;')
     sql('\n'.join(statements))
+    # The online migrations create two more application roles and grant them
+    # broad table privileges. The deployment connects as kamkmchess_runtime,
+    # so those roles are unused and must not keep a grant. Provisioning strips
+    # them, so no unused role can hold a privilege the policy does not grant.
+    unused = [name for name in policy.get('unusedRoles', [])
+              if role_exists(name)]
+    if unused:
+        revokes = []
+        for role in unused:
+            revokes.append('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ' + role + ';')
+            revokes.append('REVOKE ALL ON SCHEMA public FROM ' + role + ';')
+        sql('\n'.join(revokes))
     backup_env = Path('backup.env')
     if 'DATABASE_URL=' not in backup_env.read_text():
         settings = dict(line.split('=', 1) for line in Path('postgres.env').read_text().splitlines())

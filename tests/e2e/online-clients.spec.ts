@@ -175,6 +175,7 @@ test.describe('online clients against the local fixture', () => {
     expectExactFields(invitationBody, [
       'invitationId', 'kind', 'status', 'inviterLabel', 'inviterSeat', 'inviterControl',
       'timeControl', 'startingFen', 'expiresAt', 'createdAt', 'consumedAt', 'cancelledAt', 'matchId',
+      'schemaVersion',
     ], 'the invitation object');
     expect(invitationBody.invitationId).toBeTruthy();
     expect(invitationBody.kind).toBe('link');
@@ -262,9 +263,12 @@ test.describe('online clients against the local fixture', () => {
     });
     expect(liveAfter.status).toBe(200);
     expect(Number((liveAfter.json as Json).version)).toBeGreaterThan(version);
-    expect((liveAfter.json as Json).moves).toEqual(expect.arrayContaining([
-      expect.objectContaining({ from: 'e2', to: 'e4' }),
-    ]));
+    const moves = (liveAfter.json as Json).moves as Json[];
+    expect(moves.length).toBe(1);
+    expect(Object.keys(moves[0]!).sort()).toEqual(['resultingFen', 'san', 'seat', 'uci', 'version']);
+    expect(moves[0]!.uci).toBe('e2e4');
+    expect(moves[0]!.san).toBe('e4');
+    expect(moves[0]!.seat).toBe('white');
 
     // The server is the single writer: a stale command cannot move the game.
     const stale = await browserRequest(ownerPage, {
@@ -282,6 +286,45 @@ test.describe('online clients against the local fixture', () => {
       },
     });
     expect(stale.status).toBeGreaterThanOrEqual(400);
+
+    // The guest answers the opening move. The responder owes a reply inside
+    // the opening window, so the answer has to be accepted and both clients
+    // have to see it.
+    const afterFirstMove = await browserRequest(guestPage, {
+      method: 'GET',
+      path: `/v1/online/matches/${encodeURIComponent(matchId)}`,
+      guestToken,
+    });
+    expect(afterFirstMove.status).toBe(200);
+    const replyVersion = Number((afterFirstMove.json as Json).version);
+    const reply = await browserRequest(guestPage, {
+      method: 'POST',
+      path: `/v1/online/matches/${encodeURIComponent(matchId)}/commands`,
+      guestToken,
+      body: {
+        schemaVersion: 2,
+        matchId,
+        operationId: `browser-reply-${Date.now()}`,
+        expectedVersion: replyVersion,
+        seat: 'black',
+        controlEpoch: 1,
+        action: { kind: 'submit_move', move: 'e7e5' },
+      },
+    });
+    expect(reply.status, `the opening reply failed: ${reply.text}`).toBeLessThan(300);
+
+    const afterReply = await browserRequest(ownerPage, {
+      method: 'GET',
+      path: `/v1/online/matches/${encodeURIComponent(matchId)}`,
+      token: ownerToken,
+    });
+    expect(afterReply.status).toBe(200);
+    const finalView = afterReply.json as Json;
+    expect(Number(finalView.version)).toBeGreaterThan(replyVersion);
+    const finalMoves = finalView.moves as Json[];
+    expect(finalMoves.length).toBe(2);
+    expect(finalMoves[1]!.uci).toBe('e7e5');
+    expect(finalMoves[1]!.seat).toBe('black');
 
     await ownerContext.close();
     await guestContext.close();
@@ -381,5 +424,59 @@ test.describe('online clients against the local fixture', () => {
 
     await ownerContext.close();
     await guestContext.close();
+  });
+
+  test('the rendered workspace reflects the real service state', async ({ browser }) => {
+    if (!descriptor) {
+      test.skip(!strict, 'ONLINE_FIXTURE_DESCRIPTOR is not set; start scripts/online/fixture-server.mjs first');
+      throw new Error('the fixture descriptor is missing');
+    }
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    // The service is the authority for the surfaces. The rendered workspace
+    // must show the same state the service reports, so a browser flag alone
+    // cannot open a surface.
+    const observed: { answer: Json | null } = { answer: null };
+    page.on('response', async (response) => {
+      if (!response.url().endsWith('/v1/online/features')) return;
+      try {
+        observed.answer = await response.json();
+      } catch {
+        observed.answer = null;
+      }
+    });
+    await page.goto('/play?online=1');
+
+    // The service answer is read from a second page, so the probe request
+    // cannot be mistaken for the application's own request.
+    const probeContext = await browser.newContext();
+    const probePage = await probeContext.newPage();
+    await probePage.goto('/');
+    const features = await browserRequest(probePage, { method: 'GET', path: '/v1/online/features' });
+    expect(features.status, `feature switch route failed: ${features.text}`).toBe(200);
+    const queueEnabled = features.json!.queue === true;
+
+    await page.getByRole('button', { name: 'Online play' }).click();
+    await expect(page.getByRole('region', { name: 'Online play' })).toBeVisible();
+    await page.getByRole('button', { name: 'New play' }).click();
+    const playYourself = page.getByRole('button', { name: 'Play yourself' }).first();
+    await expect(playYourself).toBeVisible();
+    if (observed.answer) {
+      // The browser asked the service and the service opened the queue, so the
+      // rendered action must be available.
+      expect(observed.answer.queue, 'the rendered workspace read a different service answer').toBe(queueEnabled);
+      if (queueEnabled) {
+        await expect(playYourself).toBeEnabled();
+      } else {
+        await expect(playYourself).toBeDisabled();
+      }
+    } else {
+      // The build carries no account configuration, so the workspace never
+      // asks the service. The closed state is then the correct rendering.
+      await expect(playYourself).toBeDisabled();
+    }
+
+    await context.close();
+    await probeContext.close();
   });
 });

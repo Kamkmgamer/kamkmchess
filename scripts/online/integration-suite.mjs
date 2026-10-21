@@ -151,9 +151,41 @@ export async function runIntegrationSuite(options) {
   };
 
   if (options.record) {
-    await writeRecords(root, report);
+    await writeRecords(root, report, map);
+    if (report.browser?.status === 'passed') {
+      await writeBrowserRecords(root, report);
+    }
   }
   return report;
+}
+
+/**
+ * Records the evidence of the browser run.
+ *
+ * The browser cases are the real clients: two Chromium contexts against the
+ * real service. A scenario is only recorded when the browser run passed.
+ * @param {string} root
+ * @param {any} report
+ */
+async function writeBrowserRecords(root, report) {
+  const contract = JSON.parse(await readFile(join(root, 'docs', 'spec', 'online-play-acceptance.json'), 'utf8'));
+  const browserMap = JSON.parse(await readFile(join(root, 'scripts', 'online', 'browser-map.json'), 'utf8'));
+  const directory = join(root, 'docs', 'evidence', 'online', 'records');
+  await mkdir(directory, { recursive: true });
+  for (const [scenarioId, cases] of Object.entries(browserMap.scenarios)) {
+    const scenario = contract.cases.find((item) => item.id === scenarioId);
+    const record = {
+      scenarioId,
+      status: 'passed',
+      kind: 'local',
+      commit: report.commit,
+      command: 'pnpm exec playwright test tests/e2e/online-clients.spec.ts (ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1)',
+      expected: scenario?.scenario ?? '',
+      actual: `The browser cases passed against the real service: ${cases.join('; ')}.`,
+      notes: 'Local browser evidence. It does not certify a native assistive-technology run, a live host or a released cohort.',
+    };
+    await writeFile(join(directory, `${scenarioId}.json`), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  }
 }
 
 /**
@@ -196,7 +228,9 @@ async function runBrowserClients(root, databaseUrl) {
 
   const playwright = await runCommand(process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm', ['exec', 'playwright', 'test', 'tests/e2e/online-clients.spec.ts', '--reporter=line'], {
     cwd: root,
-    env: { ONLINE_FIXTURE_DESCRIPTOR: descriptorPath },
+    // The browser run is strict: a missing route or a missing field fails
+    // instead of being reported as a skip.
+    env: { ONLINE_FIXTURE_DESCRIPTOR: descriptorPath, ONLINE_FIXTURE_STRICT: '1' },
   });
   fixture.kill('SIGTERM');
   return {

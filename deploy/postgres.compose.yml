@@ -16,6 +16,11 @@ services:
       - ./bin:/opt/kamkmchess:ro
       - ./backups:/backups
       - ./backup.env:/run/secrets/backup.env:ro
+      # The durable restore fence. The restore command writes and clears it
+      # here, and the API reads the same file from the same volume. A fence
+      # inside the database schema would be replaced by the restore it has to
+      # guard, and a container-local file would not survive a restart.
+      - restorefence:/var/lib/kamkmchess/restore-fence
     command:
       - postgres
       - -c
@@ -47,3 +52,6 @@ services:
 
 volumes:
   pgdata:
+  # The durable restore fence is shared with the API container. Both must see
+  # the same file, and it must outlive a container restart.
+  restorefence:

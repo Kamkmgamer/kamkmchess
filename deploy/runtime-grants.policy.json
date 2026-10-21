@@ -2,6 +2,7 @@
   "policyVersion": 1,
   "role": "kamkmchess_runtime",
   "schema": "public",
+  "unusedRoles": ["kamkm_online_api", "kamkm_online_rules"],
   "note": "Least-privilege table grants for the API's runtime role. Every table is listed explicitly. There is no blanket grant, no default privilege and no grant on a table that the application does not use. The grant set is derived from the checked-in migrations and verified against the statements the Go writer actually executes.",
   "privileges": {
     "games": ["SELECT", "INSERT", "UPDATE"],
@@ -48,7 +49,8 @@
     "online_account_deletions": ["SELECT", "INSERT"],
     "online_removal_requests": ["SELECT", "INSERT", "UPDATE"],
     "online_removal_ledger": ["SELECT", "INSERT"],
-    "online_restore_gates": ["SELECT", "INSERT", "UPDATE"]
+    "online_restore_gates": ["SELECT", "INSERT", "UPDATE"],
+    "online_removal_subjects": ["SELECT", "INSERT"]
   },
   "rationale": {
     "games": "The account game's metadata row is created, updated and read. It is never deleted: an owner deletion writes a tombstone.",
@@ -94,6 +96,7 @@
     "online_account_deletions": "The account deletion markers are append-only. They are the evidence that a deleted account stays deleted.",
     "online_removal_requests": "A removal request is created, updated when it is verified or applied and read by the ledger.",
     "online_removal_ledger": "The removal ledger is append-only. It is replayed after a restore and must survive it.",
-    "online_restore_gates": "A restore gate is created when a restored copy is prepared and released only after the removal ledger is applied."
+    "online_restore_gates": "A restore gate is created when a restored copy is prepared and released only after the removal ledger is applied.",
+    "online_removal_subjects": "The subject removals are append-only. They record which owner or guest a removal request applies to and survive a restore."
   }
 }

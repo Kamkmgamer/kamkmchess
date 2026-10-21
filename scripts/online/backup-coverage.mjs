@@ -93,7 +93,7 @@ export async function inspectBackup(root) {
     const goFiles = [];
     const walk = async (directory) => {
       /** @type {import('node:fs').Dirent[]} */
-      let entries = [];
+      let entries;
       try {
         entries = await readdir(directory, { withFileTypes: true });
       } catch {

@@ -159,6 +159,19 @@ test('the wiring audit blocks a tree without the feature route and the server sw
   assert.ok(codes.includes('server-switch-unused'));
 });
 
+test('the restore fence has to be loaded and shared', async () => {
+  const root = await makeTree({
+    'backend/serverapp/server.go': 'package serverapp\n\ntype OnlineConfig struct{ RestoreFencePath string }\n',
+    'deploy/api.compose.yml': 'services:\n  api:\n    environment:\n      ONLINE_RESTORE_FENCE_PATH: /var/lib/kamkmchess/restore-fence/fence.json\n',
+    'deploy/postgres.compose.yml': 'services:\n  postgres:\n    volumes:\n      - restorefence:/var/lib/kamkmchess/restore-fence\n',
+  });
+  const report = await auditServiceWiring(root);
+  const codes = report.findings.map((finding) => finding.code);
+  // A configuration field that nothing fills is not a fence.
+  assert.ok(codes.includes('restore-fence-not-loaded'));
+  assert.ok(codes.includes('restore-fence-not-shared'));
+});
+
 test('the wiring audit accepts a tree that serves the feature route behind a closed switch', async () => {
   const root = await makeTree({
     'backend/serverapp/server.go': [
