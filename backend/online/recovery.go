@@ -143,6 +143,12 @@ func (s *Service) PendingSuspension(ctx context.Context) (*RecoveryBoundary, err
 // dependency that keeps failing does not plan a second interruption and the
 // clock is refunded once.
 func (s *Service) SuspendForDependency(ctx context.Context, dependency string) error {
+	// The interruption is only planned for a dependency the service knows.
+	// An unknown name is never planned as an interruption of the rules, and
+	// the caller learns that the name is not supported.
+	if dependency != DependencyRules && dependency != DependencyDatabase {
+		return ErrInvalidArgument
+	}
 	// The interruption of the open failure episode of this instance is
 	// identified by the boundary of its first plan.
 	//

@@ -41,7 +41,7 @@ func (failingEvaluator) Evaluate(context.Context, RulesInput) (Candidate, error)
 func TestHealthIgnoresACancelledEvaluation(t *testing.T) {
 	reporter := NewHealthReporter(nil)
 	service := &Service{health: reporter}
-	service.noteEvaluatorSuccess()
+	service.observeSuccess(context.Background(), service.observationSeq.Add(1))
 	if err := reporter.ReportDependency(context.Background(), DependencyRules, HealthHealthy, "the rules process answered"); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestProbeNeverRecoversARealOutage(t *testing.T) {
 		t.Fatalf("the rules dependency = %q after a failed probe, want %q", state, HealthDegraded)
 	}
 	// A real evaluation of the primary process clears the dependency.
-	service.noteEvaluatorSuccess()
+	service.observeSuccess(context.Background(), service.observationSeq.Add(1))
 	if state := reporter.Current().Rules.State; state != HealthHealthy {
 		t.Fatalf("the rules dependency = %q after a real evaluation, want %q", state, HealthHealthy)
 	}

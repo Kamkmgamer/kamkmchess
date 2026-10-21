@@ -367,9 +367,21 @@ func (s *Service) ValidateSetup(ctx context.Context, setup CreateMatchSetup) err
 		Moves:  []Move{},
 		Offers: []Offer{},
 	}
+	// The epoch of the outage is read before the validation, so the
+	// identity of the episode is the epoch of the outage.
+	seq := s.observationSeq.Add(1)
+	causal, _ := s.causalEpoch(ctx)
 	if err := s.evaluator.ValidateSetup(ctx, BuildRulesInput(match, match.Moves, "")); err != nil {
-		return ErrInvalidContract
+		if errors.Is(err, ErrInvalidContract) || errors.Is(err, ErrActionNotAllowed) {
+			// A refused setup is a contract outcome, not an outage.
+			return ErrInvalidContract
+		}
+		// A broken rules process is an outage, not an invalid setup, and
+		// the health boundary has to learn about it.
+		s.observeFailure(ctx, causal, seq, err)
+		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
+	s.observeSuccess(ctx, seq)
 	return nil
 }
 

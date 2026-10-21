@@ -126,12 +126,27 @@ type HealthReporter struct {
 	mu           sync.RWMutex
 	dependencies map[string]DependencyHealth
 	order        []string
+	// written is the durable state of every dependency: the state of the
+	// last checkpoint that was written.
+	//
+	// The checkpoint is written when the durable state differs from the
+	// observation, so a report that failed is written again by the next
+	// observation, and a healthy service does not grow a checkpoint row.
+	written map[string]HealthState
 }
 
 // NewHealthReporter binds a reporter to a pool.
 func NewHealthReporter(db *pgxpool.Pool) *HealthReporter {
-	return &HealthReporter{db: db, dependencies: map[string]DependencyHealth{}}
+	return &HealthReporter{db: db, dependencies: map[string]DependencyHealth{}, written: map[string]HealthState{}}
 }
+
+// ReportBudget bounds the durable report of a dependency.
+//
+// The report is a database write, and it happens while the episode of the
+// instance is guarded, so a write that waits for a connection must not wait
+// for ever: the observation of the caller returns and the next observation
+// writes the checkpoint again.
+const ReportBudget = 5 * time.Second
 
 // ReportDependency records one observation of one dependency.
 //
@@ -155,22 +170,33 @@ func (h *HealthReporter) ReportDependency(ctx context.Context, dependency string
 	if _, known := h.dependencies[dependency]; !known {
 		h.order = append(h.order, dependency)
 	}
-	previous, had := h.dependencies[dependency]
 	h.dependencies[dependency] = DependencyHealth{State: state, Detail: detail, RecordedAt: recordedAt}
 	h.mu.Unlock()
-	changed := !had || previous.State != state
+	durable, known := h.written[dependency]
 	if h.db == nil {
+		// Without a database there is no durable state, so the observation
+		// is the state.
+		h.mu.Lock()
+		h.written[dependency] = state
+		h.mu.Unlock()
 		return nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, ReportBudget)
+	defer cancel()
 	var now time.Time
 	if err := h.db.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
 		return err
 	}
-	if changed {
+	if !known || durable != state {
 		if _, err := h.db.Exec(ctx, `INSERT INTO online_service_health(checkpoint_id,dependency,state,detail,recorded_at) VALUES($1,$2,$3,$4,$5)`,
 			healthCheckpointID(dependency, state, now.UTC()), dependency, string(state), detail, now.UTC()); err != nil {
+			// The checkpoint is not written, so the durable state stays
+			// the old one and the next observation writes it again.
 			return err
 		}
+		h.mu.Lock()
+		h.written[dependency] = state
+		h.mu.Unlock()
 	}
 	if !h.OverallHealthy() {
 		// The service is not healthy, so it is not alive. The liveness
@@ -179,6 +205,49 @@ func (h *HealthReporter) ReportDependency(ctx context.Context, dependency string
 		return nil
 	}
 	return h.refreshLiveness(ctx, now.UTC())
+}
+
+// RefreshDependency writes a checkpoint of a dependency when the shared state
+// is worse than the given state.
+//
+// The shared state is the newest checkpoint of every dependency, so a healthy
+// instance that answers again restores it and the claim path of the healthy
+// instances opens again.
+//
+// The refresh is not a claim that every instance is healthy. The instance
+// whose worker is broken keeps its own state and its own claim path closed;
+// the refresh only says that this instance answered.
+func (h *HealthReporter) RefreshDependency(ctx context.Context, dependency string, state HealthState, detail string) error {
+	if h == nil || h.db == nil {
+		return nil
+	}
+	if dependency == "" || !state.Valid() {
+		return ErrInvalidArgument
+	}
+	ctx, cancel := context.WithTimeout(ctx, ReportBudget)
+	defer cancel()
+	var shared string
+	if err := h.db.QueryRow(ctx, `SELECT state FROM online_service_health WHERE dependency=$1 ORDER BY recorded_at DESC, checkpoint_id DESC LIMIT 1`, dependency).Scan(&shared); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	candidate := HealthState(shared)
+	if candidate.severity() <= state.severity() {
+		// The shared state is not worse than the observation, so the
+		// checkpoint of the observation is the newest one already.
+		return nil
+	}
+	var now time.Time
+	if err := h.db.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return err
+	}
+	if _, err := h.db.Exec(ctx, `INSERT INTO online_service_health(checkpoint_id,dependency,state,detail,recorded_at) VALUES($1,$2,$3,$4,$5)`,
+		healthCheckpointID(dependency, state, now.UTC()), dependency, string(state), detail, now.UTC()); err != nil {
+		return err
+	}
+	return nil
 }
 
 // OverallHealthy reports whether every observed dependency is healthy.
@@ -501,10 +570,10 @@ func (s *Service) ProbeRules(ctx context.Context) error {
 			if s.busy(err) || s.cancelled(err) {
 				return err
 			}
-			s.observeFailure(causal, seq, err)
+			s.observeFailure(ctx, causal, seq, err)
 			return err
 		}
-		s.observeSuccess(seq)
+		s.observeSuccess(ctx, seq)
 		return nil
 	}
 	probeCtx := ctx
@@ -525,10 +594,10 @@ func (s *Service) ProbeRules(ctx context.Context) error {
 			// either.
 			return err
 		}
-		s.observeFailure(causal, seq, err)
+		s.observeFailure(ctx, causal, seq, err)
 		return err
 	}
-	s.observeSuccess(seq)
+	s.observeSuccess(ctx, seq)
 	return nil
 }
 
@@ -561,7 +630,7 @@ func (s *Service) causalEpoch(ctx context.Context) (int64, error) {
 // A failure that is older than the newest success is stale: the dependency
 // answered after that failure was made, so it neither opens an episode nor
 // degrades the dependency.
-func (s *Service) observeFailure(causal int64, seq int64, err error) {
+func (s *Service) observeFailure(ctx context.Context, causal int64, seq int64, err error) {
 	s.episodeMu.Lock()
 	defer s.episodeMu.Unlock()
 	if s.busy(err) || s.cancelled(err) {
@@ -577,7 +646,7 @@ func (s *Service) observeFailure(causal int64, seq int64, err error) {
 		s.latestFailureSeq = seq
 		s.episodePlanned = false
 		s.episodeBoundary = ""
-		s.reportRulesDegraded(err)
+		s.reportRulesDegraded(ctx, err)
 		return
 	}
 	if seq < s.episodeFirstSeq {
@@ -589,13 +658,13 @@ func (s *Service) observeFailure(causal int64, seq int64, err error) {
 			s.episodeFirstSeq = seq
 			s.episodeEpoch = causal
 		}
-		s.reportRulesDegraded(err)
+		s.reportRulesDegraded(ctx, err)
 		return
 	}
 	if seq > s.latestFailureSeq {
 		s.latestFailureSeq = seq
 	}
-	s.reportRulesDegraded(err)
+	s.reportRulesDegraded(ctx, err)
 }
 
 // observeSuccess records a successful observation of the rules dependency.
@@ -605,7 +674,7 @@ func (s *Service) observeFailure(causal int64, seq int64, err error) {
 // than the newest failure answered before that failure, so it neither closes
 // the episode nor reports the dependency as healthy: the healthy report would
 // hide the dependency that is still broken.
-func (s *Service) observeSuccess(seq int64) {
+func (s *Service) observeSuccess(ctx context.Context, seq int64) {
 	s.episodeMu.Lock()
 	defer s.episodeMu.Unlock()
 	if seq > s.latestSuccessSeq {
@@ -621,32 +690,39 @@ func (s *Service) observeSuccess(seq int64) {
 		s.episodePlanned = false
 		s.episodeBoundary = ""
 	}
-	s.reportRulesHealthy()
+	s.reportRulesHealthy(ctx)
 }
 
 // reportRulesDegraded records that the rules process did not answer.
 //
 // The reporter is written while the episode is locked, so the report and the
 // decision that ordered it belong to the same observation.
-func (s *Service) reportRulesDegraded(err error) {
+func (s *Service) reportRulesDegraded(ctx context.Context, err error) {
 	if s.health == nil {
 		return
 	}
-	_ = s.health.ReportDependency(context.Background(), DependencyRules, HealthDegraded, "the rules process did not answer")
+	_ = s.health.ReportDependency(ctx, DependencyRules, HealthDegraded, "the rules process did not answer")
 }
 
 // reportRulesHealthy records that the rules process answered again.
 //
 // Only a real evaluation clears a degraded rules state. A healthy database
 // never does.
-func (s *Service) reportRulesHealthy() {
+//
+// The shared state is the newest checkpoint of every dependency, so a healthy
+// instance that answers again restores it and the claim path of the healthy
+// instances opens again. The refresh is not a claim that every instance is
+// healthy: the instance whose worker is broken keeps its own state and its
+// own claim path closed.
+func (s *Service) reportRulesHealthy(ctx context.Context) {
 	if s.health == nil {
 		return
 	}
-	if s.health.Current().Rules.State == HealthHealthy {
+	if s.health.Current().Rules.State != HealthHealthy {
+		_ = s.health.ReportDependency(ctx, DependencyRules, HealthHealthy, "the rules process answered")
 		return
 	}
-	_ = s.health.ReportDependency(context.Background(), DependencyRules, HealthHealthy, "the rules process answered")
+	_ = s.health.RefreshDependency(ctx, DependencyRules, HealthHealthy, "the rules process answered")
 }
 
 // RepairRules replaces the rules process and proves that the replacement
@@ -688,10 +764,10 @@ func (s *Service) RepairRules(ctx context.Context) error {
 		if s.busy(err) || s.cancelled(err) {
 			return err
 		}
-		s.observeFailure(causal, seq, err)
+		s.observeFailure(ctx, causal, seq, err)
 		return err
 	}
-	s.observeSuccess(seq)
+	s.observeSuccess(ctx, seq)
 	return nil
 }
 
@@ -743,15 +819,7 @@ func probeRulesInput() RulesInput {
 // successes: a failure that is older than the newest success is stale and it
 // does not degrade the dependency.
 func (s *Service) noteEvaluatorFailure(err error) {
-	s.observeFailure(0, s.observationSeq.Add(1), err)
-}
-
-// noteEvaluatorSuccess records that the rules process answered again.
-//
-// Only a real evaluation clears a degraded rules state. A healthy database
-// never does.
-func (s *Service) noteEvaluatorSuccess() {
-	s.observeSuccess(s.observationSeq.Add(1))
+	s.observeFailure(context.Background(), 0, s.observationSeq.Add(1), err)
 }
 
 // healthCheckpointID mints the identity of one durable checkpoint.

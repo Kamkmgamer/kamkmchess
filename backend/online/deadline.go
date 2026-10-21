@@ -272,10 +272,20 @@ func (s *Service) settleClockExpiry(ctx context.Context, snapshot Match) (Deadli
 	input := BuildRulesInput(snapshot, snapshot.Moves, "")
 	// External rules evaluation happens with no database lock or transaction
 	// held.
+	//
+	// The epoch of the outage is read before the evaluation, and the
+	// failure is reported to the health boundary: a broken rules process is
+	// an outage of the dependency, not a missing timeout policy.
+	seq := s.observationSeq.Add(1)
+	causal, _ := s.causalEpoch(ctx)
 	facts, err := evaluator.EvaluateTimeout(ctx, input, expired)
 	if err != nil {
+		if !s.busy(err) && !s.cancelled(err) {
+			s.observeFailure(ctx, causal, seq, err)
+		}
 		return "", fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
+	s.observeSuccess(ctx, seq)
 	if err = facts.Validate(); err != nil {
 		return "", err
 	}

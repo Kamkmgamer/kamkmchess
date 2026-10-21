@@ -55,7 +55,7 @@ func TestEpisodeKeepsTheIdentityOfItsEarliestObservation(t *testing.T) {
 		group.Add(1)
 		go func(observation int64) {
 			defer group.Done()
-			service.observeFailure(observation, observation, errBrokenWorker)
+			service.observeFailure(context.Background(), observation, observation, errBrokenWorker)
 		}(int64(index + 1))
 	}
 	group.Wait()
@@ -63,13 +63,13 @@ func TestEpisodeKeepsTheIdentityOfItsEarliestObservation(t *testing.T) {
 		t.Fatalf("the identity of the episode = %d after sixteen concurrent failures, want the epoch of the earliest observation (1)", got)
 	}
 	// A later failure does not move the identity of the episode.
-	service.observeFailure(99, 99, errBrokenWorker)
+	service.observeFailure(context.Background(), 99, 99, errBrokenWorker)
 	if got := service.episodeEpoch; got != 1 {
 		t.Fatalf("the identity of the episode = %d after a later failure, want 1", got)
 	}
 	// An observation that is older is the earliest one, so it owns the
 	// identity while no interruption was planned with it.
-	service.observeFailure(42, 0, errBrokenWorker)
+	service.observeFailure(context.Background(), 42, 0, errBrokenWorker)
 	if got := service.episodeEpoch; got != 42 {
 		t.Fatalf("the identity of the episode = %d after an older observation, want 42", got)
 	}
@@ -77,7 +77,7 @@ func TestEpisodeKeepsTheIdentityOfItsEarliestObservation(t *testing.T) {
 	service.episodeMu.Lock()
 	service.episodePlanned = true
 	service.episodeMu.Unlock()
-	service.observeFailure(7, 0, errBrokenWorker)
+	service.observeFailure(context.Background(), 7, 0, errBrokenWorker)
 	if got := service.episodeEpoch; got != 42 {
 		t.Fatalf("the identity of the episode = %d after a planned interruption, want 42", got)
 	}
@@ -104,14 +104,14 @@ func TestEpisodeSurvivesAStaleSuccess(t *testing.T) {
 		t.Fatalf("the rules dependency = %q after the failure, want %q", state, HealthDegraded)
 	}
 	// A newer failure does not move the identity of the episode.
-	service.observeFailure(6, 7, errBrokenWorker)
+	service.observeFailure(context.Background(), 6, 7, errBrokenWorker)
 	if got := service.episodeEpoch; got != 0 {
 		t.Fatalf("the identity of the episode = %d, want the unknown identity of the probe", got)
 	}
 
 	// A success that is older than that failure is stale: the episode stays
 	// open and the dependency stays degraded.
-	service.observeSuccess(3)
+	service.observeSuccess(context.Background(), 3)
 	if !service.episodeOpen {
 		t.Fatal("a stale success closed the episode of the newest failure")
 	}
@@ -121,7 +121,7 @@ func TestEpisodeSurvivesAStaleSuccess(t *testing.T) {
 
 	// A success that is newer closes the episode and reports the
 	// dependency as healthy.
-	service.observeSuccess(9)
+	service.observeSuccess(context.Background(), 9)
 	if service.episodeOpen {
 		t.Fatal("the success did not close the episode")
 	}
@@ -137,19 +137,19 @@ func TestEpisodeSurvivesAStaleSuccess(t *testing.T) {
 // the success already closed.
 func TestEpisodeIsNotReopenedByADeferredFailure(t *testing.T) {
 	service := &Service{}
-	service.observeFailure(5, 1, errBrokenWorker)
-	service.observeSuccess(9)
+	service.observeFailure(context.Background(), 5, 1, errBrokenWorker)
+	service.observeSuccess(context.Background(), 9)
 	if service.episodeOpen {
 		t.Fatal("the success did not close the episode")
 	}
 	// The deferred failure of the observation that was made before the
 	// success.
-	service.observeFailure(3, 3, errBrokenWorker)
+	service.observeFailure(context.Background(), 3, 3, errBrokenWorker)
 	if service.episodeOpen {
 		t.Fatal("a deferred failure reopened the episode that a success closed")
 	}
 	// A failure that is newer opens a new episode.
-	service.observeFailure(7, 11, errBrokenWorker)
+	service.observeFailure(context.Background(), 7, 11, errBrokenWorker)
 	if !service.episodeOpen {
 		t.Fatal("a new failure did not open an episode")
 	}
@@ -172,10 +172,10 @@ func TestEpisodeOrdersADeferredFailureAgainstASuccess(t *testing.T) {
 	go func() {
 		defer close(done)
 		<-release
-		service.observeFailure(5, 3, errBrokenWorker)
+		service.observeFailure(context.Background(), 5, 3, errBrokenWorker)
 	}()
 	// The success completes while the failure waits.
-	service.observeSuccess(9)
+	service.observeSuccess(context.Background(), 9)
 	close(release)
 	<-done
 	// The deferred failure must not degrade the dependency.
@@ -196,13 +196,13 @@ func TestEpisodeOrdersADeferredFailureAgainstASuccess(t *testing.T) {
 func TestEpisodeOrdersADeferredSuccessAgainstAFailure(t *testing.T) {
 	reporter := NewHealthReporter(nil)
 	service := &Service{health: reporter}
-	service.observeFailure(5, 7, errBrokenWorker)
+	service.observeFailure(context.Background(), 5, 7, errBrokenWorker)
 	release := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		<-release
-		service.observeSuccess(3)
+		service.observeSuccess(context.Background(), 3)
 	}()
 	close(release)
 	<-done
@@ -221,14 +221,14 @@ func TestEpisodeOrdersADeferredSuccessAgainstAFailure(t *testing.T) {
 func TestEpisodeIgnoresABusyOrCancelledObservation(t *testing.T) {
 	reporter := NewHealthReporter(nil)
 	service := &Service{health: reporter}
-	service.observeFailure(5, 1, ErrRulesBusy)
+	service.observeFailure(context.Background(), 5, 1, ErrRulesBusy)
 	if service.episodeOpen {
 		t.Fatal("a busy observation opened an episode")
 	}
 	if state := reporter.Current().Rules.State; state == HealthDegraded {
 		t.Fatalf("the rules dependency = %q after a busy observation, want the state of the service", state)
 	}
-	service.observeFailure(5, 1, context.Canceled)
+	service.observeFailure(context.Background(), 5, 1, context.Canceled)
 	if service.episodeOpen {
 		t.Fatal("a cancelled observation opened an episode")
 	}
@@ -242,13 +242,13 @@ func TestEpisodeIgnoresABusyOrCancelledObservation(t *testing.T) {
 // never destroys the identity that dedupes the outage.
 func TestEpisodeKeepsAKnownIdentityWhenTheEpochIsUnreadable(t *testing.T) {
 	service := &Service{}
-	service.observeFailure(5, 1, errBrokenWorker)
-	service.observeFailure(0, 2, errBrokenWorker)
+	service.observeFailure(context.Background(), 5, 1, errBrokenWorker)
+	service.observeFailure(context.Background(), 0, 2, errBrokenWorker)
 	if got := service.episodeEpoch; got != 5 {
 		t.Fatalf("the identity of the episode = %d after an unreadable epoch, want 5", got)
 	}
 	empty := &Service{}
-	empty.observeFailure(0, 1, errBrokenWorker)
+	empty.observeFailure(context.Background(), 0, 1, errBrokenWorker)
 	if got := empty.episodeEpoch; got != 0 {
 		t.Fatalf("the identity of the episode = %d, want the unknown identity", got)
 	}

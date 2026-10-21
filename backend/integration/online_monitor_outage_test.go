@@ -157,6 +157,72 @@ func TestOnlineAStalePlanOfAFailedRequestFindsTheBoundaryOfTheOutage(t *testing.
 	}
 }
 
+// TestOnlineTheSharedHealthRecoversWhenAHealthyPeerAnswers covers the shared
+// health of the rules dependency.
+//
+// The shared state is the newest checkpoint of every dependency, so the
+// failure of one instance closes the claim path of every match of the
+// deployment. A healthy instance that answers again restores it: the refresh
+// is not a claim that every instance is healthy, the broken instance keeps
+// its own state and its own claim path closed.
+func TestOnlineTheSharedHealthRecoversWhenAHealthyPeerAnswers(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	broken := &outageEvaluator{}
+	broken.broken.Store(true)
+	working := &outageEvaluator{}
+	// Every instance keeps its own reporter, and the durable checkpoints of
+	// the dependency are shared.
+	brokenHealth := online.NewHealthReporter(fixture.pool)
+	workingHealth := online.NewHealthReporter(fixture.pool)
+	brokenService, err := online.Open(ctx, fixture.pool, broken, online.WithHealthReporter(brokenHealth))
+	if err != nil {
+		t.Fatalf("open the broken instance: %v", err)
+	}
+	workingService, err := online.Open(ctx, fixture.pool, working, online.WithHealthReporter(workingHealth))
+	if err != nil {
+		t.Fatalf("open the working instance: %v", err)
+	}
+
+	// The healthy instance answers first, so the shared state is healthy.
+	if err = workingService.ProbeRules(ctx); err != nil {
+		t.Fatalf("the probe of the healthy worker: %v", err)
+	}
+	// The broken instance records the failure.
+	if err = brokenService.ProbeRules(ctx); err == nil {
+		t.Fatal("the probe of a broken worker answered")
+	}
+	shared, err := workingHealth.SharedState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shared != online.HealthDegraded {
+		t.Fatalf("the shared state = %q while one instance is degraded, want %q", shared, online.HealthDegraded)
+	}
+
+	// The healthy instance answers again. The shared state is restored, so
+	// the claim path of the healthy instances opens again.
+	if err = workingService.ProbeRules(ctx); err != nil {
+		t.Fatalf("the probe of the healthy worker: %v", err)
+	}
+	shared, err = workingHealth.SharedState(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if shared != online.HealthHealthy {
+		t.Fatalf("the shared state = %q after the healthy peer answered, want %q", shared, online.HealthHealthy)
+	}
+	// The broken instance keeps its own state, so its own claim path stays
+	// closed.
+	local, err := brokenService.Health(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if local.Rules.State != online.HealthDegraded {
+		t.Fatalf("the local state of the broken instance = %q, want %q", local.Rules.State, online.HealthDegraded)
+	}
+}
+
 // TestOnlineMonitorPlansOneInterruptionForOneOutage covers the outage of one
 // broken worker with the real monitor.
 //

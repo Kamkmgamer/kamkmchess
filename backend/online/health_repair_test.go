@@ -96,7 +96,7 @@ func TestRepairRulesLeavesTheHealthAloneOnABusyRepair(t *testing.T) {
 	evaluator := &repairableEvaluator{repairErr: ErrRulesBusy}
 	reporter := NewHealthReporter(nil)
 	service := &Service{evaluator: evaluator, health: reporter}
-	service.noteEvaluatorSuccess()
+	service.observeSuccess(context.Background(), service.observationSeq.Add(1))
 	if err := service.RepairRules(context.Background()); err == nil {
 		t.Fatal("the repair of a busy worker answered")
 	}

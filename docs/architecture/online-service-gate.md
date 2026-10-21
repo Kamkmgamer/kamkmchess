@@ -250,12 +250,18 @@ an episode, so it always plans the interruption of the current epoch.
 
 Every instance keeps its own health reporter, but the durable checkpoints are
 written for the dependency, not for the instance, and the shared state reads
-the newest checkpoint of every dependency. A healthy instance therefore
-overwrites the degraded checkpoint of a broken one, so the shared state is not
-the evidence that every instance is healthy, and the recovery of a planned
-boundary is not gated on it. The evidence that a dependency is broken is the
-local health of the instance that saw it, and that instance keeps it until its
-own worker answers again.
+the newest checkpoint of every dependency. A healthy instance that answers
+again refreshes that checkpoint, so the claim path of the healthy instances
+opens again. The refresh is not a claim that every instance is healthy: the
+instance whose worker is broken keeps its own state and its own claim path
+closed until its own worker answers again, and the recovery of a planned
+boundary is not gated on the shared state.
+
+The durable report of a dependency is a database write, and it happens while
+the episode of the instance is guarded, so it is bounded by a short internal
+budget and by the context of the caller. A report that failed leaves the
+durable state of the dependency unchanged, so the next observation writes the
+checkpoint again.
 
 ## The runner fence
 
