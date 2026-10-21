@@ -192,10 +192,10 @@ async function committedMovesByColour(page: Page): Promise<{ white: string[]; bl
   const white: string[] = [];
   const black: string[] = [];
   for (const row of await rows.all()) {
-    const cells = await row.getByRole('cell').all();
-    if (cells.length < 2) continue;
-    const first = ((await cells[0].textContent()) ?? '').trim();
-    const second = ((await cells[1].textContent()) ?? '').trim();
+    const [whiteCell, blackCell] = await row.getByRole('cell').all();
+    if (!whiteCell || !blackCell) continue;
+    const first = ((await whiteCell.textContent()) ?? '').trim();
+    const second = ((await blackCell.textContent()) ?? '').trim();
     if (first) white.push(first);
     if (second) black.push(second);
   }
