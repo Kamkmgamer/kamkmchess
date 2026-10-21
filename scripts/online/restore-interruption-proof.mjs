@@ -814,10 +814,17 @@ export async function runInterruptionProof(options = {}) {
       return false;
     };
     // The owner of the fence of a case is read while the restore is alive.
-    const waitForOwner = async (fence, container) => {
+    // The binding of the lifecycle writes the digest of the removal ledger
+    // and the durable evidence of it. The owner marker alone does not prove
+    // that the record was written, so the proof waits for the record itself
+    // and opens it with the production reader.
+    const waitForBoundLedger = async (fence, container) => {
       for (let attempt = 0; attempt < 60; attempt += 1) {
         const owner = await fenceOwner(fence);
-        if (owner.restoreId) return owner;
+        if (owner.restoreId && owner.digest.length === 64) {
+          const record = await validateEvidence(fence, owner);
+          if (record.valid) return { owner, record };
+        }
         if (!(await containerRunning(container))) return null;
         await sleep(500);
       }
@@ -870,7 +877,7 @@ export async function runInterruptionProof(options = {}) {
       id: 'the-import-is-killed-during-the-transaction',
       passed: duringBarrier.open && killedDuring.code === 0 && !duringAlive,
       detail: duringBarrier.open && killedDuring.code === 0 && !duringAlive
-        ? `the import transaction was open with the removal ledger destroyed inside it, the restore was killed with signal ${killedDuring.stdout.trim()} and the process is gone`
+        ? `the import transaction was open with the removal ledger destroyed inside it, the container of the restore was killed (${killedDuring.stdout.trim()}) and the process is gone`
         : `the import transaction was not open when the restore was killed: ${await containerLog(duringContainer)}`,
     });
     await run('docker', ['rm', '--force', duringContainer]);
@@ -923,7 +930,7 @@ export async function runInterruptionProof(options = {}) {
       passed: recoveredDuring.code !== 0
         && /not applied in the database|is not applied/i.test(recoveredDuring.stderr + recoveredDuring.stdout),
       detail: recoveredDuring.code !== 0
-        ? `the recovery refused the database whose rows are still unsanitized, and the gate of the restore stays closed (${gateDuring.text || 'unknown'} blocking gate): ${(recoveredDuring.stderr + recoveredDuring.stdout).trim().split('\n').slice(-1)[0] ?? ''}`
+        ? `the recovery refused the database whose rows are still unsanitized, and the fence of the lifecycle stays open, so the service stays closed (${gateDuring.text || 'unknown'} blocking gate): ${(recoveredDuring.stderr + recoveredDuring.stdout).trim().split('\n').slice(-1)[0] ?? ''}`
         : 'the recovery closed the fence of a database whose rows are still unsanitized',
     });
     // The take-over of the same restore replays the owed ledger, sanitizes
@@ -962,7 +969,7 @@ export async function runInterruptionProof(options = {}) {
       id: 'the-import-is-killed-after-the-commit',
       passed: committed && killedAfter.code === 0 && !afterAlive,
       detail: committed && killedAfter.code === 0 && !afterAlive
-        ? `the real psql committed the import, the restore was killed with signal ${killedAfter.stdout.trim()} before the removal ledger was replayed and the process is gone`
+        ? `the real psql committed the import, the container of the restore was killed (${killedAfter.stdout.trim()}) before the removal ledger was replayed and the process is gone`
         : `the import did not commit before the restore was killed: ${await containerLog(afterContainer)}`,
     });
     await run('docker', ['rm', '--force', afterContainer]);
@@ -1036,12 +1043,16 @@ export async function runInterruptionProof(options = {}) {
       '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
     ], { DATABASE_URL: insideDatabaseUrl(context.target.url, afterEntry.database), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
     const stillLost = await removalState(context, afterEntry.database);
+    // The refusal is bound by its reason and not by its exit code: a
+    // recovery that fails for another reason is not the refusal the proof
+    // measures.
+    const lostLedgerReason = /not applied in the database|is not applied/i.test(recovered.stderr + recovered.stdout);
     steps.push({
       id: 'the-recovery-refuses-the-lost-ledger',
-      passed: recovered.code !== 0 && stillLost.matches === '0' && stillLost.subjects === '0',
-      detail: recovered.code !== 0
+      passed: recovered.code !== 0 && lostLedgerReason && stillLost.matches === '0' && stillLost.subjects === '0',
+      detail: recovered.code !== 0 && lostLedgerReason
         ? `the recovery refused a database that lost the removals: ${recovered.stderr.trim().split('\n').slice(-1)[0] ?? ''}`
-        : 'the recovery closed the fence of a database that lost the removals',
+        : `the recovery did not refuse the database that lost the removals for the right reason: ${(recovered.stderr + recovered.stdout).trim().split('\n').slice(-1)[0] ?? ''}`,
     });
 
     // A second recovery has nothing to recover: the fence of the crashed
@@ -1054,12 +1065,14 @@ export async function runInterruptionProof(options = {}) {
       '--database-url-env', 'DATABASE_URL',
       '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
     ], { DATABASE_URL: insideDatabaseUrl(context.target.url, afterEntry.database), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    // The reason of the second refusal is the one of a closed lifecycle.
+    const closedReason = /there is no restore fence to recover/i.test(repeated.stderr + repeated.stdout);
     steps.push({
       id: 'the-repeated-recovery-refuses',
-      passed: repeated.code !== 0,
-      detail: repeated.code !== 0
+      passed: repeated.code !== 0 && closedReason,
+      detail: repeated.code !== 0 && closedReason
         ? `a second recovery of the same restore refuses: ${repeated.stderr.trim().split('\n').slice(-1)[0] ?? ''}`
-        : 'a second recovery of a closed restore was accepted',
+        : `the second recovery was refused for another reason: ${(repeated.stderr + repeated.stdout).trim().split('\n').slice(-1)[0] ?? ''}`,
     });
 
     // ---- the take-over replays the owed ledger --------------------------
@@ -1104,25 +1117,36 @@ export async function runInterruptionProof(options = {}) {
     const evidenceEntry = cases.evidence;
     const evidenceContainer = await startRestore(evidenceEntry.database, 'evidence');
     // The record of the owed ledger is written before the import, so the
-    // proof waits for the owner of the fence before it lets the import go
-    // on.
-    const evidenceOwner = await waitForOwner(evidenceEntry.fence, evidenceContainer);
+    // proof waits for the binding of the lifecycle before it lets the import
+    // go on.
+    const bound = await waitForBoundLedger(evidenceEntry.fence, evidenceContainer);
+    const evidenceOwner = bound?.owner ?? null;
+    // The owner marker alone does not prove that the record was written: the
+    // marker carries the identifier of the restore before the ledgers are
+    // read, and only the binding of the lifecycle writes the digest and the
+    // record. The record is therefore opened with the production reader.
+    const evidenceRecord = bound?.record ?? { valid: false, reason: 'the marker of the lifecycle names no bound removal ledger' };
     steps.push({
       id: 'the-evidence-of-the-owed-ledger-is-written-before-the-import',
-      passed: evidenceOwner !== null && evidenceOwner.restoreId.length > 0,
-      detail: evidenceOwner && evidenceOwner.restoreId
-        ? `the record of the owed ledger of this run is on the disk before the import (${evidenceOwner.restoreId})`
-        : 'the record of the owed ledger was not written before the import',
+      passed: evidenceOwner !== null && evidenceOwner.restoreId.length > 0
+        && evidenceOwner.digest.length === 64 && evidenceRecord.valid,
+      detail: evidenceOwner && evidenceOwner.restoreId && evidenceRecord.valid
+        ? `the record of the owed ledger of this run is on the disk before the import, and it names the restore ${evidenceOwner.restoreId} and the digest of the marker`
+        : `the record of the owed ledger was not written before the import: ${evidenceRecord.reason}`,
     });
     const evidenceCommitted = await waitForCommit(evidenceEntry);
     const evidenceOwnerAfter = await fenceOwner(evidenceEntry.fence);
-    await run('docker', ['kill', evidenceContainer]);
+    const killedEvidence = await run('docker', ['kill', evidenceContainer]);
+    const evidenceAlive = await containerRunning(evidenceContainer);
     await run('docker', ['rm', '--force', evidenceContainer]);
     containers.splice(containers.indexOf(evidenceContainer), 1);
     steps.push({
       id: 'the-restore-of-the-copied-evidence-is-killed-after-the-commit',
-      passed: evidenceCommitted && evidenceOwnerAfter.restoreId.length > 0 && evidenceOwnerAfter.restoreId === evidenceOwner?.restoreId,
-      detail: `the import of this restore committed (${evidenceCommitted}) and the restore ${evidenceOwnerAfter.restoreId || 'of no name'} was killed before the removals were replayed`,
+      passed: evidenceCommitted && killedEvidence.code === 0 && !evidenceAlive
+        && evidenceOwnerAfter.restoreId.length > 0 && evidenceOwnerAfter.restoreId === evidenceOwner?.restoreId,
+      detail: evidenceCommitted && killedEvidence.code === 0 && !evidenceAlive
+        ? `the import of this restore committed (${evidenceCommitted}) and the restore ${evidenceOwnerAfter.restoreId || 'of no name'} was killed before the removals were replayed and the process is gone`
+        : `the restore of the copied evidence was not killed after the commit: committed ${evidenceCommitted}, kill ${killedEvidence.code}, alive ${evidenceAlive}`,
     });
     // The record of this run is copied to a protected place: a directory of
     // mode 0700 and a record of mode 0600, both owned by the restore user.
