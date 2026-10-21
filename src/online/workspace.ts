@@ -265,6 +265,13 @@ export function createOnlineWorkspace(options: OnlineWorkspaceOptions): OnlineWo
 
   function publish(): void {
     if (disposed) return;
+    // The owner of the workspace learns about every change. The drivers of the
+    // engine seats and of the agent seats react to the new snapshot here.
+    try {
+      options.onChange?.();
+    } catch {
+      // A failing driver never breaks the workspace.
+    }
     for (const listener of [...listeners]) listener();
   }
 

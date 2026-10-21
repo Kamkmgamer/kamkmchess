@@ -85,6 +85,9 @@ function createFetchDouble(answers: {
       result = answers.match ?? { status: 404, data: { error: 'not_found' } };
     } else if (path.includes('/v1/online/matches/')) {
       result = answers.matchView ?? { status: 200, data: matchView() };
+    } else if (path.includes('/updates')) {
+      const snapshot = matchView();
+      result = { status: 200, data: { schemaVersion: 1, cursor: snapshot.version, snapshot } };
     } else if (path.includes('/v1/online/features')) {
       result = { status: 200, data: { friends: true, queue: true } };
     }
@@ -433,6 +436,32 @@ describe('the agent binding follows the seat, never the public label (B-26)', ()
     // A switch to a label the owner never connected is refused.
     await expect(composition.agentDecision('match-00000001', 'white', 'switch-model', 'Unknown model'))
       .rejects.toThrow(/not connected/);
+    composition.dispose();
+  });
+});
+
+describe('the composition reacts to a snapshot (R4-03)', () => {
+  it('publishes the change of an attached match', async () => {
+    const { composition } = createComposition();
+    let notifications = 0;
+    const unsubscribe = composition.subscribe(() => { notifications += 1; });
+    // The workspace follows the match, and the update route answers with a
+    // canonical snapshot. The composition has to learn about it, otherwise the
+    // engine seat and the agent seat never play.
+    composition.attachAndFocus('match-00000001', 'white', {
+      kind: 'guest',
+      guestId: 'guest-1',
+      matchId: 'match-00000001',
+      seat: 'white',
+      issue: async () => 'guest-token',
+    });
+    const deadline = Date.now() + 5_000;
+    while (notifications === 0 && Date.now() < deadline) {
+      await new Promise<void>(resolve => { setTimeout(resolve, 25); });
+    }
+    expect(notifications).toBeGreaterThan(0);
+    expect(composition.workspace.state('match-00000001')?.status).not.toBeNull();
+    unsubscribe();
     composition.dispose();
   });
 });

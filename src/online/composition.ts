@@ -98,6 +98,13 @@ interface QueueIntent {
   readonly timeControl: TimeControl;
   readonly entryId: string | null;
   readonly recordId: string;
+  /**
+   * The private selection of the agent at the moment the entry was created.
+   *
+   * The selection is captured before the service is asked, so a model the
+   * owner picks later never replaces the agent of a waiting entry.
+   */
+  readonly selection: ModelSelection | null;
 }
 
 /** The interval of the background poll of a waiting entry. */
@@ -296,6 +303,8 @@ interface RegisteredSeat {
   readonly credential: GuestOnlineCredential;
   /** The identity that owns the seat authority. */
   readonly owner: 'account' | 'guest';
+  /** The identity that held the credential when it was registered. */
+  readonly identityKey: string;
 }
 
 /** Reads every intent of one identity. */
@@ -322,6 +331,7 @@ function readIntents(storage: OnlineCompositionOptions['storage'], identity: str
         timeControl: timeControl as TimeControl,
         entryId: typeof record.entryId === 'string' ? record.entryId : null,
         recordId: typeof record.recordId === 'string' ? record.recordId : '',
+        selection: parseModelSelection(record.selection),
       });
     }
     return intents;
@@ -390,6 +400,29 @@ function createIntentId(): string {
 }
 
 /**
+ * Reads a persisted model selection.
+ *
+ * The record has to look like a selection. A record of another shape is
+ * dropped, so a damaged storage never binds a wrong model to a seat.
+ */
+function parseModelSelection(value: unknown): ModelSelection | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Record<string, unknown>;
+  const connectionId = record.connectionId;
+  const modelRoutingId = record.modelRoutingId;
+  const protocol = record.protocol;
+  if (typeof connectionId !== 'string' || connectionId.length === 0) return null;
+  if (typeof modelRoutingId !== 'string' || modelRoutingId.length === 0) return null;
+  if (typeof protocol !== 'string' || protocol.length === 0) return null;
+  return {
+    ...(record as unknown as ModelSelection),
+    connectionId,
+    modelRoutingId,
+    protocol,
+  } as ModelSelection;
+}
+
+/**
  * Reads the expiry of a seat credential.
  *
  * The service answers an ISO timestamp. The local credential keeps an
@@ -440,6 +473,8 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   const agentRunners = new Map<string, OnlineProviderRunner>();
   /** The seats that are driven by a guest seat credential. */
   const guestSeats = new Set<string>();
+  /** The identities whose seat authority was revoked. */
+  const revokedIdentities = new Set<string>();
   /** The private binding of a canonical public label of the service. */
   /**
    * The private binding of one seat.
@@ -515,16 +550,35 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   let heartbeatTimer: unknown = null;
   /** True while the composition is superseded by another identity. */
   let suspended = false;
+  /** Restores the durable matches of the current identity. */
+  function restorePersistedMatches(): void {
+    if (disposed) return;
+    const accountId = accountParticipant?.accountId ?? null;
+    if (accountId === null) return;
+    const key = `account:${accountId}`;
+    const entries = workspace.persisted(key);
+    for (const entry of entries) {
+      const credential = accountParticipant?.credential;
+      if (!credential) continue;
+      workspace.attach({ matchId: entry.matchId, seat: entry.seat, credential });
+    }
+  }
+
   let disposed = false;
 
   /** The browser owned secrets of the friend surface. */
   const friendSecrets = createFriendSecretStore({ identity: 'guest' });
+  /** True when the composition finished its construction. */
+  let ready = false;
 
   const workspace = createOnlineWorkspace({
     baseUrl,
     ...(fetcher ? { fetch: fetcher } : {}),
     ...(options.accountSession ? { accountSession: options.accountSession } : {}),
     onChange: () => {
+      // The drivers read the state of the composition. They run only after the
+      // composition finished its construction.
+      if (!ready) return;
       notify();
       driveEngineSeats();
       driveAgentSeats();
@@ -556,12 +610,23 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         // engine seats keep their authority.
         return;
       }
+      const previousKey = accountKey;
       accountKey = nextKey;
+      if (previousKey !== null) revokedIdentities.add(previousKey);
       // The secrets of the friend surface follow the identity. The records of
       // the previous identity never reach the new one.
       friendSecrets.setIdentity(queueIdentity());
+      // The durable matches of the new identity are restored, and the ones of
+      // the previous identity are gone.
+      revokedIdentities.add(previousKey ?? '');
+      for (const [key, registered] of [...seats]) {
+        if (registered.identityKey === previousKey) seats.delete(key);
+      }
+      agentBindings.clear();
+      writeAgentBindings(previousKey ?? '', []);
       queue.reset();
       fenceAccountSeats();
+      restorePersistedMatches();
       notify();
     });
   }
@@ -690,7 +755,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       throw failure;
     }
     return result.data;
-  });
+  }, { holdsEngineCredential });
 
   /**
    * The ports of one queue entry.
@@ -731,6 +796,10 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
           timeControl: request.timeControl,
           entryId: null,
           recordId: record.id,
+          // The private selection of the agent is captured before the service
+          // is asked. A model the owner picks later never replaces the agent
+          // of this entry.
+          selection: request.control.kind === 'agent' ? agent?.selection ?? null : null,
         };
         writeIntents(storage, identity, [
           ...current.filter(existing => existing.key !== intent.key),
@@ -964,7 +1033,6 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
 
   /** Tracks an invitation this browser created. */
   function trackInvitation(invitationId: string, ownerToken: string): void {
-    console.log('[track]', invitationId, typeof ownerToken);
     createdInvitations.set(invitationId, ownerToken);
     scheduleInvitationWork();
   }
@@ -978,7 +1046,6 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     if (disposed || suspended) return;
     if (createdInvitations.size === 0) return;
     invitationTimer = timers.setTimer(() => {
-      console.log('[poll]', createdInvitations.size);
       invitationTimer = null;
       for (const [invitationId, ownerToken] of [...createdInvitations]) {
         void (async () => {
@@ -1007,6 +1074,21 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     }, ONLINE_QUEUE_POLL_INTERVAL_MS);
   }
 
+  /**
+   * The usable engine credential of one match.
+   *
+   * The browser owns the credential of its engine seat. A credential of a
+   * revoked identity is not usable, even while the record of it still exists.
+   */
+  function holdsEngineCredential(matchId: string): boolean {
+    for (const [key, registered] of seats) {
+      if (!key.startsWith(`${matchId}:`)) continue;
+      if (revokedIdentities.has(registered.identityKey)) continue;
+      return true;
+    }
+    return false;
+  }
+
   function registerGuestCredential(credential: GuestOnlineCredential, owner: 'account' | 'guest' = 'guest'): void {
     const key = `${credential.matchId}:${credential.seat}`;
     const previous = seats.get(key);
@@ -1024,7 +1106,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         guestSessions.delete(key);
       }
     }
-    seats.set(key, { credential, owner });
+    seats.set(key, { credential, owner, identityKey: queueIdentity() });
     if (owner === 'guest') guestSeats.add(key);
     notify();
   }
@@ -1342,6 +1424,8 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     }, ONLINE_PRESENCE_HEARTBEAT_MS);
   }
 
+  ready = true;
+
   return {
     get features() {
       return features;
@@ -1467,16 +1551,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       });
     },
     resumeMatches() {
-      if (disposed) return;
-      const accountId = accountParticipant?.accountId ?? null;
-      if (accountId === null) return;
-      const key = `account:${accountId}`;
-      const entries = workspace.persisted(key);
-      for (const entry of entries) {
-        const credential = accountParticipant?.credential;
-        if (!credential) continue;
-        workspace.attach({ matchId: entry.matchId, seat: entry.seat, credential });
-      }
+      restorePersistedMatches();
     },
     async loadFeatures() {
       let service: OnlineFeatureFlags = ONLINE_FEATURES_DISABLED;
