@@ -1,0 +1,10 @@
+{
+  "scenarioId": "ARC-05",
+  "status": "passed",
+  "kind": "local",
+  "commit": "9c6bc799253c68f5ef4ca92ee1cd07a9c9dc9411",
+  "command": "go test ./backend/integration -count=1 -json (KHA41_TEST_DATABASE_URL=<local fixture>, KHA66_WORKER_ENTRY=build/rules-worker/worker.mjs)",
+  "expected": "Reject wrong account/seat/origin, expired/revoked auth and identity-changed stale work; refresh stream authentication within its lifetime.",
+  "actual": "TestPostgresOnlineNonMemberCannotReadOrCommand, TestPostgresOnlineAccountSessionRevocationRejectsBeforeTokenExpiry, TestPostgresOnlineRevokedGuestCredentialStopsEveryAccess passed against postgres://postgres@127.0.0.1:55467/kamkmchess_online_test?sslmode=disable with the pinned rules worker bundle.",
+  "notes": "Local evidence only. It does not certify a native run, a live host or a released cohort."
+}

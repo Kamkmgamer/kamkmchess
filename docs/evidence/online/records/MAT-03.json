@@ -1,0 +1,10 @@
+{
+  "scenarioId": "MAT-03",
+  "status": "passed",
+  "kind": "local",
+  "commit": "9c6bc799253c68f5ef4ca92ee1cd07a9c9dc9411",
+  "command": "pnpm exec playwright test tests/e2e/online-clients.spec.ts (ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1)",
+  "expected": "Duplicate, stale, illegal and wrong-seat intents neither advance state nor mint clock increments.",
+  "actual": "The browser cases passed against the real service: a guest accepts a friend invitation and both browser clients observe the same accepted move.",
+  "notes": "Local browser evidence. It does not certify a native assistive-technology run, a live host or a released cohort."
+}

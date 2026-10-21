@@ -1,0 +1,10 @@
+{
+  "scenarioId": "FRI-03",
+  "status": "passed",
+  "kind": "local",
+  "commit": "9c6bc799253c68f5ef4ca92ee1cd07a9c9dc9411",
+  "command": "pnpm exec playwright test tests/e2e/online-clients.spec.ts (ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1)",
+  "expected": "Invitee sees assigned color, minutes/increment and custom FEN; link preview has inviter/Guest, board where relevant and no invented final pairing.",
+  "actual": "The browser cases passed against the real service: a guest accepts a friend invitation and both browser clients observe the same accepted move.",
+  "notes": "Local browser evidence. It does not certify a native assistive-technology run, a live host or a released cohort."
+}

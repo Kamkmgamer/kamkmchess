@@ -1,0 +1,10 @@
+{
+  "scenarioId": "ARC-06",
+  "status": "passed",
+  "kind": "local",
+  "commit": "9c6bc799253c68f5ef4ca92ee1cd07a9c9dc9411",
+  "command": "pnpm exec playwright test tests/e2e/online-clients.spec.ts (ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1)",
+  "expected": "Consumed invitation cannot control a seat; private scoped guest credentials can reconnect and request their own data removal.",
+  "actual": "The browser cases passed against the real service: a consumed invitation cannot be accepted twice and a guest without a credential is refused.",
+  "notes": "Local browser evidence. It does not certify a native assistive-technology run, a live host or a released cohort."
+}
