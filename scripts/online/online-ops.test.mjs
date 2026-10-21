@@ -17,7 +17,7 @@ import { percentiles } from './load-suite.mjs';
 import { auditServiceWiring, switchDefaultState } from './service-wiring.mjs';
 import { composeFencePaths, completeReport as fenceCompleteReport, documentedFencePath, fencePathAgreement, fenceVolumeAgreement, fenceVolumeControl, holderDatabaseUrl, ownedSchemaName, planCleanup as planFenceCleanup, proofExitCode as fenceExitCode, readmeFencePath, REQUIRED_STEPS as FENCE_REQUIRED_STEPS, resolveTarget, RUN_SCHEMA, targetFromEnvironment, verifyFenceAccess } from '../../deploy/verify-fence-access.mjs';
 import { completeReport, createAndMigrate, insideDatabaseUrl, planCleanup as planRestoreCleanup, redactReport, reportFailure, REQUIRED_STEPS, RUN_SCHEMA as RESTORE_RUN_SCHEMA } from './restore-proof.mjs';
-import { barrierScript, REQUIRED_STEPS as INTERRUPTION_REQUIRED_STEPS } from './restore-interruption-proof.mjs';
+import { barrierScript, injectionScript, proofCases, REQUIRED_STEPS as INTERRUPTION_REQUIRED_STEPS, restoreIdIsUsable } from './restore-interruption-proof.mjs';
 import { buildProbes, evaluateProbe } from '../../deploy/runtime-grants-probe.mjs';
 import { auditGrants, parseMigrationFunctions, parseMigrationGrants, parseMigrationReads, parseMigrationTables, parseMigrationWrites, parsePolicy, scanGoUsage } from '../../deploy/runtime-grants.mjs';
 
@@ -1130,7 +1130,7 @@ test('the barrier of the native import runs the real psql and pauses where it is
   // Every case has its own program, with the mode written into it: the
   // environment of the loader is an explicit allowlist of the production
   // code and never carries a switch of the proof.
-  const during = barrierScript('during', { application: 'kamkm_proof_barrier_during', marker: '/backups/barrier-during-committed' });
+  const during = barrierScript('during', { application: 'kamkm_proof_barrier_during', marker: '/backups/barrier-during-committed', inject: '/fixtures/inject-during.sql' });
   const after = barrierScript('after', { application: 'kamkm_proof_barrier_after', marker: '/backups/barrier-after-committed' });
   const none = barrierScript('none', { application: 'kamkm_proof_barrier_none' });
 
@@ -1139,8 +1139,6 @@ test('the barrier of the native import runs the real psql and pauses where it is
   assert.match(after, /"\$REAL_PSQL" "\$@"/);
   // The path of the loader is found in the image, not guessed.
   assert.match(during, /command -v psql/);
-  // The marker of the "during" case holds the import transaction open.
-  assert.match(during, /pg_sleep/);
   // The marker of the "after" case is written after the psql committed, and
   // the program waits for the kill.
   assert.match(after, /touch \/backups\/barrier-after-committed/);
@@ -1155,21 +1153,115 @@ test('the barrier of the native import runs the real psql and pauses where it is
   assert.match(after, /PGAPPNAME=kamkm_proof_barrier_after/);
 });
 
+test('the barrier of the import waits for the destructive statement of the real dump', () => {
+  // The kill of the proof has to land after the import destroyed something.
+  // A barrier that pauses after the first statement of the dump would pause
+  // before the import touched anything, and the rollback of the transaction
+  // would prove nothing at all.
+  const during = barrierScript('during', {
+    application: 'kamkm_proof_during',
+    marker: '/backups/barrier-during',
+    inject: '/fixtures/inject-during.sql',
+  });
+  // The program looks for the destructive statement of the real dump and
+  // writes the marker of the barrier only after it.
+  assert.match(during, /DROP TABLE IF EXISTS public\[\.\]online_removal_ledger;\$/);
+  assert.match(during, /while \(\(getline line < inject\) > 0\) print line/);
+  // The statements of the barrier are read from a file of their own, so the
+  // program of the barrier stays a program and never a restatement of the
+  // import.
+  assert.match(during, /inject='\/fixtures\/inject-during\.sql'/);
+
+  const injection = injectionScript({ relation: 'online_removal_ledger', marker: '/tmp/proof-barrier-during.txt' });
+  // The barrier refuses the load when the relation of the removal ledger is
+  // still there, so a barrier that did not run after the destructive
+  // statement aborts the import instead of pretending that it did.
+  assert.match(injection, /to_regclass\('online_removal_ledger'\) IS NOT NULL/);
+  assert.match(injection, /RAISE EXCEPTION/);
+  // The marker is written from inside the transaction and names the backend
+  // that wrote it.
+  assert.match(injection, /COPY \(SELECT 'pid=' \|\| pg_backend_pid\(\)::text/);
+  assert.match(injection, /relation_present=/);
+  assert.match(injection, /TO '\/tmp\/proof-barrier-during\.txt'/);
+  // The transaction stays open, so the kill lands while it is open.
+  assert.match(injection, /pg_sleep\(600\)/);
+});
+
+test('every case of the proof has a fence, a marker and an application name of its own', () => {
+  const cases = proofCases('abc123def456');
+  const names = Object.keys(cases);
+  assert.deepEqual(names.sort(), ['after', 'during', 'evidence', 'nosink']);
+  const fences = new Set();
+  const markers = new Set();
+  const applications = new Set();
+  const databases = new Set();
+  for (const name of names) {
+    const entry = cases[name];
+    // The fence of a case is a parent of its own, so the marker, the lock
+    // and the evidence directory of one case never belong to another case.
+    assert.equal(entry.fence, `/backups/fence-abc123def456/${name}`);
+    assert.equal(entry.database, `kamkmchess_interruption_${name}_abc123def456`);
+    // The marker of the commit of a case is the marker of that case alone.
+    assert.equal(entry.marker, `/backups/barrier-${name}-abc123def456.committed`);
+    fences.add(entry.fence);
+    markers.add(entry.marker);
+    applications.add(entry.application);
+    applications.add(entry.plainApplication);
+    databases.add(entry.database);
+  }
+  assert.equal(fences.size, names.length);
+  assert.equal(markers.size, names.length);
+  assert.equal(applications.size, names.length * 2);
+  assert.equal(databases.size, names.length);
+  // The evidence case is killed after the commit as well, so it uses the
+  // barrier of the commit with a marker of its own.
+  assert.equal(cases.evidence.barrier, 'after');
+  assert.equal(cases.during.barrier, 'during');
+  assert.equal(cases.nosink.barrier, 'none');
+});
+
+test('the identifier of a restore is only ever used as a name', () => {
+  // The identifier of a restore becomes the name of the record of the owed
+  // ledger, so a name that carries a path separator is refused before it
+  // reaches a path.
+  assert.equal(restoreIdIsUsable('restore-20261021T165057Z-2e2840f3d33b'), true);
+  assert.equal(restoreIdIsUsable('restore-staged-abc123'), true);
+  assert.equal(restoreIdIsUsable('../../etc/passwd'), false);
+  assert.equal(restoreIdIsUsable('restore/2026'), false);
+  assert.equal(restoreIdIsUsable('short'), false);
+  assert.equal(restoreIdIsUsable(''), false);
+  assert.equal(restoreIdIsUsable(undefined), false);
+});
+
 test('the interruption proof names every case it has to show', () => {
   for (const step of [
     'the-import-is-killed-during-the-transaction',
+    'the-import-destroyed-the-removal-ledger-inside-the-transaction',
     'the-import-is-rolled-back',
     'the-import-is-killed-after-the-commit',
     'the-live-only-ledger-is-lost-from-the-database',
     'the-durable-evidence-of-the-owed-ledger-exists',
+    'the-evidence-of-the-restore-names-its-own-restore',
     'the-recovery-refuses-the-lost-ledger',
     'the-take-over-replays-the-owed-ledger',
     'the-service-admits-after-the-replay',
+    'the-recovery-refuses-the-lost-ledger-with-the-copied-record',
+    'the-obligation-of-the-next-import-is-retained',
+    'the-recovery-succeeds-with-the-copied-record-alone',
+    'the-recovery-closed-the-fence-of-the-recovered-restore',
+    'the-next-import-without-a-sink-is-refused',
+    'the-refused-import-did-not-touch-the-database',
+    'the-refused-take-over-keeps-the-crashed-restore',
     'the-removed-data-does-not-come-back',
     'the-control-survives',
   ]) {
     assert.ok(INTERRUPTION_REQUIRED_STEPS.includes(step), `${step} is not a required step`);
   }
+  // The old expectation that a refused recovery leaves the evidence of the
+  // run absent is gone: the obligation of the next import is durable and is
+  // written again by the refused recovery.
+  assert.equal(INTERRUPTION_REQUIRED_STEPS.includes('the-obligation-of-the-restore-is-still-owed'), false);
+  assert.ok(INTERRUPTION_REQUIRED_STEPS.includes('the-obligation-of-the-next-import-is-retained'));
 });
 
 test('a proof that skipped a case is never green', () => {

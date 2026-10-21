@@ -1,29 +1,39 @@
 // The native restore interruption proof.
 //
 // The native proof of the restore shows the lifecycle of a restore that
-// finishes. This proof shows the two interruptions that decide whether a
-// removed subject can come back:
+// finishes. This proof shows the interruptions that decide whether a removed
+// subject can come back:
 //
 //   - the restore is killed while the import transaction is open: the
 //     transaction is rolled back, so the live removals are still in the
-//     database and the recovery closes the fence;
+//     database and the take-over replays them;
 //   - the restore is killed after the import committed and before the
 //     removal ledger was replayed: the import replaced the schema, so the
 //     removals that only the live database carried are gone, the recovery
-//     refuses and keeps the gate closed, and the take-over replays the
+//     refuses and keeps the service closed, and the take-over replays the
 //     exact ledger the restore owed from the durable evidence next to the
-//     marker of the lifecycle.
+//     marker of the lifecycle;
+//   - the durable evidence of a restore is copied to a protected place, the
+//     evidence directory of the run is lost, and the recovery of a restore
+//     whose removals are applied and erased succeeds with the copy alone.
 //
 // The kill is real and deterministic. The restore runs the real binary of the
 // repository against a real encrypted bundle, and the loader is the real
 // psql: the proof only puts a barrier in front of it.
 //
-//   during  the barrier holds the import transaction open with a marker
-//           statement, so the kill lands while the transaction is active;
+//   during  the barrier waits for the destructive statement of the real dump
+//           and holds the import transaction open with a marker statement, so
+//           the kill lands while the transaction is open and after the
+//           import already destroyed the removal ledger of the live database;
 //   after   the barrier waits after the real psql committed, so the kill
 //           lands between the commit of the import and the replay of the
 //           removals;
 //   none    the real psql runs without a barrier, for the take-over.
+//
+// Every case has a fence of its own, a marker of its own and an application
+// name of its own. Nothing of one case can be mistaken for the state of
+// another case: the owner of the fence, the record of the owed ledger and the
+// backend of the barrier are read for the case they belong to.
 //
 // Usage:
 //   node scripts/online/restore-interruption-proof.mjs [--json] [--keep]
@@ -43,8 +53,18 @@ const RUN = randomUUID().replace(/-/g, '').slice(0, 12);
 const PASSPHRASE = 'fixture-only-passphrase';
 const DIRECTORY = join(ROOT, '.scratch', 'restore-interruption', RUN);
 const VOLUME = `kamkmchess-interruption-${RUN}`;
-const FENCE = `/backups/fence-${RUN}`;
+// The parent of the fences of the cases. Every case has a fence of its own
+// below it, so the marker of a case, its lock and its evidence directory
+// never belong to another case.
+const FENCE_ROOT = `/backups/fence-${RUN}`;
+// The protected copy of a record of the run. It is outside every fence
+// parent, so the loss of an evidence directory never takes it with it.
+const PROTECTED = `/backups/protected-${RUN}`;
 const API_UID = '65532:65532';
+// The relation whose destruction inside the import transaction is measured.
+// The dump of the real tool drops it, and the rows of the live database that
+// only the live database carried are gone with it.
+const BARRIER_RELATION = 'online_removal_ledger';
 
 /**
  * @param {string} command
@@ -71,32 +91,133 @@ function run(command, args, options = {}) {
 }
 
 /**
+ * @param {number} milliseconds
+ * @returns {Promise<void>}
+ */
+function sleep(milliseconds) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, milliseconds));
+}
+
+/**
+ * The shape of the identifier of a restore.
+ *
+ * The identifier becomes a name of a file, so it may not carry a path
+ * separator. The pattern is the one of the production code: the proof never
+ * builds a path from a name it did not check.
+ */
+export const RESTORE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
+
+/**
+ * Reports whether an identifier of a restore can be used as a name.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+export function restoreIdIsUsable(value) {
+  return typeof value === 'string' && RESTORE_ID_PATTERN.test(value);
+}
+
+/**
+ * The cases of the proof.
+ *
+ * Every case has a fence of its own, a database of its own, an application
+ * name of its own and a marker of its own. The isolation is the point: a
+ * barrier of one case may never be mistaken for the barrier of another one.
+ * @param {string} run
+ * @returns {Record<string, {fence: string, database: string, application: string, marker: string}>}
+ */
+export function proofCases(run) {
+  const cases = {};
+  // The barrier of a case. The evidence case is killed after the commit as
+  // well, so it uses the barrier of the commit with a marker of its own.
+  const barriers = { during: 'during', after: 'after', evidence: 'after', nosink: 'none' };
+  for (const name of ['during', 'after', 'evidence', 'nosink']) {
+    cases[name] = {
+      fence: `/backups/fence-${run}/${name}`,
+      database: `kamkmchess_interruption_${name}_${run}`,
+      application: `kamkm_proof_${name}_${run}`,
+      // The loader without a barrier of the case. The take-over of a case
+      // runs without a barrier, and the application name of it is the name of
+      // the case as well, so a backend of one case is never the backend of
+      // another one.
+      plainApplication: `kamkm_proof_plain_${name}_${run}`,
+      marker: `/backups/barrier-${name}-${run}.committed`,
+      barrier: barriers[name],
+    };
+  }
+  return cases;
+}
+
+/**
+ * The statements the barrier injects into the real import.
+ *
+ * The statements run inside the transaction of the real import, after the
+ * destructive statement of the real dump has run. The first statement refuses
+ * the load when the relation is still there, so a barrier that did not run
+ * after the destructive statement aborts the import instead of pretending
+ * that it did.
+ *
+ * The second statement writes a marker from inside the transaction, so the
+ * proof reads the state the import itself saw and the backend that saw it.
+ * The third statement holds the transaction open, so the kill lands while it
+ * is open.
+ *
+ * The content of the marker holds no private payload: it names the backend
+ * and whether the relation of the removal ledger is still there.
+ * @param {{relation: string, marker: string}} options
+ * @returns {string}
+ */
+export function injectionScript(options) {
+  const relation = options.relation;
+  const marker = options.marker;
+  return `-- The statements of the proof barrier of the import.
+--
+-- They run inside the transaction of the real import, after the destructive
+-- statement of the real dump has run.
+DO $proof$ BEGIN
+  IF to_regclass('${relation}') IS NOT NULL THEN
+    RAISE EXCEPTION 'the proof barrier did not run after the destructive statement of the import';
+  END IF;
+END $proof$;
+--
+-- The marker of the barrier, written from inside the transaction.
+COPY (SELECT 'pid=' || pg_backend_pid()::text || ' relation_present=' || (to_regclass('${relation}') IS NOT NULL)::text) TO '${marker}';
+--
+-- The transaction stays open here, so the kill lands while it is open.
+SELECT pg_sleep(600);
+`;
+}
+
+/**
  * The barrier of the native import.
  *
  * The real psql runs the real dump. The barrier only decides when the
  * restore is killed.
  * @param {string} mode during, after or none
+ * @param {{application?: string, marker?: string, inject?: string, pattern?: string}} [options]
  * @returns {string}
  */
 export function barrierScript(mode, options = {}) {
   const application = options.application ?? `kamkm_proof_barrier_${mode}`;
   const marker = options.marker ?? `/backups/barrier-${mode}`;
   if (mode === 'during') {
+    const inject = options.inject ?? '/fixtures/inject-during.sql';
+    const pattern = options.pattern ?? `^DROP TABLE IF EXISTS public[.]${BARRIER_RELATION};$`;
     return `#!/bin/sh
 # The barrier of the native import, in the mode that holds the import
 # transaction open.
 #
-# The real psql runs the real dump. The marker statement is a statement
-# inside the import transaction, so the backend waits inside the transaction
-# and the kill lands while the transaction is active.
+# The real psql runs the real dump. The barrier waits for the destructive
+# statement of the dump and then writes the marker of the import from inside
+# the transaction, so the kill lands while the transaction is open and after
+# the import already destroyed the removal ledger of the live database.
 #
 # The mode is written into this program: the environment of the loader is an
-# explicit allowlist of the production code and never carries a switch of
-# the proof.
+# explicit allowlist of the production code and never carries a switch of the
+# proof.
 set -e
 REAL_PSQL="$(command -v psql)"
 export PGAPPNAME=${application}
-awk 'BEGIN { done = 0 } { print; if (!done && index($0, ";") > 0) { print "SELECT pg_sleep(600);"; done = 1 } }' \\
+awk -v inject='${inject}' -v pattern='${pattern}' 'BEGIN { done = 0 } { print; if (!done && $0 ~ pattern) { while ((getline line < inject) > 0) print line; close(inject); done = 1 } }' \\
   | "$REAL_PSQL" "$@"
 `;
   }
@@ -109,8 +230,8 @@ awk 'BEGIN { done = 0 } { print; if (!done && index($0, ";") > 0) { print "SELEC
 # commit of the import and the replay of the removals.
 #
 # The mode is written into this program: the environment of the loader is an
-# explicit allowlist of the production code and never carries a switch of
-# the proof.
+# explicit allowlist of the production code and never carries a switch of the
+# proof.
 set -e
 REAL_PSQL="$(command -v psql)"
 export PGAPPNAME=${application}
@@ -142,10 +263,12 @@ export const REQUIRED_STEPS = [
   'the-newer-bundle-is-created',
   'the-live-only-removals-are-seeded',
   'the-import-is-killed-during-the-transaction',
+  'the-import-destroyed-the-removal-ledger-inside-the-transaction',
   'the-import-is-rolled-back',
   'the-marker-names-the-restore-while-it-is-alive',
   'the-marker-names-the-restore-that-crashed',
   'the-marker-names-the-same-restore-after-the-crash',
+  'the-evidence-of-the-restore-names-its-own-restore',
   'the-recovery-refuses-the-unsanitized-fixture',
   'the-take-over-replays-the-owed-ledger-of-the-rolled-back-restore',
   'the-import-is-killed-after-the-commit',
@@ -161,10 +284,18 @@ export const REQUIRED_STEPS = [
   'the-restore-of-the-copied-evidence-is-killed-after-the-commit',
   'the-record-of-the-owed-ledger-is-copied-to-a-protected-place',
   'the-evidence-directory-of-the-run-is-lost',
-  'the-recovery-proves-the-owed-ledger-with-the-copied-record',
-  'the-obligation-of-the-restore-is-still-owed',
-  'the-marker-of-the-recovery-is-truthful',
+  'the-recovery-refuses-the-lost-ledger-with-the-copied-record',
+  'the-obligation-of-the-next-import-is-retained',
+  'the-take-over-applies-the-owed-ledger-of-the-copied-evidence',
+  'the-crash-after-the-replay-is-staged',
+  'the-record-of-the-replayed-ledger-is-copied-to-a-protected-place',
+  'the-recovery-succeeds-with-the-copied-record-alone',
+  'the-recovery-closed-the-fence-of-the-recovered-restore',
+  'the-service-admits-after-the-recovery-from-the-copy',
+  'the-removed-data-is-still-erased-after-the-recovery',
   'the-next-import-without-a-sink-is-refused',
+  'the-refused-import-did-not-touch-the-database',
+  'the-refused-take-over-keeps-the-crashed-restore',
   'the-unrelated-control-survives-the-lost-evidence',
   'the-private-payload-is-in-the-bundle-and-in-the-restored-database',
   'the-private-payload-of-the-removed-subject-is-gone',
@@ -307,8 +438,7 @@ export async function runInterruptionProof(options = {}) {
   /** @type {{container: string, target: {url: URL}}|null} */
   let context = null;
   const sourceDatabase = `kamkmchess_interruption_source_${RUN}`;
-  const targetDuring = `kamkmchess_interruption_during_${RUN}`;
-  const targetAfter = `kamkmchess_interruption_after_${RUN}`;
+  const cases = proofCases(RUN);
 
   const resolved = resolveTarget({
     container: options.container ?? process.env.ONLINE_FIXTURE_CONTAINER ?? DEFAULT_CONTAINER,
@@ -350,40 +480,51 @@ export async function runInterruptionProof(options = {}) {
     const endpoint = await fixtureEndpoint(context.container);
 
     // The fence directory belongs to the user of the service, the way the
-    // compose entrypoint of the deployment prepares it.
+    // compose entrypoint of the deployment prepares it. Every case has a
+    // fence parent of its own below it.
     const prepared = await run('docker', [
       'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
       '--mount', `type=volume,source=${VOLUME},target=/backups`,
       endpoint.image, 'sh', '-c',
-      `mkdir -p ${FENCE} && chown 65532:65532 /backups ${FENCE} && chmod 700 ${FENCE}`,
+      `mkdir -p ${FENCE_ROOT} && chown 65532:65532 /backups ${FENCE_ROOT} && chmod 700 ${FENCE_ROOT}` +
+      Object.values(cases).map((entry) => ` && mkdir -p ${entry.fence} && chown 65532:65532 ${entry.fence} && chmod 700 ${entry.fence}`).join('') +
+      ` && mkdir -p ${PROTECTED} && chown 65532:65532 ${PROTECTED} && chmod 700 ${PROTECTED}`,
     ]);
-    if (prepared.code !== 0) throw new Error(`the shared fence directory could not be prepared: ${prepared.stderr.trim()}`);
+    if (prepared.code !== 0) throw new Error(`the shared fence directories could not be prepared: ${prepared.stderr.trim()}`);
 
     const binary = join(DIRECTORY, 'khabackup');
     const helper = join(DIRECTORY, 'fenceprobe');
-    const barriers = {
-      during: join(DIRECTORY, 'psql-during.sh'),
-      after: join(DIRECTORY, 'psql-after.sh'),
-      none: join(DIRECTORY, 'psql-none.sh'),
-    };
-    const markers = {
-      during: '/backups/barrier-during-committed',
-      after: '/backups/barrier-after-committed',
-      none: '/backups/barrier-none-committed',
-    };
-    const applications = {
-      during: 'kamkm_proof_barrier_during',
-      after: 'kamkm_proof_barrier_after',
-      none: 'kamkm_proof_barrier_none',
-    };
+    const evidenceHelper = join(DIRECTORY, 'restoreevidence');
     const built = await run('go', ['build', '-trimpath', '-o', binary, './backend/backup/cmd/khabackup'], { env: { CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64' } });
     if (built.code !== 0) throw new Error('the backup command could not be built');
     const builtHelper = await run('go', ['build', '-trimpath', '-tags', 'fenceprobe', '-o', helper, './tools/fenceprobe'], { env: { CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64' } });
     if (builtHelper.code !== 0) throw new Error('the fence helper could not be built');
-    for (const mode of ['during', 'after', 'none']) {
-      await writeFile(barriers[mode], barrierScript(mode, { application: applications[mode], marker: markers[mode] }), 'utf8');
-      // The barrier is a program: the restore executes it.
-      await chmod(barriers[mode], 0o755);
+    const builtEvidence = await run('go', ['build', '-trimpath', '-tags', 'restoreevidence', '-o', evidenceHelper, './tools/restoreevidence'], { env: { CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64' } });
+    if (builtEvidence.code !== 0) throw new Error('the evidence helper could not be built');
+
+    // Every case has its own program, its own marker and its own
+    // application name.
+    for (const [name, entry] of Object.entries(cases)) {
+      const program = join(DIRECTORY, `psql-${name}.sh`);
+      const plain = join(DIRECTORY, `psql-${name}-none.sh`);
+      const inject = join(DIRECTORY, `inject-${name}.sql`);
+      await writeFile(program, barrierScript(entry.barrier, {
+        application: entry.application,
+        marker: entry.marker,
+        inject: `/fixtures/inject-${name}.sql`,
+      }), 'utf8');
+      await chmod(program, 0o755);
+      // The loader without a barrier, for the take-over of the case.
+      await writeFile(plain, barrierScript('none', { application: entry.plainApplication }), 'utf8');
+      await chmod(plain, 0o755);
+      if (entry.barrier === 'during') {
+        // The marker of the barrier is written by the server, so it lives in
+        // the container of the database and not in the volume of the client.
+        await writeFile(inject, injectionScript({
+          relation: BARRIER_RELATION,
+          marker: `/tmp/proof-barrier-${name}-${RUN}.txt`,
+        }), 'utf8');
+      }
     }
 
     const sourceUrl = insideDatabaseUrl(context.target.url, sourceDatabase);
@@ -405,14 +546,14 @@ export async function runInterruptionProof(options = {}) {
 
     await createDatabase(sourceDatabase);
     await migrate(sourceDatabase);
-    await createDatabase(targetDuring);
-    await migrate(targetDuring);
-    await createDatabase(targetAfter);
-    await migrate(targetAfter);
+    for (const name of ['during', 'after', 'evidence', 'nosink']) {
+      await createDatabase(cases[name].database);
+      await migrate(cases[name].database);
+    }
 
-    // The source carries the match of the removed subject and the match of the
-    // control. The removals are seeded into the live databases afterwards, so
-    // no bundle carries them.
+    // The source carries the match of the removed subject and the match of
+    // the control. The removals are seeded into the live databases
+    // afterwards, so no bundle carries them.
     const matchId = 'proof_match_removed';
     const controlId = 'proof_match_control';
     const seed = async (database) => {
@@ -427,8 +568,8 @@ export async function runInterruptionProof(options = {}) {
       }
     };
     await seed(sourceDatabase);
-    await seed(targetDuring);
-    await seed(targetAfter);
+    for (const name of ['during', 'after', 'evidence', 'nosink']) await seed(cases[name].database);
+
     // The private payload of the removed subject and of an unrelated
     // subject. The bundle carries both, the import brings both into the
     // target, and the removal of the subject erases only its own payload.
@@ -456,20 +597,18 @@ export async function runInterruptionProof(options = {}) {
       if (controlEvent.code !== 0) throw new Error(`the archive event of the control could not be seeded: ${controlEvent.error}`);
     };
     await seedPrivatePayload(sourceDatabase);
+    for (const name of ['during', 'after', 'evidence', 'nosink']) await seedPrivatePayload(cases[name].database);
 
     // The live only row of the target is the snapshot of the import: the
     // bundle does not carry it, the import replaces it, and a rollback
     // leaves it where it was.
-    await seedLiveOnly(targetDuring);
-    await seedLiveOnly(targetAfter);
-
-    // The live only row of the target: the bundle does not carry it.
     async function seedLiveOnly(database) {
       const fen = 'rnbqkbnr/ppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
       await sql(database, `INSERT INTO online_matches (match_id, schema_version, variant, starting_fen, position_fen, starting_time_ms, increment_ms, version, control_epoch, input_hash, rules_policy_version, status) VALUES ('proof_match_live_only', 1, 'orthodox', '${fen}', '${fen}', 60000, 0, 1, 1, decode(repeat('00',32),'hex'), 'online-rules/1', 'active')`);
       await sql(database, `INSERT INTO online_seats (match_id, seat, owner_kind, owner_id, public_label, control_kind, model_label, control_epoch) VALUES ('proof_match_live_only', 'white', 'account', 'proof_owner_live_only', 'Proof', 'human', NULL, 1)`);
       await sql(database, `INSERT INTO online_public_replays (match_id, schema_version, replay_json, result_hash, game_kind, scored) VALUES ('proof_match_live_only', 2, '{"moves":[]}'::jsonb, decode(repeat('00',32),'hex'), 'friend', true)`);
     }
+    for (const name of ['during', 'after', 'evidence', 'nosink']) await seedLiveOnly(cases[name].database);
 
     // The two bundles are created before the removals exist, so no bundle and
     // no newer export carries them: they are live only.
@@ -482,6 +621,37 @@ export async function runInterruptionProof(options = {}) {
       '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
       ...Object.entries(env ?? {}).map(([name, value]) => ['--env', `${name}=${value}`]).flat(),
       '--entrypoint', '/fixtures/khabackup',
+      endpoint.image, ...args,
+    ]);
+
+    // The evidence only recovery runs without a bundle and without a
+    // passphrase. The command refuses to start when the environment carries
+    // a passphrase, so the proof shows that the recovery really did without
+    // one.
+    const evidenceOnlyTool = async (args, env) => run('docker', [
+      'run', '--rm', '-i',
+      '--network', endpoint.network,
+      '--add-host', 'host.docker.internal:host-gateway',
+      '--user', API_UID,
+      '--mount', `type=volume,source=${VOLUME},target=/backups`,
+      '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
+      ...Object.entries(env ?? {}).map(([name, value]) => ['--env', `${name}=${value}`]).flat(),
+      '--entrypoint', 'sh',
+      endpoint.image, '-c',
+      'test -z "${KHA_BACKUP_PASSPHRASE:-}" && exec /fixtures/khabackup "$@"',
+      'khabackup', ...args,
+    ]);
+
+    // The helper of the evidence uses the production reader of the privacy
+    // service, so the proof does not restate the validation of a record.
+    const evidenceHelperRun = async (args, env) => run('docker', [
+      'run', '--rm',
+      '--network', endpoint.network,
+      '--user', API_UID,
+      '--mount', `type=volume,source=${VOLUME},target=/backups`,
+      '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
+      ...Object.entries(env ?? {}).map(([name, value]) => ['--env', `${name}=${value}`]).flat(),
+      '--entrypoint', '/fixtures/restoreevidence',
       endpoint.image, ...args,
     ]);
 
@@ -530,21 +700,77 @@ export async function runInterruptionProof(options = {}) {
       if (subject.code !== 0) throw new Error(`the subject removal could not be seeded: ${subject.error}`);
       return { removed, privateSubject };
     };
-    const references = await seedRemovals(targetDuring);
-    await seedRemovals(targetAfter);
-    const subjectOnly = await sql(targetDuring, `SELECT count(*) FROM online_removal_subjects WHERE subject_id = 'rs_interruption_subject_${RUN}'`);
+    const references = await seedRemovals(cases.during.database);
+    for (const name of ['after', 'evidence', 'nosink']) await seedRemovals(cases[name].database);
+    const subjectOnly = await sql(cases.during.database, `SELECT count(*) FROM online_removal_subjects WHERE subject_id = 'rs_interruption_subject_${RUN}'`);
     const inBundle = await sql(sourceDatabase, `SELECT count(*) FROM online_removal_subjects WHERE subject_id = 'rs_interruption_subject_${RUN}'`);
-    const live = await removalState(context, targetDuring);
+    const live = await removalState(context, cases.during.database);
     steps.push({
       id: 'the-live-only-removals-are-seeded',
       passed: live.matches === '1' && live.subjects === '1' && subjectOnly.text === '1' && inBundle.text === '0',
       detail: `the live database carries ${live.matches} match bound removal and ${live.subjects} subject removal, the subject only record is there (${subjectOnly.text}) and no bundle carries it (${inBundle.text})`,
     });
 
-
+    // ---- the helpers of the cases ---------------------------------------
+    // The restore names itself: the command line of the restore cannot name
+    // it, so the identifier of the restore is the one the marker of the
+    // lifecycle carries.
+    const fenceOwner = async (fence) => {
+      const marker = await run('docker', [
+        'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
+        '--mount', `type=volume,source=${VOLUME},target=/backups`,
+        endpoint.image, 'sh', '-c', `cat ${fence}/restore-fence/owner 2>/dev/null`,
+      ]);
+      try {
+        const owner = JSON.parse((marker.stdout || '').trim());
+        return {
+          restoreId: typeof owner.restoreId === 'string' ? owner.restoreId : '',
+          digest: typeof owner.expectedLedgerDigest === 'string' ? owner.expectedLedgerDigest : '',
+        };
+      } catch {
+        return { restoreId: '', digest: '' };
+      }
+    };
+    const fenceMarkerState = async (fence) => {
+      const marker = await run('docker', [
+        'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
+        '--mount', `type=volume,source=${VOLUME},target=/backups`,
+        endpoint.image, 'sh', '-c',
+        `test -e ${fence}/restore-fence/owner && echo open || echo closed`,
+      ]);
+      return (marker.stdout || '').trim() || 'unknown';
+    };
+    // The record of the owed ledger is validated with the production reader
+    // of the privacy service. The content of the record is never printed.
+    const validateEvidence = async (fence, owner) => {
+      if (!restoreIdIsUsable(owner.restoreId) || !/^[0-9a-f]{64}$/i.test(owner.digest)) {
+        return { valid: false, reason: 'the marker of the lifecycle names no usable restore' };
+      }
+      const verified = await evidenceHelperRun([
+        'verify',
+        '--evidence', `${fence}/restore-requirements/${owner.restoreId}.json`,
+        '--restore-id', owner.restoreId,
+        '--digest', owner.digest,
+      ]);
+      let answer = { valid: false, reason: 'the evidence could not be read' };
+      try {
+        answer = JSON.parse((verified.stdout || '').trim() || '{}');
+      } catch {
+        answer = { valid: false, reason: 'the answer of the evidence helper could not be read' };
+      }
+      return { valid: answer.valid === true, reason: answer.reason ?? 'the evidence does not name the restore' };
+    };
+    const containerLog = async (id) => {
+      const collected = await run('docker', ['logs', id]);
+      return (collected.stdout + collected.stderr).trim().split('\n').slice(-4).join(' | ');
+    };
+    const containerRunning = async (id) => {
+      const alive = await run('docker', ['inspect', '--format', '{{.State.Running}}', id]);
+      return alive.code === 0 && alive.stdout.trim() === 'true';
+    };
     // The restore runs in its own container, so it can be killed exactly at
     // the barrier.
-    const startRestore = async (database, restoreId, mode) => {
+    const startRestore = async (database, mode) => {
       const url = insideDatabaseUrl(context.target.url, database);
       const started = await run('docker', [
         'run', '--detach',
@@ -559,7 +785,7 @@ export async function runInterruptionProof(options = {}) {
         endpoint.image, 'restore',
         '--file', oldBundle,
         '--newer-ledger', newerBundle,
-        '--fence', FENCE,
+        '--fence', cases[mode].fence,
         '--database-url-env', 'DATABASE_URL',
         '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
         '--psql', `/fixtures/psql-${mode}.sh`,
@@ -572,100 +798,87 @@ export async function runInterruptionProof(options = {}) {
       containers.push(id);
       return id;
     };
-
-    // The barrier of the "during" case: the import transaction is open and
-    // the backend of the barrier is busy inside it.
-    const waitForTransaction = async (database) => {
-      for (let attempt = 0; attempt < 45; attempt += 1) {
-        const state = await sql('postgres', `SELECT count(*) FROM pg_stat_activity WHERE application_name = '${applications.during}' AND datname = '${database}' AND xact_start IS NOT NULL AND query LIKE '%pg_sleep%'`);
-        if (state.text === '1') return true;
-        const alive = await run('docker', ['inspect', '--format', '{{.State.Running}}', containers[containers.length - 1]]);
-        if (alive.code !== 0 || alive.stdout.trim() !== 'true') return false;
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
-      }
-      return false;
-    };
-    // The barrier of the "after" case: the real psql committed.
-    const fenceOwnerId = async () => {
-      const marker = await run('docker', [
-        'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
-        '--mount', `type=volume,source=${VOLUME},target=/backups`,
-        endpoint.image, 'sh', '-c', `cat ${FENCE}/restore-fence/owner 2>/dev/null`,
-      ]);
-      try {
-        const owner = JSON.parse((marker.stdout || '').trim());
-        return typeof owner.restoreId === 'string' ? owner.restoreId : '';
-      } catch {
-        return '';
-      }
-    };
-    const containerLog = async (id) => {
-      const collected = await run('docker', ['logs', id]);
-      return (collected.stdout + collected.stderr).trim().split('\n').slice(-4).join(' | ');
-    };
-    // The state of the marker of the lifecycle.
-    const fenceMarkerState = async () => {
-      const marker = await run('docker', [
-        'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
-        '--mount', `type=volume,source=${VOLUME},target=/backups`,
-        endpoint.image, 'sh', '-c',
-        `test -e ${FENCE}/restore-fence/owner && echo open || echo closed`,
-      ]);
-      return (marker.stdout || '').trim() || 'unknown';
-    };
-    const waitForRequirement = async () => {
-      for (let attempt = 0; attempt < 45; attempt += 1) {
-        const listed = await run('docker', [
-          'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
-          '--mount', `type=volume,source=${VOLUME},target=/backups`,
-          endpoint.image, 'sh', '-c',
-          `ls ${FENCE}/restore-requirements 2>/dev/null | head -n 1`,
-        ]);
-        const name = (listed.stdout || '').trim();
-        if (name) return { found: true, detail: name, name };
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
-      }
-      return { found: false, detail: 'the requirements directory holds no record' };
-    };
-    const waitForCommit = async () => {
-      for (let attempt = 0; attempt < 45; attempt += 1) {
+    // The marker of the commit of the import of a case. Every case has a
+    // marker of its own, so a marker of a previous case can never finish a
+    // wait of another case.
+    const waitForCommit = async (entry) => {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
         const marker = await run('docker', [
           'run', '--rm', '--network', endpoint.network,
           '--mount', `type=volume,source=${VOLUME},target=/backups`,
-          endpoint.image, 'sh', '-c', `test -e ${markers.after} && echo committed || echo waiting`,
+          endpoint.image, 'sh', '-c', `test -e ${entry.marker} && echo committed || echo waiting`,
         ]);
-        if (marker.stdout.trim() === 'committed') return true;
-        await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
+        if ((marker.stdout || '').trim() === 'committed') return true;
+        await sleep(1000);
       }
       return false;
     };
+    // The owner of the fence of a case is read while the restore is alive.
+    const waitForOwner = async (fence, container) => {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const owner = await fenceOwner(fence);
+        if (owner.restoreId) return owner;
+        if (!(await containerRunning(container))) return null;
+        await sleep(500);
+      }
+      return null;
+    };
+    // The barrier of the "during" case: the import transaction is open, the
+    // backend of the barrier holds the exclusive lock of the relation of the
+    // removal ledger, and the marker of the barrier was written from inside
+    // the transaction.
+    const waitForDestructiveTransaction = async (entry, oid) => {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const backend = await sql('postgres', `SELECT pid FROM pg_stat_activity WHERE application_name = '${entry.application}' AND datname = '${entry.database}' AND xact_start IS NOT NULL AND state = 'active' AND query LIKE '%pg_sleep%'`);
+        if (backend.code === 0 && backend.text) {
+          const pid = backend.text.split('\n')[0].trim();
+          const lock = await sql(entry.database, `SELECT count(*) FROM pg_locks WHERE pid = ${Number(pid)} AND relation = ${Number(oid)} AND mode = 'AccessExclusiveLock' AND granted`);
+          const marker = await run('docker', ['exec', context.container, 'cat', `/tmp/proof-barrier-${entry.name}-${RUN}.txt`]);
+          const markerText = (marker.stdout || '').trim();
+          if (lock.text === '1' && markerText.includes(`pid=${pid}`) && markerText.includes('relation_present=false')) {
+            return { open: true, pid, marker: markerText };
+          }
+        }
+        await sleep(1000);
+      }
+      return { open: false, pid: '', marker: '' };
+    };
 
     // ---- the kill during the import transaction -------------------------
-    const duringId = `restore-during-${RUN}`;
-    const duringContainer = await startRestore(targetDuring, duringId, 'during');
-    const transactionOpen = await waitForTransaction(targetDuring);
-    const duringOwnerAtBarrier = await fenceOwnerId();
+    const duringEntry = cases.during;
+    const duringOid = (await sql(duringEntry.database, `SELECT oid FROM pg_class WHERE relname = '${BARRIER_RELATION}' AND relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'public')`)).text;
+    const duringContainer = await startRestore(duringEntry.database, 'during');
+    const duringBarrier = await waitForDestructiveTransaction({ ...duringEntry, name: 'during' }, duringOid);
+    const duringOwnerAtBarrier = await fenceOwner(duringEntry.fence);
     steps.push({
       id: 'the-marker-names-the-restore-while-it-is-alive',
-      passed: duringOwnerAtBarrier.length > 0,
-      detail: duringOwnerAtBarrier
-        ? `the marker of the lifecycle names the restore ${duringOwnerAtBarrier} while the restore is alive at the barrier`
+      passed: duringOwnerAtBarrier.restoreId.length > 0 && restoreIdIsUsable(duringOwnerAtBarrier.restoreId),
+      detail: duringOwnerAtBarrier.restoreId
+        ? `the marker of the lifecycle names the restore ${duringOwnerAtBarrier.restoreId} while the restore is alive at the barrier`
         : 'the marker of the lifecycle names no restore while the restore is alive',
     });
+    steps.push({
+      id: 'the-import-destroyed-the-removal-ledger-inside-the-transaction',
+      passed: duringBarrier.open && duringBarrier.marker.includes('relation_present=false'),
+      detail: duringBarrier.open
+        ? `the import transaction of the backend ${duringBarrier.pid} holds the exclusive lock of the relation of the removal ledger and the marker of the barrier says the relation is gone inside the transaction: ${duringBarrier.marker}`
+        : 'the import transaction did not destroy the relation of the removal ledger before the barrier',
+    });
     const killedDuring = await run('docker', ['kill', duringContainer]);
+    const duringAlive = await containerRunning(duringContainer);
     steps.push({
       id: 'the-import-is-killed-during-the-transaction',
-      passed: transactionOpen && killedDuring.code === 0,
-      detail: transactionOpen
-        ? `the import transaction was open (the barrier of the real psql) and the restore was killed with signal ${killedDuring.stdout.trim()}`
+      passed: duringBarrier.open && killedDuring.code === 0 && !duringAlive,
+      detail: duringBarrier.open && killedDuring.code === 0 && !duringAlive
+        ? `the import transaction was open with the removal ledger destroyed inside it, the restore was killed with signal ${killedDuring.stdout.trim()} and the process is gone`
         : `the import transaction was not open when the restore was killed: ${await containerLog(duringContainer)}`,
     });
     await run('docker', ['rm', '--force', duringContainer]);
     containers.splice(containers.indexOf(duringContainer), 1);
 
-    const afterRollback = await removalState(context, targetDuring);
-    const replayAfterRollback = await replayState(context, targetDuring, matchId);
-    const liveOnlyAfterRollback = await replayState(context, targetDuring, 'proof_match_live_only');
+    const afterRollback = await removalState(context, duringEntry.database);
+    const replayAfterRollback = await replayState(context, duringEntry.database, matchId);
+    const liveOnlyAfterRollback = await replayState(context, duringEntry.database, 'proof_match_live_only');
     steps.push({
       id: 'the-import-is-rolled-back',
       passed: afterRollback.matches === '1' && afterRollback.subjects === '1' && replayAfterRollback.present && !replayAfterRollback.revoked && liveOnlyAfterRollback.present,
@@ -673,30 +886,38 @@ export async function runInterruptionProof(options = {}) {
     });
 
     // ---- the recovery of the rolled back restore ------------------------
-    const duringOwner = await fenceOwnerId();
+    const duringOwner = await fenceOwner(duringEntry.fence);
     steps.push({
       id: 'the-marker-names-the-same-restore-after-the-crash',
-      passed: duringOwner.length > 0 && duringOwner === duringOwnerAtBarrier,
-      detail: duringOwner === duringOwnerAtBarrier && duringOwner.length > 0
-        ? `the marker of the crashed restore still names the restore ${duringOwner}`
-        : `the marker names ${duringOwner || 'nothing'} after the crash, and it named ${duringOwnerAtBarrier || 'nothing'} at the barrier`,
+      passed: duringOwner.restoreId.length > 0 && duringOwner.restoreId === duringOwnerAtBarrier.restoreId,
+      detail: duringOwner.restoreId === duringOwnerAtBarrier.restoreId && duringOwner.restoreId.length > 0
+        ? `the marker of the crashed restore still names the restore ${duringOwner.restoreId}`
+        : `the marker names ${duringOwner.restoreId || 'nothing'} after the crash, and it named ${duringOwnerAtBarrier.restoreId || 'nothing'} at the barrier`,
     });
     steps.push({
       id: 'the-marker-names-the-restore-that-crashed',
-      passed: duringOwner.length > 0,
-      detail: duringOwner
-        ? `the marker of the lifecycle names the restore ${duringOwner} (the restore names itself, the command line cannot name it)`
+      passed: duringOwner.restoreId.length > 0,
+      detail: duringOwner.restoreId
+        ? `the marker of the lifecycle names the restore ${duringOwner.restoreId} (the restore names itself, the command line cannot name it)`
         : 'the marker of the lifecycle names no restore',
+    });
+    const duringEvidence = await validateEvidence(duringEntry.fence, duringOwner);
+    steps.push({
+      id: 'the-evidence-of-the-restore-names-its-own-restore',
+      passed: duringEvidence.valid,
+      detail: duringEvidence.valid
+        ? `the record of the owed ledger of this restore is the record of this restore, and its digest is the digest the marker names`
+        : `the record of the owed ledger does not name its own restore: ${duringEvidence.reason}`,
     });
     const recoveredDuring = await tool([
       'recover',
       '--file', oldBundle,
-      '--restore-id', duringOwner,
-      '--fence', FENCE,
+      '--restore-id', duringOwner.restoreId,
+      '--fence', duringEntry.fence,
       '--database-url-env', 'DATABASE_URL',
       '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
-    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, targetDuring), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
-    const gateDuring = await sql(targetDuring, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed = false`);
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, duringEntry.database), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    const gateDuring = await sql(duringEntry.database, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed = false`);
     steps.push({
       id: 'the-recovery-refuses-the-unsanitized-fixture',
       passed: recoveredDuring.code !== 0
@@ -711,16 +932,16 @@ export async function runInterruptionProof(options = {}) {
       'restore',
       '--file', oldBundle,
       '--newer-ledger', newerBundle,
-      '--fence', FENCE,
-      '--restore-id', duringOwner,
+      '--fence', duringEntry.fence,
+      '--restore-id', duringOwner.restoreId,
       '--takeover',
       '--database-url-env', 'DATABASE_URL',
       '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
-      '--psql', '/fixtures/psql-none.sh',
+      '--psql', '/fixtures/psql-during-none.sh',
       '--apply',
-    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, targetDuring), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
-    const afterTakeoverDuring = await removalState(context, targetDuring);
-    const sanitizedDuring = await sql(targetDuring, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND checkpoint_json = '{}'::bytea`);
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, duringEntry.database), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    const afterTakeoverDuring = await removalState(context, duringEntry.database);
+    const sanitizedDuring = await sql(duringEntry.database, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND checkpoint_json = '{}'::bytea`);
     steps.push({
       id: 'the-take-over-replays-the-owed-ledger-of-the-rolled-back-restore',
       passed: takeoverDuring.code === 0 && afterTakeoverDuring.matches === '1' && afterTakeoverDuring.subjects === '1' && sanitizedDuring.text === '1',
@@ -730,28 +951,31 @@ export async function runInterruptionProof(options = {}) {
     });
 
     // ---- the kill after the commit --------------------------------------
-    const afterId = `restore-after-${RUN}`;
-    const afterContainer = await startRestore(targetAfter, afterId, 'after');
-    const committed = await waitForCommit();
+    const afterEntry = cases.after;
+    const afterContainer = await startRestore(afterEntry.database, 'after');
+    const committed = await waitForCommit(afterEntry);
+    const afterOwnerAtBarrier = await fenceOwner(afterEntry.fence);
+    const afterEvidenceAtBarrier = await validateEvidence(afterEntry.fence, afterOwnerAtBarrier);
     const killedAfter = await run('docker', ['kill', afterContainer]);
+    const afterAlive = await containerRunning(afterContainer);
     steps.push({
       id: 'the-import-is-killed-after-the-commit',
-      passed: committed && killedAfter.code === 0,
-      detail: committed
-        ? `the real psql committed the import and the restore was killed with signal ${killedAfter.stdout.trim()} before the removal ledger was replayed`
+      passed: committed && killedAfter.code === 0 && !afterAlive,
+      detail: committed && killedAfter.code === 0 && !afterAlive
+        ? `the real psql committed the import, the restore was killed with signal ${killedAfter.stdout.trim()} before the removal ledger was replayed and the process is gone`
         : `the import did not commit before the restore was killed: ${await containerLog(afterContainer)}`,
     });
     await run('docker', ['rm', '--force', afterContainer]);
     containers.splice(containers.indexOf(afterContainer), 1);
 
-    const afterImport = await removalState(context, targetAfter);
-    const replayAfterImport = await replayState(context, targetAfter, matchId);
-    const liveOnlyAfterImport = await replayState(context, targetAfter, 'proof_match_live_only');
+    const afterImport = await removalState(context, afterEntry.database);
+    const replayAfterImport = await replayState(context, afterEntry.database, matchId);
+    const liveOnlyAfterImport = await replayState(context, afterEntry.database, 'proof_match_live_only');
     const payloadInSource = await sql(sourceDatabase, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND length(checkpoint_json) > 2`);
-    const payloadAfterImport = await sql(targetAfter, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND length(checkpoint_json) > 2`);
-    const archiveAfterImport = await sql(targetAfter, `SELECT count(*) FROM archive_chunks WHERE game_id = 'proof_private_game' AND length(raw_json) > 2`);
-    const eventAfterImport = await sql(targetAfter, `SELECT count(*) FROM archive_events WHERE game_id = 'proof_private_game' AND length(raw_json) > 2`);
-    const receiptAfterImport = await sql(targetAfter, `SELECT count(*) FROM operations WHERE game_id = 'proof_private_game' AND length(result_json) > 2`);
+    const payloadAfterImport = await sql(afterEntry.database, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND length(checkpoint_json) > 2`);
+    const archiveAfterImport = await sql(afterEntry.database, `SELECT count(*) FROM archive_chunks WHERE game_id = 'proof_private_game' AND length(raw_json) > 2`);
+    const eventAfterImport = await sql(afterEntry.database, `SELECT count(*) FROM archive_events WHERE game_id = 'proof_private_game' AND length(raw_json) > 2`);
+    const receiptAfterImport = await sql(afterEntry.database, `SELECT count(*) FROM operations WHERE game_id = 'proof_private_game' AND length(result_json) > 2`);
     steps.push({
       id: 'the-private-payload-is-in-the-bundle-and-in-the-restored-database',
       passed: payloadInSource.text === '1' && payloadAfterImport.text === '1'
@@ -774,24 +998,25 @@ export async function runInterruptionProof(options = {}) {
     // The durable evidence of the owed ledger is next to the marker of the
     // lifecycle, and it is readable by its owner only. The identifier of the
     // restore is the one the marker names.
-    const afterOwner = await fenceOwnerId();
+    const afterOwner = await fenceOwner(afterEntry.fence);
     const evidence = await run('docker', [
       'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
       '--mount', `type=volume,source=${VOLUME},target=/backups`,
       endpoint.image, 'sh', '-c',
-      `stat -c '%a %u' ${FENCE}/restore-requirements 2>&1; ls -l ${FENCE}/restore-requirements 2>&1 | tail -n 1`,
+      `stat -c '%a %u' ${afterEntry.fence}/restore-requirements 2>&1; ls -l ${afterEntry.fence}/restore-requirements 2>&1 | tail -n 1`,
     ]);
     const evidenceText = (evidence.stdout + evidence.stderr).trim();
     steps.push({
       id: 'the-durable-evidence-of-the-owed-ledger-exists',
-      passed: evidence.code === 0 && /\b700 65532\b/.test(evidenceText) && /-rw-------/.test(evidenceText),
+      passed: evidence.code === 0 && /\b700 65532\b/.test(evidenceText) && /-rw-------/.test(evidenceText)
+        && afterEvidenceAtBarrier.valid && afterOwner.restoreId === afterOwnerAtBarrier.restoreId,
       detail: evidence.code === 0 && /-rw-------/.test(evidenceText)
-        ? `the evidence of the owed ledger is there and private: ${evidenceText.split('\n').join(' | ')}`
+        ? `the evidence of the owed ledger is there and private, and it is the record of the restore of this case: ${evidenceText.split('\n').join(' | ')}`
         : `the evidence of the owed ledger is missing or not private: ${evidenceText.split('\n').join(' | ')}`,
     });
 
     // ---- the gate stays closed ------------------------------------------
-    const gate = await startGate(context, endpoint, targetAfter, containers);
+    const gate = await startGate(context, endpoint, afterEntry, containers);
     const refused = await waitForGate(gate.port);
     steps.push({
       id: 'the-gate-stays-closed-after-the-kill',
@@ -805,12 +1030,12 @@ export async function runInterruptionProof(options = {}) {
     const recovered = await tool([
       'recover',
       '--file', oldBundle,
-      '--restore-id', afterOwner,
-      '--fence', FENCE,
+      '--restore-id', afterOwner.restoreId,
+      '--fence', afterEntry.fence,
       '--database-url-env', 'DATABASE_URL',
       '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
-    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, targetAfter), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
-    const stillLost = await removalState(context, targetAfter);
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, afterEntry.database), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    const stillLost = await removalState(context, afterEntry.database);
     steps.push({
       id: 'the-recovery-refuses-the-lost-ledger',
       passed: recovered.code !== 0 && stillLost.matches === '0' && stillLost.subjects === '0',
@@ -824,11 +1049,11 @@ export async function runInterruptionProof(options = {}) {
     const repeated = await tool([
       'recover',
       '--file', oldBundle,
-      '--restore-id', afterOwner,
-      '--fence', FENCE,
+      '--restore-id', afterOwner.restoreId,
+      '--fence', afterEntry.fence,
       '--database-url-env', 'DATABASE_URL',
       '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
-    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, targetAfter), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, afterEntry.database), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
     steps.push({
       id: 'the-repeated-recovery-refuses',
       passed: repeated.code !== 0,
@@ -842,15 +1067,15 @@ export async function runInterruptionProof(options = {}) {
       'restore',
       '--file', oldBundle,
       '--newer-ledger', newerBundle,
-      '--fence', FENCE,
-      '--restore-id', afterId,
+      '--fence', afterEntry.fence,
+      '--restore-id', afterOwner.restoreId,
       '--takeover',
       '--database-url-env', 'DATABASE_URL',
       '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
-      '--psql', '/fixtures/psql-none.sh',
+      '--psql', '/fixtures/psql-after-none.sh',
       '--apply',
-    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, targetAfter), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
-    const afterTakeover = await removalState(context, targetAfter);
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, afterEntry.database), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    const afterTakeover = await removalState(context, afterEntry.database);
     steps.push({
       id: 'the-take-over-replays-the-owed-ledger',
       passed: takeover.code === 0 && afterTakeover.matches === '1' && afterTakeover.subjects === '1',
@@ -860,7 +1085,7 @@ export async function runInterruptionProof(options = {}) {
     });
 
     // ---- the service admits again ---------------------------------------
-    const gateAfter = await startGate(context, endpoint, targetAfter, containers);
+    const gateAfter = await startGate(context, endpoint, afterEntry, containers);
     const served = await waitForGate(gateAfter.port);
     steps.push({
       id: 'the-service-admits-after-the-replay',
@@ -876,43 +1101,38 @@ export async function runInterruptionProof(options = {}) {
     // protected place, the evidence directory of the run is lost, and the
     // recovery proves the owed ledger with the copy alone, without the
     // bundle of the restore.
-    const evidenceDatabase = `kamkmchess_interruption_evidence_${RUN}`;
-    await createDatabase(evidenceDatabase);
-    await migrate(evidenceDatabase);
-    await seed(evidenceDatabase);
-    await seedRemovals(evidenceDatabase);
-    await seedLiveOnly(evidenceDatabase);
-    await seedPrivatePayload(evidenceDatabase);
-    const evidenceContainer = await startRestore(evidenceDatabase, 'restore-evidence', 'after');
+    const evidenceEntry = cases.evidence;
+    const evidenceContainer = await startRestore(evidenceEntry.database, 'evidence');
     // The record of the owed ledger is written before the import, so the
-    // proof waits for it before it lets the import go on.
-    const record = await waitForRequirement();
+    // proof waits for the owner of the fence before it lets the import go
+    // on.
+    const evidenceOwner = await waitForOwner(evidenceEntry.fence, evidenceContainer);
     steps.push({
       id: 'the-evidence-of-the-owed-ledger-is-written-before-the-import',
-      passed: record.found,
-      detail: record.found
-        ? `the record of the owed ledger of this run is on the disk before the import (${record.detail})`
-        : `the record of the owed ledger was not written before the import: ${record.detail}`,
+      passed: evidenceOwner !== null && evidenceOwner.restoreId.length > 0,
+      detail: evidenceOwner && evidenceOwner.restoreId
+        ? `the record of the owed ledger of this run is on the disk before the import (${evidenceOwner.restoreId})`
+        : 'the record of the owed ledger was not written before the import',
     });
-    const evidenceCommitted = await waitForCommit();
-    const evidenceOwner = await fenceOwnerId();
+    const evidenceCommitted = await waitForCommit(evidenceEntry);
+    const evidenceOwnerAfter = await fenceOwner(evidenceEntry.fence);
     await run('docker', ['kill', evidenceContainer]);
     await run('docker', ['rm', '--force', evidenceContainer]);
     containers.splice(containers.indexOf(evidenceContainer), 1);
     steps.push({
       id: 'the-restore-of-the-copied-evidence-is-killed-after-the-commit',
-      passed: evidenceCommitted && evidenceOwner.length > 0,
-      detail: `the import of this restore committed (${evidenceCommitted}) and the restore ${evidenceOwner || 'of no name'} was killed before the removals were replayed`,
+      passed: evidenceCommitted && evidenceOwnerAfter.restoreId.length > 0 && evidenceOwnerAfter.restoreId === evidenceOwner?.restoreId,
+      detail: `the import of this restore committed (${evidenceCommitted}) and the restore ${evidenceOwnerAfter.restoreId || 'of no name'} was killed before the removals were replayed`,
     });
     // The record of this run is copied to a protected place: a directory of
     // mode 0700 and a record of mode 0600, both owned by the restore user.
     // The content of the record is never printed.
-    const copy = `/backups/protected/${RUN}.evidence`;
+    const copy = `${PROTECTED}/${evidenceOwnerAfter.restoreId}.json`;
     const copied = await run('docker', [
       'run', '--rm', '--user', '65532:65532', '--network', endpoint.network,
       '--mount', `type=volume,source=${VOLUME},target=/backups`,
       endpoint.image, 'sh', '-c',
-      `mkdir -p /backups/protected && chmod 700 /backups/protected && cp ${FENCE}/restore-requirements/${record.name} ${copy} && chmod 600 ${copy} && stat -c '%a %u' ${copy} && stat -c '%a %u' /backups/protected`,
+      `cp ${evidenceEntry.fence}/restore-requirements/${evidenceOwnerAfter.restoreId}.json ${copy} && chmod 600 ${copy} && stat -c '%a %u' ${copy} && stat -c '%a %u' ${PROTECTED}`,
     ]);
     const copyText = (copied.stdout + copied.stderr).trim();
     steps.push({
@@ -926,7 +1146,7 @@ export async function runInterruptionProof(options = {}) {
       'run', '--rm', '--user', '65532:65532', '--network', endpoint.network,
       '--mount', `type=volume,source=${VOLUME},target=/backups`,
       endpoint.image, 'sh', '-c',
-      `test -d ${FENCE}/restore-requirements && rm -rf ${FENCE}/restore-requirements && echo lost`,
+      `target=${evidenceEntry.fence}/restore-requirements; resolved=$(readlink -f "$target"); if [ "$resolved" != "${evidenceEntry.fence}/restore-requirements" ]; then echo out-of-scope; exit 1; fi; if [ ! -d "$resolved" ]; then echo missing; exit 1; fi; rm -rf "$resolved" && echo lost`,
     ]);
     steps.push({
       id: 'the-evidence-directory-of-the-run-is-lost',
@@ -936,77 +1156,249 @@ export async function runInterruptionProof(options = {}) {
         : `the evidence directory of this run could not be removed: ${(lost.stdout + lost.stderr).trim()}`,
     });
     // The recovery with the copy alone: no bundle of the restore, so the
-    // copy of the record is the only description of what the restore owed.
-    const recoveredWithCopy = await tool([
+    // copy of the record is the only description of what the restore owed,
+    // and no passphrase, because the bundle is not read at all.
+    //
+    // The removals of this restore are not applied in the database: the
+    // import replaced them. The recovery therefore refuses, and the service
+    // stays closed.
+    const recoveredWithCopy = await evidenceOnlyTool([
       'recover',
-      '--restore-id', evidenceOwner,
+      '--restore-id', evidenceOwnerAfter.restoreId,
       '--evidence', copy,
-      '--fence', FENCE,
+      '--fence', evidenceEntry.fence,
       '--database-url-env', 'DATABASE_URL',
-      '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
-    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, evidenceDatabase), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
-    const recreated = await run('docker', [
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, evidenceEntry.database) });
+    const pendingGate = await sql(evidenceEntry.database, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed = false`);
+    steps.push({
+      id: 'the-recovery-refuses-the-lost-ledger-with-the-copied-record',
+      passed: recoveredWithCopy.code !== 0
+        && /not applied in the database|is not applied/i.test(recoveredWithCopy.stderr + recoveredWithCopy.stdout),
+      detail: recoveredWithCopy.code !== 0
+        ? `the recovery took the copied record alone, without a bundle and without a passphrase, and refused the database that lost the removals: ${(recoveredWithCopy.stderr + recoveredWithCopy.stdout).trim().split('\n').slice(-1)[0] ?? ''}`
+        : 'the recovery accepted a database that lost the removals',
+    });
+    // The obligation of the next import is durable: the refused recovery
+    // wrote the record again, so a restore that comes next replays the
+    // removals the crashed restore owed.
+    const retained = await run('docker', [
       'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
       '--mount', `type=volume,source=${VOLUME},target=/backups`,
       endpoint.image, 'sh', '-c',
-      `stat -c '%a %u' ${FENCE}/restore-requirements 2>&1; ls ${FENCE}/restore-requirements 2>&1 | head -n 2`,
+      `stat -c '%a %u' ${evidenceEntry.fence}/restore-requirements 2>&1; ls ${evidenceEntry.fence}/restore-requirements 2>&1 | head -n 2`,
     ]);
-    const recreatedText = (recreated.stdout + recreated.stderr).trim();
-    const pendingGate = await sql(evidenceDatabase, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed = false`);
-    const markerAfter = await fenceMarkerState();
+    const retainedText = (retained.stdout + retained.stderr).trim();
     steps.push({
-      id: 'the-recovery-proves-the-owed-ledger-with-the-copied-record',
-      passed: recoveredWithCopy.code !== 0
-        && /not applied in the database|is not applied/i.test(recoveredWithCopy.stderr + recoveredWithCopy.stdout),
-      detail: `the recovery took the copied record alone, proved the owed ledger against it and kept the service closed: ${(recoveredWithCopy.stderr + recoveredWithCopy.stdout).trim().split('\n').slice(-1)[0] ?? ''}`,
+      id: 'the-obligation-of-the-next-import-is-retained',
+      passed: /\b700 65532\b/.test(retainedText) && retainedText.includes(`${evidenceOwnerAfter.restoreId}.json`),
+      detail: `the obligation of the next import is retained: the record of the owed ledger is on the disk again and private, and the restore gates of the database are ${pendingGate.text}: ${retainedText.split('\n').join(' | ')}`,
     });
-    steps.push({
-      id: 'the-obligation-of-the-restore-is-still-owed',
-      passed: markerAfter === 'open' && !/\b700 65532\b/.test(recreatedText),
-      detail: `the obligation of the restore is still owed: the marker of the crashed restore is still there, the evidence of the run was not recreated by the refused recovery (${recreatedText.split('\n').join(' | ')}) and the restore gates of the database are ${pendingGate.text}`,
-    });
-    steps.push({
-      id: 'the-marker-of-the-recovery-is-truthful',
-      passed: markerAfter === 'open',
-      detail: `the marker of the crashed restore is still there (${markerAfter}), so the service stays closed by the fence as well as by the gate`,
-    });
-    // The next import has no sink: the target does not carry the removal
-    // tables, so the tool refuses before it imports anything.
-    const noSinkDatabase = `kamkmchess_interruption_nosink_${RUN}`;
-    await createDatabase(noSinkDatabase);
-    const noSink = await tool([
+    // ---- the take-over applies the owed ledger of this case --------------
+    const evidenceTakeover = await tool([
       'restore',
       '--file', oldBundle,
-      '--fence', FENCE,
+      '--newer-ledger', newerBundle,
+      '--fence', evidenceEntry.fence,
+      '--takeover',
       '--database-url-env', 'DATABASE_URL',
       '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
-      '--psql', '/fixtures/psql-none.sh',
+      '--psql', '/fixtures/psql-evidence-none.sh',
       '--apply',
-    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, noSinkDatabase), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, evidenceEntry.database), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    const evidenceApplied = await removalState(context, evidenceEntry.database);
+    const evidenceErased = await sql(evidenceEntry.database, `SELECT count(*) FROM online_seats WHERE match_id = '${matchId}' AND owner_id = 'anonymized'`);
     steps.push({
-      id: 'the-next-import-without-a-sink-is-refused',
-      passed: noSink.code !== 0,
-      detail: `a restore into a database without the removal tables is refused: ${(noSink.stderr + noSink.stdout).trim().split('\n').slice(-1)[0] ?? ''}`,
+      id: 'the-take-over-applies-the-owed-ledger-of-the-copied-evidence',
+      passed: evidenceTakeover.code === 0 && evidenceApplied.matches === '1' && evidenceApplied.subjects === '1' && evidenceErased.text === '1',
+      detail: evidenceTakeover.code === 0
+        ? `the take-over replayed the owed ledger of the copied evidence (${evidenceApplied.matches} match bound, ${evidenceApplied.subjects} subject) and the seat of the removed match is anonymized (${evidenceErased.text})`
+        : `the take-over of the copied evidence failed: ${evidenceTakeover.stderr.trim().split('\n').slice(-1)[0] ?? ''}`,
     });
-    const controlAfterCopy = await sql(evidenceDatabase, `SELECT count(*) FROM games WHERE game_id = 'proof_control_game' AND length(checkpoint_json) > 2`);
+    // ---- the crash after the replay --------------------------------------
+    // The boundary of a restore that replayed its removal ledger and died
+    // before it closed the fence is staged with the production code of the
+    // privacy service: the lifecycle is opened, the removal ledger the
+    // database really holds is bound to it, the durable evidence of it is
+    // written, and the helper ends without closing the fence. The recovery
+    // that follows is the real binary.
+    const stagedRestoreID = `restore-staged-${RUN}`;
+    const staged = await evidenceHelperRun([
+      'stage',
+      '--fence', evidenceEntry.fence,
+      '--database-url-env', 'DATABASE_URL',
+      '--restore-id', stagedRestoreID,
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, evidenceEntry.database) });
+    let stagedAnswer = {};
+    try {
+      stagedAnswer = JSON.parse((staged.stdout || '').trim() || '{}');
+    } catch {
+      stagedAnswer = {};
+    }
+    const stagedFence = await fenceOwner(evidenceEntry.fence);
+    steps.push({
+      id: 'the-crash-after-the-replay-is-staged',
+      passed: staged.code === 0 && stagedAnswer.staged === true
+        && stagedFence.restoreId === stagedRestoreID && stagedFence.digest.length === 64
+        && stagedAnswer.digest === stagedFence.digest,
+      detail: staged.code === 0 && stagedAnswer.staged === true
+        ? `the lifecycle of the restore ${stagedRestoreID} is open and bound to the removal ledger the database really holds (${stagedAnswer.matches} match bound, ${stagedAnswer.subjects} subject); the replay is applied and the close of the restore never ran`
+        : `the crash after the replay could not be staged: ${(staged.stdout + staged.stderr).trim()}`,
+    });
+    // The record of the staged restore is copied to the protected place of
+    // the run and validated with the production reader.
+    const stagedCopy = `${PROTECTED}/${stagedRestoreID}.json`;
+    const stagedCopied = await run('docker', [
+      'run', '--rm', '--user', '65532:65532', '--network', endpoint.network,
+      '--mount', `type=volume,source=${VOLUME},target=/backups`,
+      endpoint.image, 'sh', '-c',
+      `cp ${evidenceEntry.fence}/restore-requirements/${stagedRestoreID}.json ${stagedCopy} && chmod 600 ${stagedCopy} && stat -c '%a %u' ${stagedCopy}`,
+    ]);
+    const stagedCopyText = (stagedCopied.stdout + stagedCopied.stderr).trim();
+    const stagedValidated = await validateEvidence(evidenceEntry.fence, stagedFence);
+    steps.push({
+      id: 'the-record-of-the-replayed-ledger-is-copied-to-a-protected-place',
+      passed: stagedCopied.code === 0 && /\b600 65532\b/.test(stagedCopyText) && stagedValidated.valid,
+      detail: `the record of the replayed ledger was copied to the protected place of the run and it names its own restore: ${stagedCopyText}`,
+    });
+    // The evidence directory is lost again, and only that directory.
+    const lostAgain = await run('docker', [
+      'run', '--rm', '--user', '65532:65532', '--network', endpoint.network,
+      '--mount', `type=volume,source=${VOLUME},target=/backups`,
+      endpoint.image, 'sh', '-c',
+      `target=${evidenceEntry.fence}/restore-requirements; resolved=$(readlink -f "$target"); if [ "$resolved" != "${evidenceEntry.fence}/restore-requirements" ]; then echo out-of-scope; exit 1; fi; if [ ! -d "$resolved" ]; then echo missing; exit 1; fi; rm -rf "$resolved" && echo lost`,
+    ]);
+    if (lostAgain.code !== 0 || !(lostAgain.stdout || '').includes('lost')) {
+      throw new Error(`the evidence directory of the copied case could not be removed: ${(lostAgain.stdout + lostAgain.stderr).trim()}`);
+    }
+    // The recovery with the copy alone succeeds: the removals are applied
+    // and erased, so the recovery releases the gate and closes the fence.
+    const succeeded = await evidenceOnlyTool([
+      'recover',
+      '--restore-id', stagedRestoreID,
+      '--evidence', stagedCopy,
+      '--fence', evidenceEntry.fence,
+      '--database-url-env', 'DATABASE_URL',
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, evidenceEntry.database) });
+    steps.push({
+      id: 'the-recovery-succeeds-with-the-copied-record-alone',
+      passed: succeeded.code === 0 && /recovered the restore/i.test(succeeded.stdout + succeeded.stderr),
+      detail: succeeded.code === 0
+        ? `the recovery took the copied record alone, without a bundle and without a passphrase, and recovered the restore: ${(succeeded.stdout + succeeded.stderr).trim().split('\n').slice(-1)[0] ?? ''}`
+        : `the recovery of the copied record failed: ${(succeeded.stdout + succeeded.stderr).trim().split('\n').slice(-1)[0] ?? ''}`,
+    });
+    const fenceAfterRecovery = await fenceMarkerState(evidenceEntry.fence);
+    steps.push({
+      id: 'the-recovery-closed-the-fence-of-the-recovered-restore',
+      passed: fenceAfterRecovery === 'closed',
+      detail: `the fence of the recovered restore is ${fenceAfterRecovery}`,
+    });
+    const gateAfterRecovery = await startGate(context, endpoint, evidenceEntry, containers);
+    const servedAfterRecovery = await waitForGate(gateAfterRecovery.port);
+    steps.push({
+      id: 'the-service-admits-after-the-recovery-from-the-copy',
+      passed: servedAfterRecovery !== null && servedAfterRecovery.status === 200,
+      detail: servedAfterRecovery !== null
+        ? `the gate answered ${servedAfterRecovery.status} after the recovery of the copied record`
+        : 'the gate did not answer',
+    });
+    await run('docker', ['rm', '--force', gateAfterRecovery.id]);
+    containers.splice(containers.indexOf(gateAfterRecovery.id), 1);
+    const erasedAfterRecovery = await sql(evidenceEntry.database, `SELECT count(*) FROM online_seats WHERE match_id = '${matchId}' AND owner_id = 'anonymized'`);
+    const erasedReplay = await replayState(context, evidenceEntry.database, matchId);
+    const emptiedAfterRecovery = await sql(evidenceEntry.database, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND checkpoint_json = '{}'::bytea`);
+    steps.push({
+      id: 'the-removed-data-is-still-erased-after-the-recovery',
+      passed: erasedAfterRecovery.text === '1' && erasedReplay.revoked && erasedReplay.emptied && emptiedAfterRecovery.text === '1',
+      detail: `the seat of the removed match is still anonymized (${erasedAfterRecovery.text}), its replay is still revoked (${erasedReplay.revoked}) and the private payload is still erased (${emptiedAfterRecovery.text})`,
+    });
+    const controlAfterCopy = await sql(evidenceEntry.database, `SELECT count(*) FROM games WHERE game_id = 'proof_control_game' AND length(checkpoint_json) > 2`);
     steps.push({
       id: 'the-unrelated-control-survives-the-lost-evidence',
       passed: controlAfterCopy.text === '1',
       detail: `the private payload of the unrelated subject survived the loss of the evidence (${controlAfterCopy.text})`,
     });
 
+    // ---- the next import without a removal ledger sink ------------------
+    // The refusal is measured with the real library, against a real
+    // database and a real encrypted bundle, with a counter on the importer.
+    const noSinkEntry = cases.nosink;
+    const owedBefore = await removalState(context, noSinkEntry.database);
+    const seatBefore = await seatOwner(context, noSinkEntry.database, matchId);
+    const replayBefore = await replayState(context, noSinkEntry.database, matchId);
+    // The obligation of the next import is real: the lifecycle of a restore
+    // that crashed is staged with the production code, so the evidence
+    // directory holds a record of a restore that owes removals.
+    const noSinkRestoreID = `restore-nosink-${RUN}`;
+    const stagedNoSink = await evidenceHelperRun([
+      'stage',
+      '--fence', noSinkEntry.fence,
+      '--database-url-env', 'DATABASE_URL',
+      '--restore-id', noSinkRestoreID,
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, noSinkEntry.database) });
+    const noSink = await run('docker', [
+      'run', '--rm',
+      '--network', endpoint.network,
+      '--user', API_UID,
+      '--mount', `type=volume,source=${VOLUME},target=/backups`,
+      '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
+      '--env', `DATABASE_URL=${insideDatabaseUrl(context.target.url, noSinkEntry.database)}`,
+      '--env', `KHA_BACKUP_PASSPHRASE=${PASSPHRASE}`,
+      '--entrypoint', '/fixtures/restoreevidence',
+      endpoint.image, 'nosink',
+      '--fence', noSinkEntry.fence,
+      '--database-url-env', 'DATABASE_URL',
+      '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
+      '--restore-id', `restore-nosink-attempt-${RUN}`,
+      '--file', oldBundle,
+      '--takeover',
+    ]);
+    let noSinkAnswer = {};
+    try {
+      noSinkAnswer = JSON.parse((noSink.stdout || '').trim() || '{}');
+    } catch {
+      noSinkAnswer = {};
+    }
+    steps.push({
+      id: 'the-next-import-without-a-sink-is-refused',
+      passed: stagedNoSink.code === 0 && noSink.code === 0 && noSinkAnswer.refused === true
+        && noSinkAnswer.ledgerConflict === true && noSinkAnswer.imports === 0
+        && /removals are owed/i.test(noSinkAnswer.error ?? ''),
+      detail: noSinkAnswer.refused === true
+        ? `a restore without the removal ledger sink is refused with the conflict of the owed removals and imported ${noSinkAnswer.imports} times: ${noSinkAnswer.error ?? ''}`
+        : `a restore without the removal ledger sink was not refused: ${(noSink.stdout + noSink.stderr).trim()}`,
+    });
+    const owedAfter = await removalState(context, noSinkEntry.database);
+    const seatAfter = await seatOwner(context, noSinkEntry.database, matchId);
+    const replayAfter = await replayState(context, noSinkEntry.database, matchId);
+    steps.push({
+      id: 'the-refused-import-did-not-touch-the-database',
+      passed: owedAfter.matches === owedBefore.matches && owedAfter.subjects === owedBefore.subjects
+        && seatAfter === seatBefore && replayAfter.present === replayBefore.present && replayAfter.revoked === replayBefore.revoked,
+      detail: `the refused import changed nothing: the removal ledger of the database is still ${owedAfter.matches} match bound and ${owedAfter.subjects} subject, the seat of the removed match is owned by ${seatAfter || 'nobody'} and the replay is ${replayAfter.revoked ? 'revoked' : 'published'}`,
+    });
+    // The refused take-over gave the lifecycle back and put the marker of
+    // the crashed restore back, so the crashed restore is still recoverable.
+    const noSinkFence = await fenceOwner(noSinkEntry.fence);
+    steps.push({
+      id: 'the-refused-take-over-keeps-the-crashed-restore',
+      passed: noSinkFence.restoreId === noSinkRestoreID,
+      detail: noSinkFence.restoreId === noSinkRestoreID
+        ? `the refused take-over put the marker of the crashed restore back: the fence still names the restore ${noSinkFence.restoreId}`
+        : `the refused take-over left the fence naming ${noSinkFence.restoreId || 'nothing'} instead of the crashed restore ${noSinkRestoreID}`,
+    });
+
     // ---- the private payload of the removed subject ---------------------
-    const emptied = await sql(targetAfter, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND checkpoint_json = '{}'::bytea AND deleted_at IS NOT NULL`);
-    const chunks = await sql(targetAfter, `SELECT count(*) FROM archive_chunks WHERE game_id = 'proof_private_game'`);
-    const events = await sql(targetAfter, `SELECT count(*) FROM archive_events WHERE game_id = 'proof_private_game'`);
-    const operation = await sql(targetAfter, `SELECT count(*) FROM operations WHERE game_id = 'proof_private_game' AND result_json = '{}'::bytea`);
-    const tombstone = await sql(targetAfter, `SELECT count(*) FROM deletion_tombstones WHERE game_id = 'proof_private_game'`);
-    const controlPayload = await sql(targetAfter, `SELECT count(*) FROM games WHERE game_id = 'proof_control_game' AND checkpoint_json = '\\x7b22636f6e74726f6c223a227061796c6f6164227d'::bytea`);
-    const controlChunks = await sql(targetAfter, `SELECT count(*) FROM archive_chunks WHERE game_id = 'proof_control_game' AND length(raw_json) > 2`);
-    const controlEvents = await sql(targetAfter, `SELECT count(*) FROM archive_events WHERE game_id = 'proof_control_game' AND length(raw_json) > 2`);
-    const controlReceipts = await sql(targetAfter, `SELECT count(*) FROM operations WHERE game_id = 'proof_control_game' AND length(result_json) > 2`);
-    const tombstonePayload = await sql(targetAfter, `SELECT count(*) FROM deletion_tombstones t JOIN games g ON g.game_id = t.game_id WHERE t.game_id = 'proof_private_game' AND length(g.checkpoint_json) > 2`);
-    const session = await sql(targetAfter, `SELECT count(*) FROM online_session_revocations WHERE subject_id = 'proof_owner_private'`);
+    const emptied = await sql(afterEntry.database, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND checkpoint_json = '{}'::bytea AND deleted_at IS NOT NULL`);
+    const chunks = await sql(afterEntry.database, `SELECT count(*) FROM archive_chunks WHERE game_id = 'proof_private_game'`);
+    const events = await sql(afterEntry.database, `SELECT count(*) FROM archive_events WHERE game_id = 'proof_private_game'`);
+    const operation = await sql(afterEntry.database, `SELECT count(*) FROM operations WHERE game_id = 'proof_private_game' AND result_json = '{}'::bytea`);
+    const tombstone = await sql(afterEntry.database, `SELECT count(*) FROM deletion_tombstones WHERE game_id = 'proof_private_game'`);
+    const controlPayload = await sql(afterEntry.database, `SELECT count(*) FROM games WHERE game_id = 'proof_control_game' AND checkpoint_json = '\\x7b22636f6e74726f6c223a227061796c6f6164227d'::bytea`);
+    const controlChunks = await sql(afterEntry.database, `SELECT count(*) FROM archive_chunks WHERE game_id = 'proof_control_game' AND length(raw_json) > 2`);
+    const controlEvents = await sql(afterEntry.database, `SELECT count(*) FROM archive_events WHERE game_id = 'proof_control_game' AND length(raw_json) > 2`);
+    const controlReceipts = await sql(afterEntry.database, `SELECT count(*) FROM operations WHERE game_id = 'proof_control_game' AND length(result_json) > 2`);
+    const tombstonePayload = await sql(afterEntry.database, `SELECT count(*) FROM deletion_tombstones t JOIN games g ON g.game_id = t.game_id WHERE t.game_id = 'proof_private_game' AND length(g.checkpoint_json) > 2`);
+    const session = await sql(afterEntry.database, `SELECT count(*) FROM online_session_revocations WHERE subject_id = 'proof_owner_private'`);
     const sessionCount = session.code === 0 ? Number(session.text) : -1;
     steps.push({
       id: 'the-private-payload-of-the-removed-subject-is-gone',
@@ -1030,10 +1422,10 @@ export async function runInterruptionProof(options = {}) {
     });
 
     // ---- the removed data and the control -------------------------------
-    const revoked = await replayState(context, targetAfter, matchId);
-    const seat = await seatOwner(context, targetAfter, matchId);
-    const control = await replayState(context, targetAfter, controlId);
-    const controlSeat = await seatOwner(context, targetAfter, controlId);
+    const revoked = await replayState(context, afterEntry.database, matchId);
+    const seat = await seatOwner(context, afterEntry.database, matchId);
+    const control = await replayState(context, afterEntry.database, controlId);
+    const controlSeat = await seatOwner(context, afterEntry.database, controlId);
     steps.push({
       id: 'the-removed-data-does-not-come-back',
       passed: revoked.present && revoked.revoked && revoked.emptied && revoked.marker !== '' && seat === 'anonymized',
@@ -1051,6 +1443,8 @@ export async function runInterruptionProof(options = {}) {
     return completeReport(steps, logs, [
       'The kill is real: the restore of the real binary is killed by the container runtime while the real psql holds the import.',
       'The proof runs against the local fixture container, not against the deployment host.',
+      'The crash after the replay is staged with the production code of the privacy service: the lifecycle is opened, the removal ledger the database really holds is bound to it and the helper ends without closing it. The recovery that follows is the real binary of the command.',
+      'The container proofs are reproduced by the workflow container-proofs on a Linux engine; this report was measured on the local engine of the developer.',
     ]);
   } catch (error) {
     steps.push({
@@ -1093,7 +1487,7 @@ export async function runInterruptionProof(options = {}) {
     for (const volume of plan.removeVolumes) {
       const removed = await run('docker', ['volume', 'rm', '--force', volume]);
       if (removed.code !== 0) {
-        steps.push({ id: 'the-volume-is-removed', passed: false, detail: `the volume ${volume} could not be removed: ${removed.stderr.trim()}` });
+        steps.push({ id: 'the-volume-is-removed', passed: false, detail: `the volume could not be removed: ${removed.stderr.trim()}` });
       }
     }
     if (plan.removeDirectory) {
@@ -1134,11 +1528,12 @@ async function fixtureEndpoint(container) {
  * Starts the service that observes the fence.
  * @param {{container: string, target: {url: URL}}} context
  * @param {{image: string, network: string, host: string}} endpoint
- * @param {string} database
+ * @param {{fence: string, database: string}} entry
+ * @param {string[]} tracked
  * @returns {Promise<{id: string, port: string}>}
  */
-async function startGate(context, endpoint, database, tracked) {
-  const url = insideDatabaseUrl(context.target.url, database);
+async function startGate(context, endpoint, entry, tracked) {
+  const url = insideDatabaseUrl(context.target.url, entry.database);
   const started = await run('docker', [
     'run', '--detach',
     '--network', endpoint.network,
@@ -1148,7 +1543,7 @@ async function startGate(context, endpoint, database, tracked) {
     '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
     '--publish', '127.0.0.1::8099',
     '--entrypoint', '/fixtures/fenceprobe',
-    endpoint.image, 'watch', FENCE, url, '8099', `restore-gate-${RUN}`,
+    endpoint.image, 'watch', entry.fence, url, '8099', `restore-gate-${RUN}`,
   ]);
   if (started.code !== 0 || !started.stdout.trim()) {
     throw new Error(`the service that observes the fence could not be started: ${(started.stdout + started.stderr).trim()}`);
@@ -1164,7 +1559,7 @@ async function startGate(context, endpoint, database, tracked) {
     if (port) break;
     const alive = await run('docker', ['inspect', '--format', '{{.State.Running}}', id]);
     if (alive.code !== 0 || alive.stdout.trim() !== 'true') break;
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1000));
+    await sleep(1000);
   }
   if (!port) {
     const logs = await run('docker', ['logs', id]);
@@ -1185,7 +1580,7 @@ async function waitForGate(port) {
   for (let attempt = 0; attempt < 30; attempt += 1) {
     const answer = await fetch(`http://127.0.0.1:${port}/healthz`).catch(() => null);
     if (answer !== null) return answer;
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+    await sleep(500);
   }
   return null;
 }
