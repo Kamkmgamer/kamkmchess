@@ -202,9 +202,18 @@ export function scanGoUsage(source) {
     if (!usage.has(name)) usage.set(name, new Set());
     usage.get(name).add(verb);
   };
-  for (const match of text.matchAll(/INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) record(match[1], 'INSERT');
-  for (const match of text.matchAll(/DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) record(match[1], 'DELETE');
-  for (const match of text.matchAll(/UPDATE\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?[A-Za-z_][A-Za-z0-9_]*)?\s+SET\b/gi)) record(match[1], 'UPDATE');  for (const match of text.matchAll(/\bFROM\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)\b/gi)) record(match[1], 'SELECT');
+  for (const match of text.matchAll(/INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) {
+    record(match[1], 'INSERT');
+  }
+  for (const match of text.matchAll(/DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) {
+    record(match[1], 'DELETE');
+  }
+  for (const match of text.matchAll(/UPDATE\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?[A-Za-z_][A-Za-z0-9_]*)?\s+SET\b/gi)) {
+    record(match[1], 'UPDATE');
+  }
+  for (const match of text.matchAll(/\bFROM\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)\b/gi)) {
+    record(match[1], 'SELECT');
+  }
   return usage;
 }
 
@@ -251,21 +260,23 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
   const migrated = new Set(tables.map((table) => table.toLowerCase()));
   const known = new Set([...migrated, ...policy.privileges.keys()]);
 
-  /** @type {Map<string, {tables: Set<string>, privileges: Set<string>}>} */
+  /** @type {Map<string, Map<string, Set<string>>>} */
   const migrationGrantsByRole = new Map();
   for (const grant of migrationGrants) {
     if (!migrationGrantsByRole.has(grant.role)) {
-      migrationGrantsByRole.set(grant.role, { tables: new Set(), privileges: new Set() });
+      migrationGrantsByRole.set(grant.role, new Map());
     }
-    const entry = migrationGrantsByRole.get(grant.role);
-    entry.tables.add(grant.table);
-    for (const privilege of grant.privileges) entry.privileges.add(privilege);
+    const tables = migrationGrantsByRole.get(grant.role);
+    if (!tables.has(grant.table)) tables.set(grant.table, new Set());
+    for (const privilege of grant.privileges) tables.get(grant.table).add(privilege);
   }
-  for (const [role, entry] of [...migrationGrantsByRole.entries()].sort()) {
+  for (const [role, tables] of [...migrationGrantsByRole.entries()].sort()) {
     if (role === policy.role) {
-      for (const table of [...entry.tables].sort()) {
+      // The policy role is compared table by table. The privileges of one
+      // table never carry over to another one.
+      for (const [table, verbs] of [...tables.entries()].sort()) {
         const granted = policy.privileges.get(table);
-        const extra = [...entry.privileges].filter((verb) => !granted || !granted.has(verb));
+        const extra = [...verbs].filter((verb) => !granted || !granted.has(verb));
         if (extra.length > 0) {
           findings.push(finding(
             'blocker',
@@ -277,11 +288,15 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
       }
       continue;
     }
+    // The presentation for the roles the deployment does not connect as is
+    // aggregated, because the finding names the role and its reach.
+    const reached = new Set();
+    for (const verbs of tables.values()) for (const verb of verbs) reached.add(verb);
     const stripped = (policy.unusedRoles ?? []).includes(role);
     findings.push(finding(
       stripped ? 'warning' : 'blocker',
       stripped ? 'migration-grant-stripped-role' : 'migration-grants-unreviewed-role',
-      `The migrations grant ${[...entry.privileges].sort().join(', ')} on ${entry.tables.size} table(s) to ${role}, a role the deployment does not connect as.`,
+      `The migrations grant ${[...reached].sort().join(', ')} on ${tables.size} table(s) to ${role}, a role the deployment does not connect as.`,
       stripped
         ? `The deployment connects as ${policy.role}. Provisioning revokes the privileges of ${role} and the grant probe proves it holds nothing on a real database.`
         : `The deployment connects as ${policy.role}. List ${role} in the unused roles of the policy so the deployment strips it, or remove the grant from the migration.`,

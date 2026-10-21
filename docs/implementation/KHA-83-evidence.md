@@ -73,7 +73,7 @@ The static audits are clean against the assembled tree:
 
 | Audit | Result |
 | --- | --- |
-| `node deploy/runtime-grants.mjs` | clear, 45 tables, no blocker |
+| `node deploy/runtime-grants.mjs` | clear, 45 tables, no blocker; the 43 grants the migrations issue to the unused role are reported once, and the policy role is compared table by table |
 | `node scripts/online/service-wiring.mjs` | the feature route is served, both switches are read with a closed default, the restore fence is loaded and shared |
 | `node scripts/online/backup-coverage.mjs` | the dump covers the database, the game and the online removal ledgers are reapplied, the restore gate is consulted before serving |
 
@@ -83,15 +83,22 @@ It is **not** a capacity claim.
 
 ## Open blockers
 
-1. **The API cannot read the restore fence.** `node deploy/verify-fence-access.mjs`
-   proves it with two throwaway containers: the restore writes a fence with a
-   private directory and a private file as the database user, and the API user
-   (65532) cannot read it. The service then refuses every request for the
-   wrong reason: it never sees the fence close. The proof also shows the
-   mitigation — writing the fence as the user the API reads it as makes it
-   readable without loosening the mode. The fence code owns the mode, the
-   deployment owns the user, and the privacy worker has the pending fence
-   change.
+1. **The fence access is fixed in the deployment, and the proof is green.**
+   `node deploy/verify-fence-access.mjs` runs the real fence code of the
+   privacy service in throwaway containers against a volume this run created:
+
+   | Step | Result |
+   | --- | --- |
+   | the shared directory is prepared for the API user | passed |
+   | the database user cannot write the fence into the shared directory | passed |
+   | the API user observes the **open** fence the restore wrote | passed |
+   | the API user observes the **closed** fence after the restore finished | passed |
+
+   The remedy is a deployment choice, not a mode decision: the database
+   service prepares the shared directory for the user the API reads it as, and
+   the restore runs as that user. The fence file keeps its private mode. The
+   API therefore observes the open fence and refuses traffic during the
+   restore, and observes the closed fence and resumes afterwards.
 2. **The host has not been verified.** Apache flushing, finite stream
    delivery, the delivered CSP and CORS, the TLS chain, the private worker
    reachability and the capacity need the real host and an authorized staging

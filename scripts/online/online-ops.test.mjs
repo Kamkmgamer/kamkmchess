@@ -359,3 +359,56 @@ test('an update with a table alias is still a table update', () => {
   assert.ok(usage.has('online_queue_allocations'));
   assert.ok(usage.get('online_queue_allocations').has('UPDATE'));
 });
+
+test('a migration grant is compared table by table, never as a union', () => {
+  // The policy allows only a read on both tables. The migration grants a
+  // write on the second one. A union would report the write on the first
+  // table as well, which would be a privilege that no migration grants.
+  const policy = parsePolicy({ role: 'kamkmchess_runtime', privileges: { alpha: ['SELECT'], beta: ['SELECT'] } });
+  const findings = auditGrants({
+    policy,
+    tables: ['alpha', 'beta'],
+    usage: new Map(),
+    migrationGrants: [
+      { role: 'kamkmchess_runtime', table: 'alpha', privileges: ['SELECT'] },
+      { role: 'kamkmchess_runtime', table: 'beta', privileges: ['SELECT', 'UPDATE'] },
+    ],
+  });
+  const blockers = findings.filter((finding) => finding.code === 'migration-grant-exceeds-policy');
+  assert.equal(blockers.length, 1);
+  assert.match(blockers[0].message, /UPDATE on beta/);
+  assert.ok(!blockers[0].message.includes('alpha'));
+});
+
+test('the grants of a role the deployment does not use are reported once', () => {
+  const policy = parsePolicy({
+    role: 'kamkmchess_runtime',
+    unusedRoles: ['kamkm_online_api'],
+    privileges: { alpha: ['SELECT'] },
+  });
+  const findings = auditGrants({
+    policy,
+    tables: ['alpha', 'beta'],
+    usage: new Map(),
+    migrationGrants: [
+      { role: 'kamkm_online_api', table: 'alpha', privileges: ['SELECT', 'UPDATE'] },
+      { role: 'kamkm_online_api', table: 'beta', privileges: ['SELECT', 'UPDATE'] },
+    ],
+  });
+  const reported = findings.filter((finding) => finding.code === 'migration-grant-stripped-role');
+  assert.equal(reported.length, 1);
+  assert.match(reported[0].message, /2 table\(s\)/);
+});
+
+test('a role the deployment does not use and does not strip is a blocker', () => {
+  const policy = parsePolicy({ role: 'kamkmchess_runtime', privileges: { alpha: ['SELECT'] } });
+  const findings = auditGrants({
+    policy,
+    tables: ['alpha'],
+    usage: new Map(),
+    migrationGrants: [{ role: 'kamkm_online_api', table: 'alpha', privileges: ['SELECT', 'UPDATE'] }],
+  });
+  const blockers = findings.filter((finding) => finding.code === 'migration-grants-unreviewed-role');
+  assert.equal(blockers.length, 1);
+  assert.equal(blockers[0].severity, 'blocker');
+});

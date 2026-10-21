@@ -27,6 +27,19 @@ services:
       # inside the database schema would be replaced by the restore it has to
       # guard, and a container-local file would not survive a restart.
       - restorefence:/var/lib/kamkmchess/restore-fence
+    # The shared fence directory belongs to the user the API reads it as, so
+    # the restore can write a private file there and the API can traverse the
+    # directory. Without that ownership the API cannot read the fence at all
+    # and refuses every request for the wrong reason.
+    user: root
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        mkdir -p /var/lib/kamkmchess/restore-fence &&
+        chown 65532:65532 /var/lib/kamkmchess/restore-fence &&
+        chmod 700 /var/lib/kamkmchess/restore-fence &&
+        exec docker-entrypoint.sh postgres
     command:
       - postgres
       - -c
