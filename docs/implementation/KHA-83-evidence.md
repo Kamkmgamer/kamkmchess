@@ -1,27 +1,38 @@
 # KHA-83 evidence — host verification for the online service
 
-Tested tree: the **root `f578875`** with the privacy candidate
-(`3a4aed6`, `daa2a5f`, `4e86892`, `1616aa8` — the lifecycle of a restore
-around its import, the cancellation of a refused restore and the recovery of
-the crashed marker) and the operations candidate of this file applied. Every
-number and every step id below is the output of the tools on that tree, and
-the commit that carries this file names the exact tree it was measured on.
-The measurements are **local**, against the fixture container of this
-machine; the host is not verified, and the local rehearsal of 2026-10-18 that
-[`MVP-operations.md`](MVP-operations.md) records is a separate, older
-rehearsal that is not part of this candidate.
+Tested tree: the **root `ec84214`** with the operations candidate of this
+file applied. Every number and every step id below is the output of the tools
+on that tree, and the commit that carries this file names the exact tree it
+was measured on. The measurements are **local**, against the fixture
+container of this machine; the host is not verified, and the local rehearsal
+of 2026-10-18 that [`MVP-operations.md`](MVP-operations.md) records is a
+separate, older rehearsal that is not part of this candidate.
 
-The exact content that was measured: the privacy commits `3a4aed6`,
-`daa2a5f`, `4e86892` and `1616aa8` (applied on this branch as `c5994c7`,
-`d2ddb4d`, `3d6b2bf` and `7c1fdd7`), the operations commits `f19d265`,
-`800bbfd`, `a5f3632`, `33fce9e`, `f76f73e`, `19662fe` and `d84750a`, and the
-proof `97a9d03` with the helper `tools/restoreevidence`.
+The content of that tree, in the order it was integrated:
+
+| Content | Commits on the root | Written on |
+| --- | --- | --- |
+| the lifecycle of a restore around its import, the cancellation of a refused restore and the recovery of the crashed marker | `3c2348c`, `70b0755`, `cc4857a`, `e7f2adc` | the branch of the privacy worker, as `3a4aed6`, `daa2a5f`, `4e86892`, `1616aa8` |
+| the operations proof of the restore and the runbook of the recovery | `dbbc370`, `0b3d191`, `65d16ed`, `3039022`, `1e7c30e`, `eb42579`, `96745bb`, `c100f28`, `70efe4e`, `50bbe5a`, `a9f8031` | the branch of the operations worker, as `f19d265`, `800bbfd`, `a5f3632`, `33fce9e`, `f76f73e`, `19662fe`, `d84750a`, `97a9d03`, `fa0c477`, `55de406`, `a852307` |
+
+The commits of the second row are the ones a reader of the root can check
+out. The commits of the third column are the same content on the branches of
+the workers, and they are **not** ancestors of the root: they are named here
+so that the difference between a branch and the root is visible, not to claim
+that the root contains them.
+
+Two measurements of this file were made by other workers and were **not**
+repeated on this tree. They are named with the tree they came from, and that
+tree is not an ancestor of the root either: the grant probe below ran on
+`d88eafc` of the branch `t3/online-ops-evidence-gates`, and the native
+restore proof of the lifecycle ran on the same tree. Everything else below
+was measured on the tree of this candidate.
 
 The fence helper of this tree binds and closes with the removal ledger of
 the privacy candidate, and it builds and runs on it. The container proofs
 are reproduced by the workflow `container-proofs` of
 `.github/workflows/online-ops.yml`, which starts a `postgres:17.6`
-fixture and runs the three container proofs against it; the helpers reach
+fixture and runs the four container proofs against it; the helpers reach
 the published port of the fixture through `host.docker.internal`, which a
 Linux engine resolves only with the mapping the proofs pass.
 
@@ -48,8 +59,9 @@ Linux engine resolves only with the mapping the proofs pass.
 
 The grant probe ran against the local PostgreSQL 17 fixture
 (`127.0.0.1:55467`, database `kamkmchess_online_test`) on the schema of
-the tree at `d88eafc` (migrations up to
-`0019_privacy_auxiliary_redaction`):
+the tree at `d88eafc` of the branch `t3/online-ops-evidence-gates` (migrations
+up to `0019_privacy_auxiliary_redaction`). That tree is **not** an ancestor
+of the root and the probe was **not** repeated on it:
 
 ```
 221 probes, 0 failures
@@ -163,7 +175,36 @@ measurement of a serving path is still **not run** and not claimed.
   measures that inside the real service container, with a negative control:
   the restore user is refused the file, the documented reading side hands the
   values over, and the file is still `0600` and owned by root afterwards.
-   The compose proof reports 11 steps, all of them passed at `d88eafc`.
+   The compose proof reports 18 steps, all of them passed on the tree of this
+   candidate.
+- The protected copy of the durable evidence of a restore is **durable** and
+  it is measured to be so. The copy is written onto `/backups/restore-evidence`,
+  which is inside the bind mount of the deployment that holds the encrypted
+  bundles, and the backup procedure of the deployment runs the very program
+  that writes it, so the copy is covered by the backup of the deployment.
+  The compose proof measures this inside the real service container: the
+  record of the owed ledger is staged in the fence volume, the copy program
+  of the repository copies it, and the copy is then read **outside** the
+  container, so a file that is visible on the host is on a mounted path and a
+  file that is not would die with the container. The proof also measures the
+  permissions of the durable path (the directory is `0700` and the record is
+  `0600`, both owned by the restore user `65532`), the ownership of the lock
+  of the lifecycle (the file is created by the restore user with mode
+  `0600`, so the restore can open it), and the negative control: while a
+  restore holds the lock of the lifecycle, the copy is refused with the
+  documented exit code `75`, so the copy is never a half written record of a
+  restore that is running. A copy that fails for any other reason keeps its
+  own reason and its own exit code, so the backup procedure can tell it from
+  a running restore and **fails the backup** instead of reporting a
+  complete protected backup.
+- The identifier of a restore is read by a program of the deployment
+  (`deploy/check-restore-id.sh`) that applies the **production rule** before
+  the identifier is used to build a path: an alphanumeric first character and
+  eight to one hundred and twenty eight characters in total. The compose
+  proof runs that program inside the real service container against fixture
+  markers and measures that it reads the identifier of a well formed marker
+  and refuses one with a leading dot, one that is too short, one that is too
+  long and one that carries a path separator.
 - The superseded `scripts/online/prepare-restore-fixture.mjs` is **removed**.
    It wrote the restore command that cannot run (it sourced the private file
    as the restore user) and left a bundle and a stages file on the host; the
@@ -186,6 +227,15 @@ alive, the identifier is validated as a name before it is used in a path,
 and the record of the owed ledger is opened with the production reader of the
 privacy service, which refuses a record that names another restore or
 another removal ledger. The content of the record is never printed.
+
+Every kill of the proof binds the exit code of the kill **and** the liveness
+of the container afterwards, and every refusal binds the **reason** of the
+refusal and not only its exit code: a recovery that failed for another
+reason, a fence conflict or a held lock, would leave the proof red instead
+of green. The step that says that the record of the owed ledger was written
+before the import opens the record with the production reader and compares
+its digest with the digest the marker names, because the marker alone only
+proves that the restore took the lifecycle.
 
 The kill during the import transaction is **measured green**, and it is a
 real mid-import proof: the barrier of the "during" case waits for the
@@ -273,7 +323,9 @@ removals it owed are still missing from the database.
    `node deploy/verify-fence-access.mjs` runs the real fence code of the
    privacy service in throwaway containers against a volume this run created:
 
-   The tool reports 13 steps, and every one of them passed at `d88eafc`:
+   The tool reports 15 steps, and every one of them passed on the tree of
+   this candidate (the run was made on the branch copy of that tree, which is
+   integrated as `a9f8031`):
 
    | Step id | Result |
    | --- | --- |
@@ -287,6 +339,7 @@ removals it owed are still missing from the database.
    | `the-database-user-cannot-write-the-fence` | passed |
    | `the-schema-of-the-run-is-owned` | passed |
    | `the-service-takes-the-fence` | passed |
+   | `the-evidence-of-the-owed-ledger-is-owner-only` | passed |
    | `the-service-refuses-while-the-fence-is-held` | passed (503) |
    | `the-service-serves-again-after-the-fence-is-closed` | passed (200) |
    | `the-schema-of-the-run-is-dropped` | passed |
@@ -304,7 +357,9 @@ removals it owed are still missing from the database.
    to be refused). The encrypted restore itself is proved by
    `node scripts/online/restore-proof.mjs`, which runs the real
    `khabackup` against the fence lifecycle of the privacy service and reports
-   18 steps, all of them passed at `d88eafc`. The **crash of the restore
+   18 steps, all of them passed on the tree `d88eafc` of the branch
+   `t3/online-ops-evidence-gates`; that run was **not** repeated on the tree
+   of this candidate. The **crash of the restore
    during its import** is run by
    `node scripts/online/restore-interruption-proof.mjs`, which kills the real
    restore of the real binary at a real barrier in front of the real psql and
