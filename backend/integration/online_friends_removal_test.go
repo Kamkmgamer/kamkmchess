@@ -1371,6 +1371,224 @@ func TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor(t *testing
 	}
 }
 
+// friendRemovalRematch plays a friend game between two guests and accepts a
+// rematch offer.
+//
+// The answer of the acceptance is dropped: the test keeps the identifiers of
+// the new match, as a browser that lost the answer would.
+func friendRemovalRematch(t *testing.T, fixture *friendRemovalFixture) (offer invite.Rematch, newMatchID string, proposer *onlineauth.Principal, proposerID string, acceptorID string) {
+	t.Helper()
+	ctx := context.Background()
+	const proposerGuest = "guest_rematch_proposer"
+	const acceptorGuest = "guest_rematch_acceptor"
+	created, err := fixture.friends.Create(ctx, invite.CreateRequest{
+		Inviter:     &invite.Identity{Participant: online.ParticipantRef{Kind: online.ParticipantGuest, ID: proposerGuest}, PublicLabel: invite.GuestLabel},
+		Seat:        online.SeatWhite,
+		TimeControl: online.TimeControl{StartingTimeMs: 300_000, IncrementMs: 0},
+		Control:     online.SeatControl{Kind: online.ControlHuman},
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	accepted, err := fixture.friends.Accept(ctx, invite.AcceptRequest{
+		InvitationID:  created.Invitation.InvitationID,
+		AcceptanceKey: acceptanceKey("rematch-survivor"),
+		Acceptor:      &invite.Identity{Participant: online.ParticipantRef{Kind: online.ParticipantGuest, ID: acceptorGuest}, PublicLabel: invite.GuestLabel},
+		Control:       online.SeatControl{Kind: online.ControlHuman},
+		Origin:        friendOrigin,
+	})
+	if err != nil {
+		t.Fatalf("accept: %v", err)
+	}
+	// The inviter claims the credential of its seat, so the removal of the
+	// guest can verify the ownership of the seat.
+	claimed, err := fixture.friends.SeatCredential(ctx, invite.SeatCredentialRequest{
+		InvitationID: created.Invitation.InvitationID,
+		OwnerToken:   created.OwnerToken,
+		Origin:       friendOrigin,
+	})
+	if err != nil {
+		t.Fatalf("claim the inviter credential: %v", err)
+	}
+	principal, err := fixture.authorizer.AuthenticateGuest(ctx, claimed.GuestCredential.Token, friendOrigin)
+	if err != nil {
+		t.Fatalf("authenticate the inviter credential: %v", err)
+	}
+	// The game ends and the inviter proposes the rematch.
+	resign := resignOnlineCommand(accepted.MatchID, "rematch-survivor-resign", online.SeatWhite, 1)
+	if _, err = fixture.service.Execute(onlineauth.WithPrincipal(ctx, principal), principal.Participant, resign); err != nil {
+		t.Fatalf("resign: %v", err)
+	}
+	proposal, err := fixture.friends.ProposeRematch(ctx, invite.RematchRequest{
+		MatchID:       accepted.MatchID,
+		Proposer:      principal.Participant,
+		ProposerLabel: invite.GuestLabel,
+	})
+	if err != nil {
+		t.Fatalf("propose: %v", err)
+	}
+	// The guest accepts the rematch. The answer is lost.
+	result, err := fixture.friends.AcceptRematch(ctx, invite.AcceptRematchRequest{
+		RematchID: proposal.RematchID,
+		Acceptor:  online.ParticipantRef{Kind: online.ParticipantGuest, ID: acceptorGuest},
+		Origin:    friendOrigin,
+	})
+	if err != nil {
+		t.Fatalf("accept the rematch: %v", err)
+	}
+	return proposal, result.MatchID, &principal, proposerGuest, acceptorGuest
+}
+
+// TestPostgresFriendTheSurvivorOfARematchRecoversItsOwnNewSeatCredential
+// covers the duplicate acceptance of a rematch after the removal of the
+// opponent.
+//
+// The acceptance of a rematch that lost its answer is the recovery of the
+// credential of the new seat. The write names the accepter alone, so the
+// removal of the opponent does not take the seat of the survivor away.
+func TestPostgresFriendTheSurvivorOfARematchRecoversItsOwnNewSeatCredential(t *testing.T) {
+	fixture := newFriendRemovalFixture(t)
+	ctx := context.Background()
+	offer, newMatchID, proposer, proposerID, acceptorID := friendRemovalRematch(t, fixture)
+	acceptor := online.ParticipantRef{Kind: online.ParticipantGuest, ID: acceptorID}
+	// The control: the retry of the lost answer delivers the credential of
+	// the new seat of the accepter.
+	control, err := fixture.friends.AcceptRematch(ctx, invite.AcceptRematchRequest{
+		RematchID:        offer.RematchID,
+		Acceptor:         acceptor,
+		Origin:           friendOrigin,
+		RotateCredential: true,
+	})
+	if err != nil {
+		t.Fatalf("the control retry: %v", err)
+	}
+	if control.GuestCredential == nil {
+		t.Fatal("the control retry delivered no credential")
+	}
+	// The opponent of the survivor is removed. The new game stays live.
+	if _, err = fixture.removals.RemoveGuest(ctx, *proposer, friendOrigin); err != nil {
+		t.Fatalf("remove the opponent: %v", err)
+	}
+	// The retry of the lost answer still delivers the credential of the new
+	// seat of the survivor.
+	recovered, err := fixture.friends.AcceptRematch(ctx, invite.AcceptRematchRequest{
+		RematchID:        offer.RematchID,
+		Acceptor:         acceptor,
+		Origin:           friendOrigin,
+		RotateCredential: true,
+	})
+	if err != nil {
+		t.Fatalf("the retry after the removal: %v", err)
+	}
+	if recovered.MatchID != newMatchID {
+		t.Fatalf("the retry named %q, want %q", recovered.MatchID, newMatchID)
+	}
+	if recovered.GuestCredential == nil {
+		t.Fatal("the retry after the removal delivered no credential")
+	}
+	// The credential authorizes the new seat of the survivor.
+	principal, err := fixture.authorizer.AuthenticateGuest(ctx, recovered.GuestCredential.Token, friendOrigin)
+	if err != nil {
+		t.Fatalf("authenticate the recovered credential: %v", err)
+	}
+	if principal.MatchID != newMatchID || principal.Participant.ID != acceptorID {
+		t.Fatalf("the recovered principal = %+v", principal)
+	}
+	// No new match and no reallocation.
+	var matches int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_matches`).Scan(&matches); err != nil {
+		t.Fatal(err)
+	}
+	if matches != 2 {
+		t.Fatalf("the recovery left %d matches, want the game and its rematch", matches)
+	}
+	var offerMatch *string
+	if err = fixture.pool.QueryRow(ctx, `SELECT new_match_id FROM online_rematch_offers WHERE rematch_id=$1`, offer.RematchID).Scan(&offerMatch); err != nil {
+		t.Fatal(err)
+	}
+	if offerMatch == nil || *offerMatch != newMatchID {
+		t.Fatalf("the offer names %v, want %q", offerMatch, newMatchID)
+	}
+	// No personal row of the removed opponent is revived.
+	named := 0
+	for _, statement := range []string{
+		`SELECT count(*) FROM online_friend_invitations WHERE inviter_id=$1`,
+		`SELECT count(*) FROM online_seats WHERE owner_id=$1`,
+		`SELECT count(*) FROM online_rematch_offers WHERE proposer_id=$1`,
+	} {
+		var count int
+		if err = fixture.pool.QueryRow(ctx, statement, proposerID).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		named += count
+	}
+	if named != 0 {
+		t.Fatalf("%d rows still name the removed opponent", named)
+	}
+}
+
+// TestPostgresFriendARemovedAcceptorOfARematchIsStillDenied covers the
+// accepter of a rematch that was removed.
+//
+// The duplicate acceptance names the accepter alone, so the removal of that
+// accepter refuses the retry: no credential of a removed participant is
+// minted and no row of it is revived.
+//
+// The removal of the accepter of an accepted offer is the open privacy defect
+// R7-01: the sanitation of the accepter aborts the removal, so the test
+// records the removal of the accepter directly. The privacy candidate that
+// fixes it keeps the state the test records.
+func TestPostgresFriendARemovedAcceptorOfARematchIsStillDenied(t *testing.T) {
+	fixture := newFriendRemovalFixture(t)
+	ctx := context.Background()
+	offer, newMatchID, _, _, acceptorID := friendRemovalRematch(t, fixture)
+	acceptor := online.ParticipantRef{Kind: online.ParticipantGuest, ID: acceptorID}
+	// The removal of the accepter is recorded.
+	if _, err := fixture.pool.Exec(ctx, `INSERT INTO online_removal_requests(removal_id,subject_kind,subject_id,scope,status,requested_at,verified_at,applied_at,live_delete_due_at,recovery_sanitize_due_at)
+		VALUES('rm_removedacceptor1','guest',$1,'explicit_removal','applied',clock_timestamp(),clock_timestamp(),clock_timestamp(),clock_timestamp(),clock_timestamp())`, subject.Reference(acceptorID)); err != nil {
+		t.Fatal(err)
+	}
+	// The live credentials of the accepter are the ones it had before the
+	// removal. The retry must not add one.
+	var before int
+	if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_guest_seat_credentials WHERE guest_id=$1 AND revoked_at IS NULL AND superseded_at IS NULL`, acceptorID).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	// The retry of the lost answer is refused.
+	_, err := fixture.friends.AcceptRematch(ctx, invite.AcceptRematchRequest{
+		RematchID:        offer.RematchID,
+		Acceptor:         acceptor,
+		Origin:           friendOrigin,
+		RotateCredential: true,
+	})
+	if !errors.Is(err, invite.ErrRemoved) {
+		t.Fatalf("the retry of a removed accepter error = %v, want ErrRemoved", err)
+	}
+	// No credential of the removed accepter was minted and no new match was
+	// created.
+	var live int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_guest_seat_credentials WHERE guest_id=$1 AND revoked_at IS NULL AND superseded_at IS NULL`, acceptorID).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
+	if live != before {
+		t.Fatalf("the refused retry minted a credential: %d live credentials, want %d", live, before)
+	}
+	var matches int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_matches`).Scan(&matches); err != nil {
+		t.Fatal(err)
+	}
+	if matches != 2 {
+		t.Fatalf("the refused retry left %d matches", matches)
+	}
+	var offerMatch *string
+	if err = fixture.pool.QueryRow(ctx, `SELECT new_match_id FROM online_rematch_offers WHERE rematch_id=$1`, offer.RematchID).Scan(&offerMatch); err != nil {
+		t.Fatal(err)
+	}
+	if offerMatch == nil || *offerMatch != newMatchID {
+		t.Fatalf("the offer names %v, want %q", offerMatch, newMatchID)
+	}
+}
+
 // TestPostgresFriendRemovedParticipantCannotCancelItsInvitation covers the
 // cancellation of a removed participant.
 //

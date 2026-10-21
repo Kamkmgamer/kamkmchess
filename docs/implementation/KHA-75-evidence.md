@@ -295,6 +295,8 @@ The focused regressions of this round, one by one:
 --- PASS: TestPostgresFriendRemovalIsOrderedAgainstTheCredentialRotationOfTheAcceptor
 --- PASS: TestPostgresFriendAnAccountNeverResumesTheAcceptanceOfAGuest
 --- PASS: TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor
+--- PASS: TestPostgresFriendTheSurvivorOfARematchRecoversItsOwnNewSeatCredential
+--- PASS: TestPostgresFriendARemovedAcceptorOfARematchIsStillDenied
 --- PASS: TestPostgresFriendRestoredSeatIdentityIsRefused
 --- PASS: TestPostgresFriendLegacyAcceptingOfferIsReadWithoutAnError
 --- PASS: TestPostgresFriendRemovedInviterDoesNotTakeTheAcceptorSeatAway
@@ -639,6 +641,19 @@ outcome:
 * `TestPostgresFriendAnAccountNeverResumesTheAcceptanceOfAGuest` (an account
   and a guest that share an identifier never resume each other's acceptance,
   and the bearer capability of the key still resumes the guest acceptance)
+* `TestPostgresFriendTheRestartOfAnAcceptanceLocksTheStoredAcceptor` (the
+  restart of an acceptance whose stored acceptor was never locked takes the
+  scope of that acceptor: the test holds that scope at the resumption, so the
+  restart blocks on it. This is the **discriminating** proof of the restart)
+* `TestPostgresFriendTheSurvivorOfARematchRecoversItsOwnNewSeatCredential`
+  (the guest that lost the answer of its acceptance of a rematch recovers the
+  credential of its own new seat after the removal of the opponent; the game
+  of the survivor stays live, no second match is created and no row of the
+  removed opponent is revived. This is the **discriminating** proof of the
+  participant scoped recovery of a rematch)
+* `TestPostgresFriendARemovedAcceptorOfARematchIsStillDenied` (the removed
+  accepter is still refused, no credential of it is minted and no match is
+  created. A broader contract check: it holds on both branches)
 * `TestPostgresFriendRestoredSeatIdentityIsRefused` (the seat of an older
   backup that still names the removed subject is refused, because the ledger
   row of the match names that participant)
@@ -692,6 +707,42 @@ The review is `D:/projects/kamkmchess/.scratch/online-swarm/matching-review-r6.m
 The guest bearer capability dispute stays closed: the acceptance key is the
 whole capability of a guest acceptance, the service stores only its hash, and
 no fingerprint of an anonymous guest was added.
+
+## The findings of the round 7 review
+
+The review is `D:/projects/kamkmchess/.scratch/online-swarm/matching-review-r7.md`.
+
+| Finding | Disposition |
+| --- | --- |
+| **R7-01** the removal of the accepter of an `accepting` offer fails with a check violation | **not ours, and not duplicated.** The privacy worker owns the sanitation of the accepter column. The friend table keeps the check, and the friend surface does not write that state any more. The privacy candidate that keeps the shape of the offer is not integrated here, so the regression of the removed accepter records the removal of the accepter directly and says so. |
+| **R7-02** the survivor of a removal cannot recover the credential of its own seat of the new match | **fixed.** The duplicate acceptance of a rematch is the recovery of a lost answer: it creates no match and it writes the credential of the seat of the accepter in the new match, so only the accepter is rechecked. The first acceptance still rechecks both participants, because the new match needs the consent of both. The identity of the accepter is compared exactly. |
+| **R7-03** two earlier regressions were not discriminating | **answered.** The barrier of the restart is now proved by the effective regression, which is red on the branch without the restart and green on the branch with it. The other regressions of the round are broader contract checks and are labelled as such. |
+| **R7-04** the documentation understated the removal bug | **fixed.** The published rule now states that the duplicate acceptance of a rematch names the accepter alone, and that the removal of the opponent does not lock the survivor out of the live new match. The defect was never limited to the offers of an older build. |
+
+The regressions of this round:
+
+* `TestPostgresFriendTheSurvivorOfARematchRecoversItsOwnNewSeatCredential` (the
+  guest that lost the answer of its acceptance of a rematch recovers the
+  credential of its own new seat after the removal of the opponent; the game
+  of the survivor stays live, no second match is created and no row of the
+  removed opponent is revived)
+* `TestPostgresFriendARemovedAcceptorOfARematchIsStillDenied` (the removed
+  accepter is still refused, no credential of it is minted and no match is
+  created; a broader contract check, it holds on both branches)
+
+The first one is the discriminating proof:
+
+```
+# against the branch without the correction (dcd89f6)
+--- FAIL: TestPostgresFriendTheSurvivorOfARematchRecoversItsOwnNewSeatCredential (2.40s)
+    the retry after the removal: invite: the participant was removed
+
+# against the branch with the correction
+--- PASS: TestPostgresFriendTheSurvivorOfARematchRecoversItsOwnNewSeatCredential (6.90s)
+--- PASS: TestPostgresFriendTheSurvivorOfARematchRecoversItsOwnNewSeatCredential (2.89s)
+--- PASS: TestPostgresFriendARemovedAcceptorOfARematchIsStillDenied (4.78s)
+--- PASS: TestPostgresFriendARemovedAcceptorOfARematchIsStillDenied (2.06s)
+```
 
 ## The changed wire
 

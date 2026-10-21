@@ -717,6 +717,23 @@ func containsParticipant(participants []online.ParticipantRef, participant onlin
 	return false
 }
 
+// rematchAccepterMatches reports whether a participant is the accepter of a
+// rematch offer.
+//
+// The identity is compared exactly when the offer names the kind of its
+// accepter: an account and a guest that share an identifier are two
+// different participants. An offer of an older build can name the identifier
+// only, and the identifier is compared then.
+func rematchAccepterMatches(offer Rematch, participant online.ParticipantRef) bool {
+	if offer.acceptedByID != participant.ID {
+		return false
+	}
+	if offer.acceptedByKind == "" {
+		return true
+	}
+	return offer.acceptedByKind == string(participant.Kind)
+}
+
 // resolvePublicModelLabel resolves a declared model control to the control
 // that may be published.
 //
@@ -1647,18 +1664,6 @@ func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchReques
 		_ = tx.Rollback(ctx)
 		return RematchResult{}, err
 	}
-	// The removal of a participant is rechecked after the locks, so a
-	// request that was authenticated before the removal cannot accept an
-	// offer or create a personal row after it. The finished match is the
-	// match the new game is about, so the removal ledger of that match
-	// refuses the acceptance when a participant of it was removed, and the
-	// proposer of the offer is checked as well, because the sanitation
-	// replaced its identifier with the anonymized sentinel.
-	if err = recheckParticipants(ctx, tx, offer.MatchID, append(participants, proposer)...); err != nil {
-		closed = true
-		_ = tx.Rollback(ctx)
-		return RematchResult{}, err
-	}
 	switch locked.Status {
 	case RematchAccepted:
 		// The offer is already accepted. The duplicate acceptance returns
@@ -1667,6 +1672,16 @@ func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchReques
 			closed = true
 			_ = tx.Rollback(ctx)
 			return RematchResult{}, ErrConflict
+		}
+		// The duplicate acceptance is the recovery of a lost answer: it
+		// creates no match and it writes the credential of the seat of the
+		// accepter in the new match. It therefore names the accepter alone,
+		// exactly like the resumed acceptance of an invitation. The removal
+		// of the opponent does not take the seat of the survivor away.
+		if err = recheckParticipants(ctx, tx, *locked.NewMatchID, request.Acceptor); err != nil {
+			closed = true
+			_ = tx.Rollback(ctx)
+			return RematchResult{}, err
 		}
 		accepted := RematchResult{Rematch: locked, MatchID: *locked.NewMatchID, Seat: newSeat}
 		if request.Acceptor.Kind == online.ParticipantGuest {
@@ -1684,7 +1699,23 @@ func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchReques
 		closed = true
 		return accepted, nil
 	case RematchPending, RematchAccepting:
-		// The offer may still be accepted.
+		// The offer may still be accepted. The acceptance creates the new
+		// match of both participants, so both of them have to consent: the
+		// removal of either of them is refused before the match is created.
+		//
+		// The removal of a participant is rechecked after the locks, so a
+		// request that was authenticated before the removal cannot accept
+		// an offer or create a personal row after it. The finished match is
+		// the match the new game is about, so the removal ledger of that
+		// match refuses the acceptance when a participant of it was
+		// removed, and the proposer of the offer is checked as well,
+		// because the sanitation replaced its identifier with the
+		// anonymized sentinel.
+		if err = recheckParticipants(ctx, tx, offer.MatchID, append(participants, proposer)...); err != nil {
+			closed = true
+			_ = tx.Rollback(ctx)
+			return RematchResult{}, err
+		}
 	default:
 		closed = true
 		_ = tx.Rollback(ctx)
@@ -1699,7 +1730,7 @@ func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchReques
 	// A reservation of an earlier build names its accepter. Only that
 	// accepter may complete the offer, because the consent of the opponent
 	// was already given.
-	if locked.Status == RematchAccepting && locked.acceptedByID != "" && locked.acceptedByID != request.Acceptor.ID {
+	if locked.Status == RematchAccepting && locked.acceptedByID != "" && !rematchAccepterMatches(locked, request.Acceptor) {
 		closed = true
 		_ = tx.Rollback(ctx)
 		return RematchResult{}, ErrConflict

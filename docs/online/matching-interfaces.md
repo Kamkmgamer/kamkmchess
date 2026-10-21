@@ -282,6 +282,14 @@ only the acceptor is rechecked, and the removal of the inviter does not take
 the seat of the acceptor away. The credential of a seat is recovered for the
 owner of that seat alone.
 
+The same rule holds for a rematch. The **first** acceptance of a rematch offer
+creates the new match of both participants, so both of them have to consent and
+both are rechecked. The **duplicate** acceptance is the recovery of a lost
+answer: it creates no match and it writes the credential of the seat of the
+accepter in the new match, so only the accepter is rechecked. The removal of
+the opponent therefore does not lock the survivor out of the live new match,
+and the removal of the accepter still refuses the recovery.
+
 A resumed acceptance may present **no identity at all**: the acceptance key is
 the capability of a guest acceptance. The scope of the stored acceptor is
 locked before the row of the invitation in that case as well, so the resume is
