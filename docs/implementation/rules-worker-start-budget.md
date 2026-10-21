@@ -91,6 +91,8 @@ The wall-clock bound of one call is therefore `RequestTimeout + StartTimeout`
 for a call that starts the worker once, and `RequestTimeout + 2 *
 StartTimeout` for a call that starts it twice. The start durations are added
 back to the exchange deadline, so the exchange always keeps its own budget.
+The call never outlives the deadline of its caller: the client does not wait
+past it to classify a failure.
 
 **The cold start is charged to the requests that are queued behind it.** The
 worker has one slot, and the request that triggers a cold start holds that
@@ -108,30 +110,28 @@ start still meet a cold worker; a `client.Warm(ctx)` call next to the
 creation of the client in the composition closes that window. The composition
 is not part of this change.
 
-## The failure class and the late answer
+## The failure of a call
 
-A second defect shared the same symptom. The exchange ended as soon as its
-deadline passed, and the failure it reported depended on which case the
-select happened to pick. A worker that had died was reported as a timeout
-whenever the deadline won the race, and a retry replaced the specific
-failure with the generic one.
+The call reports the failure that happened, and it never reports a contract
+outcome for a request that ran out of time.
 
-The client now decides the failure class deliberately:
+- The exchange ends with the deadline of the caller. A late answer is never
+  read, so it can never be mistaken for the answer of a newer request, and a
+  late **rejection** can never reach the participant as "illegal move". A
+  request that ran out of its deadline is a timeout.
+- The caller's own **cancellation** keeps its class: a caller that went away
+  is told that it was canceled, not that the worker was slow.
+- A **specific** failure survives the retry. A worker that died on the first
+  exchange and hung on the second is reported as the crash, because the caller
+  must be able to tell "the worker died" from "the worker was slow". The
+  generic timeout of the last attempt never replaces a crash or a malformed
+  answer.
 
-- after the deadline, a **short bounded grace** (`classificationGrace`,
-  250 ms) lets the in-flight read report what actually happened. The grace
-  never returns a late answer: a request that ran out of patience still
-  fails, and the caller's deadline stands.
-- a worker that **died** is reported as a crash, an oversized line as a
-  malformed answer, and a malformed line as a malformed answer. A specific
-  failure always wins over a generic timeout, and a failure that the
-  exchange already reported is never replaced by a timeout afterwards.
-- a worker that **answered late** is healthy. The request still fails, but
-  the worker is not killed: the next request does not pay a cold start for a
-  request that only ran out of patience.
-
-The worker is therefore only destroyed when it is actually broken. That is
-what stops the failure from repeating itself under load.
+The client does not wait past the deadline of the caller to classify the
+failure. A bounded grace was tried and removed: it extended the caller's
+deadline, it held the shared worker slot for the queued requests, and it
+turned the cancellation of a caller into a timeout. The failure of a call is
+decided by the exchange that produced it.
 
 ## The fixture budgets
 
@@ -153,31 +153,37 @@ warm-up fails the fixture instead of the package.
 `backend/rulesworker/client_test.go` covers the defect with a fake worker
 whose readiness probe answers only after a simulated boot delay:
 
-- `TestTheColdStartDoesNotConsumeTheExchangeBudget`: a 150 ms request budget
-  and a 400 ms boot. The request succeeds, because the boot is not charged to
-  the exchange.
+- `TestTheColdStartDoesNotConsumeTheExchangeBudget`: a one second exchange
+  budget and a two second simulated boot. The request succeeds, because the
+  boot is not charged to the exchange.
 - `TestTheRestartAfterATimeoutKeepsItsOwnStartBudget`: the same budgets after
   a timeout stopped the worker. The restart succeeds, because the restart has
   its own start budget.
 
-Both fail with the old budget accounting and pass with the new one. The
+Both fail with the old budget accounting and pass with the current one. The
 fixtures warm the worker before they measure a protocol behaviour, so they
 measure the protocol instead of the host's process start latency.
 
-Two further regressions cover the failure class and the late answer:
+Three regressions cover the failure of a call. They are written against the
+probes of the independent review, and all three fail with the reviewed
+candidate and pass with the current code:
 
-- `TestTheFailureClassDoesNotDependOnTheDeadline`: a worker that dies after
-  the deadline of the exchange expired. The client reports the crash, not a
-  timeout. Without the classification grace and the failure precedence the
-  same failure is reported as a timeout.
-- `TestALateAnswerKeepsTheWorkerAlive`: a worker that answers after the
-  deadline. The request fails with a timeout, and the worker stays alive, so
-  the next request does not pay a cold start. The regression compares the
-  process identifier of the worker before and after the failure.
-- `TestTheRealBundleColdStartIsOutsideTheExchangeBudget`: the same cold
-  start regression against the pinned worker bundle, with an exchange budget
-  far shorter than the real boot. The assertion does not depend on how long
-  the boot takes.
+- `TestTheCrashOfTheFirstExchangeIsNotReplacedByTheTimeoutOfTheRetry`: a
+  worker that dies on the first exchange and hangs on the second. The call
+  reports the crash, not the timeout of the retry.
+- `TestACanceledCallerKeepsItsCancellation`: a caller that cancels while the
+  worker answers. The caller is told that it was canceled, not that it timed
+  out.
+- `TestALateRejectionIsNotAContractOutcome`: a worker that rejects after the
+  deadline. The call reports a timeout, and the rejection never reaches the
+  participant as "illegal move".
+
+`TestTheRealBundleAnswersAColdRequest` is the smoke test of the pinned worker
+bundle: the real process accepts the readiness probe and answers a cold
+request. It deliberately does not claim that the cold start is outside the
+exchange budget, because the length of the real boot depends on the host. The
+regression that proves the add-back simulates the boot instead of measuring
+one.
 
 The real worker bundle is covered as well: with `KHA66_WORKER_ENTRY` set to
 the built `build/rules-worker/worker.mjs`, the readiness probe is accepted by
@@ -186,9 +192,8 @@ process (checkmate, timeout policy, candidate fencing) pass.
 
 ### What was measured, and what was not
 
-- The two start regressions and the two failure-class regressions fail with
-  the old behaviour (the add-back removed, the classification grace removed
-  and the failure precedence removed) and pass with the current one.
+- The five regressions above fail with the old behaviour and pass with the
+  current one.
 - The failure that was reported on the assembled root is a load-fragile
   fixture, not the start accounting. The fixture installed a line of twice
   the response limit, so the client had to read about a megabyte through a

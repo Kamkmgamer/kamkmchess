@@ -16,7 +16,7 @@ import (
 
 const fakeWorkerScript = `
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 
@@ -126,6 +126,25 @@ for await (const line of rl) {
     case 'late':
       await new Promise((resolve) => setTimeout(resolve, 60));
       break;
+    case 'late-reject':
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      process.stdout.write(JSON.stringify({
+        protocolVersion: 1,
+        status: 'rejected',
+        requestId: req.requestId,
+        code: 'illegal-move',
+        message: 'The requested move is not legal in this position.',
+      }) + '\n');
+      continue;
+    case 'crash-then-hang': {
+      const counter = join(dirname(process.argv[1]), 'counter');
+      let n = 0;
+      try { n = Number.parseInt(readFileSync(counter, 'utf8').trim(), 10) || 0; } catch { n = 0; }
+      writeFileSync(counter, String(n + 1));
+      if (n === 0) { process.exit(9); }
+      await new Promise(() => {});
+      continue;
+    }
     case 'crash-late':
       await new Promise((resolve) => setTimeout(resolve, 50));
       process.exit(9);
@@ -326,71 +345,104 @@ func TestTheRestartAfterATimeoutKeepsItsOwnStartBudget(t *testing.T) {
 // it reports is the failure that happened. Without the grace the same
 // failure is reported as a timeout, and the answer depends on which case the
 // select happens to pick.
-func TestTheFailureClassDoesNotDependOnTheDeadline(t *testing.T) {
-	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 10 * time.Millisecond, StartTimeout: 10 * time.Second})
+// TestTheCrashOfTheFirstExchangeIsNotReplacedByTheTimeoutOfTheRetry proves
+// that a specific failure survives the retry.
+//
+// The worker dies on the first request and hangs on the second. The retry
+// runs out of budget, and the answer of the call is still the crash: a caller
+// must be able to tell "the worker died" from "the worker was slow".
+func TestTheCrashOfTheFirstExchangeIsNotReplacedByTheTimeoutOfTheRetry(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 1500 * time.Millisecond, StartTimeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	// The worker dies after the deadline of the exchange expired.
-	_, err = client.Evaluate(context.Background(), request("crash-late"))
+	_, err = client.Evaluate(context.Background(), request("crash-then-hang"))
 	if !errors.Is(err, ErrCrashed) {
-		t.Fatalf("error = %v, want the crash of the worker", err)
+		t.Fatalf("the crash of the first exchange was replaced by %v", err)
 	}
 }
 
-// TestALateAnswerKeepsTheWorkerAlive proves that a worker that answered
-// after the deadline is not destroyed.
+// TestACanceledCallerKeepsItsCancellation proves that the caller's own
+// cancellation keeps its class.
 //
-// The answer is unusable, so the request still fails with a timeout. The
-// worker itself is healthy, so it stays alive and the next request does not
-// pay a cold start for a request that only ran out of patience.
-func TestALateAnswerKeepsTheWorkerAlive(t *testing.T) {
-	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 2 * time.Second, StartTimeout: 10 * time.Second})
+// A worker that answers after the cancellation must not turn the
+// cancellation into a timeout: the caller knows that it went away.
+func TestACanceledCallerKeepsItsCancellation(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 5 * time.Second, StartTimeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
-	if err = client.Warm(context.Background()); err != nil {
+	warm, cancelWarm := context.WithTimeout(context.Background(), warmBudget)
+	defer cancelWarm()
+	if err = client.Warm(warm); err != nil {
 		t.Fatalf("warm: %v", err)
 	}
-	pid := client.proc.Process.Pid
-	// The deadline of the exchange expires before the worker answers.
-	tight, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-	if _, err = client.Evaluate(tight, request("late")); !errors.Is(err, ErrTimeout) {
-		t.Fatalf("error = %v, want timeout", err)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	_, err = client.Evaluate(ctx, request("late"))
+	if !errors.Is(err, ErrCanceled) {
+		t.Fatalf("a canceled caller got %v instead of a cancellation", err)
 	}
-	if client.proc == nil || client.proc.Process.Pid != pid {
-		t.Fatal("the worker was restarted although it answered")
-	}
-	// The next request uses the worker that stayed alive.
-	if _, err = client.Evaluate(context.Background(), request("ok")); err != nil {
-		t.Fatalf("the next request: %v", err)
+	if errors.Is(err, ErrTimeout) {
+		t.Fatal("a canceled caller was reported as a timeout")
 	}
 }
 
-// TestTheRealBundleColdStartIsOutsideTheExchangeBudget runs the regression
-// against the pinned worker bundle.
+// TestALateRejectionIsNotAContractOutcome proves that a request that ran out
+// of its deadline is never answered with a contract outcome.
 //
-// The exchange budget is far shorter than the cold start of the real Node
-// process, so the request can only succeed when the start has its own
-// budget. The assertion does not depend on how long the boot takes: the
-// start is bounded by its own budget, and the exchange by the budget of the
-// request.
-func TestTheRealBundleColdStartIsOutsideTheExchangeBudget(t *testing.T) {
+// A rejection is a valid answer of the worker, but a rejection that arrives
+// after the deadline belongs to a request that already failed. Answering the
+// participant with "illegal move" would blame the participant for a slow
+// worker.
+func TestALateRejectionIsNotAContractOutcome(t *testing.T) {
+	client, err := New(Config{Entry: testEntry(t), RequestTimeout: 20 * time.Millisecond, StartTimeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	warm, cancelWarm := context.WithTimeout(context.Background(), warmBudget)
+	defer cancelWarm()
+	if err = client.Warm(warm); err != nil {
+		t.Fatalf("warm: %v", err)
+	}
+	_, err = client.Evaluate(context.Background(), request("late-reject"))
+	if !errors.Is(err, ErrTimeout) {
+		t.Fatalf("a late rejection was answered as %v", err)
+	}
+	var rejection *RejectionError
+	if errors.As(err, &rejection) {
+		t.Fatal("a late rejection escaped as a contract outcome")
+	}
+}
+
+// TestTheRealBundleAnswersAColdRequest is the smoke test of the pinned worker
+// bundle.
+//
+// It proves that the real process accepts the readiness probe and answers a
+// cold request. It does not prove that the cold start is outside the
+// exchange budget: the length of the real boot depends on the host, and a
+// budget below it would be a wall-clock assumption. The regression that
+// proves the add-back is `TestTheColdStartDoesNotConsumeTheExchangeBudget`,
+// which simulates a boot instead of measuring one.
+func TestTheRealBundleAnswersAColdRequest(t *testing.T) {
 	entry := os.Getenv("KHA66_WORKER_ENTRY")
 	if entry == "" {
 		t.Skip("set KHA66_WORKER_ENTRY to a built build/rules-worker/worker.mjs")
 	}
-	client, err := New(Config{Entry: entry, RequestTimeout: 300 * time.Millisecond, StartTimeout: 30 * time.Second})
+	client, err := New(Config{Entry: entry, RequestTimeout: 3 * time.Second, StartTimeout: 30 * time.Second})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
 	response, err := client.Evaluate(context.Background(), moveRequest("real-cold"))
 	if err != nil {
-		t.Fatalf("the real cold start consumed the exchange budget: %v", err)
+		t.Fatalf("the real bundle did not answer a cold request: %v", err)
 	}
 	if response.Candidate == nil || response.Candidate.Move.From != "e2" {
 		t.Fatalf("candidate = %+v", response.Candidate)
