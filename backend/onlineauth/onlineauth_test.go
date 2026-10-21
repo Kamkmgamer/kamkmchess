@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/locks"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 )
 
@@ -116,17 +117,17 @@ func TestPrincipalContextRoundTrip(t *testing.T) {
 }
 
 func TestAdvisoryLocksAreStableAndSeparateNamespaces(t *testing.T) {
-	if accountLockKey("user_a") != accountLockKey("user_a") {
-		t.Fatal("the account lock key is not stable")
+	if locks.AccountScope(string(online.ParticipantAccount), "user_a") != locks.AccountScope(string(online.ParticipantAccount), "user_a") {
+		t.Fatal("the account lock scope is not stable")
 	}
-	if accountLockKey("user_a") == accountLockKey("user_b") {
-		t.Fatal("two accounts share a lock key")
+	if locks.AccountScope(string(online.ParticipantAccount), "user_a") == locks.AccountScope(string(online.ParticipantAccount), "user_b") {
+		t.Fatal("two accounts share a lock scope")
 	}
 	if seatLockKey("match-a", online.SeatWhite) == seatLockKey("match-a", online.SeatBlack) {
 		t.Fatal("two seats share a lock key")
 	}
-	if seatLockKey("match-a", online.SeatWhite) == accountLockKey("match-a") {
-		t.Fatal("the account and seat namespaces collide")
+	if locks.AccountScope(string(online.ParticipantAccount), "user_a") == locks.AccountScope(string(online.ParticipantGuest), "user_a") {
+		t.Fatal("an account and a guest share a lock scope")
 	}
 }
 

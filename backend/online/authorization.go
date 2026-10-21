@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Querier is the read surface shared by the connection pool and by a single
@@ -13,6 +14,15 @@ import (
 // acceptance transaction.
 type Querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// WriteQuerier is the write surface of a queryable transaction.
+//
+// A caller that can write may use it to take the shared locks of the service
+// inside its own transaction.
+type WriteQuerier interface {
+	Querier
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 // SeatAuthorizer re-checks participant authorization inside the writer.

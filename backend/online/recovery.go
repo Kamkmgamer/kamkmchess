@@ -114,6 +114,50 @@ func WithRecoveryGate() Option {
 // waits for one.
 func (s *Service) Recovered() bool { return !s.recoveryRequired.Load() || s.recovered.Load() }
 
+// PendingSuspension returns the interruption that waits for its recovery.
+//
+// The boundary is nil when no interruption is pending.
+func (s *Service) PendingSuspension(ctx context.Context) (*RecoveryBoundary, error) {
+	boundaryID, err := s.pendingPlannedBoundary(ctx, s.db)
+	if err != nil {
+		return nil, err
+	}
+	if boundaryID == "" {
+		return nil, nil
+	}
+	boundary, err := s.loadRecoveryBoundary(ctx, s.db, boundaryID)
+	if err != nil {
+		return nil, err
+	}
+	return &boundary, nil
+}
+
+// SuspendForDependency records the interruption of a dependency.
+//
+// The interruption is persisted as a planned boundary, so the durable gate
+// closes and the clock of the unfinished matches is refunded when the
+// dependency comes back. The service does not have to restart for the
+// interruption to be recovered.
+//
+// One interruption is one boundary. A pending boundary is reused, so a
+// dependency that keeps failing does not plan a second interruption and the
+// clock is refunded once.
+func (s *Service) SuspendForDependency(ctx context.Context, dependency string) error {
+	pending, err := s.PendingSuspension(ctx)
+	if err != nil {
+		return err
+	}
+	if pending != nil {
+		return nil
+	}
+	started, err := s.now(ctx, s.db)
+	if err != nil {
+		return err
+	}
+	_, err = s.PlanSuspension(ctx, started, started)
+	return err
+}
+
 // PlanSuspension persists a planned interruption boundary.
 //
 // The boundary is written before the service stops, so the interval of the
@@ -134,9 +178,22 @@ func (s *Service) PlanSuspension(ctx context.Context, startedAt, endedAt time.Ti
 	if !endedAt.IsZero() {
 		ended = endedAt.UTC()
 	}
-	_, err = s.db.Exec(ctx, `INSERT INTO online_suspension_boundaries(boundary_id,kind,started_at,ended_at,service_epoch,interruption_ms) VALUES($1,$2,$3,$4,$5,0)
-ON CONFLICT (boundary_id) DO NOTHING`, boundaryID, string(SuspensionPlanned), startedAt.UTC(), ended, epoch)
+	// The exclusive gate lock orders the planned suspension against the
+	// mutations that are already running. The suspension is committed after
+	// them, and every later mutation sees the closed gate.
+	tx, err := s.db.Begin(ctx)
 	if err != nil {
+		return RecoveryBoundary{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err = LockGate(ctx, tx); err != nil {
+		return RecoveryBoundary{}, err
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO online_suspension_boundaries(boundary_id,kind,started_at,ended_at,service_epoch,interruption_ms) VALUES($1,$2,$3,$4,$5,0)
+ON CONFLICT (boundary_id) DO NOTHING`, boundaryID, string(SuspensionPlanned), startedAt.UTC(), ended, epoch); err != nil {
+		return RecoveryBoundary{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
 		return RecoveryBoundary{}, err
 	}
 	return s.loadRecoveryBoundary(ctx, s.db, boundaryID)
@@ -318,6 +375,11 @@ func (s *Service) applyBoundary(ctx context.Context, conn *pgxpool.Conn, boundar
 	if _, err = tx.Exec(ctx, `UPDATE online_suspension_boundaries SET ended_at=$1,resumed_at=$1,adjusted_at=$1,interruption_ms=$2 WHERE boundary_id=$3`, resumed, shift.Milliseconds(), boundary.BoundaryID); err != nil {
 		return RecoveryPlan{}, err
 	}
+	// The epoch of this recovery is completed, so the durable gate opens
+	// again for every instance of the service.
+	if _, err = tx.Exec(ctx, `UPDATE online_service_epochs SET recovered_at=$1 WHERE epoch=$2 AND recovered_at IS NULL`, resumed.UTC(), boundary.ServiceEpoch); err != nil {
+		return RecoveryPlan{}, err
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return RecoveryPlan{}, err
 	}
@@ -425,46 +487,65 @@ func (s *Service) adjustOneMatch(ctx context.Context, tx pgx.Tx, boundary Recove
 	return s.applyRecoveryAdjustment(ctx, tx, boundary, end, match.MatchID, match.Version, match.ControlEpoch, clock.DeadlineAt, clock.ActiveSince, clock.ReplyDeadlineAt, overlap)
 }
 
-// recoveryOverlap returns the part of the charged window that fell inside the
-// interruption.
+// recoveryOverlap returns the time of the charged window that the service
+// interruption must not charge to the player.
 //
 // The charged window of the main clock runs from the start of the active
 // clock to its deadline. The charged window of the opening reply window runs
-// from the first accepted move to the reply deadline. The overlap is the
-// part of that window that lies inside the interruption, so a clock that
-// survived the interruption is refunded for exactly the time it was not
-// running.
+// from the first accepted move to the reply deadline.
 func recoveryOverlap(deadlineAt, activeSince, replyDeadline, firstMoveAt *time.Time, createdAt, start, end time.Time) (time.Duration, bool) {
 	switch {
 	case deadlineAt != nil && activeSince != nil:
-		windowStart := activeSince.UTC()
-		windowEnd := deadlineAt.UTC()
-		return overlapOf(windowStart, windowEnd, start, end), true
+		return recoveryRefund(activeSince.UTC(), deadlineAt.UTC(), start, end), true
 	case replyDeadline != nil:
 		windowStart := createdAt.UTC()
 		if firstMoveAt != nil {
 			windowStart = firstMoveAt.UTC()
 		}
-		return overlapOf(windowStart, replyDeadline.UTC(), start, end), true
+		return recoveryRefund(windowStart, replyDeadline.UTC(), start, end), true
 	default:
 		return 0, false
 	}
 }
 
-// overlapOf returns the length of the intersection of two intervals.
-func overlapOf(windowStart, windowEnd, start, end time.Time) time.Duration {
-	from := windowStart
-	if start.After(from) {
-		from = start
-	}
-	to := windowEnd
-	if end.Before(to) {
-		to = end
-	}
-	if !to.After(from) {
+// recoveryRefund returns the time of a charged window that the interruption
+// must not charge to the player.
+//
+// The rule is the approved one: a service interruption is never charged to a
+// player. When the clock was still running when the service went down, the
+// whole interruption is refunded, even when the deadline passed while the
+// service was down. The player keeps the time they had left when the
+// service went down, and the deadline moves by the length of the
+// interruption.
+//
+// A deadline that expired before the interruption is preserved, because the
+// match was already over. A clock that started inside the interruption is
+// refunded only for the part of its charge that fell inside it, because the
+// clock was never running before that.
+func recoveryRefund(windowStart, windowEnd, start, end time.Time) time.Duration {
+	if !windowEnd.After(start) {
+		// The charge ended before the interruption started. The deadline is
+		// preserved.
 		return 0
 	}
-	return to.Sub(from)
+	if windowStart.After(start) {
+		// The clock started inside the interruption. Only the part of the
+		// charge that fell inside it is refunded.
+		to := windowEnd
+		if end.Before(to) {
+			to = end
+		}
+		if !to.After(windowStart) {
+			return 0
+		}
+		return to.Sub(windowStart)
+	}
+	// The clock was running when the service went down, so the whole
+	// interruption is refunded.
+	if !end.After(start) {
+		return 0
+	}
+	return end.Sub(start)
 }
 
 // applyRecoveryAdjustment shifts one match and publishes the adjusted state.
@@ -497,6 +578,15 @@ func (s *Service) applyRecoveryAdjustment(ctx context.Context, tx pgx.Tx, bounda
 	resumed = resumed.UTC()
 	if _, err = tx.Exec(ctx, `UPDATE online_clocks SET deadline_at=$1,active_since=$2,reply_deadline_at=$3,recovery_adjusted_at=$4,recovery_shift_ms=recovery_shift_ms+$5,updated_at=$4 WHERE match_id=$6`,
 		newDeadline, newActiveSince, newReply, resumed, shift.Milliseconds(), matchID); err != nil {
+		return false, err
+	}
+	// The presence lease of a connected seat is refunded by the same
+	// interruption. A seat whose lease covered the start of the interruption
+	// was connected when the service went down, so the interruption must
+	// not make it look absent afterwards.
+	if _, err = tx.Exec(ctx, `UPDATE online_presence
+SET last_heartbeat_at=last_heartbeat_at+$2::interval,lease_expires_at=lease_expires_at+$2::interval,keep_waiting_at=keep_waiting_at+$2::interval,updated_at=$3
+WHERE match_id=$1 AND lease_expires_at > $4`, matchID, shift, resumed, boundary.StartedAt.UTC()); err != nil {
 		return false, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE online_matches SET version=version+1,updated_at=$1 WHERE match_id=$2`, resumed, matchID); err != nil {
@@ -571,9 +661,9 @@ func (s *Service) deriveUnexpectedBoundary(ctx context.Context, conn *pgxpool.Co
 
 // pendingPlannedBoundary returns the oldest planned boundary that was not
 // applied yet.
-func (s *Service) pendingPlannedBoundary(ctx context.Context, conn *pgxpool.Conn) (string, error) {
+func (s *Service) pendingPlannedBoundary(ctx context.Context, q queryer) (string, error) {
 	var boundaryID string
-	err := conn.QueryRow(ctx, `SELECT boundary_id FROM online_suspension_boundaries WHERE kind='planned' AND adjusted_at IS NULL ORDER BY created_at LIMIT 1`).Scan(&boundaryID)
+	err := q.QueryRow(ctx, `SELECT boundary_id FROM online_suspension_boundaries WHERE kind='planned' AND adjusted_at IS NULL ORDER BY created_at LIMIT 1`).Scan(&boundaryID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}

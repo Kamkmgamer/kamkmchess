@@ -195,6 +195,12 @@ func (s *Service) AcquireRunnerLease(ctx context.Context, actor ParticipantRef, 
 	if err = s.authorizeSeat(ctx, tx, req.MatchID, actor, req.Seat); err != nil {
 		return RunnerLease{}, err
 	}
+	// The shared gate refuses the lease while the service is suspended,
+	// restoring or still recovering. A lease is a right to act for a seat,
+	// and a service that is not serving cannot grant one.
+	if err = s.requireGate(ctx, tx); err != nil {
+		return RunnerLease{}, err
+	}
 	if match.Status != MatchActive {
 		return RunnerLease{}, ErrMatchEnded
 	}
@@ -288,6 +294,12 @@ func (s *Service) RenewRunnerLease(ctx context.Context, actor ParticipantRef, re
 	if err = s.authorizeSeat(ctx, tx, req.MatchID, actor, req.Seat); err != nil {
 		return RunnerLease{}, err
 	}
+	// The shared gate refuses the lease while the service is suspended,
+	// restoring or still recovering. A lease is a right to act for a seat,
+	// and a service that is not serving cannot grant one.
+	if err = s.requireGate(ctx, tx); err != nil {
+		return RunnerLease{}, err
+	}
 	lease, err := loadRunnerLease(ctx, tx, req.LeaseID)
 	if err != nil {
 		return RunnerLease{}, err
@@ -300,6 +312,21 @@ func (s *Service) RenewRunnerLease(ctx context.Context, actor ParticipantRef, re
 	}
 	if lease.Status != LeaseActive {
 		return RunnerLease{}, ErrConflict
+	}
+	// A lease of a finished match is not renewed. The match is over, so the
+	// lease ends with it instead of living on until it expires.
+	if match.Status != MatchActive {
+		if _, err = tx.Exec(ctx, `UPDATE online_runner_leases SET status='revoked',revoked_at=$1,revoked_reason=$2 WHERE lease_id=$3 AND status='active'`, decision, LeaseRevokeMatchEnded, req.LeaseID); err != nil {
+			return RunnerLease{}, err
+		}
+		lease.Status = LeaseRevoked
+		lease.RevokedAt = &decision
+		reason := LeaseRevokeMatchEnded
+		lease.RevokedReason = &reason
+		if err = tx.Commit(ctx); err != nil {
+			return RunnerLease{}, err
+		}
+		return lease, ErrMatchEnded
 	}
 	// An expired lease is never revived. It is closed here, so the lease
 	// history shows that the runner lost the seat, and the runner has to
@@ -374,6 +401,12 @@ func (s *Service) ReleaseRunnerLease(ctx context.Context, actor ParticipantRef, 
 		return RunnerLease{}, ErrNotAuthorized
 	}
 	if err = s.authorizeSeat(ctx, tx, req.MatchID, actor, req.Seat); err != nil {
+		return RunnerLease{}, err
+	}
+	// The shared gate refuses the lease while the service is suspended,
+	// restoring or still recovering. A lease is a right to act for a seat,
+	// and a service that is not serving cannot grant one.
+	if err = s.requireGate(ctx, tx); err != nil {
 		return RunnerLease{}, err
 	}
 	lease, err := loadRunnerLease(ctx, tx, req.LeaseID)
@@ -485,6 +518,12 @@ func (s *Service) writeRunnerRequest(ctx context.Context, actor ParticipantRef, 
 	if err = s.authorizeSeat(ctx, tx, req.MatchID, actor, req.Seat); err != nil {
 		return RunnerLease{}, err
 	}
+	// The shared gate refuses the lease while the service is suspended,
+	// restoring or still recovering. A lease is a right to act for a seat,
+	// and a service that is not serving cannot grant one.
+	if err = s.requireGate(ctx, tx); err != nil {
+		return RunnerLease{}, err
+	}
 	lease, err := loadRunnerLease(ctx, tx, req.LeaseID)
 	if err != nil {
 		return RunnerLease{}, err
@@ -502,6 +541,11 @@ func (s *Service) writeRunnerRequest(ctx context.Context, actor ParticipantRef, 
 	// seat, so its request record is no longer authoritative.
 	if !lease.ExpiresAt.After(decision) {
 		return RunnerLease{}, ErrConflict
+	}
+	// A finished match records no provider request. The work of the match is
+	// over, so a billable request must not start or settle against it.
+	if match.Status != MatchActive {
+		return RunnerLease{}, ErrMatchEnded
 	}
 	if lease.ControlEpoch != match.ControlEpoch || req.ControlEpoch != match.ControlEpoch {
 		return RunnerLease{}, ErrConflict
@@ -679,27 +723,23 @@ func loadLatestRunnerLease(ctx context.Context, q queryer, matchID string, seat 
 	return loadRunnerLease(ctx, q, leaseID)
 }
 
-// authorizeRunnerLease fences a command that arrives without the current
-// runner lease of an agent seat.
+// authorizePresentedLease fences a command that presents a runner lease.
 //
-// The check runs inside the acceptance transaction, after the match row lock
-// is held, and it reads the authoritative decision time of that transaction.
-// A lease that expired, that was revoked, that belongs to an older control
-// epoch, that belongs to an older service epoch, or that is bound to another
-// turn cannot be used to accept a move. A human seat needs no lease, but a
-// lease that is presented is still checked.
-func (s *Service) authorizeRunnerLease(ctx context.Context, tx pgx.Tx, match Match, cmd Command, decision time.Time) error {
-	seat, ok := match.Seat(cmd.Seat)
-	if !ok {
-		return ErrNotAuthorized
-	}
+// A lease is a right to act for a seat, so a command that carries one may
+// only act while the lease is live: it must be active, it must not have
+// expired, it must belong to the current control epoch and to the current
+// service epoch, and it must be bound to the turn the command acts for.
+//
+// The check applies to every action, not only to the move. A stale runner
+// may not resign, spend a recovery attempt, or change the control of its
+// seat, because those actions end the game as surely as a move does.
+//
+// A command that presents no lease is the owner acting for itself. That
+// stays allowed, so an owner may always resign or cancel, and a seat that a
+// human controls never needs a lease.
+func (s *Service) authorizePresentedLease(ctx context.Context, tx pgx.Tx, match Match, cmd Command, decision time.Time) error {
 	if cmd.LeaseID == "" {
-		if seat.Control.Kind == ControlHuman {
-			return nil
-		}
-		// An agent seat acts through a browser runner, and the runner
-		// holds the lease of the seat.
-		return ErrNotAuthorized
+		return nil
 	}
 	lease, err := loadRunnerLease(ctx, tx, cmd.LeaseID)
 	if err != nil {
@@ -731,11 +771,36 @@ func (s *Service) authorizeRunnerLease(ctx context.Context, tx pgx.Tx, match Mat
 		return ErrNotAuthorized
 	}
 	// The lease is bound to the turn the command acts for. A lease of an
-	// older turn cannot submit a move of a later turn.
+	// older turn cannot act for a later one.
 	if lease.TurnVersion == nil || *lease.TurnVersion != cmd.ExpectedVersion {
 		return ErrNotAuthorized
 	}
 	return nil
+}
+
+// authorizeRunnerLease fences a command that arrives without the current
+// runner lease of an agent seat.
+//
+// The check runs inside the acceptance transaction, after the match row lock
+// is held, and it reads the authoritative decision time of that transaction.
+// A lease that expired, that was revoked, that belongs to an older control
+// epoch, that belongs to an older service epoch, or that is bound to another
+// turn cannot be used to accept a move. A human seat needs no lease, but a
+// lease that is presented is still checked.
+func (s *Service) authorizeRunnerLease(ctx context.Context, tx pgx.Tx, match Match, cmd Command, decision time.Time) error {
+	seat, ok := match.Seat(cmd.Seat)
+	if !ok {
+		return ErrNotAuthorized
+	}
+	if cmd.LeaseID == "" {
+		if seat.Control.Kind == ControlHuman {
+			return nil
+		}
+		// An agent seat acts through a browser runner, and the runner
+		// holds the lease of the seat.
+		return ErrNotAuthorized
+	}
+	return s.authorizePresentedLease(ctx, tx, match, cmd, decision)
 }
 
 // newRunnerLeaseID mints an opaque lease identifier.

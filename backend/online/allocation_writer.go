@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/locks"
+	"github.com/Kamkmgamer/kamkmchess/backend/subject"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -136,6 +138,49 @@ func (s *Service) createMatchInTx(ctx context.Context, tx pgx.Tx, cmd Command, s
 	} else if !errors.Is(err, ErrNotFound) {
 		return CommandResult{}, err
 	}
+	// The account scope locks of the participants order this allocation
+	// against the removal of the same participants, and the match scope lock
+	// orders it against another allocation of the same match. Both locks are
+	// taken before the receipt is read again, so two allocations of one match
+	// wait for each other instead of racing for the insert.
+	if err = LockAccountScopes(ctx, tx, []ParticipantRef{setup.Seats.White.Participant, setup.Seats.Black.Participant}); err != nil {
+		return CommandResult{}, err
+	}
+	if err = locks.LockMatchScope(ctx, tx, cmd.MatchID); err != nil {
+		return CommandResult{}, err
+	}
+	// The shared gate refuses the allocation when the service is suspended,
+	// restoring or still recovering. The check runs inside the caller's
+	// transaction, so a refused allocation consumes nothing: the invitation
+	// or the queue entry of that transaction is rolled back with it.
+	if err = s.requireGate(ctx, tx); err != nil {
+		return CommandResult{}, err
+	}
+	// The receipt is read again under the locks. The allocation that waited
+	// for them committed the same match, so this one returns its stored
+	// receipt instead of writing a second match.
+	if duplicate, err := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:]); err == nil {
+		return duplicate, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return CommandResult{}, err
+	}
+	// A trusted allocation does not present a credential, so the removal of
+	// a participant is checked here instead. The account scope locks order
+	// the allocation against the removal of the same participant, and the
+	// removal ledger decides whether a participant still exists.
+	if err = s.requireParticipants(ctx, tx, setup); err != nil {
+		return CommandResult{}, err
+	}
+	// The match may already exist from another operation. The match scope
+	// lock orders the allocations, so the check is exact, and the caller
+	// learns that the match exists instead of a service failure.
+	var exists bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_matches WHERE match_id=$1)`, cmd.MatchID).Scan(&exists); err != nil {
+		return CommandResult{}, err
+	}
+	if exists {
+		return CommandResult{}, ErrAlreadyExists
+	}
 	var decision time.Time
 	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&decision); err != nil {
 		return CommandResult{}, err
@@ -213,6 +258,66 @@ func (s *Service) CreateAllocatedMatch(ctx context.Context, actor ParticipantRef
 		return CommandResult{}, err
 	}
 	return result, nil
+}
+
+// requireParticipants refuses an allocation of a participant that was
+// removed.
+//
+// A trusted allocation does not present a credential, so the removal state of
+// both participants is checked here. The account scope locks are taken first,
+// in ascending order, so the allocation is ordered against the removal of the
+// same participant and two allocations of the same participants cannot
+// deadlock.
+//
+// The removal ledger and the account deletions are the durable record of the
+// removal. A removal that was verified is committed, so the participant no
+// longer has a seat anywhere, and a new seat would resurrect it.
+//
+// A replay removal is not an identity removal. The removal of a public
+// replay is a match scoped marker, and it never appears in the removal
+// requests or in the account deletions, so a participant whose replay was
+// removed may still play.
+func (s *Service) requireParticipants(ctx context.Context, tx pgx.Tx, setup *CreateMatchSetup) error {
+	participants := []ParticipantRef{setup.Seats.White.Participant, setup.Seats.Black.Participant}
+	if err := LockAccountScopes(ctx, tx, participants); err != nil {
+		return err
+	}
+	for _, participant := range participants {
+		removed, err := participantRemoved(ctx, tx, participant)
+		if err != nil {
+			return err
+		}
+		if removed {
+			return ErrNotAuthorized
+		}
+	}
+	return nil
+}
+
+// participantRemoved reports whether a participant was removed.
+//
+// The account deletions are the record of an ordinary account deletion, and
+// the removal ledger is the record of an explicit removal of an account or of
+// a guest. The lookup uses the one-way reference of the subject, so the
+// removal tables never receive the identifier of the participant.
+//
+// A replay removal is not an identity removal. The removal of a public
+// replay is a match scoped marker, and it never appears in the removal
+// requests or in the account deletions, so a participant whose replay was
+// removed may still play.
+func participantRemoved(ctx context.Context, q Querier, participant ParticipantRef) (bool, error) {
+	reference := subject.Reference(participant.ID)
+	var removed bool
+	if participant.Kind == ParticipantAccount {
+		if err := q.QueryRow(ctx, subject.AccountRemovedSQL, reference).Scan(&removed); err != nil {
+			return false, err
+		}
+		return removed, nil
+	}
+	if err := q.QueryRow(ctx, subject.GuestRemovedSQL, reference).Scan(&removed); err != nil {
+		return false, err
+	}
+	return removed, nil
 }
 
 // ValidateSetup checks a match setup against the pinned rules policy.

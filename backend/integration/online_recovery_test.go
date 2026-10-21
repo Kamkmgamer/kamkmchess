@@ -251,3 +251,102 @@ func TestOnlineRecoveryPreservesTerminalResults(t *testing.T) {
 		t.Fatalf("the finished result changed: %+v", after.Result)
 	}
 }
+
+// TestOnlineRecoveryRefundsAnOutageThatCrossedTheDeadline covers the
+// approved no-charging rule.
+//
+// A clock that ran out while the service was down keeps the time it had
+// left when the service went down, so the interruption is never charged to
+// the player.
+func TestOnlineRecoveryRefundsAnOutageThatCrossedTheDeadline(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	const matchID = "match-recovery-crossed"
+	// The clock of the match is short, so it runs out during the outage.
+	createAgentMatch(t, fixture.service, matchID, 20_000)
+	acceptMoves(t, fixture.service, matchID)
+	match, err := fixture.service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeDeadline := match.Clock.DeadlineAt.UTC()
+	beforeActive := match.Clock.ActiveSince.UTC()
+	beforeBank := match.Clock.WhiteMs + match.Clock.BlackMs
+
+	// The service went down five minutes ago and comes back now.
+	setLiveness(t, fixture.pool, fixture.clock.Now().Add(-5*time.Minute))
+	fixture.clock.Advance(5 * time.Minute)
+
+	plan, err := fixture.service.RecoverFromInterruption(ctx)
+	if err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+	if plan.AdjustedMatches != 1 {
+		t.Fatalf("adjusted matches = %d, want 1", plan.AdjustedMatches)
+	}
+	after, err := fixture.service.GetMatch(ctx, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The deadline moved by the whole interruption, so it is past the
+	// resume again.
+	if got := after.Clock.DeadlineAt.UTC().Sub(beforeDeadline); got != 5*time.Minute {
+		t.Fatalf("the deadline moved by %v, want 5m", got)
+	}
+	if got := after.Clock.ActiveSince.UTC().Sub(beforeActive); got != 5*time.Minute {
+		t.Fatalf("the active clock moved by %v, want 5m", got)
+	}
+	// The time the player had left when the service went down is the time
+	// the player has left now.
+	afterBank := after.Clock.WhiteMs + after.Clock.BlackMs
+	if afterBank != beforeBank {
+		t.Fatalf("the bank changed from %d to %d, want the same remaining time", beforeBank, afterBank)
+	}
+	if !after.Clock.DeadlineAt.After(fixture.clock.Now()) {
+		t.Fatalf("the deadline %v is still in the past of the resume %v", after.Clock.DeadlineAt, fixture.clock.Now())
+	}
+}
+
+// TestOnlineRecoveryRefundsThePresenceLease covers the presence of the
+// interruption.
+//
+// A service that was down cannot receive heartbeats, so the liveness lease
+// of a connected seat is refunded too. A suspended service never manufactures
+// an absent opponent.
+func TestOnlineRecoveryRefundsThePresenceLease(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	const matchID = "match-recovery-presence"
+	createAgentMatch(t, fixture.service, matchID, 20*60*1000)
+	acceptMoves(t, fixture.service, matchID)
+	presence, err := fixture.service.Heartbeat(ctx, presenceBob().ref, matchID, online.SeatBlack)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease := presence.LeaseExpiresAt.UTC()
+
+	setLiveness(t, fixture.pool, fixture.clock.Now().Add(-5*time.Minute))
+	fixture.clock.Advance(5 * time.Minute)
+	if _, err = fixture.service.RecoverFromInterruption(ctx); err != nil {
+		t.Fatalf("recover: %v", err)
+	}
+	view, err := fixture.service.GetPresence(ctx, presenceAlice().ref, matchID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var black *online.SeatPresence
+	for index := range view.Seats {
+		if view.Seats[index].Seat == online.SeatBlack {
+			black = &view.Seats[index]
+		}
+	}
+	if black == nil {
+		t.Fatal("the presence view has no black seat")
+	}
+	if black.State != online.PresenceConnected {
+		t.Fatalf("the seat state = %q, want %q", black.State, online.PresenceConnected)
+	}
+	if got := black.LeaseExpiresAt.UTC().Sub(lease); got != 5*time.Minute {
+		t.Fatalf("the presence lease moved by %v, want 5m", got)
+	}
+}

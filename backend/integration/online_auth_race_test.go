@@ -35,7 +35,7 @@ import (
 // so a test controls exactly when a command acquires the participant lock.
 type lockProbe struct {
 	mu          sync.Mutex
-	key         int64
+	scope       string
 	haveKey     bool
 	seen        int
 	pauseAt     int
@@ -58,14 +58,16 @@ func newLockProbe(pauseAt int) *lockProbe {
 }
 
 func (p *lockProbe) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	if !strings.Contains(data.SQL, "pg_advisory_xact_lock") {
+	// The participant scope lock derives its key in the database, so the
+	// probe observes the scope and holds exactly the same lock.
+	if !strings.Contains(data.SQL, "pg_advisory_xact_lock") || !strings.Contains(data.SQL, "hashtext") {
 		return ctx
 	}
 	p.mu.Lock()
 	p.seen++
 	if !p.haveKey && len(data.Args) > 0 {
-		if key, ok := data.Args[0].(int64); ok {
-			p.key = key
+		if scope, ok := data.Args[0].(string); ok {
+			p.scope = scope
 			p.haveKey = true
 		}
 	}
@@ -91,21 +93,21 @@ func (p *lockProbe) Release() {
 	p.releaseOnce.Do(func() { close(p.release) })
 }
 
-// LockKey returns the participant advisory lock key the production code used.
-func (p *lockProbe) LockKey(t *testing.T) int64 {
+// LockKey returns the participant advisory lock scope the production code used.
+func (p *lockProbe) LockKey(t *testing.T) string {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		p.mu.Lock()
-		key, ok := p.key, p.haveKey
+		scope, ok := p.scope, p.haveKey
 		p.mu.Unlock()
 		if ok {
-			return key
+			return scope
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("the participant lock key was never observed")
-	return 0
+	t.Fatal("the participant lock scope was never observed")
+	return ""
 }
 
 // revocationPause pauses a revocation after its revocation statement and
@@ -166,7 +168,7 @@ func probedPool(t *testing.T, fixture *onlineAuthFixture, tracer pgx.QueryTracer
 // connection. A command that needs the same lock waits until the returned
 // release function is called. The release function is safe to call more than
 // once, so a failing test never leaves the lock held.
-func holdParticipantLock(t *testing.T, pool *pgxpool.Pool, key int64) func() {
+func holdParticipantLock(t *testing.T, pool *pgxpool.Pool, scope string) func() {
 	t.Helper()
 	ctx := context.Background()
 	conn, err := pool.Acquire(ctx)
@@ -178,7 +180,7 @@ func holdParticipantLock(t *testing.T, pool *pgxpool.Pool, key int64) func() {
 		conn.Release()
 		t.Fatal(err)
 	}
-	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, scope); err != nil {
 		_ = tx.Rollback(ctx)
 		conn.Release()
 		t.Fatal(err)

@@ -23,6 +23,7 @@ import (
 	"sort"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // accountScopePrefix separates the account scope locks from every other
@@ -69,4 +70,40 @@ func LockAccountScopes(ctx context.Context, tx pgx.Tx, scopes []string) error {
 		}
 	}
 	return nil
+}
+
+// matchScopePrefix separates the match scope locks from every other advisory
+// lock of the service.
+const matchScopePrefix = "kamkmchess.match."
+
+// LockMatchScope takes the match scope lock of one match.
+//
+// The scope lock orders the trusted allocation of a match against another
+// allocation of the same match. A match that does not exist yet has no row
+// to lock, so the scope lock is what makes two allocations of the same
+// match id wait for each other instead of racing for the insert.
+func LockMatchScope(ctx context.Context, tx pgx.Tx, matchID string) error {
+	if matchID == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, matchScopePrefix+matchID)
+	return err
+}
+
+// Querier is the write surface a lock needs.
+type Querier interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+// LockAccountScopeQ takes the account scope lock when the caller is inside a
+// transaction.
+//
+// Outside a real transaction the call is a no-op, because a pooled statement
+// cannot hold a lock that orders it against a concurrent removal.
+func LockAccountScopeQ(ctx context.Context, q Querier, scope string) error {
+	tx, ok := q.(pgx.Tx)
+	if !ok {
+		return nil
+	}
+	return LockAccountScope(ctx, tx, scope)
 }

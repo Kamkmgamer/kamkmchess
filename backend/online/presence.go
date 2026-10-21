@@ -313,6 +313,14 @@ func (s *Service) Heartbeat(ctx context.Context, actor ParticipantRef, matchID s
 	if err = s.authorizeSeat(ctx, tx, matchID, actor, seat); err != nil {
 		return SeatPresence{}, err
 	}
+	// The shared gate refuses the heartbeat when the service is suspended,
+	// restoring or still recovering. A heartbeat is a liveness statement
+	// about a live service, so a service that is not serving cannot make
+	// one. The recovery refunds the presence lease of the interruption, so
+	// a suspended service never manufactures an absent opponent.
+	if err = s.requireGate(ctx, tx); err != nil {
+		return SeatPresence{}, err
+	}
 	decision, err := s.sampleDecision(ctx, tx, match.UpdatedAt)
 	if err != nil {
 		return SeatPresence{}, err
@@ -362,6 +370,10 @@ func (s *Service) KeepWaiting(ctx context.Context, actor ParticipantRef, matchID
 	if err = s.authorizeSeat(ctx, tx, matchID, actor, seat); err != nil {
 		return SeatPresence{}, err
 	}
+	// The shared gate refuses the choice while the service is not serving.
+	if err = s.requireGate(ctx, tx); err != nil {
+		return SeatPresence{}, err
+	}
 	decision, err := s.sampleDecision(ctx, tx, match.UpdatedAt)
 	if err != nil {
 		return SeatPresence{}, err
@@ -405,6 +417,9 @@ func (s *Service) GetPresence(ctx context.Context, actor ParticipantRef, matchID
 			return err
 		}
 		yourSeat, ok := match.Seat(actorSeat(match, actor))
+		// The recovering state of the service is durable, so every instance
+		// reports the same state to the client.
+		gate, gateErr := s.gateState(ctx, tx)
 		view = PresenceView{
 			SchemaVersion: ContractsSchemaVersion,
 			MatchID:       matchID,
@@ -413,7 +428,7 @@ func (s *Service) GetPresence(ctx context.Context, actor ParticipantRef, matchID
 			Status:        match.Status,
 			Seats:         seats,
 			ServiceState:  s.healthState(ctx),
-			Recovered:     s.Recovered(),
+			Recovered:     gate.Open && gateErr == nil,
 		}
 		if !ok {
 			return ErrNotFound
@@ -498,6 +513,12 @@ func (s *Service) ClaimAbandonment(ctx context.Context, actor ParticipantRef, cm
 		return CommandResult{}, ErrNotAuthorized
 	}
 	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
+		return CommandResult{}, err
+	}
+	// The shared gate refuses the claim while the service is suspended,
+	// restoring or still recovering. A claim finalizes a match, so it waits
+	// for the canonical state like every other mutation.
+	if err = s.requireGate(ctx, tx); err != nil {
 		return CommandResult{}, err
 	}
 	if match.Moves, err = loadMoves(ctx, tx, cmd.MatchID); err != nil {
