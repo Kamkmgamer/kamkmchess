@@ -66,7 +66,7 @@ test('the invitation of a published link is previewed and the screen stays usabl
   await expect(guest.getByRole('status').filter({ hasText: 'Guest' })).toBeVisible();
 });
 
-test('two clicks in the same tick start one request', async ({ page }) => {
+test('two clicks in the same tick start one request', async ({ page, browser }) => {
   const loaded = await loadDescriptor();
   expect(loaded).not.toBeNull();
   const inviter = await page.context().newPage();
@@ -77,17 +77,47 @@ test('two clicks in the same tick start one request', async ({ page }) => {
   const link = await inviter.getByLabel('Invitation link').inputValue();
   const invitationId = link.split('/invite/')[1] ?? '';
 
-  const guest = await page.context().newPage();
-  let previews = 0;
-  guest.on('request', (request) => {
-    if (request.method() === 'GET' && request.url().includes(`/v1/online/invitations/${invitationId}`)) previews += 1;
-  });
-  await guest.goto(`/invite/${invitationId}`);
-  await expect(guest.getByLabel('Invitation code')).toHaveValue(invitationId);
-  await guest.waitForTimeout(1500);
-  const afterMount = previews;
-  // Two clicks in the same tick start one request.
-  await guest.getByRole('button', { name: 'Preview' }).click({ clickCount: 2, delay: 0 });
-  await guest.waitForTimeout(1000);
-  expect(previews - afterMount).toBeLessThanOrEqual(1);
+  // The other guest has its own storage. Sharing the inviter's context also
+  // shares its owner token and starts the owner's invitation polling here.
+  const guest = await browser.newPage({ baseURL: new URL(inviter.url()).origin });
+  try {
+    let previews = 0;
+    guest.on('request', (request) => {
+      if (request.method() === 'GET' && request.url().includes(`/v1/online/invitations/${invitationId}`)) previews += 1;
+    });
+    await guest.goto(`/invite/${invitationId}`);
+    await expect(guest.getByLabel('Invitation code')).toHaveValue(invitationId);
+    const preview = guest.getByRole('button', { name: 'Preview' });
+    await expect(preview).toBeEnabled();
+    const afterMount = previews;
+    let releaseResponse: () => void = () => undefined;
+    const heldResponse = new Promise<void>(resolve => { releaseResponse = resolve; });
+    // Forward to the real service, but keep its answer pending until both
+    // clicks have run. A fast answer must not turn the second click into a new
+    // operation after the first has already finished.
+    await guest.route(`**/v1/online/invitations/${invitationId}`, async route => {
+      const response = await route.fetch();
+      await heldResponse;
+      await route.fulfill({ response });
+    });
+    try {
+      await preview.evaluate(button => {
+        if (!(button instanceof HTMLButtonElement)) throw new Error('Preview is not a button');
+        button.click();
+        button.click();
+      });
+      await expect.poll(() => previews - afterMount).toBe(1);
+      await expect(preview).toBeDisabled();
+    } finally {
+      releaseResponse();
+    }
+    await expect(preview).toBeEnabled();
+    expect(previews - afterMount).toBe(1);
+    // Finishing the first operation releases ownership for a later click.
+    await preview.click();
+    await expect.poll(() => previews - afterMount).toBe(2);
+    await expect(preview).toBeEnabled();
+  } finally {
+    await guest.close();
+  }
 });
