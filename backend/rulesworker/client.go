@@ -950,20 +950,43 @@ func (c *Client) stop() {
 
 // contextError maps the end of an exchange onto the class of the failure.
 //
-// The cause of the caller is carried when the caller's own context ended: a
-// cancellation stays a cancellation and the deadline of the caller stays the
-// deadline of the caller. An internal timeout of the request or of the start
-// carries no cause, so a genuine outage of the worker is never recorded as
-// the deadline of a caller.
+// The class follows the **deadlines**, not the moment of the check. The
+// cleanup of the worker process can outlive the deadline of the caller, and
+// the cause of the caller must never be invented from that.
+//
+//   - An explicit cancellation of the caller is a cancellation. The caller
+//     knows that it went away.
+//   - The deadline of the caller, when it is the deadline that ended the
+//     exchange, is carried as the cause. A caller that gave up is not a
+//     failure of the worker.
+//   - An internal timeout of the request or of the start carries **no** cause.
+//     A worker that did not answer inside its own budget is an outage of the
+//     worker, and it must never be recorded as the deadline of a caller.
+//
+// The comparison of the deadlines decides which of the two ended the
+// exchange, so the answer does not depend on the schedule of the runtime.
 func contextError(exchange context.Context, caller context.Context) error {
-	if caller != nil && caller.Err() != nil {
-		if errors.Is(caller.Err(), context.Canceled) {
-			return ErrCanceled
-		}
-		return fmt.Errorf("%w: %w", ErrTimeout, context.DeadlineExceeded)
+	if caller == nil {
+		caller = exchange
 	}
-	if errors.Is(exchange.Err(), context.Canceled) {
+	// An explicit cancellation of the caller is a cancellation. The caller
+	// knows that it went away.
+	if errors.Is(caller.Err(), context.Canceled) {
 		return ErrCanceled
+	}
+	if exchange == caller {
+		// The exchange ended with the context of the caller itself, so the
+		// deadline of the caller ended it.
+		if caller.Err() != nil {
+			return fmt.Errorf("%w: %w", ErrTimeout, context.DeadlineExceeded)
+		}
+		return ErrTimeout
+	}
+	exchangeDeadline, hasExchange := exchange.Deadline()
+	callerDeadline, hasCaller := caller.Deadline()
+	if hasExchange && hasCaller && callerDeadline.Before(exchangeDeadline) && caller.Err() != nil {
+		// The deadline of the caller is the one that ended the call.
+		return fmt.Errorf("%w: %w", ErrTimeout, context.DeadlineExceeded)
 	}
 	return ErrTimeout
 }

@@ -129,10 +129,17 @@ outcome for a request that ran out of time.
   is told that it was canceled, not that the worker was slow. The
   cancellation wins over a specific failure of an earlier attempt, because
   the caller knows that it left.
+- The class of a **timeout** follows the deadlines, not the moment of the
+  check. The cleanup of the worker process can outlive the deadline of the
+  caller, and the cause of the caller must never be invented from that.
+  - The deadline of the caller, when it is the deadline that ended the
+    exchange, is carried as the cause.
+  - An internal timeout of the request or of the start carries **no** cause,
+    so a genuine outage of the worker is never recorded as the deadline of a
+    caller.
 - The cancellation carries the **cause** of the context, so that every caller
   of the client can tell a cancellation from a failure of the worker. An
-  internal timeout of the request or of the start carries **no** cause, so a
-  genuine outage of the worker is never recorded as the deadline of a caller.
+  internal timeout carries none.
 - A **specific** failure survives the retry and the restart. A worker that
   died on the first exchange and hung on the second is reported as the crash,
   and a replacement worker that never becomes ready does not replace it
@@ -142,6 +149,19 @@ outcome for a request that ran out of time.
 - An answer that arrives after the budget of the exchange is not accepted:
   the budget is checked again before the answer or the rejection is used, so
   a request that ran out of time is never answered with a contract outcome.
+
+### What a caller must give the client
+
+The taxonomy above has one requirement for the caller: **the deadline of the
+caller must be later than the internal request budget of the client**, when
+the caller wants a failure of the worker to be reported as such.
+
+A caller whose deadline ends first learns only that it ran out of time, and
+a worker that hangs while it is idle is then indistinguishable from a caller
+that went away. A caller that probes the worker (the health probe of the
+service) therefore has to give the client a deadline that is longer than the
+internal request budget of the client, so that the internal timeout is the
+one that fires and the outage of the worker is recorded.
 
 The client does not wait past the deadline of the caller to classify the
 failure. A bounded grace was tried and removed: it extended the caller's
@@ -204,6 +224,8 @@ Three further regressions cover the causes and the starts:
   a replacement that never becomes ready. The call still reports the crash.
 - `TestTheCancellationWinsOverAnEarlierCrash`: a crash followed by the
   cancellation of the caller. The call reports the cancellation.
+- `TestTheClassOfATimeoutFollowsTheDeadlines`: the class of a timeout
+  follows the deadlines and not the moment of the check.
 
 `TestTheRealBundleAnswersAColdRequest` is the smoke test of the pinned worker
 bundle: the real process accepts the readiness probe and answers a cold

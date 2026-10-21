@@ -471,6 +471,44 @@ func TestTheRealBundleAnswersAColdRequest(t *testing.T) {
 	}
 }
 
+// TestTheClassOfATimeoutFollowsTheDeadlines proves that the class of a
+// timeout follows the deadlines and not the moment of the check.
+//
+// The cleanup of the worker process can outlive the deadline of the caller.
+// The cause of the caller must never be invented from that, and an internal
+// timeout must never be reported as the deadline of a caller: a worker that
+// did not answer inside its own budget is an outage of the worker.
+func TestTheClassOfATimeoutFollowsTheDeadlines(t *testing.T) {
+	now := time.Now()
+	// The deadline of the caller ends the exchange.
+	callerExpired, cancelExpired := context.WithDeadline(context.Background(), now.Add(-time.Second))
+	defer cancelExpired()
+	// The internal budget ends the exchange.
+	internal, cancelInternal := context.WithDeadline(context.Background(), now.Add(time.Second))
+	defer cancelInternal()
+	expiredInternal, cancelExpiredInternal := context.WithDeadline(context.Background(), now.Add(-time.Second))
+	defer cancelExpiredInternal()
+
+	// The deadline of the caller is the earlier one: the cause is carried.
+	if err := contextError(internal, callerExpired); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("the deadline of the caller was not carried: %v", err)
+	}
+	// The internal budget is the earlier one: no cause is carried, even
+	// when the context of the caller has ended in the meantime.
+	if err := contextError(expiredInternal, callerExpired); errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("an internal timeout was reported as the deadline of the caller: %v", err)
+	}
+	if err := contextError(expiredInternal, callerExpired); !errors.Is(err, ErrTimeout) {
+		t.Fatalf("an internal timeout is not a timeout: %v", err)
+	}
+	// An explicit cancellation of the caller keeps its class.
+	canceled, cancelNow := context.WithCancel(context.Background())
+	cancelNow()
+	if err := contextError(internal, canceled); !errors.Is(err, ErrCanceled) {
+		t.Fatalf("a cancellation lost its class: %v", err)
+	}
+}
+
 // TestTheCancellationCarriesTheCauseOfTheCaller proves that the class of a
 // cancellation can be told apart from a failure of the worker.
 //
