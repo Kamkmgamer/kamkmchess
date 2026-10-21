@@ -444,7 +444,7 @@ type RestoreResult struct {
 // The online removal ledger is replayed after the restore, in the same call.
 // A restore that cannot replay the removals must not serve traffic, so the
 // removal sink is a required part of a restore that carries removals.
-func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error) {
+func Restore(ctx context.Context, request RestoreRequest) (result RestoreResult, err error) {
 	if request.Restorer == nil {
 		return RestoreResult{}, fmt.Errorf("%w: a restorer is required", ErrMalformedContainer)
 	}
@@ -504,7 +504,15 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 			return
 		}
 		// The import never ran: the marker this attempt created is undone.
-		_ = handle.Cancel()
+		//
+		// The ownership of the lifecycle is given back whatever the outcome of
+		// the cleanup is, so a caller that cannot clean up does not hold the
+		// lifecycle for ever, and the failure of the cleanup is reported with
+		// the failure of the restore.
+		if cancelErr := handle.Cancel(); cancelErr != nil {
+			handle.Release()
+			err = errors.Join(err, cancelErr)
+		}
 	}()
 	if request.Removals == nil {
 		// A restore without the removal ledger sink cannot replay the
@@ -594,7 +602,7 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err = request.Tombstones.ApplyTombstones(ctx, ledger); err != nil {
 		return RestoreResult{}, err
 	}
-	result := RestoreResult{
+	result = RestoreResult{
 		RestorePlan: RestorePlan{
 			Manifest:       verified.Manifest,
 			SQLBytes:       verified.SQLBytes,

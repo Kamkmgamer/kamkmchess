@@ -120,6 +120,11 @@ type FenceHandle struct {
 	// A marker that was already there belongs to a crashed restore, and the
 	// history of that restore is never removed.
 	created bool
+	// prior is the owner marker of the lifecycle before this attempt replaced
+	// it, and priorPresent tells whether there was one at all. A take-over
+	// that is refused before its import restores it exactly.
+	prior        []byte
+	priorPresent bool
 }
 
 // Token is the ownership token of the lifecycle.
@@ -292,13 +297,31 @@ func (h *FenceHandle) Cancel() error {
 	if h.finished {
 		return errors.New("privacy: the restore fence is already closed")
 	}
+	// The ownership of the lifecycle is given back whatever the outcome is:
+	// a caller that keeps it would hold the lifecycle for ever, and the
+	// operator could not recover the restore.
+	defer func() {
+		h.finished = true
+		h.lock.release()
+	}()
 	if h.created {
-		if err := h.service.removeFenceDirectory(); err != nil {
-			return err
-		}
+		// This attempt created the marker of the lifecycle, so it is removed
+		// and the service keeps the state it had.
+		return h.service.removeFenceDirectory()
 	}
-	h.finished = true
-	h.lock.release()
+	if h.priorPresent {
+		// The marker of a crashed restore was replaced by this attempt. The
+		// exact owner marker of the crashed restore is restored, in the
+		// directory that is already there, so the identity, the token and the
+		// bound ledger of the crashed restore survive the refusal and the
+		// service never sees a gap.
+		return h.service.writeOwnerMarker(h.service.fenceDirectory(), h.prior)
+	}
+	// The marker directory was there without an owner marker: that unknown
+	// state is restored faithfully, and the directory is never removed.
+	if err := os.Remove(filepath.Join(h.service.fenceDirectory(), fenceOwnerName)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	return nil
 }
 
@@ -373,10 +396,20 @@ func (s *Service) BeginFence(restoreID string, takeover bool) (*FenceHandle, err
 	directory := s.fenceDirectory()
 	_, statErr := os.Stat(directory)
 	created := false
+	var (
+		prior        []byte
+		priorPresent bool
+	)
 	switch {
 	case statErr == nil:
-		// The marker of a crashed restore is there. Only a take-over may
-		// continue the lifecycle.
+		// The marker of a crashed restore is there. Its owner marker is
+		// captured before it is replaced, so a take-over that is refused
+		// before its import can restore it exactly.
+		prior, priorPresent, err = s.priorOwnerMarker(directory)
+		if err != nil {
+			return nil, err
+		}
+		// Only a take-over may continue the lifecycle.
 		if !takeover {
 			return nil, errors.New("privacy: the fence of a crashed restore is still there; recover it or run the restore with the take-over")
 		}
@@ -392,7 +425,31 @@ func (s *Service) BeginFence(restoreID string, takeover bool) (*FenceHandle, err
 		return nil, statErr
 	}
 	release = false
-	return &FenceHandle{service: s, lock: lock, restoreID: restoreID, token: token, created: created}, nil
+	return &FenceHandle{
+		service:      s,
+		lock:         lock,
+		restoreID:    restoreID,
+		token:        token,
+		created:      created,
+		prior:        prior,
+		priorPresent: priorPresent,
+	}, nil
+}
+
+// priorOwnerMarker reads the owner marker of the lifecycle as it is.
+//
+// The bytes are read and not parsed, so a marker that cannot be read is kept
+// exactly as it is: a take-over that is refused restores it, and the unknown
+// state of the lifecycle survives the refusal.
+func (s *Service) priorOwnerMarker(directory string) ([]byte, bool, error) {
+	raw, err := os.ReadFile(filepath.Join(directory, fenceOwnerName))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	return raw, true, nil
 }
 
 // createMarkerDirectory creates the marker directory of the lifecycle and

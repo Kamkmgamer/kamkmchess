@@ -316,12 +316,25 @@ Rules the browser must honour:
   still wait for their removal ledger. A gate that waits keeps the service closed, so the recovery
   never claims that the service serves while one of them waits.
 * A **restore that has a fence and no removal ledger sink** is refused while an evidence record of
+* A **restore that has a fence and no removal ledger sink** is refused while an evidence record of
   a removal is pending. The fence owns the durable evidence of the removals, so the fence itself
   says whether any are owed, and the refusal happens under the ownership of the lifecycle and
   before the import: the database is not touched, the evidence stays pending, and the marker of the
-  lifecycle that this attempt created is removed, so the service keeps the state it had. A marker that
-  was already there - the history of a crashed restore - is never removed, and an import that ran keeps
-  the marker in place, so the service stays closed until the restore is resolved.
+  lifecycle that this attempt created is removed, so the service keeps the state it had.
+* A **take-over that is refused before its import restores the owner marker of the crashed
+  restore exactly**. A take-over replaces the owner marker of the lifecycle, so the bytes of the
+  marker of the crashed restore are captured before the replacement, and the cancellation writes
+  them back into the directory that is already there. The identifier, the ownership token and the
+  bound removal ledger of the crashed restore survive the refusal, so the operator can still
+  recover it, and the directory of the marker is never removed, so the service never sees a gap. A
+  marker that cannot be read is restored byte for byte, so the unknown state of the lifecycle
+  survives the refusal as well.
+* The **cleanup of a refused restore never keeps the ownership**: the ownership of the lifecycle is
+  given back whatever the outcome of the cleanup is, and a failure of the cleanup is reported with
+  the failure of the restore. A caller that could not clean up does not hold the lifecycle for
+  ever, so an operator can recover the restore.
+  An import that ran keeps the marker in place, so the service stays closed until the restore is
+  resolved.
 * The obligation of a pending evidence record is for the **next import**, not for the database of
   the moment. The import of a restore replaces the schema of the database, so the removals that the
   evidence names are gone afterwards, and the restore that comes next has to replay them: the
