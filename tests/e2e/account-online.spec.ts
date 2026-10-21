@@ -32,6 +32,13 @@ import type { SyntheticProvider } from '../support/synthetic-provider';
 const descriptorPath = process.env.ONLINE_FIXTURE_DESCRIPTOR ?? '';
 const strict = process.env.ONLINE_FIXTURE_STRICT === '1';
 /**
+ * The tolerance of the clock of the browser and the clock of the service.
+ *
+ * The fixture runs on the host of the browser, so both read the same clock.
+ * The tolerance covers the round trip of the answer that carries the cutoff.
+ */
+const CLOCK_TOLERANCE_MS = 1_000;
+/**
  * The synthetic credential of the account connection.
  *
  * It is a harmless constant of the fixture: the local provider expects it and
@@ -529,38 +536,77 @@ test('the first account gets its game back when it signs in again', async ({ pag
 
 test('a waiting entry survives a reload without committing the browser engine', async ({ page }) => {
   // The fallback route of the service is the authoritative allocation of the
-  // browser engine. A waiting entry must never reach it: the engine would be
-  // committed before the deadline of the search, without the readiness flow
-  // and without an owner action.
+  // browser engine. The engine is committed at the cutoff of the entry, so a
+  // fallback that happened before the cutoff the service gave the entry
+  // would commit the engine before the deadline of the search, without the
+  // readiness flow and without an owner action.
   test.setTimeout(180_000);
   const loaded = await loadDescriptor();
   expect(loaded).not.toBeNull();
   await signInWithFixtureAccount(page, loaded!, await firstAccount());
   await page.goto('/play?online=1');
   await openOnline(page);
-  await page.getByRole('button', { name: 'Play yourself' }).click();
-  // The entry is created and shown before the reload, so the browser owns the
-  // entry of the service when the page comes back.
-  await expect(page.getByRole('list', { name: 'Queue entries' }).getByRole('listitem')).toHaveCount(1, { timeout: 30_000 });
-  // Every request of the fallback route is counted.
-  const fallbacks: string[] = [];
-  page.on('request', request => {
-    if (request.url().includes('/fallback')) fallbacks.push(request.url());
+
+  // The canonical answer of the service carries the entry and its cutoff.
+  const answers: { entryId: string; cutoffAt: string | null }[] = [];
+  const creations: number[] = [];
+  const fallbacks: number[] = [];
+  const reads: string[] = [];
+  page.on('response', response => {
+    // Only the creation of an entry is a new entry: the other routes of the
+    // queue act on an entry that already exists.
+    const path = new URL(response.url()).pathname;
+    if (path !== '/v1/online/queue/entries' || response.request().method() !== 'POST') return;
+    creations.push(Date.now());
+    void response.json().then((body: unknown) => {
+      const answer = body as { entryId?: unknown; cutoffAt?: unknown };
+      if (typeof answer.entryId !== 'string') return;
+      answers.push({
+        entryId: answer.entryId,
+        cutoffAt: typeof answer.cutoffAt === 'string' ? answer.cutoffAt : null,
+      });
+    }).catch(() => undefined);
   });
+  page.on('request', request => {
+    const url = request.url();
+    if (url.includes('/fallback')) fallbacks.push(Date.now());
+    const read = /\/v1\/online\/queue\/entries\/([^/?]+)/.exec(url);
+    if (read && request.method() === 'GET') reads.push(decodeURIComponent(read[1] ?? ''));
+  });
+
+  await page.getByRole('button', { name: 'Play yourself' }).click();
+  // The entry of the service is created and shown before the reload, so the
+  // browser owns it when the page comes back.
+  await expect(page.getByRole('list', { name: 'Queue entries' }).getByRole('listitem')).toHaveCount(1, { timeout: 30_000 });
+  await expect.poll(() => answers.length, { timeout: 30_000 }).toBeGreaterThan(0);
+  const entry = answers[0]!;
+  expect(entry.cutoffAt).not.toBeNull();
+  const cutoff = Date.parse(entry.cutoffAt ?? '');
+  expect(Number.isNaN(cutoff)).toBe(false);
+
   // The reload restores the persisted games of the account, resumes the
   // waiting entry and runs the recovery of the engine credentials.
+  const creationsBefore = creations.length;
+  const readsBefore = reads.length;
   await page.reload();
   await openOnline(page);
-  // The same entry is shown again, with the cutoff the service gave it.
+  // The same entry is shown again, and the browser read the same canonical
+  // entry of the service.
   await expect(page.getByRole('list', { name: 'Queue entries' }).getByRole('listitem')).toHaveCount(1, { timeout: 30_000 });
-  // The service was never asked to commit the engine of the waiting entry.
-  expect(fallbacks).toHaveLength(0);
-  // The entry is cancelled, so the cutoff of the entry cannot commit the
-  // engine behind the back of the owner.
-  await page.getByRole('button', { name: /Cancel queue entry/ }).click();
-  // The entry still waits for a human opponent: it was not matched.
-  await expect(page.getByRole('status').filter({ hasText: 'Matched.' })).toHaveCount(0, { timeout: 20_000 });
-  await expect(page.getByRole('list', { name: 'Queue entries' }).getByRole('listitem')).toHaveCount(1, { timeout: 20_000 });
+  expect(reads.slice(readsBefore)).toContain(entry.entryId);
+  // The restore never created an entry.
+  expect(creations.length).toBe(creationsBefore);
+  // The deadline of the entry has not arrived, so the engine of the entry was
+  // not committed.
+  expect(fallbacks.filter(at => at < cutoff - CLOCK_TOLERANCE_MS)).toHaveLength(0);
+
+  // The deadline of the entry arrives. The engine may be committed then, and
+  // only then: the deadline selects the opponent.
+  await page.waitForTimeout(Math.max(0, cutoff - Date.now()) + 2_000);
+  expect(fallbacks.filter(at => at < cutoff - CLOCK_TOLERANCE_MS)).toHaveLength(0);
+  // The entry of the service is still the same one.
+  expect(reads.slice(readsBefore)).toContain(entry.entryId);
+  expect(creations.length).toBe(creationsBefore);
 });
 
 test('a late seat change never writes into the next account', async ({ page }) => {
