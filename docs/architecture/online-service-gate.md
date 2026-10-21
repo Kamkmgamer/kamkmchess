@@ -261,7 +261,21 @@ The shared state is the newest **persisted observation** of a dependency, and
 the persistence is symmetric: a healthy observation and a degraded one are
 written when they are the newest, so a continuing failure of a broken instance
 degrades the shared state again after a healthy peer answered. The write is
-deduplicated against the shared state, so a stable state writes no row.
+deduplicated against the shared state. When all instances observe the same
+state, repeated observations write no row.
+
+This is last-writer-wins health per dependency. In a mixed deployment, a
+broken instance and a healthy peer can alternate the shared state on each
+write. The broken instance stays locally degraded and keeps its own claim
+path closed. Healthy instances follow the shared state, so their claim paths
+can close after a broken peer writes and reopen after a healthy peer writes.
+The shared record does not establish that every instance is healthy.
+
+Each change inserts a checkpoint. Alternating peers can therefore keep
+growing `online_service_health` for the duration of the mixed state. There
+is no checkpoint retention or pruning. The liveness singleton does not bound
+this history, and no storage, throughput or deployment capacity has been
+measured for this pattern.
 
 The order of the checkpoints is the sequence of the database
 (`online_service_health_order`), not a clock: the newest checkpoint of a
@@ -293,6 +307,10 @@ state of the instance and are remembered by the reporter; the monitor's tick
 writes them, with the context of the monitor and a short internal budget. A
 request never waits for a checkpoint or for the liveness, and a write that
 failed leaves the observation pending, so the next tick writes it again.
+Other instances learn a request's observation only after a successful monitor
+flush. That normally adds up to one monitor interval, five seconds by default,
+plus the write time. A failed flush can delay it longer; the local guard of
+the instance that observed the failure takes effect immediately.
 
 The decision, the order and the write of a checkpoint are one transaction, and
 the advisory lock of the dependency serializes them with the other instances:
