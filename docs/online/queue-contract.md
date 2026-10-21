@@ -309,6 +309,13 @@ operation identifier for every mutation ✓.
   transaction that holds the time-control bucket lock, so the game and the
   consumption of the entries commit together and two owners of one pair can
   never write the same match.
+- The lock order of the queue is fixed: the **bucket lock**, then the
+  **account scope locks** of the participants in ascending order, then the
+  **row locks**. The account scope lock is the shared lock of the online
+  service, so the removal of an account and a queue write of one account are
+  ordered instead of racing, and the durable removal is re-read inside the
+  transaction of every queue write. A removed account can never create an
+  entry, rearm one, heartbeat one, commit a fallback or be paired.
 - The composition reads `cfg.Online.FriendEnabled` and
   `cfg.Online.QueueEnabled` and passes
   `httpapi.NewFeatures(httpapi.OnlineFeatures{Friends: …, Queue: …})`.

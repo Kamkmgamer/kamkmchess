@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/locks"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
 	"github.com/jackc/pgx/v5"
@@ -110,6 +111,7 @@ type candidateRecord struct {
 func (s *Service) Match(ctx context.Context, actor online.ParticipantRef, entryID string, operation Operation) (Assignment, error) {
 	return s.allocate(ctx, actor, entryID, allocationRequest{Operation: operation})
 }
+
 // Fallback commits the browser engine fallback.
 //
 // The service checks once more for a compatible candidate before it commits,
@@ -246,6 +248,17 @@ func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entry
 	if record.OwnerID != actor.ID {
 		return reservationPlan{}, ErrNotFound
 	}
+	// An entry that already produced a game keeps its opponent. The check
+	// runs before the rules policy is asked, so a repeated request costs no
+	// rules evaluation. The transaction checks it again under the lock.
+	if existing, role, found, err := s.loadAllocationForEntry(ctx, s.db, entryID); err != nil {
+		return reservationPlan{}, err
+	} else if found {
+		if existing.MatchID == nil {
+			return reservationPlan{}, fmt.Errorf("%w: the allocation names no match", ErrUnavailable)
+		}
+		return planFromAllocation(existing, role), nil
+	}
 	// The rules policy is asked before the transaction opens. The queue only
 	// ever produces the standard position, so the probe covers the only
 	// position a queue game can use.
@@ -257,8 +270,42 @@ func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entry
 		return reservationPlan{}, err
 	}
 	defer tx.Rollback(ctx)
+	// The lock order of the queue is fixed: the bucket lock, then the
+	// account scope locks of the participants in ascending order, then the
+	// row locks. Every queue write takes them in that order, so two
+	// allocations never wait for each other in the opposite order.
 	if err = lockBucket(ctx, tx, record.StartingTimeMs, record.IncrementMs); err != nil {
 		return reservationPlan{}, err
+	}
+	bound := record.bound(now)
+	// The candidate is selected before the row locks, because the account
+	// scope locks of both participants are taken together and in ascending
+	// order.
+	candidate, found, err := s.findCandidate(ctx, tx, record, bound, now)
+	if err != nil {
+		return reservationPlan{}, err
+	}
+	scopes := []string{locks.AccountScope("account", actor.ID)}
+	if found {
+		scopes = append(scopes, locks.AccountScope("account", candidate.OwnerID))
+	}
+	if err = locks.LockAccountScopes(ctx, tx, scopes); err != nil {
+		return reservationPlan{}, err
+	}
+	// The durable removal of every participant is re-read inside the
+	// transaction. A removed account never writes queue state and is never
+	// paired.
+	if err = assertAccountPresent(ctx, tx, actor.ID); err != nil {
+		return reservationPlan{}, err
+	}
+	if found {
+		if err = assertAccountPresent(ctx, tx, candidate.OwnerID); err != nil {
+			if !errors.Is(err, ErrAccountRemoved) {
+				return reservationPlan{}, err
+			}
+			// The candidate is gone. The decision continues without it.
+			found = false
+		}
 	}
 	record, err = s.lockEntry(ctx, tx, entryID)
 	if err != nil {
@@ -267,11 +314,11 @@ func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entry
 	if record.OwnerID != actor.ID {
 		return reservationPlan{}, ErrNotFound
 	}
-	existing, role, found, err := s.loadAllocationForEntry(ctx, tx, entryID)
+	existing, role, allocated, err := s.loadAllocationForEntry(ctx, tx, entryID)
 	if err != nil {
 		return reservationPlan{}, err
 	}
-	if found {
+	if allocated {
 		// The entry already produced a game. Its opponent is fixed and the
 		// answer names the committed allocation.
 		if existing.MatchID == nil {
@@ -297,10 +344,11 @@ func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entry
 	if record.ExpiresAt != nil && !record.ExpiresAt.After(now) {
 		return reservationPlan{}, fmt.Errorf("%w: the entry expired", ErrConflict)
 	}
-	bound := record.bound(now)
-	candidate, found, err := s.findCandidate(ctx, tx, record, bound, now)
-	if err != nil {
-		return reservationPlan{}, err
+	if found {
+		candidate, found, err = s.lockCandidate(ctx, tx, record, candidate, bound, now)
+		if err != nil {
+			return reservationPlan{}, err
+		}
 	}
 	if !found && mode == modeCandidate {
 		return reservationPlan{}, ErrNoCandidate
@@ -341,12 +389,12 @@ func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entry
 // findCandidate selects the oldest eligible candidate of one entry.
 //
 // The candidate has to be ready by the bound, which is the current time
-// before the cutoff and the original cutoff at or after it. The candidate is
-// locked, so a concurrent decision cannot consume it as well.
+// before the cutoff and the original cutoff at or after it.
 //
-// The scan never skips a busy candidate: the bucket lock orders the whole
-// decision, so a candidate that another transaction reserved is already
-// committed as consumed when this transaction reads the bucket.
+// The scan does not lock the row. The bucket lock orders the whole decision,
+// so a candidate that another transaction reserved is already committed as
+// consumed when this transaction reads the bucket. The row itself is locked
+// after the account scope of the candidate, in the order of the shared seams.
 func (s *Service) findCandidate(ctx context.Context, tx pgx.Tx, record entryRecord, bound, now time.Time) (candidateRecord, bool, error) {
 	row := tx.QueryRow(ctx, `SELECT e.entry_id,e.owner_id,e.seat_control_kind,e.seat_control_model_label,e.ready_at
 		FROM online_queue_entries e
@@ -359,8 +407,7 @@ func (s *Service) findCandidate(ctx context.Context, tx pgx.Tx, record entryReco
 		  AND NOT (e.seat_control_kind='human' AND $7='human')
 		  AND NOT EXISTS (SELECT 1 FROM online_queue_allocation_entries x WHERE x.entry_id=e.entry_id)
 		ORDER BY e.ready_at, e.created_at, e.entry_id
-		LIMIT 1
-		FOR UPDATE OF e`,
+		LIMIT 1`,
 		record.StartingTimeMs, record.IncrementMs, record.EntryID, record.OwnerID, bound, now, record.ControlKind)
 	var candidate candidateRecord
 	err := row.Scan(&candidate.EntryID, &candidate.OwnerID, &candidate.ControlKind, &candidate.ControlModelLabel, &candidate.ReadyAt)
@@ -371,6 +418,31 @@ func (s *Service) findCandidate(ctx context.Context, tx pgx.Tx, record entryReco
 		return candidateRecord{}, false, err
 	}
 	return candidate, true, nil
+}
+
+// lockCandidate locks the row of the selected candidate and re-checks its
+// eligibility.
+//
+// The candidate is locked after the account scope of its owner, so the row
+// lock never precedes a scope lock.
+func (s *Service) lockCandidate(ctx context.Context, tx pgx.Tx, record entryRecord, candidate candidateRecord, bound, now time.Time) (candidateRecord, bool, error) {
+	row := tx.QueryRow(ctx, `SELECT e.entry_id,e.owner_id,e.seat_control_kind,e.seat_control_model_label,e.ready_at
+		FROM online_queue_entries e
+		WHERE e.entry_id=$1
+		  AND e.internal_state='waiting' AND e.status='waiting'
+		  AND e.ready_at IS NOT NULL AND e.ready_at<=$2
+		  AND (e.expires_at IS NULL OR e.expires_at>$3)
+		  AND NOT EXISTS (SELECT 1 FROM online_queue_allocation_entries x WHERE x.entry_id=e.entry_id)
+		FOR UPDATE OF e`, candidate.EntryID, bound, now)
+	var locked candidateRecord
+	err := row.Scan(&locked.EntryID, &locked.OwnerID, &locked.ControlKind, &locked.ControlModelLabel, &locked.ReadyAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return candidateRecord{}, false, nil
+	}
+	if err != nil {
+		return candidateRecord{}, false, err
+	}
+	return locked, true, nil
 }
 
 // validateSetup asks the rules policy about the starting position of a queue

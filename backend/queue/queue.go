@@ -42,8 +42,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/locks"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/Kamkmgamer/kamkmchess/backend/subject"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -95,6 +97,10 @@ var (
 
 	// ErrUnavailable means the queue cannot serve the request right now.
 	ErrUnavailable = errors.New("queue: unavailable")
+
+	// ErrAccountRemoved means the account of the caller was removed. The
+	// removal is durable, so the account can never write queue state again.
+	ErrAccountRemoved = errors.New("queue: the account was removed")
 )
 
 // MatchAllocator is the trusted seam to the canonical match writer.
@@ -527,7 +533,27 @@ func (s *Service) CreateEntry(ctx context.Context, actor online.ParticipantRef, 
 		value := *request.Control.ModelLabel
 		modelLabel = &value
 	}
-	row := s.db.QueryRow(ctx, `INSERT INTO online_queue_entries(entry_id,owner_kind,owner_id,seat_control_kind,seat_control_model_label,starting_time_ms,increment_ms,status,internal_state,version,ready_at,cutoff_at,original_cutoff_at,expires_at,last_heartbeat_at,keep_searching,client_request_id,creation_hash,created_at,updated_at)
+	// The entry is written inside a transaction that holds the time-control
+	// bucket lock and the account scope lock of the owner, and that re-reads
+	// the durable removal. An account that was removed cannot create an
+	// entry afterwards, even when it was authenticated before the removal.
+	//
+	// The lock order of the queue is fixed: the bucket lock, then the
+	// account scope locks in ascending order, then the row locks. Every
+	// queue write takes them in that order, so two writes never wait for
+	// each other in the opposite order.
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return online.QueueEntry{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	if err = lockBucket(ctx, tx, request.TimeControl.StartingTimeMs, request.TimeControl.IncrementMs); err != nil {
+		return online.QueueEntry{}, false, err
+	}
+	if err = lockAccount(ctx, tx, actor.ID); err != nil {
+		return online.QueueEntry{}, false, err
+	}
+	row := tx.QueryRow(ctx, `INSERT INTO online_queue_entries(entry_id,owner_kind,owner_id,seat_control_kind,seat_control_model_label,starting_time_ms,increment_ms,status,internal_state,version,ready_at,cutoff_at,original_cutoff_at,expires_at,last_heartbeat_at,keep_searching,client_request_id,creation_hash,created_at,updated_at)
 		VALUES($1,'account',$2,$3,$4,$5,$6,'waiting','waiting',1,$7,$8,$8,$9,$7,false,$10,$11,$7,$7)
 		ON CONFLICT (owner_kind, owner_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
 		RETURNING `+entryColumns,
@@ -535,6 +561,9 @@ func (s *Service) CreateEntry(ctx context.Context, actor online.ParticipantRef, 
 		now, cutoff, now.Add(s.readinessTTL), clientRequestID, creationHash)
 	record, err := scanEntry(row)
 	if err == nil {
+		if err = tx.Commit(ctx); err != nil {
+			return online.QueueEntry{}, false, err
+		}
 		return record.entry(), true, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -549,6 +578,9 @@ func (s *Service) CreateEntry(ctx context.Context, actor online.ParticipantRef, 
 	}
 	if !equalBytes(existing.creationHash, creationHash) {
 		return online.QueueEntry{}, false, fmt.Errorf("%w: the client request id is already used for another entry", ErrConflict)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return online.QueueEntry{}, false, err
 	}
 	return existing.entry(), false, nil
 }
@@ -752,7 +784,14 @@ func (s *Service) mutateEntry(ctx context.Context, actor online.ParticipantRef, 
 	if record.OwnerID != actor.ID {
 		return entryRecord{}, ErrNotFound
 	}
+	// The lock order of the queue is fixed: the bucket lock, then the
+	// account scope lock, then the row lock.
 	if err = lockBucket(ctx, tx, record.StartingTimeMs, record.IncrementMs); err != nil {
+		return entryRecord{}, err
+	}
+	// The account scope lock comes before the row lock, and the durable
+	// removal of the owner is re-read inside the transaction.
+	if err = lockAccount(ctx, tx, actor.ID); err != nil {
 		return entryRecord{}, err
 	}
 	record, err = s.lockEntry(ctx, tx, entryID)
@@ -812,6 +851,40 @@ func ValidateEntryRequest(request CreateEntryRequest) error {
 	}
 	if request.ClientRequestID != "" && !clientRequestIDShape(request.ClientRequestID) {
 		return fmt.Errorf("%w: client request id", ErrInvalidRequest)
+	}
+	return nil
+}
+
+// lockAccount takes the account scope lock of one owner and refuses a
+// removed account.
+//
+// The scope lock is the shared lock of the online service: the removal of a
+// participant takes the same lock, so a removal and a queue write of one
+// account are ordered instead of racing. The durable removal is re-read
+// inside the transaction, so an account that was authenticated before its
+// removal cannot write queue state afterwards.
+//
+// The lock order of the shared seams is fixed: the account scope locks come
+// before the queue bucket lock and before every row lock.
+func lockAccount(ctx context.Context, tx pgx.Tx, accountID string) error {
+	if err := locks.LockAccountScope(ctx, tx, locks.AccountScope("account", accountID)); err != nil {
+		return err
+	}
+	return assertAccountPresent(ctx, tx, accountID)
+}
+
+// assertAccountPresent refuses an account that was removed.
+//
+// The comparison uses the one-way reference of the subject, so the removal
+// tables never see an account identifier and the service never sends one to
+// the database.
+func assertAccountPresent(ctx context.Context, q queryer, accountID string) error {
+	var removed bool
+	if err := q.QueryRow(ctx, subject.AccountRemovedSQL, subject.Reference(accountID)).Scan(&removed); err != nil {
+		return err
+	}
+	if removed {
+		return ErrAccountRemoved
 	}
 	return nil
 }

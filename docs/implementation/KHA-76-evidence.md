@@ -170,6 +170,37 @@ lost the answer of a fallback stays without an engine credential until the
 owner asks for the recovery. The composition already sends an operation
 identifier for every mutation.
 
+## The removal of an account and the queue writes
+
+The queue and the removal of an account share the account scope lock of the
+online service, and every queue write re-reads the durable removal inside its
+own transaction. An account that was authenticated before its removal
+therefore cannot write queue state afterwards, and it is never paired.
+
+| Write | The service takes | The removal is re-read |
+| --- | --- | --- |
+| the creation of an entry | the bucket lock, then the account scope lock | yes, inside the transaction |
+| the rearm, the cancellation, the keep-searching and the heartbeat | the bucket lock, then the account scope lock | yes, inside the transaction |
+| the allocation of a match | the bucket lock, then the account scope locks of both participants in ascending order | yes, for both participants, inside the transaction |
+| the reconciliation loop | the same locks, through the same decision | yes, and a removed account is skipped without a failure |
+
+The lock order of the queue is fixed: the bucket lock, then the account scope
+locks in ascending order, then the row locks. Every queue write takes them in
+that order, so two allocations never wait for each other in the opposite
+order. The scope locks come before the row locks, and the removal of a
+participant takes the same scope lock, so an allocation and a removal of one
+participant are ordered instead of racing.
+
+The comparison uses the one-way reference of the subject
+(`subject.Reference`), so the removal tables never see an account identifier
+and the service never sends one to the database.
+
+The regressions are `TestQueueRemovedAccountCannotWriteQueueState`,
+`TestQueueRemovedAccountIsNeverPaired`,
+`TestQueueRemovalOrdersTheQueueWrites` (the write waits for the scope lock
+and is refused once the removal committed) and
+`TestQueueSweepSkipsARemovedAccount`.
+
 ## Known limitations
 
 1. The engine credential is minted in its own transaction, after the match

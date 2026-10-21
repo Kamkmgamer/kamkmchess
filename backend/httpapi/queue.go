@@ -276,6 +276,10 @@ func (a *queueAPI) operation(w http.ResponseWriter, r *http.Request) (queue.Oper
 // candidate is a 404 too: it means "no candidate right now", not an error.
 func writeQueueError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, queue.ErrAccountRemoved):
+		// The account of the caller was removed. It is not a participant
+		// any more, so the request is refused like an unauthenticated one.
+		writeError(w, http.StatusUnauthorized, "unauthorized")
 	case errors.Is(err, queue.ErrNotFound), errors.Is(err, queue.ErrNoCandidate):
 		writeError(w, http.StatusNotFound, "not_found")
 	case errors.Is(err, queue.ErrInvalidRequest):

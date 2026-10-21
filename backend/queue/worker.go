@@ -80,6 +80,11 @@ func (s *Service) ResolveDueCutoffs(ctx context.Context, limit int) (SweepResult
 			continue
 		}
 		if err != nil {
+			if errors.Is(err, ErrAccountRemoved) {
+				// The owner of the entry was removed. The removal flow
+				// cleans its queue rows, so the sweep has nothing to do.
+				continue
+			}
 			result.Failed++
 			continue
 		}
