@@ -1,11 +1,14 @@
 package privacy
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -18,163 +21,313 @@ import (
 // old ledger: the newest removals would be absent, and no state inside the
 // database could tell that they are missing.
 //
-// The fence therefore lives outside the replaced target, in a small file that
-// the restore writes before it imports anything and that it removes only after
-// the newest merged removal ledger was replayed and verified. The fence
-// survives the schema replacement and a process crash, and the service refuses
-// to serve while it is open.
+// The fence therefore lives outside the restored database. The configured path
+// is the *parent* directory that the operator prepares; the lifecycle owns a
+// marker directory inside it:
 //
-// The fence is an admission record, never a payload: it holds the identifier
-// of the restore, the digest of the removal ledger the restore has to apply,
-// and the time the fence was written.
+//	<parent>/restore-fence/         the marker directory
+//	<parent>/restore-fence/owner    the owner marker of the lifecycle
+//	<parent>/restore-fence.lock     the operating system lock of the lifecycle
+//
+// The lock file carries an operating system lock that the restore holds for
+// the whole lifecycle, from the admission of the restore until the fence is
+// closed. It is the live ownership proof: it is held only by a running
+// restore, and the operating system releases it when that process dies. A
+// restore that finds the lock held is refused, a closer that does not own the
+// lifecycle is refused, and the recovery of a crashed restore may only run
+// when the lock is free, which proves that the named restore is not alive.
+//
+// The marker directory is the crash persistent, fail closed part: it exists
+// while a restore is in progress and while a crashed restore waits for an
+// operator, and it is never removed before a new marker replaced it. The
+// service refuses to serve while it exists.
+//
+// The fence is an admission record, never a payload: the owner marker holds
+// the identifier of the restore, the digest of the removal ledger the restore
+// has to apply, a random ownership token and the time the fence was written.
+//
+// The permissions of the parent directory are the operator's decision: the
+// restore tool has to create the marker and the service has to read the owner
+// marker, so both accounts need access to the parent directory.
+
+const (
+	// fenceLockName is the name of the marker directory of the restore
+	// lifecycle inside the configured parent directory.
+	fenceLockName = "restore-fence"
+	// fenceLockFileName is the name of the file that carries the operating
+	// system lock of the lifecycle. It is a sibling of the marker directory,
+	// so it survives the removal of the directory.
+	fenceLockFileName = "restore-fence.lock"
+	// fenceOwnerName is the owner marker inside the marker directory.
+	fenceOwnerName = "owner"
+)
+
+// ErrFenceConflict is returned when the fence belongs to another restore.
+var ErrFenceConflict = errors.New("privacy: the restore fence belongs to another restore")
+
+// ErrFenceLive is returned when a restore holds the fence of the lifecycle.
+var ErrFenceLive = errors.New("privacy: a restore is in progress")
+
+// restoreIDPattern is the shape of a restore identifier.
+//
+// The identifier becomes a file name, so it may not carry a path separator
+// and it may not be empty.
+var restoreIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$`)
 
 // Fence is the durable record of a restore that is in progress.
 type Fence struct {
 	// RestoreID identifies the restore.
 	RestoreID string `json:"restoreId"`
-	// ExpectedLedgerDigest is the digest of the newest merged removal ledger
-	// the restore has to apply. A database that does not carry that ledger
-	// afterwards was not restored from the expected state.
+	// ExpectedLedgerDigest is the digest of the removal ledger the restore has
+	// to apply. A database that does not carry that ledger afterwards was not
+	// restored from the expected state.
 	ExpectedLedgerDigest string `json:"expectedLedgerDigest"`
+	// OwnershipToken proves that the caller of the close is the restore that
+	// opened the fence. It is a random value and it never leaves the process.
+	OwnershipToken string `json:"ownershipToken"`
 	// RecordedAt is when the fence was written.
 	RecordedAt time.Time `json:"recordedAt"`
 }
 
-// OpenFence opens the durable restore fence of one restore.
+// FenceHandle is the ownership of the restore lifecycle.
 //
-// The fence is owned exclusively by the restore that opened it. The file is
-// created exclusively, so two restores that start at the same time cannot take
-// the same fence: the second one is refused instead of overwriting the fence
-// of the first. The same restore with the same ledger is idempotent, and the
-// same restore with a different ledger is refused.
+// The handle holds the operating system lock of the lifecycle, so the
+// ownership is exclusive across processes for the whole lifecycle of the
+// restore: from the admission of the restore until the fence is closed. The
+// handle is the only thing that may finish or release the lifecycle, and the
+// close of the fence uses the handle instead of taking the lock again.
 //
-// The digest is the digest of the removal ledger the restore has to apply, so
-// the fence states what the restore owes.
-func (s *Service) OpenFence(restoreID string, expectedDigest []byte) error {
-	restoreID = strings.TrimSpace(restoreID)
-	if restoreID == "" {
-		return errors.New("privacy: the restore needs an identifier")
+// A restore that crashes never finishes its handle. The operating system
+// releases the lock when the process dies, and the marker of the lifecycle
+// survives, so the service stays closed until an operator resolves the
+// restore.
+type FenceHandle struct {
+	service   *Service
+	lock      *fenceLock
+	restoreID string
+	token     string
+	finished  bool
+}
+
+// Token is the ownership token of the lifecycle.
+func (h *FenceHandle) Token() string {
+	if h == nil {
+		return ""
 	}
-	path := s.options.FencePath
-	if path == "" {
-		return errors.New("privacy: no restore fence path is configured")
+	return h.token
+}
+
+// Bind records the digest of the removal ledger the restore has to apply in
+// the marker of the lifecycle.
+//
+// The marker is replaced atomically inside the marker directory, so the
+// marker of the lifecycle never disappears and the service stays closed.
+func (h *FenceHandle) Bind(expectedDigest []byte) error {
+	if h == nil || h.service == nil {
+		return errors.New("privacy: there is no restore fence to bind")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if h.finished {
+		return errors.New("privacy: the restore fence is already closed")
+	}
+	existing, open, err := readFenceMarker(h.service.fenceDirectory())
+	if err != nil {
 		return err
 	}
+	if !open {
+		return errors.New("privacy: the restore fence is not there")
+	}
+	if existing.RestoreID != h.restoreID || existing.OwnershipToken != h.token {
+		return errors.New("privacy: the caller does not own the restore fence")
+	}
 	fence := Fence{
-		RestoreID:            restoreID,
+		RestoreID:            h.restoreID,
 		ExpectedLedgerDigest: fmt.Sprintf("%x", expectedDigest),
-		RecordedAt:           s.now(),
+		OwnershipToken:       h.token,
+		RecordedAt:           existing.RecordedAt,
 	}
 	raw, err := json.Marshal(fence)
 	if err != nil {
 		return err
 	}
-	// The exclusive create is the ownership: only one restore can hold the
-	// fence, and the holder is the one that created the file.
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	return h.service.writeOwnerMarker(h.service.fenceDirectory(), raw)
+}
+
+// Finish closes the fence of the lifecycle.
+//
+// The close verifies the owner marker of the lifecycle - the identifier, the
+// ownership token and the digest of the removal ledger - and removes the
+// marker only when it still belongs to this restore. The marker is removed
+// under the lock the handle holds, so no other restore can take the
+// lifecycle in the middle of the close.
+func (h *FenceHandle) Finish(appliedDigest []byte) error {
+	if h == nil || h.service == nil {
+		return errors.New("privacy: there is no restore fence to close")
+	}
+	if h.finished {
+		return errors.New("privacy: the restore fence is already closed")
+	}
+	existing, open, err := readFenceMarker(h.service.fenceDirectory())
 	if err != nil {
-		if !errors.Is(err, os.ErrExist) {
-			return err
-		}
-		existing, open, readErr := s.ReadFence()
-		if readErr != nil {
-			return readErr
-		}
-		if !open {
-			return errors.New("privacy: the restore fence is unreadable")
-		}
-		if existing.RestoreID != restoreID {
-			return fmt.Errorf("privacy: the restore %q is already in progress", existing.RestoreID)
-		}
-		if existing.ExpectedLedgerDigest != fence.ExpectedLedgerDigest {
-			return errors.New("privacy: the open fence names another removal ledger")
-		}
+		return err
+	}
+	if !open {
+		// The fence is already closed. The close is idempotent.
+		h.finished = true
+		h.lock.release()
 		return nil
 	}
-	defer file.Close()
-	if _, err = file.Write(raw); err != nil {
-		return err
+	if existing.RestoreID != h.restoreID {
+		return fmt.Errorf("privacy: the open fence belongs to the restore %q", existing.RestoreID)
 	}
-	if err = file.Sync(); err != nil {
-		return err
+	if existing.OwnershipToken != h.token {
+		return errors.New("privacy: the caller does not own the restore fence")
 	}
-	return nil
-}
-
-// CloseFence closes the durable restore fence of one restore.
-//
-// The fence is closed only when the restore that opened it applied the ledger
-// the fence names. A different restore, or a different ledger, is refused. The
-// fence is moved aside before it is read, so a fence that another restore
-// replaced in the meantime is put back instead of being removed.
-func (s *Service) CloseFence(restoreID string, appliedDigest []byte) error {
-	restoreID = strings.TrimSpace(restoreID)
-	if restoreID == "" {
-		return errors.New("privacy: the restore needs an identifier")
-	}
-	path := s.options.FencePath
-	if path == "" {
-		return errors.New("privacy: no restore fence path is configured")
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return errors.New("privacy: no restore fence is open")
-		}
-		return err
-	}
-	var fence Fence
-	if err = json.Unmarshal(raw, &fence); err != nil {
-		return errors.New("privacy: the restore fence is unreadable")
-	}
-	if fence.RestoreID != restoreID {
-		return fmt.Errorf("privacy: the open fence belongs to the restore %q", fence.RestoreID)
-	}
-	if fence.ExpectedLedgerDigest != fmt.Sprintf("%x", appliedDigest) {
+	// A marker that names no removal ledger was never bound, so there is
+	// nothing to compare with. A bound marker is closed only for the ledger it
+	// names.
+	if existing.ExpectedLedgerDigest != "" && existing.ExpectedLedgerDigest != fmt.Sprintf("%x", appliedDigest) {
 		return errors.New("privacy: the applied removal ledger is not the ledger of the restore")
 	}
-	if err = os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err = h.service.removeFenceDirectory(); err != nil {
 		return err
 	}
+	h.finished = true
+	h.lock.release()
 	return nil
 }
 
-// WriteFence opens the durable restore fence.
+// Release gives the ownership of the lifecycle back without closing the
+// fence.
 //
-// The fence is written before the restore imports anything, so the restored
-// data is never visible while the removal ledger of the restore was not
-// applied. The write is atomic, so a reader never sees a half-written fence.
-func (s *Service) WriteFence(restoreID string, expectedLedgerDigest []byte) error {
-	path := s.options.FencePath
-	if path == "" {
-		return errors.New("privacy: no restore fence path is configured")
+// The marker of the lifecycle survives, so the service stays closed. It is
+// the path of a restore that could not finish: the operator resolves the
+// restore with the recovery or with a take-over.
+func (h *FenceHandle) Release() {
+	if h == nil || h.finished {
+		return
 	}
+	h.finished = true
+	h.lock.release()
+}
+
+// BeginFence takes the ownership of the restore lifecycle.
+//
+// The ownership is the operating system lock of the lifecycle, and it is held
+// until the handle is finished or released. A restore that finds the lock
+// held is refused: a restore is alive, even when it has the same identifier.
+//
+// The marker directory of the lifecycle is the crash persistent, fail closed
+// part. It is created when it does not exist. When a crashed restore left its
+// marker behind, only a take-over may continue the lifecycle, and the take
+// over replaces the owner marker *inside* the existing marker directory: the
+// marker never disappears, so the service stays closed while the take-over
+// runs, and a failure of the take-over leaves the marker of the crashed
+// restore in place.
+func (s *Service) BeginFence(restoreID string, takeover bool) (*FenceHandle, error) {
+	restoreID = strings.TrimSpace(restoreID)
+	if !restoreIDPattern.MatchString(restoreID) {
+		return nil, errors.New("privacy: the restore identifier is not usable as a fence name")
+	}
+	parent := s.fenceParent()
+	if parent == "" {
+		return nil, errors.New("privacy: no restore fence path is configured")
+	}
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return nil, err
+	}
+	// The operating system lock is the live ownership proof of the lifecycle.
+	lock, err := acquireFenceLock(s.fenceLockPath())
+	if err != nil {
+		return nil, err
+	}
+	if lock == nil {
+		return nil, ErrFenceLive
+	}
+	release := true
+	defer func() {
+		if release {
+			lock.release()
+		}
+	}()
+	token, err := newOwnershipToken()
+	if err != nil {
+		return nil, err
+	}
+	// The digest of the removal ledger the restore has to apply is bound
+	// after the ledgers were read, with Bind.
 	fence := Fence{
-		RestoreID:            restoreID,
-		ExpectedLedgerDigest: fmt.Sprintf("%x", expectedLedgerDigest),
-		RecordedAt:           s.now(),
+		RestoreID:      restoreID,
+		OwnershipToken: token,
+		RecordedAt:     s.now(),
 	}
 	raw, err := json.Marshal(fence)
 	if err != nil {
+		return nil, err
+	}
+	directory := s.fenceDirectory()
+	_, statErr := os.Stat(directory)
+	switch {
+	case statErr == nil:
+		// The marker of a crashed restore is there. Only a take-over may
+		// continue the lifecycle.
+		if !takeover {
+			return nil, errors.New("privacy: the fence of a crashed restore is still there; recover it or run the restore with the take-over")
+		}
+		if err = s.writeOwnerMarker(directory, raw); err != nil {
+			return nil, err
+		}
+	case errors.Is(statErr, os.ErrNotExist):
+		if err = s.createMarkerDirectory(directory, raw); err != nil {
+			return nil, err
+		}
+	default:
+		return nil, statErr
+	}
+	release = false
+	return &FenceHandle{service: s, lock: lock, restoreID: restoreID, token: token}, nil
+}
+
+// createMarkerDirectory creates the marker directory of the lifecycle and
+// writes its owner marker.
+//
+// The order of the writes is the order of the durability: the owner marker is
+// flushed before the directory that holds it, and the directory is flushed in
+// the parent that holds it. A crash of the host between the two steps leaves
+// a marker without an owner file, which is still an open fence: the service
+// fails closed.
+func (s *Service) createMarkerDirectory(directory string, raw []byte) error {
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return errors.New("privacy: the fence of a crashed restore is still there; recover it or run the restore with the take-over")
+		}
 		return err
 	}
-	if err = os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := s.writeOwnerMarker(directory, raw); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".restore-fence-*.partial")
+	// The name of the marker directory has to be persistent in its parent.
+	return syncDirectory(s.fenceParent())
+}
+
+// writeOwnerMarker writes the owner marker of the lifecycle.
+//
+// The marker is written to a temporary file in the marker directory, flushed,
+// and then renamed over the owner marker. The rename is atomic, so the marker
+// of the lifecycle never disappears: a take-over that fails leaves the marker
+// of the crashed restore in place and the service stays closed.
+func (s *Service) writeOwnerMarker(directory string, raw []byte) error {
+	temporary, err := os.CreateTemp(directory, ".owner-*.partial")
 	if err != nil {
 		return err
 	}
 	name := temporary.Name()
 	defer os.Remove(name)
 	if _, err = temporary.Write(raw); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err = temporary.Sync(); err != nil {
-		temporary.Close()
+		_ = temporary.Close()
 		return err
 	}
 	if err = temporary.Close(); err != nil {
@@ -183,57 +336,104 @@ func (s *Service) WriteFence(restoreID string, expectedLedgerDigest []byte) erro
 	if err = os.Chmod(name, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(name, path)
-}
-
-// ClearFence closes the durable restore fence.
-//
-// The fence is closed only after the removal ledger of the restore was
-// replayed and verified. A restore that failed leaves the fence open, so the
-// service keeps refusing to serve the restored data.
-func (s *Service) ClearFence() error {
-	path := s.options.FencePath
-	if path == "" {
-		return nil
-	}
-	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err = os.Rename(name, filepath.Join(directory, fenceOwnerName)); err != nil {
 		return err
 	}
-	return nil
+	// The name of the owner marker has to be persistent in its directory.
+	return syncDirectory(directory)
 }
 
-// FenceOpen reports whether the durable restore fence is open.
+// FenceOpen reports whether a durable restore fence is open.
 //
-// A fence that cannot be read is an open fence: the service fails closed.
+// The fence fails closed: every state that is not "no lifecycle at all" is an
+// open fence. A marker directory that cannot be read, a marker directory
+// without an owner marker and a fence file of an older layout are all open
+// fences, so the service refuses to serve instead of serving a database whose
+// removals were never replayed.
 func (s *Service) FenceOpen() (bool, error) {
-	path := s.options.FencePath
-	if path == "" {
+	parent := s.fenceParent()
+	if parent == "" {
 		return false, nil
 	}
-	raw, err := os.ReadFile(path)
+	info, err := os.Stat(parent)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return false, nil
 		}
 		return true, err
 	}
-	var fence Fence
-	if err = json.Unmarshal(raw, &fence); err != nil {
-		// A fence that cannot be read is an open fence.
+	if !info.IsDir() {
+		// A fence of the older layout is a file at the configured path. It is
+		// not a parent directory of a marker directory, so the lifecycle
+		// cannot be over: the service fails closed.
 		return true, nil
+	}
+	if _, err = os.Stat(s.fenceDirectory()); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
+		return true, err
 	}
 	return true, nil
 }
 
 // ReadFence reads the durable restore fence.
 //
-// A missing fence is reported as a missing fence, not as an error.
-func (s *Service) ReadFence() (Fence, bool, error) {
-	path := s.options.FencePath
-	if path == "" {
+// A missing fence is reported as a missing fence, not as an error. The fence
+// of another restore is reported as a conflict, so a caller never mistakes
+// the fence of another restore for a fence that is not there.
+func (s *Service) ReadFence(restoreID string) (Fence, bool, error) {
+	if s.fenceParent() == "" {
 		return Fence{}, false, nil
 	}
-	raw, err := os.ReadFile(path)
+	fence, open, err := readFenceMarker(s.fenceDirectory())
+	if err != nil {
+		return Fence{}, false, err
+	}
+	if !open {
+		return Fence{}, false, nil
+	}
+	if restoreID != "" && fence.RestoreID != restoreID {
+		return Fence{}, false, ErrFenceConflict
+	}
+	return fence, true, nil
+}
+
+// removeFenceDirectory removes the marker and the marker directory of the
+// lifecycle.
+//
+// The caller has to hold the operating system lock of the lifecycle, so the
+// removal is exclusive and a restore that took over in the meantime keeps
+// its own marker.
+func (s *Service) removeFenceDirectory() error {
+	directory := s.fenceDirectory()
+	if err := os.Remove(filepath.Join(directory, fenceOwnerName)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Remove(directory); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return syncDirectory(s.fenceParent())
+}
+
+// fenceParent is the configured parent directory of the fence.
+func (s *Service) fenceParent() string {
+	return strings.TrimSpace(s.options.FencePath)
+}
+
+// fenceDirectory is the marker directory of the lifecycle.
+func (s *Service) fenceDirectory() string {
+	return filepath.Join(s.fenceParent(), fenceLockName)
+}
+
+// fenceLockPath is the file that carries the operating system lock.
+func (s *Service) fenceLockPath() string {
+	return filepath.Join(s.fenceParent(), fenceLockFileName)
+}
+
+// readFenceMarker reads the owner marker of the marker directory.
+func readFenceMarker(directory string) (Fence, bool, error) {
+	raw, err := os.ReadFile(filepath.Join(directory, fenceOwnerName))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return Fence{}, false, nil
@@ -245,4 +445,54 @@ func (s *Service) ReadFence() (Fence, bool, error) {
 		return Fence{}, false, fmt.Errorf("privacy: the restore fence is unreadable")
 	}
 	return fence, true, nil
+}
+
+// fenceMarkerState is the state of the marker of the lifecycle.
+//
+// The states are told apart, because a marker directory without a readable
+// owner marker is not the same as no marker at all: the first is an unknown
+// state of a lifecycle that existed, and the second is the absence of one.
+type fenceMarkerState int
+
+const (
+	// fenceMarkerAbsent means there is no marker directory at all.
+	fenceMarkerAbsent fenceMarkerState = iota
+	// fenceMarkerOwned means the marker directory carries a readable owner
+	// marker.
+	fenceMarkerOwned
+	// fenceMarkerUnreadable means the marker directory exists but its owner
+	// marker cannot be read.
+	fenceMarkerUnreadable
+)
+
+// fenceMarkerState reads the state of the marker of the lifecycle.
+//
+// The state fails closed: a marker directory that cannot be read at all is an
+// unknown state, not the absence of a lifecycle.
+func (s *Service) fenceMarkerState() (fenceMarkerState, Fence, error) {
+	directory := s.fenceDirectory()
+	if _, err := os.Stat(directory); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fenceMarkerAbsent, Fence{}, nil
+		}
+		return fenceMarkerUnreadable, Fence{}, err
+	}
+	fence, open, err := readFenceMarker(directory)
+	if err != nil {
+		return fenceMarkerUnreadable, Fence{}, err
+	}
+	if !open {
+		return fenceMarkerUnreadable, Fence{}, nil
+	}
+	return fenceMarkerOwned, fence, nil
+}
+
+// newOwnershipToken returns the proof that the caller of a close owns the
+// fence.
+func newOwnershipToken() (string, error) {
+	raw := make([]byte, 24)
+	if _, err := rand.Read(raw); err != nil {
+		return "", errors.New("privacy: secure random source unavailable")
+	}
+	return hex.EncodeToString(raw), nil
 }

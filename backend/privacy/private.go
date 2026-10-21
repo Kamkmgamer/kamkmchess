@@ -229,6 +229,9 @@ func (s *Service) auxiliaryOwnerIDs(ctx context.Context, q interface {
 		return rows.Err()
 	}
 	for _, source := range []struct{ table, column string }{
+		// The public profile of the account is the only place that still names
+		// a subject that played no match and owned no private game.
+		{"online_public_profiles", "account_id"},
 		{"online_friend_invitations", "inviter_id"},
 		{"online_friend_invitations", "recipient_account_id"},
 		{"online_invitation_acceptances", "acceptor_id"},

@@ -153,8 +153,13 @@ func (s *Service) removeRematchOffers(ctx context.Context, tx pgx.Tx, subjectKin
 		WHERE proposer_kind=$1 AND proposer_id=$2`, subjectKind, rawID); err != nil {
 		return err
 	}
+	// The accepter of a rematch offer is recorded while the offer is
+	// accepting or accepted, and the shape of the offer requires that record
+	// to be there. The raw identifier is therefore replaced by the reserved
+	// anonymized value instead of being cleared: clearing it would break the
+	// offer and abort the removal.
 	if _, err := tx.Exec(ctx, `
-		UPDATE online_rematch_offers SET accepted_by_id=NULL
+		UPDATE online_rematch_offers SET accepted_by_id='anonymized', updated_at=clock_timestamp()
 		WHERE accepted_by_kind=$1 AND accepted_by_id=$2`, subjectKind, rawID); err != nil {
 		return err
 	}

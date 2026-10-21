@@ -235,9 +235,11 @@ func TestPostgresTheServiceAndTheRestoreShareTheRestoreFence(t *testing.T) {
 		t.Fatal("a fresh database must serve traffic")
 	}
 	// The restore writes the fence at the configured path.
-	if err = removals.WriteFence("restore-crash", []byte("digest")); err != nil {
+	crashed, err := removals.BeginFence("restore-crash", false)
+	if err != nil {
 		t.Fatalf("write fence: %v", err)
 	}
+	crashed.Release()
 	// The service sees the fence of the crashed restore and refuses to serve.
 	allowed, err = removals.ServingAllowed(context.Background())
 	if err != nil {
@@ -246,7 +248,7 @@ func TestPostgresTheServiceAndTheRestoreShareTheRestoreFence(t *testing.T) {
 	if allowed {
 		t.Fatal("the service serves a restored database whose restore crashed")
 	}
-	fence, open, err := removals.ReadFence()
+	fence, open, err := removals.ReadFence("restore-crash")
 	if err != nil {
 		t.Fatal(err)
 	}

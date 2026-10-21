@@ -169,31 +169,29 @@ func (l postgresRemovalLedger) available(ctx context.Context) (bool, error) {
 	return exists, nil
 }
 
-// WriteFence opens the durable restore fence.
+// RecoverRestore releases the gate of a restore that crashed after its
+// removal ledger was applied.
 //
-// The fence is written before the restore imports anything, so the restored
-// data is never visible while the removal ledger of the restore was not
-// applied.
-func (l postgresRemovalLedger) WriteFence(restoreID string, digest []byte) error {
-	return l.removals.WriteFence(restoreID, digest)
+// The recovery is identity bound: the restore is named, the applied removal
+// ledger has to be the ledger of the restore, and a wrong clear is refused.
+func (l postgresRemovalLedger) RecoverRestore(ctx context.Context, restoreID string, required backup.AppliedRemovalLedger) error {
+	available, err := l.available(ctx)
+	if err != nil {
+		return err
+	}
+	if !available {
+		return errors.New("the online removal ledger is missing; the restored database must not serve traffic")
+	}
+	return l.removals.RecoverRestore(ctx, restoreID, required)
 }
 
-// OpenFence opens the durable restore fence of one restore.
-func (l postgresRemovalLedger) OpenFence(restoreID string, digest []byte) error {
-	return l.removals.OpenFence(restoreID, digest)
-}
-
-// CloseFence closes the durable restore fence of one restore.
-func (l postgresRemovalLedger) CloseFence(restoreID string, digest []byte) error {
-	return l.removals.CloseFence(restoreID, digest)
-}
-
-// ClearFence closes the durable restore fence.
+// BeginFence takes the ownership of the restore lifecycle.
 //
-// The fence is closed only after the removal ledger of the restore was
-// replayed and verified.
-func (l postgresRemovalLedger) ClearFence() error {
-	return l.removals.ClearFence()
+// The ownership is held for the whole lifecycle of the restore, from the
+// admission until the fence is closed. A restore that finds the ownership
+// held is a live restore, and it is never displaced.
+func (l postgresRemovalLedger) BeginFence(restoreID string, takeover bool) (backup.FenceHandle, error) {
+	return l.removals.BeginFence(restoreID, takeover)
 }
 
 // AppliedLedgerDigest is the digest of the removal ledger that is applied in the

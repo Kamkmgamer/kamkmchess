@@ -108,23 +108,24 @@ func TestPostgresTheRestoreFenceIsBoundToItsRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := []byte("digest-of-the-ledger")
-	if err = removals.OpenFence("restore-one", digest); err != nil {
+	fence, err := removals.BeginFence("restore-one", false)
+	if err != nil {
 		t.Fatalf("open fence: %v", err)
 	}
+	defer fence.Release()
+	if err = fence.Bind(digest); err != nil {
+		t.Fatalf("bind the fence: %v", err)
+	}
 	// A second restore does not overwrite the fence of the first.
-	if err = removals.OpenFence("restore-two", digest); err == nil {
+	if _, err = removals.BeginFence("restore-two", false); err == nil {
 		t.Fatal("a second restore overwrote the fence of the first")
 	}
-	// The wrong restore does not close the fence.
-	if err = removals.CloseFence("restore-two", digest); err == nil {
-		t.Fatal("the fence was closed by another restore")
-	}
 	// The wrong ledger does not close the fence.
-	if err = removals.CloseFence("restore-one", []byte("another-digest")); err == nil {
+	if err = fence.Finish([]byte("another-digest")); err == nil {
 		t.Fatal("the fence was closed with a ledger the restore did not apply")
 	}
 	// The fence of the restore that applied the ledger closes it.
-	if err = removals.CloseFence("restore-one", digest); err != nil {
+	if err = fence.Finish(digest); err != nil {
 		t.Fatalf("close fence: %v", err)
 	}
 	open, err := removals.FenceOpen()

@@ -2,6 +2,9 @@ package backup
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"io"
 	"path/filepath"
 	"testing"
 	"time"
@@ -51,6 +54,14 @@ func (l *fakeRemovalLedger) ApplySubjectRemovalRecords(_ context.Context, record
 
 func (l *fakeRemovalLedger) AppliedRemovalLedger(context.Context) (AppliedRemovalLedger, error) {
 	return AppliedRemovalLedger{Matches: l.applied, Subjects: l.subjectApplied}, nil
+}
+
+func (l *fakeRemovalLedger) RecordRestore(_ context.Context, restoreID string) (string, error) {
+	return restoreID, nil
+}
+
+func (l *fakeRemovalLedger) ReleaseRestoreGate(context.Context, string) error {
+	return nil
 }
 
 // TestMergeRemovalLedgersKeepsTwoSubjectsOfOneMatch covers the key of the
@@ -194,29 +205,133 @@ func TestRestoreWithoutAnAdmissionFenceIsRefused(t *testing.T) {
 		Restorer:   &fakeRestorer{},
 		Tombstones: &fakeLedger{},
 		Removals:   &fakeRemovalLedger{},
+		RestoreID:  "restore-one",
 	}); err == nil {
 		t.Fatal("a restore with removals was accepted without an admission fence")
 	}
 }
 
+// TestRestoreWithoutRemovalsClosesItsFence covers the finalize of a restore
+// that carries no removal.
+//
+// Every restore is fenced, because its import replaces the schema of the
+// database. A restore without removals has no removal ledger to replay, so it
+// has no gate to release, but its fence still has to be closed: a marker that
+// stayed behind would keep the service closed forever.
+func TestRestoreWithoutRemovalsClosesItsFence(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "bundle.khabackup")
+	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	if _, err := Create(context.Background(), CreateRequest{
+		Path:       path,
+		Label:      "daily-2026-10-20",
+		Passphrase: []byte(testPassphrase),
+		CreatedAt:  at,
+		Dumper:     &fakeDumper{sql: []byte("SELECT 1;")},
+		Tombstones: &fakeLedger{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fence := &fakeAdmissionFence{}
+	if _, err := Restore(context.Background(), RestoreRequest{
+		Path:           path,
+		Passphrase:     []byte(testPassphrase),
+		Restorer:       &fakeRestorer{},
+		Tombstones:     &fakeLedger{},
+		AdmissionFence: fence,
+		RestoreID:      "restore-one",
+	}); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if len(fence.opened) != 1 {
+		t.Fatalf("the restore did not take the fence: %v", fence.opened)
+	}
+	if len(fence.closed) != 1 {
+		t.Fatalf("the restore did not close its fence: %v", fence.closed)
+	}
+	if len(fence.released) != 0 {
+		t.Fatalf("the closed fence was released as well: %v", fence.released)
+	}
+}
+
+// TestRestoreThatFailsLeavesItsFenceOpen covers the failure of a restore.
+//
+// A restore that fails leaves its marker behind, so the service stays closed
+// until an operator resolves the restore.
+func TestRestoreThatFailsLeavesItsFenceOpen(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "bundle.khabackup")
+	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	if _, err := Create(context.Background(), CreateRequest{
+		Path:       path,
+		Label:      "daily-2026-10-20",
+		Passphrase: []byte(testPassphrase),
+		CreatedAt:  at,
+		Dumper:     &fakeDumper{sql: []byte("SELECT 1;")},
+		Tombstones: &fakeLedger{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fence := &fakeAdmissionFence{}
+	if _, err := Restore(context.Background(), RestoreRequest{
+		Path:           path,
+		Passphrase:     []byte(testPassphrase),
+		Restorer:       &failingRestorer{},
+		Tombstones:     &fakeLedger{},
+		AdmissionFence: fence,
+		RestoreID:      "restore-one",
+	}); err == nil {
+		t.Fatal("a restore whose import failed reported success")
+	}
+	if len(fence.closed) != 0 {
+		t.Fatalf("the failed restore closed its fence: %v", fence.closed)
+	}
+	if len(fence.released) != 1 {
+		t.Fatalf("the failed restore did not release its ownership: %v", fence.released)
+	}
+}
+
 // fakeAdmissionFence records the fence calls of a restore.
 type fakeAdmissionFence struct {
-	opened  []string
-	closed  []string
-	openErr error
+	opened   []string
+	closed   []string
+	bound    []string
+	released []string
+	openErr  error
 }
 
-func (f *fakeAdmissionFence) OpenFence(restoreID string, digest []byte) error {
+func (f *fakeAdmissionFence) BeginFence(restoreID string, takeover bool) (FenceHandle, error) {
 	if f.openErr != nil {
-		return f.openErr
+		return nil, f.openErr
 	}
 	f.opened = append(f.opened, restoreID)
+	return &fakeFenceHandle{fence: f}, nil
+}
+
+// fakeFenceHandle is the ownership of the lifecycle of the fake fence.
+type fakeFenceHandle struct {
+	fence *fakeAdmissionFence
+}
+
+func (h *fakeFenceHandle) Bind(digest []byte) error {
+	h.fence.bound = append(h.fence.bound, fmt.Sprintf("%x", digest))
 	return nil
 }
 
-func (f *fakeAdmissionFence) CloseFence(restoreID string, digest []byte) error {
-	f.closed = append(f.closed, restoreID)
+func (h *fakeFenceHandle) Finish(digest []byte) error {
+	h.fence.closed = append(h.fence.closed, fmt.Sprintf("%x", digest))
 	return nil
+}
+
+func (h *fakeFenceHandle) Release() {
+	h.fence.released = append(h.fence.released, "released")
+}
+
+// failingRestorer is an import that fails.
+type failingRestorer struct{}
+
+func (r *failingRestorer) Restore(context.Context, io.Reader) error {
+	return errors.New("the import failed")
 }
 
 // removal is one removal record fixture.
@@ -345,7 +460,7 @@ func TestRestoreReportsTheRemovalsItCannotApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	restorer := &fakeRestorer{}
-	if _, err := Restore(context.Background(), RestoreRequest{
+	if _, err := Restore(context.Background(), RestoreRequest{AdmissionFence: &fakeAdmissionFence{}, RestoreID: "restore-one",
 		Path:       path,
 		Passphrase: []byte(testPassphrase),
 		Restorer:   restorer,

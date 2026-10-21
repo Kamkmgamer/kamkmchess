@@ -29,30 +29,33 @@ func TestPostgresTheRestoreFenceHasOneOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := []byte("digest-of-the-ledger")
 	var (
-		group  sync.WaitGroup
-		start  = make(chan struct{})
-		errors = make([]error, 2)
+		group   sync.WaitGroup
+		start   = make(chan struct{})
+		handles = make([]*privacy.FenceHandle, 2)
+		errors  = make([]error, 2)
 	)
 	group.Add(2)
 	go func() {
 		defer group.Done()
 		<-start
-		errors[0] = first.OpenFence("restore-one", digest)
+		handles[0], errors[0] = first.BeginFence("restore-one", false)
 	}()
 	go func() {
 		defer group.Done()
 		<-start
-		errors[1] = second.OpenFence("restore-two", digest)
+		handles[1], errors[1] = second.BeginFence("restore-two", false)
 	}()
 	close(start)
 	group.Wait()
 	opened := 0
 	owner := ""
+	ownerHandle := (*privacy.FenceHandle)(nil)
 	for index, err := range errors {
 		if err == nil {
 			opened++
+			defer handles[index].Release()
+			ownerHandle = handles[index]
 			if index == 0 {
 				owner = "restore-one"
 			} else {
@@ -67,21 +70,22 @@ func TestPostgresTheRestoreFenceHasOneOwner(t *testing.T) {
 	if owner == "restore-one" {
 		other = "restore-two"
 	}
-	// The same restore with the same ledger is idempotent.
-	if err = first.OpenFence(owner, digest); err != nil {
-		t.Fatalf("the owner could not take its own fence again: %v", err)
-	}
-	// The same restore with another ledger is refused.
-	if err = first.OpenFence(owner, []byte("another-digest")); err == nil {
-		t.Fatal("the fence accepted another removal ledger")
+	// The same restore with the same identifier is refused while the fence is
+	// open: the ownership token is never handed to a second caller.
+	if _, err = first.BeginFence(owner, false); err == nil {
+		t.Fatal("a second restore of the same identifier took the fence")
 	}
 	// A different restore is refused.
-	if err = second.OpenFence(other, digest); err == nil {
+	if _, err = second.BeginFence(other, false); err == nil {
 		t.Fatal("a second restore took the fence")
 	}
-	// The fence is closed only by its owner.
-	if err = second.CloseFence(other, digest); err == nil {
-		t.Fatal("the fence was closed by another restore")
+	// The fence is closed only by its owner, and only with the ledger it
+	// applied.
+	if err = ownerHandle.Bind([]byte("digest-of-the-ledger")); err != nil {
+		t.Fatalf("bind the fence: %v", err)
+	}
+	if err = ownerHandle.Finish([]byte("another-digest")); err == nil {
+		t.Fatal("the fence was closed with a ledger the restore did not apply")
 	}
 }
 
@@ -97,9 +101,12 @@ func TestPostgresTheRestoreFenceSurvivesARestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = before.OpenFence("restore-crashed", []byte("digest")); err != nil {
+	crashed, err := before.BeginFence("restore-crashed", false)
+	if err != nil {
 		t.Fatalf("open fence: %v", err)
 	}
+	// The restore crashed: the ownership is released, the marker survives.
+	crashed.Release()
 	// The process restarts: a new service reads the same fence.
 	after, err := privacy.Open(context.Background(), fixture.pool, fixture.authorizer, privacy.Options{FencePath: path})
 	if err != nil {
@@ -242,4 +249,12 @@ func (l *countingRemovalLedger) ApplySubjectRemovalRecords(context.Context, []ba
 
 func (l *countingRemovalLedger) AppliedRemovalLedger(context.Context) (backup.AppliedRemovalLedger, error) {
 	return backup.AppliedRemovalLedger{Matches: l.entries}, nil
+}
+
+func (l *countingRemovalLedger) RecordRestore(_ context.Context, restoreID string) (string, error) {
+	return restoreID, nil
+}
+
+func (l *countingRemovalLedger) ReleaseRestoreGate(context.Context, string) error {
+	return nil
 }

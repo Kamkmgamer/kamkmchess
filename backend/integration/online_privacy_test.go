@@ -549,9 +549,11 @@ func TestPostgresRestoreFenceSurvivesAFailedReplay(t *testing.T) {
 		t.Fatal("a fresh database must serve traffic")
 	}
 	// The restore writes the fence before it imports anything.
-	if err = removals.WriteFence("restore-failure", []byte("digest-of-the-merged-ledger")); err != nil {
+	fence, err := removals.BeginFence("restore-failure", false)
+	if err != nil {
 		t.Fatalf("write fence: %v", err)
 	}
+	defer fence.Release()
 	if _, err = os.Stat(fencePath); err != nil {
 		t.Fatalf("the fence file is missing: %v", err)
 	}
@@ -589,7 +591,7 @@ func TestPostgresRestoreFenceSurvivesAFailedReplay(t *testing.T) {
 		t.Fatal("a fenced database serves traffic after a failed replay")
 	}
 	// The repair closes the fence.
-	if err = removals.ClearFence(); err != nil {
+	if err = fence.Finish([]byte("digest-of-the-merged-ledger")); err != nil {
 		t.Fatalf("clear fence: %v", err)
 	}
 	allowed, err = removals.ServingAllowed(context.Background())

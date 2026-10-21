@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -81,22 +82,16 @@ func (s *Service) applySubjectRemoval(ctx context.Context, record backup.Subject
 		record.RecordID, record.SubjectKind, record.SubjectRef, record.Scope, record.RemovedAt); err != nil {
 		return err
 	}
-	// The private data of the subject is removed again, and the subject is
-	// fenced again.
+	// The whole sanitation of the subject runs again: the public identity, the
+	// deletion record, the private data, the friend and the queue records and
+	// the session fence. An account that only had private data is removed as
+	// well, so a restore of an older backup cannot give its name back.
 	owners, err := s.subjectOwnerIDs(ctx, s.db, record.SubjectRef)
 	if err != nil {
 		return err
 	}
 	for _, owner := range owners {
-		if _, err = s.removePrivateGames(ctx, tx, owner); err != nil {
-			return err
-		}
-		if err = s.fenceAccount(ctx, tx, owner, revocationReason(record.Scope)); err != nil {
-			return err
-		}
-		// The friend and the queue records of the subject are sanitized
-		// again: an unused invitation preview must not name a removed owner.
-		if err = s.removeAuxiliaryPersonalData(ctx, tx, record.SubjectKind, owner); err != nil {
+		if err = s.removePrivateOwnerData(ctx, tx, record.SubjectKind, record.SubjectRef, owner, record.Scope); err != nil {
 			return err
 		}
 	}
@@ -141,6 +136,194 @@ func (s *Service) AppliedLedgerDigest(ctx context.Context) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(backup.RemovalLedgerDigest(records, subjects)), nil
+}
+
+// RecoverRestore recovers a restore that crashed.
+//
+// The recovery is the supported path for every crash boundary of the restore
+// lifecycle:
+//
+//   - the restore crashed before it recorded its gate: there is no gate to
+//     release. The removal ledger of the database decides what happens. If the
+//     ledger holds every removal the restore had to apply, the fence is
+//     closed and the service serves the database. If it does not, the
+//     database may have lost the newest removals, so a blocking gate is
+//     recorded, the fence is closed and the restore has to be run again.
+//   - the restore crashed after it recorded its gate and before it released
+//     it: the gate is released here, because the removal ledger is applied.
+//   - the restore crashed after it released its gate and before it closed the
+//     fence: the gate is already open, and the fence of the crashed restore
+//     is closed here.
+//
+// The recovery is identity bound and it never touches the fence of another
+// restore. It also never touches the fence of a *live* restore: the operating
+// system lock of the lifecycle is the live ownership proof, and the recovery
+// may only take it when it is free.
+//
+// The immutable deletion protections are never weakened: the recovery only
+// releases the admission of a database whose removals are applied.
+func (s *Service) RecoverRestore(ctx context.Context, restoreID string, required backup.AppliedRemovalLedger) error {
+	restoreID = strings.TrimSpace(restoreID)
+	if !restoreIDPattern.MatchString(restoreID) {
+		return ErrInvalidArgument
+	}
+	if s.fenceParent() == "" {
+		return errors.New("privacy: no restore fence path is configured")
+	}
+	// The live ownership proof: the operating system lock of the lifecycle is
+	// free only when no restore is alive. A restore that is still running is
+	// never cleared by a recovery, not even when it has the same identifier.
+	lock, err := acquireFenceLock(s.fenceLockPath())
+	if err != nil {
+		return err
+	}
+	if lock == nil {
+		return ErrFenceLive
+	}
+	defer lock.release()
+	// The state of the marker is read before anything else, and the three
+	// states are told apart:
+	//
+	//   - there is no marker directory at all: there is no lifecycle to
+	//     recover, so the recovery has nothing to prove and nothing to
+	//     release. It refuses.
+	//   - the marker directory exists without a readable owner marker: the
+	//     lifecycle is in an unknown state. A restore that died between the
+	//     creation of the directory and the writing of its owner marker, or
+	//     between the removal of the owner marker and the removal of the
+	//     directory, left that state behind. Nothing proves which removal
+	//     ledger the lifecycle owed, so the recovery refuses: the marker
+	//     stays, the service stays closed, and the restore has to be run again
+	//     with the take-over, which re-imports the bundle and re-applies the
+	//     removal ledger.
+	//   - the marker directory exists with a readable owner marker: the
+	//     recovery is identity bound and the containment of the removal
+	//     ledger is checked against the ledger the marker names.
+	state, fence, err := s.fenceMarkerState()
+	if err != nil {
+		return err
+	}
+	switch state {
+	case fenceMarkerAbsent:
+		return errors.New("privacy: there is no restore fence to recover")
+	case fenceMarkerUnreadable:
+		return errors.New("privacy: the restore fence has no readable owner marker; run the restore again with the take-over")
+	}
+	// The fence of another restore is never touched.
+	if fence.RestoreID != restoreID {
+		return ErrFenceConflict
+	}
+	// The recovery is identity bound: the fence of the restore names the
+	// removal ledger the restore had to apply, and the ledger of the recovery
+	// has to be that ledger. A fence that names no ledger belongs to a restore
+	// that died before it read the ledgers, so the recovery cannot prove what
+	// it owed: the restore has to be run again with the take-over.
+	requiredDigest := fmt.Sprintf("%x", backup.RemovalLedgerDigest(required.Matches, required.Subjects))
+	if fence.ExpectedLedgerDigest == "" {
+		return errors.New("privacy: the fence of the crashed restore names no removal ledger; run the restore again with the take-over")
+	}
+	if fence.ExpectedLedgerDigest != requiredDigest {
+		return errors.New("privacy: the open fence names another removal ledger")
+	}
+	// The applied removal ledger has to hold every removal the restore had to
+	// apply. A database that lost a removal is not released.
+	applied, err := s.AppliedRemovalLedger(ctx)
+	if err != nil {
+		return err
+	}
+	if !backup.RemovalLedgerContains(applied, required) {
+		// The removals are not applied: the database must not serve. A
+		// blocking gate is recorded, the fence is closed so that the restore
+		// can be run again, and the service stays closed because of the gate.
+		if err = s.recordBlockingGate(ctx, restoreID, required); err != nil {
+			return err
+		}
+		if err = s.removeFenceDirectory(); err != nil {
+			return err
+		}
+		return ErrLedgerNotApplied
+	}
+	// The removals are applied, so the gate of the restore may be released.
+	var released bool
+	err = s.db.QueryRow(ctx, `SELECT serving_allowed FROM online_restore_gates WHERE restore_id=$1`, restoreID).Scan(&released)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	if !released {
+		if _, err = s.db.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE restore_id=$1 AND serving_allowed=false`, restoreID); err != nil {
+			return err
+		}
+	}
+	// The fence of the crashed restore is closed, so a new restore can take
+	// the lock.
+	return s.removeFenceDirectory()
+}
+
+// recordBlockingGate records a restore gate that keeps the service closed.
+//
+// The gate is the durable proof that the database of a crashed restore may
+// not serve traffic. It is released by the next restore that applied the
+// removal ledger.
+// recordBlockingGate records a restore gate that keeps the service closed.
+//
+// The gate of a restore is released once and never taken back: the guard of
+// the table refuses to set a released gate to pending again. So the blocking
+// gate of a recovery is named apart from the gate of the restore, and it is
+// recorded under that name.
+//
+// The name is derived from the restore, so a retry of the recovery finds the
+// gate it recorded before instead of recording a second one. When that gate
+// was already released, a name of its own is used, so the blocking gate is
+// always a pending gate.
+func (s *Service) recordBlockingGate(ctx context.Context, restoreID string, required backup.AppliedRemovalLedger) error {
+	digest := backup.RemovalLedgerDigest(required.Matches, required.Subjects)
+	for attempt := 0; attempt < 8; attempt++ {
+		gateID, err := newIdentifier("rg_")
+		if err != nil {
+			return err
+		}
+		name := blockingGateRestoreID(restoreID)
+		if attempt > 0 {
+			// The gate of this name was already released, so it cannot block
+			// the service again. A name of its own is used.
+			name = blockingGateRestoreID(restoreID, "-"+strings.TrimPrefix(gateID, "rg_"))
+		}
+		if _, err = s.db.Exec(ctx, `
+			INSERT INTO online_restore_gates(gate_id,restore_id,ledger_digest,recorded_at)
+			VALUES($1,$2,$3,clock_timestamp())
+			ON CONFLICT (restore_id) DO NOTHING`, gateID, name, digest); err != nil {
+			return err
+		}
+		var serving bool
+		err = s.db.QueryRow(ctx, `SELECT serving_allowed FROM online_restore_gates WHERE restore_id=$1`, name).Scan(&serving)
+		if err != nil {
+			return err
+		}
+		if !serving {
+			// The gate is pending, so the service stays closed.
+			return nil
+		}
+	}
+	return errors.New("privacy: the blocking gate of the recovery could not be recorded")
+}
+
+// blockingGateRestoreID is the name of the gate that blocks the service for a
+// restore whose removal ledger was not applied.
+//
+// The name is derived from the restore and it is kept apart from the
+// identifier of the restore itself, whose gate may already be released. The
+// name stays inside the length the table allows, so the insert is never
+// refused by its own check.
+func blockingGateRestoreID(restoreID string, extra ...string) string {
+	const suffix = "-blocked"
+	name := restoreID + suffix
+	for _, part := range extra {
+		name = name + part
+	}
+	if len(name) > 128 {
+		name = name[:128]
+	}
+	return name
 }
 
 func (s *Service) ListRemovalRecords(ctx context.Context) ([]backup.RemovalRecord, error) {
@@ -343,6 +526,11 @@ func (s *Service) RecordRestore(ctx context.Context, restoreID string) (string, 
 // The release is final, and it is refused while the removal ledger is not
 // applied. A gate is never opened for a database that still serves a removed
 // game.
+//
+// The release covers every gate that waits for its release, not only the gate
+// of this restore: a restore that succeeded supersedes the restore that
+// crashed before it, and the blocking gate of that crashed restore is released
+// with it.
 func (s *Service) ReleaseRestoreGate(ctx context.Context, restoreID string) error {
 	restoreID = trimSpace(restoreID)
 	if restoreID == "" {
@@ -355,12 +543,13 @@ func (s *Service) ReleaseRestoreGate(ctx context.Context, restoreID string) erro
 	if !applied {
 		return ErrLedgerNotApplied
 	}
-	tag, err := s.db.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE restore_id=$1 AND serving_allowed=false`, restoreID)
-	if err != nil {
+	// The release covers every gate that waits for its release, not only the
+	// gate of this restore: a restore that succeeded supersedes the restore
+	// that crashed before it, and the blocking gate of that crashed restore is
+	// released with it. The gate of a restore that is still running is never
+	// touched, because the lifecycle allows one restore at a time.
+	if _, err = s.db.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE serving_allowed=false`); err != nil {
 		return err
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
 	}
 	return nil
 }

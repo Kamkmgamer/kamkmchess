@@ -19,7 +19,7 @@ func TestRestoreLoadsTheExportThenReappliesTheLedger(t *testing.T) {
 	newer := []Tombstone{tombstone("game-b", day(6), 4, 2)}
 	restorer := &fakeRestorer{}
 	sink := &fakeLedger{entries: []Tombstone{tombstone("game-a", day(1), 2, 1)}}
-	result, err := Restore(context.Background(), RestoreRequest{
+	result, err := Restore(context.Background(), RestoreRequest{AdmissionFence: &fakeAdmissionFence{}, RestoreID: "restore-one",
 		Path:         older,
 		Passphrase:   []byte(testPassphrase),
 		Restorer:     restorer,
@@ -49,7 +49,7 @@ func TestRestoreRefusesToTouchTheDatabaseWhenAuthenticationFails(t *testing.T) {
 	mustCreate(t, path, "daily-2026-10-18", nil, "SELECT 1;")
 	restorer := &fakeRestorer{}
 	sink := &fakeLedger{}
-	if _, err := Restore(context.Background(), RestoreRequest{
+	if _, err := Restore(context.Background(), RestoreRequest{AdmissionFence: &fakeAdmissionFence{}, RestoreID: "restore-one",
 		Path:       path,
 		Passphrase: []byte("not the real passphrase"),
 		Restorer:   restorer,
@@ -69,7 +69,7 @@ func TestRestoreDoesNotApplyTombstonesWhenTheLoadFails(t *testing.T) {
 	sentinel := errors.New("pg_restore aborted")
 	restorer := &fakeRestorer{err: sentinel}
 	sink := &fakeLedger{}
-	if _, err := Restore(context.Background(), RestoreRequest{
+	if _, err := Restore(context.Background(), RestoreRequest{AdmissionFence: &fakeAdmissionFence{}, RestoreID: "restore-one",
 		Path:       path,
 		Passphrase: []byte(testPassphrase),
 		Restorer:   restorer,

@@ -73,6 +73,13 @@ func MergeRemovalLedgers(older, newer []RemovalRecord) ([]RemovalRecord, error) 
 				bySubject[key] = entry
 				continue
 			}
+			if entry.RemovedAt.Equal(current.RemovedAt) && entry.Scope == current.Scope && entry.RemovalID != current.RemovalID {
+				// Two different removals of the same subject, with the same
+				// strength and the same time, are an inconsistency. The merge
+				// refuses them instead of picking one by the order of the
+				// input.
+				return nil, fmt.Errorf("%w: the removal of %q has two identifiers", ErrLedgerConflict, entry.SubjectID)
+			}
 			if strongerRemoval(entry, current) {
 				bySubject[key] = entry
 			}
@@ -94,6 +101,15 @@ func removalKey(matchID, subjectKind, subjectID string) string {
 	return matchID + "\x00" + subjectKind + "\x00" + subjectID
 }
 
+// strongerSubjectRemoval reports whether the first subject removal is the
+// stronger one.
+func strongerSubjectRemoval(candidate, current SubjectRemovalRecord) bool {
+	if candidate.Scope != current.Scope {
+		return candidate.Scope == "explicit_removal"
+	}
+	return candidate.RemovedAt.After(current.RemovedAt)
+}
+
 // strongerRemoval reports whether the first removal is the stronger one.
 //
 // An explicit removal erases the shared replay and an ordinary deletion only
@@ -113,26 +129,62 @@ func strongerRemoval(candidate, current RemovalRecord) bool {
 // one: the restored database brings its own older records back. The check is
 // therefore a containment, not an equality, so a restore that lost a removal
 // is still visible.
+//
+// The strength of a removal counts. An explicit removal erases the shared
+// replay, and an ordinary deletion only anonymizes it, so an applied
+// anonymization does not satisfy a required explicit removal.
 func RemovalLedgerContains(applied, required AppliedRemovalLedger) bool {
-	haveMatches := map[string]bool{}
+	haveMatches := map[string]RemovalRecord{}
 	for _, record := range applied.Matches {
-		haveMatches[removalKey(record.MatchID, record.SubjectKind, record.SubjectID)+"\x00"+record.Scope] = true
+		haveMatches[removalKey(record.MatchID, record.SubjectKind, record.SubjectID)] = record
 	}
 	for _, record := range required.Matches {
-		if !haveMatches[removalKey(record.MatchID, record.SubjectKind, record.SubjectID)+"\x00"+record.Scope] {
+		existing, ok := haveMatches[removalKey(record.MatchID, record.SubjectKind, record.SubjectID)]
+		if !ok {
+			return false
+		}
+		if existing.Scope != record.Scope && existing.Scope != "explicit_removal" {
+			// The applied removal is weaker than the required one.
 			return false
 		}
 	}
-	haveSubjects := map[string]bool{}
+	haveSubjects := map[string]SubjectRemovalRecord{}
 	for _, record := range applied.Subjects {
-		haveSubjects[record.SubjectKind+"\x00"+record.SubjectRef+"\x00"+record.Scope] = true
+		key := subjectKey(record.SubjectKind, record.SubjectRef)
+		// The strongest applied removal of the subject is the one that counts.
+		if existing, ok := haveSubjects[key]; !ok || strongerSubjectRemoval(record, existing) {
+			haveSubjects[key] = record
+		}
 	}
 	for _, record := range required.Subjects {
-		if !haveSubjects[record.SubjectKind+"\x00"+record.SubjectRef+"\x00"+record.Scope] {
+		existing, ok := haveSubjects[subjectKey(record.SubjectKind, record.SubjectRef)]
+		if !ok {
+			return false
+		}
+		if existing.Scope != record.Scope && existing.Scope != "explicit_removal" {
 			return false
 		}
 	}
 	return true
+}
+
+// subjectKey is the key of a subject removal record without its scope.
+//
+// The scope is not part of the key, because a stronger removal of the same
+// subject satisfies a weaker requirement: an explicit removal erases the
+// shared replay, and an ordinary deletion only anonymizes it.
+func subjectKey(subjectKind, subjectRef string) string {
+	return subjectKind + "\x00" + subjectRef
+}
+
+// subjectRecordKey is the complete key of a subject removal record.
+func subjectRecordKey(subjectKind, subjectRef, scope, recordID string) string {
+	return subjectKind + "\x00" + subjectRef + "\x00" + scope + "\x00" + recordID
+}
+
+// recordKey is the complete key of a match bound removal record.
+func recordKey(matchID, subjectKind, subjectID, scope, removalID string) string {
+	return matchID + "\x00" + subjectKind + "\x00" + subjectID + "\x00" + scope + "\x00" + removalID
 }
 
 // RemovalLedgerDigest is the digest of a removal ledger.
@@ -141,8 +193,25 @@ func RemovalLedgerContains(applied, required AppliedRemovalLedger) bool {
 // the same removals in a different order have the same digest, and two ledgers
 // that hold different removals have different digests.
 func RemovalLedgerDigest(matches []RemovalRecord, subjects []SubjectRemovalRecord) []byte {
+	// The digest is order independent: the records are sorted by their
+	// complete key, so two ledgers that hold the same removals have the same
+	// digest.
+	// The sort is over the complete key of a record: the match, the kind, the
+	// subject, the scope and the identifier. Two records that differ in the
+	// scope or in the identifier therefore have a defined order, and the
+	// digest does not depend on the order of the input.
+	ordered := append([]RemovalRecord(nil), matches...)
+	sort.Slice(ordered, func(i, j int) bool {
+		return recordKey(ordered[i].MatchID, ordered[i].SubjectKind, ordered[i].SubjectID, ordered[i].Scope, ordered[i].RemovalID) <
+			recordKey(ordered[j].MatchID, ordered[j].SubjectKind, ordered[j].SubjectID, ordered[j].Scope, ordered[j].RemovalID)
+	})
+	orderedSubjects := append([]SubjectRemovalRecord(nil), subjects...)
+	sort.Slice(orderedSubjects, func(i, j int) bool {
+		return subjectRecordKey(orderedSubjects[i].SubjectKind, orderedSubjects[i].SubjectRef, orderedSubjects[i].Scope, orderedSubjects[i].RecordID) <
+			subjectRecordKey(orderedSubjects[j].SubjectKind, orderedSubjects[j].SubjectRef, orderedSubjects[j].Scope, orderedSubjects[j].RecordID)
+	})
 	digest := sha256.New()
-	for _, record := range matches {
+	for _, record := range ordered {
 		digest.Write([]byte("match:"))
 		digest.Write([]byte(removalKey(record.MatchID, record.SubjectKind, record.SubjectID)))
 		digest.Write([]byte{0})
@@ -151,7 +220,7 @@ func RemovalLedgerDigest(matches []RemovalRecord, subjects []SubjectRemovalRecor
 		digest.Write([]byte(record.RemovalID))
 		digest.Write([]byte{0})
 	}
-	for _, record := range subjects {
+	for _, record := range orderedSubjects {
 		digest.Write([]byte("subject:"))
 		digest.Write([]byte(record.SubjectKind))
 		digest.Write([]byte{0})
@@ -251,6 +320,15 @@ type RemovalLedgerSink interface {
 	// database. The restore compares it with the ledger it had to apply, so a
 	// restore that applied a different ledger keeps the fence open.
 	AppliedRemovalLedger(ctx context.Context) (AppliedRemovalLedger, error)
+	// RecordRestore records the restore in the durable restore gate. The gate
+	// is recorded while the fence is still open, so a crash between the
+	// replay and the release leaves a recorded gate that the operator can
+	// recover.
+	RecordRestore(ctx context.Context, restoreID string) (string, error)
+	// ReleaseRestoreGate releases the gate of the restore. It is called only
+	// after the removal ledger was applied and verified, and it is called
+	// before the fence is closed.
+	ReleaseRestoreGate(ctx context.Context, restoreID string) error
 }
 
 // AppliedRemovalLedger is the removal ledger of a database.
@@ -262,15 +340,38 @@ type AppliedRemovalLedger struct {
 // AdmissionFence is the durable admission control of a restore.
 //
 // The fence lives outside the restored database, so it survives the schema
-// replacement of the restore and a crash of the restore process. A restore
-// that carries removals is refused without it, because the removals are the
-// records that keep a removed subject removed.
+// replacement of the restore and a crash of the restore process.
+//
+// The admission is taken before the restore reads anything from the database.
+// The service is closed while the fence is open, so a removal that is
+// committed after the admission cannot be lost by the import, and the
+// service never serves a database whose import is half done.
 type AdmissionFence interface {
-	// OpenFence opens the durable fence of the restore. The digest is the
-	// digest of the removal ledger the restore has to apply.
-	OpenFence(restoreID string, expectedDigest []byte) error
-	// CloseFence closes the fence of the restore. It is called only after the
+	// BeginFence takes the ownership of the restore lifecycle and returns the
+	// handle of the ownership. The handle holds the cross process ownership
+	// for the whole lifecycle of the restore.
+	//
+	// A take-over continues the lifecycle of a restore that crashed: the
+	// marker of the crashed restore is replaced inside the marker directory,
+	// so the marker never disappears and the service stays closed.
+	BeginFence(restoreID string, takeover bool) (FenceHandle, error)
+}
+
+// FenceHandle is the ownership of the restore lifecycle.
+//
+// The handle is the only thing that may finish or release the lifecycle. The
+// close of the fence uses the handle and not a lock that is taken again, so
+// the ownership cannot be lost or displaced while the restore runs.
+type FenceHandle interface {
+	// Bind records the digest of the removal ledger the restore has to apply
+	// in the marker of the lifecycle. It is called after the ledgers were
+	// read and before the import.
+	Bind(expectedDigest []byte) error
+	// Finish closes the fence of the restore. It is called only after the
 	// removal ledger was applied and verified, and it refuses a restore that
 	// applied a different ledger.
-	CloseFence(restoreID string, appliedDigest []byte) error
+	Finish(appliedDigest []byte) error
+	// Release gives the ownership back without closing the fence. The marker
+	// of the lifecycle survives, so the service stays closed.
+	Release()
 }

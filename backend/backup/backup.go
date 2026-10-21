@@ -407,6 +407,12 @@ type RestoreRequest struct {
 	AdmissionFence AdmissionFence
 	// RestoreID identifies the restore. It is bound to the fence.
 	RestoreID string
+	// Takeover continues the lifecycle of a restore that crashed.
+	//
+	// The marker of the crashed restore is replaced inside the marker
+	// directory, so the marker never disappears and the service stays closed
+	// while the take-over runs.
+	Takeover bool
 }
 
 // RestoreResult reports what a completed restore actually did.
@@ -446,6 +452,48 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if err != nil {
 		return RestoreResult{}, err
 	}
+	// The admission of the restore is taken before anything is read from the
+	// database.
+	//
+	// The fence is the control that keeps the service closed while the import
+	// replaces the schema of the database: the service refuses every request
+	// that arrives while the fence is open, so no removal is admitted after
+	// the ledgers below were read.
+	//
+	// The scope of that guarantee is exact, and it is stated here rather than
+	// claimed wider:
+	//
+	//   - a removal that is admitted *after* the fence was taken is refused by
+	//     the service, so it cannot be lost by the import;
+	//   - a removal that was already admitted *before* the fence was taken can
+	//     still commit after the ledgers were read, and the import can lose it.
+	//     The operator therefore stops and drains the API before a restore.
+	//
+	// A restore without removals is fenced as well: its import replaces the
+	// schema too, and a service that serves a half imported database is a
+	// service that serves a database whose removals are gone.
+	if request.AdmissionFence == nil {
+		return RestoreResult{}, fmt.Errorf("%w: a restore needs an admission fence", ErrLedgerConflict)
+	}
+	if request.RestoreID == "" {
+		return RestoreResult{}, fmt.Errorf("%w: a restore needs a restore identifier", ErrLedgerConflict)
+	}
+	handle, err := request.AdmissionFence.BeginFence(request.RestoreID, request.Takeover)
+	if err != nil {
+		return RestoreResult{}, err
+	}
+	// The handle owns the lifecycle until the fence is closed. A restore that
+	// fails or that is killed leaves the marker of the lifecycle behind, so
+	// the service stays closed until an operator resolves the restore.
+	//
+	// The release is deferred on every path that does not close the fence. A
+	// restore that closed the fence sets the handle to nil, so the closed
+	// fence is never released a second time.
+	defer func() {
+		if handle != nil {
+			handle.Release()
+		}
+	}()
 	live, err := request.Tombstones.ListTombstones(ctx)
 	if err != nil {
 		return RestoreResult{}, err
@@ -463,26 +511,17 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 		return RestoreResult{}, err
 	}
 	carriesRemovals := len(removals) > 0 || len(subjectRemovals) > 0
-	if carriesRemovals {
-		// A restore that carries removals needs the removal sink and the
-		// durable admission control. Both are checked before the import, so a
-		// restore that cannot replay the removals never touches the database.
-		if request.Removals == nil {
-			return RestoreResult{}, fmt.Errorf("%w: a restore with removals needs a removal sink", ErrLedgerConflict)
-		}
-		if request.AdmissionFence == nil {
-			return RestoreResult{}, fmt.Errorf("%w: a restore with removals needs an admission fence", ErrLedgerConflict)
-		}
-		if request.RestoreID == "" {
-			return RestoreResult{}, fmt.Errorf("%w: a restore with removals needs a restore identifier", ErrLedgerConflict)
-		}
-		// The fence is opened before the import. The fence lives outside the
-		// restored database, so it survives the schema replacement and a crash
-		// of this process, and a restored database that lost a removal never
-		// serves traffic.
-		if err = request.AdmissionFence.OpenFence(request.RestoreID, RemovalLedgerDigest(removals, subjectRemovals)); err != nil {
-			return RestoreResult{}, err
-		}
+	if carriesRemovals && request.Removals == nil {
+		// A restore that carries removals needs the removal sink. The check
+		// happens before the import, so a restore that cannot replay its
+		// removals never touches the database.
+		return RestoreResult{}, fmt.Errorf("%w: a restore with removals needs a removal sink", ErrLedgerConflict)
+	}
+	// The marker of the lifecycle names the removal ledger the restore has to
+	// apply. It is bound after the ledgers were read and before the import.
+	requiredDigest := RemovalLedgerDigest(removals, subjectRemovals)
+	if err = handle.Bind(requiredDigest); err != nil {
+		return RestoreResult{}, err
 	}
 	if err = request.Restorer.Restore(ctx, bytes.NewReader(verified.Payload.SQL)); err != nil {
 		return RestoreResult{}, err
@@ -503,6 +542,16 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 		TombstonesKept:    SummarizeRecovery(actions)[RecoveryKeep],
 	}
 	if !carriesRemovals {
+		// A restore without removals still replaced the schema, so its fence
+		// has to be closed: a marker that stayed behind would keep the service
+		// closed forever. There is no removal ledger to replay and no gate to
+		// release, so the digest of the empty ledger is the one the fence
+		// names.
+		if err = handle.Finish(requiredDigest); err != nil {
+			return RestoreResult{}, err
+		}
+		// The fence is closed, so the deferred release is not needed.
+		handle = nil
 		return result, nil
 	}
 	if len(removals) > 0 {
@@ -528,9 +577,21 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	if !RemovalLedgerContains(applied, required) {
 		return RestoreResult{}, fmt.Errorf("%w: the applied removal ledger is not the ledger of the restore", ErrLedgerConflict)
 	}
-	if err = request.AdmissionFence.CloseFence(request.RestoreID, RemovalLedgerDigest(removals, subjectRemovals)); err != nil {
+	// The restore is recorded and its gate is released while the fence is
+	// still open. A crash between the release and the close of the fence
+	// leaves a fence that the operator can close, and a crash before the
+	// release leaves a recorded gate that the operator can recover.
+	if _, err = request.Removals.RecordRestore(ctx, request.RestoreID); err != nil {
 		return RestoreResult{}, err
 	}
+	if err = request.Removals.ReleaseRestoreGate(ctx, request.RestoreID); err != nil {
+		return RestoreResult{}, err
+	}
+	if err = handle.Finish(requiredDigest); err != nil {
+		return RestoreResult{}, err
+	}
+	// The fence is closed, so the deferred release is not needed.
+	handle = nil
 	return result, nil
 }
 

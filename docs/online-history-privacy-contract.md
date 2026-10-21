@@ -158,27 +158,75 @@ Rules the browser must honour:
   released its gate. The service refuses to **start** while the removal ledger is not applied in
   the database, and every request is checked again while it runs. A restore releases the gate only
   after the removal ledger was replayed and the replay was verified.
-* The **durable restore fence** lives outside the restored database, in a file the restore writes
-  before it imports anything. The path is configured once, with `ONLINE_RESTORE_FENCE_PATH`, and
-  both the API and the restore tool use it: the API reads it in `serverapp.Load` and checks it
-  before it starts and on every request, the restore tool writes it with `--fence` (which
-  defaults to the same environment variable) and refuses an applied restore without it. The path
-  has to be a **shared persistent location**: a per container or per host path would let two
-  instances disagree about the state of a restore, and the file has to be readable by the account of
-  the API and of the restore tool. The fence survives the schema replacement of
-  the restore and a crash of the restore process, so a restore that dies between the import and
-  the replay leaves the service closed instead of a restored database that lost the newest
-  removals.
-* The fence is **bound to its restore**: it names the restore and the digest of the removal ledger
-  the restore has to apply. The fence file is created exclusively, so two restores that start at the
-  same time cannot both own it: the second one is refused instead of overwriting the fence of the
-  first. The same restore with the same ledger is idempotent, the same restore with another ledger
-  is refused, and the fence is closed only by its owner and only for the ledger it names. The fence
-  is on disk, so it survives the restart of the service: a service that starts after a crashed
-  restore sees the fence and refuses to serve.
-* The restore **opens the fence before the import** and closes it only after the removal ledger was
-  replayed and the applied ledger was verified to hold every record the restore had to apply. A
-  restore that cannot replay its removals is refused before it touches the database.
+* The **durable restore fence** lives outside the restored database. The configured path
+  (`ONLINE_RESTORE_FENCE_PATH`, and `--fence` of the restore tool, which defaults to the same
+  environment variable) is the **parent directory** that the operator prepares. The lifecycle
+  owns a marker directory `<parent>/restore-fence` and a lock file `<parent>/restore-fence.lock`
+  inside it, and the operator never prepares the marker directory itself. Both the API and the
+  restore tool use the same parent: the API reads the marker in `serverapp.Load` and checks it
+  before it starts and on every request, the restore tool creates the marker and the lock and
+  refuses an applied restore without them. The parent has to be a **shared persistent
+  location**: a per container or per host path would let two instances disagree about the state
+  of a restore, and it has to be writable by the account of the restore tool and readable by the
+  account of the API. The fence survives the schema replacement of the restore and a crash of the
+  restore process, so a restore that dies between the import and the replay leaves the service
+  closed instead of a restored database that lost the newest removals.
+* The fence is **owned across processes**. The lock file carries an operating system lock - an
+  advisory file lock on Linux, the byte range lock `LockFileEx` on Windows - that the restore
+  holds for the **whole** lifecycle, from the admission of the restore until the fence is closed.
+  The operating system releases it when the process dies, so the lock is the live ownership
+  proof: a restore that finds the lock held is a live restore and is refused, a closer that does
+  not own the lifecycle is refused, and the recovery of a crashed restore may only run when the
+  lock is free. The ownership is held by the handle of the lifecycle, not taken again by the
+  close, so a restore cannot lose it in the middle of its import. A platform without an advisory
+  file lock and without `LockFileEx` refuses the restore before it mutates anything.
+* The **marker directory** is the crash persistent, fail closed part. It exists while a restore
+  is in progress and while a crashed restore waits for an operator, and it is never removed
+  before a new marker replaced it: a take-over replaces the owner marker *inside* the existing
+  marker directory, so the marker never disappears, the service stays closed while the take-over
+  runs, and a failed take-over leaves the marker of the crashed restore in place. Every present
+  or unreadable marker closes the service, including a marker without an owner marker and a
+  fence file of an older layout.
+* The fence is **bound to its restore**: it names the restore, the digest of the removal ledger
+  the restore has to apply, and a random ownership token. Only the holder of the ownership can
+  close it, and it is closed only for the ledger it names.
+* The restore **takes the admission before it reads anything from the database**. The service
+  refuses every request that arrives while the fence is open, so no removal is admitted after
+  the ledgers the restore reads were read. The scope of that guarantee is exact: a removal that
+  was **already admitted before the fence was taken** can still commit after the ledgers were
+  read, and the import can lose it. The operator therefore **stops and drains the API before a
+  restore**; the runbook states it as a step of the procedure. A restore without removals is
+  fenced as well, because its import replaces the schema of the database as
+  well. The fence is closed only after the removal ledger was replayed, the applied ledger was
+  verified to hold every record the restore had to apply, and the restore gate was recorded and
+  released. A restore that cannot replay its removals is refused before it touches the database.
+* **The admission of the fence is a control of the admission, not a lock of the database.** The
+  removal flow takes the account scope lock of the subject and the row locks of the rows it
+  sanitizes, and the restore takes neither: the import replaces the schema of the database, so
+  it cannot run inside the transaction of a removal. The stronger control would be a lock that
+  both flows take, so that a removal is ordered against the ledger read of the restore. The
+  service gate is such a lock, but the restore cannot hold it across its import: the import is a
+  separate transaction that replaces the schema the lock lives in, so the lock would be dropped
+  with the schema and would not order anything after the import. The enforceable control is
+  therefore the drained API, and the contract states it instead of claiming a guarantee the
+  mechanism does not provide.
+* A restore that crashed is recovered in two ways. `khabackup restore --takeover --file <bundle>
+  --fence <parent>` continues the lifecycle of the crashed restore: it takes the ownership of the
+  lifecycle, replaces the owner marker inside the marker directory, imports the bundle again,
+  applies the removal ledger again, verifies it, records and releases the gate and closes the
+  fence. `khabackup recover --file <bundle> --restore-id <id> --fence <parent>` resolves a
+  crashed restore whose database is intact: the recovery is identity bound (the fence of the
+  restore has to name the removal ledger the restore had to apply), it needs the live ownership
+  proof (the lock of the lifecycle has to be free, so a recovery never touches the fence of a
+  running restore), and it only releases the admission of a database whose applied removal
+  ledger holds every removal the restore had to apply. A database that lost a removal is not
+  released: the recovery records a blocking gate, closes the fence so that the restore can be
+  run again, and the service stays closed. The immutable deletion protections are never weakened.
+* The **durability** of the fence is explicit: the owner marker is flushed before the directory
+  that holds it, and the marker directory is flushed in the parent that holds it, and a failure
+  of the flush aborts the restore before it imports anything. Windows offers no flush of a
+  directory, so there the durability of the fence against a power loss of the host is the
+  guarantee of the file system and not a guarantee of the tool.
 * The **subject level removal record** (`online_removal_subjects`, `subjectRef`) records that a
   subject was removed, whatever it played and whatever private data it held. It names no match
   and it stores the one-way reference of the subject, never the identifier. It travels in the
@@ -243,7 +291,10 @@ well:
   the identity of the inviter;
 * an **acceptance** that never produced a match is deleted, and the acceptance of a match loses the
   identity of the acceptor;
-* a **rematch offer** keeps its row and loses the identity of the proposer and of the acceptor;
+* a **rematch offer** keeps its row and loses the identity of the proposer and of the acceptor. The
+  offer records its accepter while it is accepting or accepted, so the raw identifier is replaced
+  by the reserved anonymized value instead of being cleared: clearing it would break the shape of
+  the offer and abort the removal;
 * a **waiting queue entry** is deleted, and an entry that already produced a match keeps its row
   and loses the owner identifier, the declared model label and the client supplied idempotency
   key; the allocation of that entry loses the public label and the declared model label of the

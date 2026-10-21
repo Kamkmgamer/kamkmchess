@@ -25,11 +25,15 @@ type Options struct {
 	LiveRemovalDelay time.Duration
 	// RecoverySanitizeDelay is the target of the recovery copy sanitation.
 	RecoverySanitizeDelay time.Duration
-	// FencePath is the path of the durable restore fence.
+	// FencePath is the parent directory of the durable restore fence.
 	//
 	// The fence lives outside the restored database, so it survives the
 	// schema replacement of a restore and a crash of the restore process. The
 	// service refuses to serve while the fence is open.
+	//
+	// The path is the *parent* directory that the operator prepares: the
+	// lifecycle owns a lock directory inside it, and the operator never has to
+	// prepare the lock directory itself.
 	FencePath string
 }
 
@@ -437,6 +441,11 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, s
 // ownership proof.
 func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, subjectKind, reference, rawID, scope string) error {
 	if subjectKind == string(online.ParticipantAccount) {
+		// The public identity of the account is removed, the deletion is
+		// recorded, the private data is purged and the friend and the queue
+		// records are sanitized. The same steps run again when a restore
+		// replays the removal, so an account that only had private data
+		// stays removed.
 		// The public identity of the account is removed. The profile row stays
 		// as an anonymous shell, because the base schema keeps the profile
 		// identifier immutable.
@@ -471,6 +480,11 @@ func (s *Service) removePrivateOwnerData(ctx context.Context, tx pgx.Tx, subject
 				}
 			}
 
+		}
+		// The sessions of the account are revoked, so an old verified session
+		// cannot use the account again. The fence comes before the sanitation.
+		if err := s.fenceAccount(ctx, tx, rawID, revocationReason(scope)); err != nil {
+			return err
 		}
 		// The friend and the queue records of the account are sanitized as
 		// well: an unused invitation preview must not name a removed owner.
