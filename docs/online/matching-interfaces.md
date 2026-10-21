@@ -109,6 +109,14 @@ to a log line, and it is not a credential.
 (cancel, seat credential). It is returned once and is never stored by the
 service in readable form.
 
+An **anonymous guest** inviter is a fresh opaque identity, and the service
+never tracks people. The service therefore cannot tell that the same human
+opens the link it created: an acceptance whose acceptor is the same
+participant as the inviter is refused before the invitation is consumed, and
+the browser avoids accepting a link it created itself with
+`isLocallyOwnedInvitation`. That is a convenience of the interface, not a
+sybil defence, and no such claim is made.
+
 ### Read an invitation (the link preview)
 
 ```
@@ -122,6 +130,10 @@ credential or an owner token.
 
 A `challenge` invitation is visible **only** to its recipient account. Any
 other caller receives `404`.
+
+The status of the preview is the *effective* status. An invitation whose
+twelve hour deadline passed reads as `expired` even though no sweep ever
+wrote that state, so the invitee sees an expired link instead of an open one.
 
 ### Accept an invitation
 
@@ -147,6 +159,13 @@ recovered instead of consuming a second invitation. It is required when the
 acceptor is a guest, because a guest has no other identity to resume with.
 The service stores only its hash, and the key is the only capability that
 resumes an acceptance.
+
+The key is a bearer secret of that accept intent. An **account** acceptor is
+additionally bound to its own acceptance, because an account has an identity
+the service can check. A **guest** acceptor has no other identity, so the key
+is the whole capability of the acceptance: whoever holds it can resume that
+acceptance. The browser therefore keeps the key in memory for the page
+lifetime only, and never shares it.
 
 Answer `200`:
 
@@ -178,9 +197,22 @@ credential asks for the replacement explicitly with `"rotateCredential": true`;
 the earlier credential is then superseded, so a lost answer never leaves the
 guest without a working credential.
 
-Errors: `404` unknown or cancelled invitation, `409` already consumed by
-somebody else, `409` expired, `403` a challenge accepted by a non-recipient,
-`400` an invalid position or an invalid control.
+The consumption of the invitation, the acceptance record, the canonical match
+and the guest seat credential commit in **one** transaction. A crash can never
+leave a spent invitation without a game, and no reconciler has to look for an
+orphaned acceptance.
+
+Errors:
+
+| Status | Code | Meaning |
+| --- | --- | --- |
+| `404` | `not_found` | unknown invitation, or a challenge that is not visible to the caller |
+| `409` | `conflict` | already consumed by somebody else, or cancelled |
+| `410` | `expired` | the twelve hour deadline passed |
+| `400` | `invalid_request` | an invalid position, an invalid control or an invalid acceptance key |
+
+A challenge that is not visible to the caller answers exactly like an unknown
+invitation, so a caller cannot learn that a named challenge exists.
 
 ### Cancel an invitation
 
@@ -190,7 +222,8 @@ POST /v1/online/invitations/{invitationId}/cancel
 
 Authorized by the `ownerToken` (body `{"schemaVersion": 2, "ownerToken": "…"}`)
 or by the account session of the inviter. Answer `200` with the invitation.
-A cancelled invitation can never be consumed.
+A cancelled invitation can never be consumed. An invitation whose deadline
+passed answers `410` with the code `expired`.
 
 ### Claim the inviter's seat credential
 
@@ -261,10 +294,20 @@ opponent's acceptance creates the new match with **reversed colors** and the
 naming the exact offer. The old match keeps its final result; a rematch is a
 new match and never revives the old one.
 
-The offer is reserved before the new match is created, so a concurrent
-supersede, an expiry or a second acceptance can never produce a second match.
+The offer, the new match and the credential of the accepter commit in **one**
+transaction. A crash in the middle leaves the offer `pending` for the
+opponent, so a rematch is never stranded by a reservation without a game.
 
-Accept body `{"schemaVersion": 2}`. Answer `200`:
+Accept body:
+
+```jsonc
+{
+  "schemaVersion": 2,
+  "rotateCredential": false       // optional, see below
+}
+```
+
+Answer `200`:
 
 ```jsonc
 {
@@ -280,9 +323,20 @@ A duplicate acceptance returns the same `newMatchId` instead of creating a
 second match.
 
 A rematch is a **new match**, so the credential of the finished match cannot
-authorize it. A guest proposer claims its own seat credential of the new match
-with `POST /v1/online/rematches/{rematchId}/seat-credential`, which answers
-`{ "schemaVersion": 2, "matchId": "…", "seat": "…", "guestCredential": { … } }`.
+authorize it. A guest participant needs a fresh credential of the new seat:
+
+* the guest **accepter** receives it in the acceptance answer;
+* the guest **proposer** claims its own with
+  `POST /v1/online/rematches/{rematchId}/seat-credential`, which answers
+  `{ "schemaVersion": 2, "matchId": "…", "seat": "…", "guestCredential": { … } }`.
+
+A guest accepter whose answer was lost holds no working credential of the new
+match, because the credential it has is bound to the finished match. The
+retry therefore answers with a fresh credential of the new seat, and the
+browser can read the live view of the new game again. A retry that presents
+the credential of the **new** match keeps it, because that credential already
+authorizes the new seat. The browser may also ask for the replacement
+explicitly with `"rotateCredential": true` when it holds none.
 
 ## Public queue routes
 
@@ -430,11 +484,23 @@ explicitly". An expired entry is never revived: the owner creates a new entry.
 `src/online/friends.ts` is written and committed. It exports the route
 constants, the request and answer types, the strict parsers, the typed client
 and the domain helpers (`isAcceptableInvitation`, `needsGuestSeatCredential`,
-`needsCredentialRotation`, `createAcceptanceKey`). The transport is an
-injected port, so the module owns no credential and no URL.
+`needsCredentialRotation`, `isLocallyOwnedInvitation`, `createAcceptanceKey`).
+The transport is an injected port, so the module owns no credential and no
+URL.
 
 The workspace should call the matching modules instead of re-declaring the
 bodies.
+
+`acceptRematch(rematchId, { rotateCredential })` carries the replacement of a
+guest seat credential. The browser asks for it when it holds no working
+credential of the new match, for example after a lost answer.
+
+`isLocallyOwnedInvitation(invitationId, ownedIds)` tells the browser that it
+created the link itself. The service cannot detect that an anonymous guest
+who created a link is the same human who opens it later, because an anonymous
+guest is a fresh opaque identity and the service never tracks people. The
+helper is a convenience of the interface, not an identity proof, and it is no
+substitute for the consent of the other player.
 
 ## Status
 
