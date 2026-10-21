@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +37,61 @@ type Service struct {
 	recoveryRequired atomic.Bool
 	// recovered records that the canonical recovery completed.
 	recovered atomic.Bool
+
+	// episodeMu serializes the transitions of the failure episode.
+	//
+	// The monitor is one goroutine, but a participant request evaluates the
+	// rules process on another one, so a success and a failure of the
+	// dependency can complete at the same time.
+	episodeMu sync.Mutex
+	// episodeOpen records that the failure episode of this instance is
+	// open.
+	episodeOpen bool
+	// episodeEpoch is the service epoch of the first observation of the
+	// open failure episode of this instance.
+	//
+	// The episode is the unresolved failure of the rules dependency of this
+	// instance. Its identity is the epoch of its first observation, and it
+	// does not change while the episode is open, so every failure of the
+	// same outage plans the same interruption, even when a peer recovered
+	// it in between. Zero means that the epoch of the first observation was
+	// unknown.
+	episodeEpoch int64
+	// episodeFirstSeq is the number of the first observation of the open
+	// episode.
+	//
+	// The identity of the episode belongs to the earliest observation. An
+	// observation that is older and arrives later may only refine it while
+	// no interruption was planned with it.
+	episodeFirstSeq int64
+	// episodeBoundary is the identity of the planned interruption of the
+	// open episode.
+	//
+	// It is the boundary of the outage, so the next plan of the same outage
+	// finds it and changes nothing. It is empty while no interruption was
+	// planned yet.
+	episodeBoundary string
+	// episodePlanned records that an interruption was planned with the
+	// identity of the episode.
+	//
+	// The identity of a planned interruption is immutable: an observation
+	// that arrives later may not move the boundary of the outage. A new
+	// episode starts without it.
+	episodePlanned bool
+	// latestFailureSeq is the number of the newest failed observation.
+	//
+	// A success that is not newer than it answered before that failure, so
+	// the failure is the current one and the episode stays open.
+	latestFailureSeq int64
+	// latestSuccessSeq is the number of the newest successful observation.
+	//
+	// A failure that is older than it is stale: the dependency answered
+	// after that failure was made, so the failure is not the current one.
+	latestSuccessSeq int64
+	// observationSeq numbers the observations of the rules dependency, so
+	// the order of a success and of a failure is decided by the moment they
+	// were made and not by the moment they completed.
+	observationSeq atomic.Int64
 }
 
 // Open binds the online writer to a pool. It does not mutate schema.
@@ -167,14 +223,15 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 		return CommandResult{}, ErrUnavailable
 	}
 	// Validate the immutable setup with no transaction or database lock held.
+	seq := s.observationSeq.Add(1)
 	if err = s.evaluator.ValidateSetup(ctx, BuildRulesInput(match, match.Moves, "")); err != nil {
 		if errors.Is(err, ErrInvalidContract) || errors.Is(err, ErrActionNotAllowed) {
 			return CommandResult{}, err
 		}
-		s.noteEvaluatorFailure(err)
+		s.observeFailure(0, seq, err)
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	s.noteEvaluatorSuccess()
+	s.observeSuccess(seq)
 	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
@@ -321,6 +378,7 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 	}
 	input := BuildRulesInput(snapshot, snapshot.Moves, cmd.Action.SubmitMove.UCI)
 	// External rules evaluation happens with no database lock or transaction held.
+	seq := s.observationSeq.Add(1)
 	candidate, err := s.evaluator.Evaluate(ctx, input)
 	if err != nil {
 		// A refused proposal is a contract outcome, not an unavailable
@@ -328,13 +386,13 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 		if errors.Is(err, ErrActionNotAllowed) || errors.Is(err, ErrStaleCandidate) || errors.Is(err, ErrInvalidContract) {
 			return CommandResult{}, err
 		}
-		s.noteEvaluatorFailure(err)
+		s.observeFailure(0, seq, err)
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	if err = candidate.Validate(); err != nil {
 		return CommandResult{}, err
 	}
-	s.noteEvaluatorSuccess()
+	s.observeSuccess(seq)
 	return s.applyWorkerCandidate(ctx, actor, cmd, fingerprint, candidate)
 }
 

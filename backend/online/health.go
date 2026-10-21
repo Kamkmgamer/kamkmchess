@@ -229,10 +229,6 @@ func (h *HealthReporter) SharedState(ctx context.Context) (HealthState, error) {
 	return state, nil
 }
 
-// refreshLiveness upserts the bounded liveness singleton.
-//
-// The row never grows, so the liveness of a long-running service costs one
-// row and one update per check.
 // RefreshLiveness refreshes the durable liveness of the service.
 //
 // The liveness record is the evidence that the service was alive, so a
@@ -263,6 +259,10 @@ func (h *HealthReporter) RefreshLiveness(ctx context.Context) error {
 	return h.refreshLiveness(ctx, at.UTC())
 }
 
+// refreshLiveness upserts the bounded liveness singleton.
+//
+// The row never grows, so the liveness of a long-running service costs one
+// row and one update per check.
 func (h *HealthReporter) refreshLiveness(ctx context.Context, at time.Time) error {
 	// The liveness never moves backwards. The record is read by the recovery
 	// of every instance, so a reader with a skewed clock may not regress it.
@@ -484,6 +484,12 @@ func (s *Service) ProbeRules(ctx context.Context) error {
 		s.noteEvaluatorFailure(nil)
 		return ErrUnavailable
 	}
+	// The epoch of the outage is read before the check, so the failure of
+	// this check is identified with the epoch it happened in. The number of
+	// the observation is taken first, so the order of a success and of a
+	// failure is the order of the moments they were made in.
+	seq := s.observationSeq.Add(1)
+	causal, _ := s.causalEpoch(ctx)
 	if ready, ok := s.evaluator.(ReadyEvaluator); ok {
 		if err := ready.Probe(ctx); err != nil {
 			// The caller of the probe left, so the failure says nothing
@@ -495,10 +501,10 @@ func (s *Service) ProbeRules(ctx context.Context) error {
 			if s.busy(err) || s.cancelled(err) {
 				return err
 			}
-			s.noteEvaluatorFailure(err)
+			s.observeFailure(causal, seq, err)
 			return err
 		}
-		s.noteEvaluatorSuccess()
+		s.observeSuccess(seq)
 		return nil
 	}
 	probeCtx := ctx
@@ -519,11 +525,128 @@ func (s *Service) ProbeRules(ctx context.Context) error {
 			// either.
 			return err
 		}
-		s.noteEvaluatorFailure(err)
+		s.observeFailure(causal, seq, err)
 		return err
 	}
-	s.noteEvaluatorSuccess()
+	s.observeSuccess(seq)
 	return nil
+}
+
+// causalEpoch reads the service epoch before a check of the rules dependency.
+//
+// The epoch identifies the outage. The interruption of an outage is planned
+// once, and the plan of the same outage finds the boundary of the first plan
+// even when a peer recovered it in between.
+//
+// A read that fails returns zero. The identity of the episode is then
+// unknown, and the episode keeps the identity it had. The interruption is
+// still planned, so an unreadable epoch never hides an outage: the plan
+// falls back to the epoch of the plan itself.
+func (s *Service) causalEpoch(ctx context.Context) (int64, error) {
+	if s.db == nil {
+		return 0, nil
+	}
+	return currentServiceEpoch(ctx, s.db)
+}
+
+// observeFailure records a failed observation of the rules dependency.
+//
+// The ordered decision, the update of the episode and the report of the
+// dependency happen in one critical section, so a success that completes in
+// between can neither hide the failure nor be hidden by it.
+//
+// A busy or a cancelled observation is not a broken dependency, so it opens no
+// episode and it leaves the durable health alone.
+//
+// A failure that is older than the newest success is stale: the dependency
+// answered after that failure was made, so it neither opens an episode nor
+// degrades the dependency.
+func (s *Service) observeFailure(causal int64, seq int64, err error) {
+	s.episodeMu.Lock()
+	defer s.episodeMu.Unlock()
+	if s.busy(err) || s.cancelled(err) {
+		return
+	}
+	if seq < s.latestSuccessSeq {
+		return
+	}
+	if !s.episodeOpen {
+		s.episodeOpen = true
+		s.episodeEpoch = causal
+		s.episodeFirstSeq = seq
+		s.latestFailureSeq = seq
+		s.episodePlanned = false
+		s.episodeBoundary = ""
+		s.reportRulesDegraded(err)
+		return
+	}
+	if seq < s.episodeFirstSeq {
+		// This observation is older than the first one of the episode, so
+		// it is the earliest observation. The identity of the episode
+		// belongs to it, but only while no interruption was planned with
+		// the identity: a planned interruption is immutable.
+		if !s.episodePlanned {
+			s.episodeFirstSeq = seq
+			s.episodeEpoch = causal
+		}
+		s.reportRulesDegraded(err)
+		return
+	}
+	if seq > s.latestFailureSeq {
+		s.latestFailureSeq = seq
+	}
+	s.reportRulesDegraded(err)
+}
+
+// observeSuccess records a successful observation of the rules dependency.
+//
+// The ordered decision, the update of the episode and the report of the
+// dependency happen in one critical section. A success that is not newer
+// than the newest failure answered before that failure, so it neither closes
+// the episode nor reports the dependency as healthy: the healthy report would
+// hide the dependency that is still broken.
+func (s *Service) observeSuccess(seq int64) {
+	s.episodeMu.Lock()
+	defer s.episodeMu.Unlock()
+	if seq > s.latestSuccessSeq {
+		s.latestSuccessSeq = seq
+	}
+	if s.episodeOpen {
+		if seq <= s.latestFailureSeq {
+			return
+		}
+		s.episodeOpen = false
+		s.episodeEpoch = 0
+		s.episodeFirstSeq = 0
+		s.episodePlanned = false
+		s.episodeBoundary = ""
+	}
+	s.reportRulesHealthy()
+}
+
+// reportRulesDegraded records that the rules process did not answer.
+//
+// The reporter is written while the episode is locked, so the report and the
+// decision that ordered it belong to the same observation.
+func (s *Service) reportRulesDegraded(err error) {
+	if s.health == nil {
+		return
+	}
+	_ = s.health.ReportDependency(context.Background(), DependencyRules, HealthDegraded, "the rules process did not answer")
+}
+
+// reportRulesHealthy records that the rules process answered again.
+//
+// Only a real evaluation clears a degraded rules state. A healthy database
+// never does.
+func (s *Service) reportRulesHealthy() {
+	if s.health == nil {
+		return
+	}
+	if s.health.Current().Rules.State == HealthHealthy {
+		return
+	}
+	_ = s.health.ReportDependency(context.Background(), DependencyRules, HealthHealthy, "the rules process answered")
 }
 
 // RepairRules replaces the rules process and proves that the replacement
@@ -544,6 +667,10 @@ func (s *Service) RepairRules(ctx context.Context) error {
 		s.noteEvaluatorFailure(nil)
 		return ErrUnavailable
 	}
+	// The epoch of the outage is read before the repair, so the failure of
+	// this repair is identified with the epoch it happened in.
+	seq := s.observationSeq.Add(1)
+	causal, _ := s.causalEpoch(ctx)
 	repairer, ok := s.evaluator.(RepairableEvaluator)
 	if !ok {
 		// The evaluator cannot replace the process, so the recovery falls
@@ -561,10 +688,10 @@ func (s *Service) RepairRules(ctx context.Context) error {
 		if s.busy(err) || s.cancelled(err) {
 			return err
 		}
-		s.noteEvaluatorFailure(err)
+		s.observeFailure(causal, seq, err)
 		return err
 	}
-	s.noteEvaluatorSuccess()
+	s.observeSuccess(seq)
 	return nil
 }
 
@@ -611,16 +738,12 @@ func probeRulesInput() RulesInput {
 // A failing rules service is a service outage, not an absent opponent, so
 // the failure downgrades the rules dependency and the claim option disappears
 // until a real evaluation succeeds again.
+//
+// The observation is numbered, so the failure follows the same order as the
+// successes: a failure that is older than the newest success is stale and it
+// does not degrade the dependency.
 func (s *Service) noteEvaluatorFailure(err error) {
-	if s.health == nil {
-		return
-	}
-	// A cancelled evaluation is a departing caller, not a broken
-	// dependency. The durable health of the rules dependency stays.
-	if s.cancelled(err) {
-		return
-	}
-	_ = s.health.ReportDependency(context.Background(), DependencyRules, HealthDegraded, "the rules process did not answer")
+	s.observeFailure(0, s.observationSeq.Add(1), err)
 }
 
 // noteEvaluatorSuccess records that the rules process answered again.
@@ -628,13 +751,7 @@ func (s *Service) noteEvaluatorFailure(err error) {
 // Only a real evaluation clears a degraded rules state. A healthy database
 // never does.
 func (s *Service) noteEvaluatorSuccess() {
-	if s.health == nil {
-		return
-	}
-	if s.health.Current().Rules.State == HealthHealthy {
-		return
-	}
-	_ = s.health.ReportDependency(context.Background(), DependencyRules, HealthHealthy, "the rules process answered")
+	s.observeSuccess(s.observationSeq.Add(1))
 }
 
 // healthCheckpointID mints the identity of one durable checkpoint.

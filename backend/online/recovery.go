@@ -125,7 +125,7 @@ func (s *Service) PendingSuspension(ctx context.Context) (*RecoveryBoundary, err
 	if boundaryID == "" {
 		return nil, nil
 	}
-	boundary, err := s.loadRecoveryBoundary(ctx, s.db, boundaryID)
+	boundary, err := loadRecoveryBoundary(ctx, s.db, boundaryID)
 	if err != nil {
 		return nil, err
 	}
@@ -143,19 +143,53 @@ func (s *Service) PendingSuspension(ctx context.Context) (*RecoveryBoundary, err
 // dependency that keeps failing does not plan a second interruption and the
 // clock is refunded once.
 func (s *Service) SuspendForDependency(ctx context.Context, dependency string) error {
-	pending, err := s.PendingSuspension(ctx)
-	if err != nil {
-		return err
-	}
-	if pending != nil {
+	// The interruption of the open failure episode of this instance is
+	// identified by the epoch of its first observation.
+	//
+	// Every failure of the same outage therefore plans the same boundary,
+	// even when a peer recovered it in between: the plan finds the boundary
+	// of the outage and changes nothing. Without it, one broken worker would
+	// plan one interruption for every recovery of the outage, and the clock
+	// of the unfinished matches would be refunded again and again.
+	//
+	// The identity does not declare the dependency healthy. The worker of
+	// this instance may really be broken: the next check of the monitor
+	// proves the current state, and a failure after an answer is a new
+	// outage with a new interruption.
+	// The episode guard is held across the whole decision: the open check,
+	// the plan of the interruption and the binding of its identity. A
+	// success that completes in between may not leave a plan of a closed
+	// episode behind, and a plan that belongs to a closed episode may not
+	// write a boundary of an outage that never happened.
+	//
+	// The lock order is the episode guard and then the gate lock of the
+	// plan. The evaluation path takes the episode guard before it opens
+	// its transaction, so no flow takes the two the other way round.
+	s.episodeMu.Lock()
+	defer s.episodeMu.Unlock()
+	if !s.episodeOpen {
+		// A stale failure whose episode was closed already may not plan a
+		// new interruption.
 		return nil
 	}
 	started, err := s.now(ctx, s.db)
 	if err != nil {
 		return err
 	}
-	_, err = s.PlanSuspension(ctx, started, started)
-	return err
+	boundary, err := s.planSuspension(ctx, s.episodeBoundary, s.episodeEpoch, started, started)
+	if err != nil {
+		return err
+	}
+	// The identity of the episode is the boundary of the outage, so the
+	// next plan of the same outage finds it and changes nothing.
+	if s.episodeBoundary == "" {
+		s.episodeBoundary = boundary.BoundaryID
+	}
+	if s.episodeEpoch == 0 {
+		s.episodeEpoch = boundary.ServiceEpoch
+	}
+	s.episodePlanned = true
+	return nil
 }
 
 // PlanSuspension persists a planned interruption boundary.
@@ -163,6 +197,17 @@ func (s *Service) SuspendForDependency(ctx context.Context, dependency string) e
 // The boundary is written before the service stops, so the interval of the
 // interruption is known exactly when the service comes back.
 func (s *Service) PlanSuspension(ctx context.Context, startedAt, endedAt time.Time) (RecoveryBoundary, error) {
+	// The explicit planning of an administrator is not identified by an
+	// episode: it plans the interruption of the current epoch.
+	return s.planSuspension(ctx, "", 0, startedAt, endedAt)
+}
+
+// planSuspension persists a planned interruption boundary.
+//
+// The identity is a previously bound boundary. Until one is bound, the
+// earliest observed epoch identifies the outage. With neither, the plan
+// belongs to the current epoch.
+func (s *Service) planSuspension(ctx context.Context, identity string, epoch int64, startedAt, endedAt time.Time) (RecoveryBoundary, error) {
 	if startedAt.IsZero() {
 		return RecoveryBoundary{}, ErrInvalidArgument
 	}
@@ -199,15 +244,30 @@ func (s *Service) PlanSuspension(ctx context.Context, startedAt, endedAt time.Ti
 	if pending != "" {
 		// The interruption is already planned. The interval of the first
 		// plan is the timeline of the interruption.
-		return s.loadRecoveryBoundary(ctx, s.db, pending)
+		//
+		// The boundary is read with the transaction that holds the gate
+		// lock. A second connection would wait for a free one, and a pool
+		// without one would block the plan that holds the only connection.
+		return loadRecoveryBoundary(ctx, tx, pending)
 	}
-	// The epoch is read under the gate lock, so the identity of the boundary
-	// belongs to the epoch the outage happened in.
-	epoch, err := currentServiceEpoch(ctx, tx)
+	// The epoch is read under the gate lock, so the interruption of an
+	// outage that was not observed before belongs to the current epoch.
+	current, err := currentServiceEpoch(ctx, tx)
 	if err != nil {
 		return RecoveryBoundary{}, err
 	}
-	boundaryID := plannedSuspensionBoundaryID(epoch)
+	boundaryID := identity
+	if boundaryID == "" {
+		if epoch != 0 {
+			// The identity of the episode is the epoch of its earliest
+			// observation, so the plan of the same outage finds the
+			// boundary of the first plan.
+			boundaryID = plannedSuspensionBoundaryID(epoch)
+		} else {
+			boundaryID = plannedSuspensionBoundaryID(current)
+		}
+	}
+	epoch = current
 	if _, err = tx.Exec(ctx, `INSERT INTO online_suspension_boundaries(boundary_id,kind,started_at,ended_at,service_epoch,interruption_ms) VALUES($1,$2,$3,$4,$5,0)
 ON CONFLICT (boundary_id) DO NOTHING`, boundaryID, string(SuspensionPlanned), startedAt.UTC(), ended, epoch); err != nil {
 		return RecoveryBoundary{}, err
@@ -215,7 +275,7 @@ ON CONFLICT (boundary_id) DO NOTHING`, boundaryID, string(SuspensionPlanned), st
 	if err = tx.Commit(ctx); err != nil {
 		return RecoveryBoundary{}, err
 	}
-	return s.loadRecoveryBoundary(ctx, s.db, boundaryID)
+	return loadRecoveryBoundary(ctx, s.db, boundaryID)
 }
 
 // RecoverFromInterruption runs the canonical recovery.
@@ -274,7 +334,7 @@ func (s *Service) recoverUnderLeadership(ctx context.Context, conn *pgxpool.Conn
 		return RecoveryPlan{}, err
 	}
 	if planned != "" {
-		boundary, err := s.loadRecoveryBoundary(ctx, conn, planned)
+		boundary, err := loadRecoveryBoundary(ctx, conn, planned)
 		if err != nil {
 			return RecoveryPlan{}, err
 		}
@@ -311,7 +371,7 @@ func (s *Service) recoverUnderLeadership(ctx context.Context, conn *pgxpool.Conn
 	}
 	// An already known boundary is a replay of an interruption that was
 	// applied before. It never opens a new epoch.
-	if _, err = s.loadRecoveryBoundary(ctx, conn, boundaryID); err == nil {
+	if _, err = loadRecoveryBoundary(ctx, conn, boundaryID); err == nil {
 		return s.applyBoundary(ctx, conn, boundaryID)
 	} else if !errors.Is(err, ErrNotFound) {
 		return RecoveryPlan{}, err
@@ -374,7 +434,15 @@ func (s *Service) applyBoundary(ctx context.Context, conn *pgxpool.Conn, boundar
 		end = boundary.EndedAt.UTC()
 	}
 	if !end.After(boundary.StartedAt) {
+		// The interruption window ends when the service resumes. A planned
+		// boundary knows its start, and the resume time closes it.
 		end = resumed
+	}
+	if end.Before(boundary.StartedAt) {
+		// The boundary starts after the resume, so the interruption is
+		// empty. The clock of the database may have moved backwards, and
+		// the interval of an interruption is never negative.
+		end = boundary.StartedAt
 	}
 	shift := end.Sub(boundary.StartedAt)
 	plan.InterruptionStart = boundary.StartedAt
@@ -391,7 +459,11 @@ func (s *Service) applyBoundary(ctx context.Context, conn *pgxpool.Conn, boundar
 		return RecoveryPlan{}, err
 	}
 	plan.RevokedLeases = revoked
-	if _, err = tx.Exec(ctx, `UPDATE online_suspension_boundaries SET ended_at=$1,resumed_at=$1,adjusted_at=$1,interruption_ms=$2 WHERE boundary_id=$3`, resumed, shift.Milliseconds(), boundary.BoundaryID); err != nil {
+	// The interval of the interruption is written with its clamped end, so
+	// the row never carries an end that lies before its start. An end that
+	// lies before the resume is left unknown, because the row may not claim
+	// a resume before the interruption ended.
+	if _, err = tx.Exec(ctx, `UPDATE online_suspension_boundaries SET ended_at=CASE WHEN $1::timestamptz <= $2::timestamptz THEN $1::timestamptz ELSE NULL::timestamptz END,resumed_at=$2::timestamptz,adjusted_at=$2::timestamptz,interruption_ms=$3::bigint WHERE boundary_id=$4`, end.UTC(), resumed.UTC(), shift.Milliseconds(), boundary.BoundaryID); err != nil {
 		return RecoveryPlan{}, err
 	}
 	// The epoch of this recovery is completed, so the durable gate opens
@@ -768,11 +840,6 @@ func loadRecoveryBoundary(ctx context.Context, q queryer, boundaryID string) (Re
 	return boundary, nil
 }
 
-// loadRecoveryBoundary reads one persisted interruption from the pool.
-func (s *Service) loadRecoveryBoundary(ctx context.Context, q queryer, boundaryID string) (RecoveryBoundary, error) {
-	return loadRecoveryBoundary(ctx, q, boundaryID)
-}
-
 // suspensionBoundaryID derives the stable identity of an interruption.
 //
 // The identity is derived from the kind and the start of the interruption, so
@@ -783,14 +850,17 @@ func suspensionBoundaryID(kind SuspensionKind, startedAt time.Time) string {
 	return "boundary-" + hex.EncodeToString(sum[:8])
 }
 
-// plannedSuspensionBoundaryID is the identity of the planned boundary of one
-// service epoch.
+// plannedSuspensionBoundaryID is the identity of a planned boundary.
 //
-// The identity is the epoch and not the timestamp. Two instances that detect
-// the same outage would otherwise plan two boundaries, and the service would
-// recover twice: two epochs, two adjustments and two refunds for one outage.
-// The epoch advances with every applied interruption, so one epoch is one
-// outage.
+// The identity is the epoch of the outage the interruption belongs to. Two
+// instances that detect the same outage would otherwise plan two boundaries,
+// and the service would recover twice: two epochs, two adjustments and two
+// refunds for one outage.
+//
+// The identity is not the current epoch of the service. Every applied
+// interruption opens a new epoch, so the current epoch moves with the
+// recovery of the outage and cannot identify the outage that is still open.
+// The caller passes the epoch of the outage it observed.
 //
 // The identity of an unexpected boundary stays derived from its interval: it
 // is not planned, and it is derived when the service comes back.

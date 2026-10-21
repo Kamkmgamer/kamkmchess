@@ -188,13 +188,72 @@ liveness carries the clock of the database and never moves backwards, because
 the record is shared by every instance of the service and the clock of one
 host may neither future-date it nor regress it.
 
-One outage is one interruption. The identity of a planned boundary is its
-service epoch, not the moment it was planned, and the epoch is read under the
-exclusive gate lock. Two instances that detect the same broken worker at the
-same time therefore plan the **same** boundary, and the insert of the second
-one changes nothing: one boundary, one epoch, one adjustment and one refund
-for one outage. The epoch advances with every applied interruption, so one
-epoch is one outage.
+One outage is one interruption. The interruption of an outage is identified by
+the **failure episode** of the instance that saw it: the epoch of its
+earliest observation. The identity of the episode does not change while the
+episode is open, so every failure of the same episode plans the same
+boundary, and the plan of a boundary that exists changes nothing. The episode
+ends when the dependency of that instance answers again, so a failure after an
+answer is a new outage with a new interruption. The identity is not the epoch
+alone: every applied interruption opens a new epoch, so the epoch moves with
+the recovery of the outage and cannot identify the outage that is still open.
+
+The observations are numbered, and two watermarks order them: the newest
+failure and the newest success. A success that is not newer than the newest
+failure answered before that failure, so it neither closes the episode nor
+reports the dependency as healthy — a healthy report would hide the
+dependency that is still broken. A failure that is older than the newest
+success is stale, so it neither opens an episode nor degrades the dependency.
+The transitions are serialized, and the ordered decision, the update of the
+episode and the report of the dependency happen in **one** critical section,
+so a success that completes in between can neither hide the failure nor be
+hidden by it.
+
+The identity of the episode is fixed by the first plan of the outage. The
+identity of a planned interruption is its **boundary**, so the next plan of the
+same outage finds it and changes nothing. When the epoch of the earliest
+observation could not be read, the plan uses the epoch of the plan itself and
+the episode keeps the boundary that the plan wrote.
+
+An interruption of a dependency is planned only for an open episode of the
+instance that observed it. A stale failure whose episode was closed already
+may not plan a new interruption: the plan of the current epoch would be an
+outage that never happened. The explicit planning of an administrator is not
+identified by an episode, so it always plans the interruption of the current
+epoch.
+
+The episode guard is held across the whole decision of a plan: the open
+check, the plan of the interruption and the binding of its identity. A
+success that completes in between may not leave a plan of a closed episode
+behind, and a plan that belongs to a closed episode may not write a boundary
+of an outage that never happened. The lock order is the episode guard and
+then the gate lock of the plan. The evaluation path takes the episode guard
+before it opens its transaction, so no flow takes the two the other way
+round.
+
+A busy process and a departing caller are not broken dependencies, so they
+open no episode and they leave the durable health alone.
+
+The pending interruption is read inside the same transaction, under the gate
+lock, so the plan never needs a second connection of the pool while it holds
+the lock.
+
+An observation of a failure that arrives after the recovery of a peer plans
+nothing: the boundary of the outage exists, and the plan finds it. The
+identity does **not** declare the dependency healthy. The worker of that
+instance may really be broken: the next check of the monitor proves the
+current state, and the instance refuses its own mutations while its worker
+cannot answer. The explicit planning of an administrator is not identified by
+an episode, so it always plans the interruption of the current epoch.
+
+Every instance keeps its own health reporter, but the durable checkpoints are
+written for the dependency, not for the instance, and the shared state reads
+the newest checkpoint of every dependency. A healthy instance therefore
+overwrites the degraded checkpoint of a broken one, so the shared state is not
+the evidence that every instance is healthy, and the recovery of a planned
+boundary is not gated on it. The evidence that a dependency is broken is the
+local health of the instance that saw it, and that instance keeps it until its
+own worker answers again.
 
 ## The runner fence
 

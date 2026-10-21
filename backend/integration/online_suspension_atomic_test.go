@@ -2,7 +2,9 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -61,6 +63,27 @@ func TestOnlinePlanDoesNotAddASecondPendingBoundaryForOneOutage(t *testing.T) {
 	}
 }
 
+// atomicSwitchableEvaluator is the rules process of the fixture. It is
+// healthy until it is broken.
+type atomicSwitchableEvaluator struct {
+	moveEvaluator
+	broken atomic.Bool
+}
+
+func (e *atomicSwitchableEvaluator) ValidateSetup(ctx context.Context, input online.RulesInput) error {
+	if e.broken.Load() {
+		return errors.New("the rules process is down")
+	}
+	return e.moveEvaluator.ValidateSetup(ctx, input)
+}
+
+func (e *atomicSwitchableEvaluator) Evaluate(ctx context.Context, input online.RulesInput) (online.Candidate, error) {
+	if e.broken.Load() {
+		return online.Candidate{}, errors.New("the rules process is down")
+	}
+	return e.moveEvaluator.Evaluate(ctx, input)
+}
+
 // TestOnlineTwoInstancesPlanOneInterruptionForOneOutage covers the race of
 // the planned interruption.
 //
@@ -69,7 +92,8 @@ func TestOnlinePlanDoesNotAddASecondPendingBoundaryForOneOutage(t *testing.T) {
 // exists, and the recovery of that boundary opens one epoch, publishes one
 // adjustment and refunds the clock once.
 func TestOnlineTwoInstancesPlanOneInterruptionForOneOutage(t *testing.T) {
-	fixture := newPresenceFixture(t)
+	evaluator := &atomicSwitchableEvaluator{}
+	fixture := newPresenceFixtureWith(t, evaluator)
 	ctx := context.Background()
 	const matchID = "match-atomic-interruption"
 	createAgentMatch(t, fixture.service, matchID, 20*60*1000)
@@ -80,11 +104,21 @@ func TestOnlineTwoInstancesPlanOneInterruptionForOneOutage(t *testing.T) {
 	}
 	beforeDeadline := *before.Clock.DeadlineAt
 
-	second, err := online.Open(ctx, fixture.pool, moveEvaluator{}, online.WithHealthReporter(fixture.health))
+	secondEvaluator := &atomicSwitchableEvaluator{}
+	second, err := online.Open(ctx, fixture.pool, secondEvaluator, online.WithHealthReporter(fixture.health))
 	if err != nil {
 		t.Fatalf("open the second instance: %v", err)
 	}
 	instances := []*online.Service{fixture.service, second}
+	// The rules process of both instances is broken, so both observed the
+	// failure of the outage and the interruption belongs to their episode.
+	evaluator.broken.Store(true)
+	secondEvaluator.broken.Store(true)
+	for _, instance := range instances {
+		if err = instance.ProbeRules(ctx); err == nil {
+			t.Fatal("the probe of a broken worker answered")
+		}
+	}
 
 	// The race is repeated, because the window between the check and the
 	// insert is small.
