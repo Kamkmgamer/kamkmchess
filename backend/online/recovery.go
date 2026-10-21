@@ -169,11 +169,6 @@ func (s *Service) PlanSuspension(ctx context.Context, startedAt, endedAt time.Ti
 	if !endedAt.IsZero() && endedAt.Before(startedAt) {
 		return RecoveryBoundary{}, ErrInvalidArgument
 	}
-	boundaryID := suspensionBoundaryID(SuspensionPlanned, startedAt)
-	epoch, err := currentServiceEpoch(ctx, s.db)
-	if err != nil {
-		return RecoveryBoundary{}, err
-	}
 	var ended any
 	if !endedAt.IsZero() {
 		ended = endedAt.UTC()
@@ -189,6 +184,13 @@ func (s *Service) PlanSuspension(ctx context.Context, startedAt, endedAt time.Ti
 	if err = LockGate(ctx, tx); err != nil {
 		return RecoveryBoundary{}, err
 	}
+	// The epoch is read under the gate lock, so the identity of the boundary
+	// belongs to the epoch the outage happened in.
+	epoch, err := currentServiceEpoch(ctx, tx)
+	if err != nil {
+		return RecoveryBoundary{}, err
+	}
+	boundaryID := plannedSuspensionBoundaryID(epoch)
 	if _, err = tx.Exec(ctx, `INSERT INTO online_suspension_boundaries(boundary_id,kind,started_at,ended_at,service_epoch,interruption_ms) VALUES($1,$2,$3,$4,$5,0)
 ON CONFLICT (boundary_id) DO NOTHING`, boundaryID, string(SuspensionPlanned), startedAt.UTC(), ended, epoch); err != nil {
 		return RecoveryBoundary{}, err
@@ -761,5 +763,21 @@ func (s *Service) loadRecoveryBoundary(ctx context.Context, q queryer, boundaryI
 // adjusts a deadline twice.
 func suspensionBoundaryID(kind SuspensionKind, startedAt time.Time) string {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", kind, startedAt.UTC().UnixNano())))
+	return "boundary-" + hex.EncodeToString(sum[:8])
+}
+
+// plannedSuspensionBoundaryID is the identity of the planned boundary of one
+// service epoch.
+//
+// The identity is the epoch and not the timestamp. Two instances that detect
+// the same outage would otherwise plan two boundaries, and the service would
+// recover twice: two epochs, two adjustments and two refunds for one outage.
+// The epoch advances with every applied interruption, so one epoch is one
+// outage.
+//
+// The identity of an unexpected boundary stays derived from its interval: it
+// is not planned, and it is derived when the service comes back.
+func plannedSuspensionBoundaryID(epoch int64) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", SuspensionPlanned, epoch)))
 	return "boundary-" + hex.EncodeToString(sum[:8])
 }
