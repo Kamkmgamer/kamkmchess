@@ -1494,6 +1494,19 @@ func TestPostgresFriendTheSurvivorOfARematchRecoversItsOwnNewSeatCredential(t *t
 	if principal.MatchID != newMatchID || principal.Participant.ID != acceptorID {
 		t.Fatalf("the recovered principal = %+v", principal)
 	}
+	// The game of the survivor stays live: the removal of a participant
+	// anonymizes the seat of that participant and keeps the shared game, so
+	// the new match of the survivor is still active and has no result.
+	var (
+		status   string
+		noResult bool
+	)
+	if err = fixture.pool.QueryRow(ctx, `SELECT status, result IS NULL FROM online_matches WHERE match_id=$1`, newMatchID).Scan(&status, &noResult); err != nil {
+		t.Fatal(err)
+	}
+	if status != "active" || !noResult {
+		t.Fatalf("the game of the survivor = %q with a result %v, want an active game without a result", status, !noResult)
+	}
 	// No new match and no reallocation.
 	var matches int
 	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_matches`).Scan(&matches); err != nil {

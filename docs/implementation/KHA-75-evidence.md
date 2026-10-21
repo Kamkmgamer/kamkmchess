@@ -266,26 +266,42 @@ Fixture: the local trust-authenticated PostgreSQL of the workspace
 every migration, so the migration set is exercised as well.
 
 The current results were executed on the assembled revision of this round:
-the parent root `496235d` ("Record the probe result of the assembled schema")
-plus the commits of this ticket on top of it. The run below is the current
-one; the earlier runs of the same filter are **historical** and describe the
-older revisions of the branch, before the round 6 corrections.
+the parent root `dcd89f6` ("Capture emitted runner requests and match Go
+identity byte limits") plus the commits of this ticket on top of it.
 
 ```
-go test ./backend/integration -run 'Friend|Invite|Rematch' -count=1
-ok  	github.com/Kamkmgamer/kamkmchess/backend/integration	156.903s
+go test ./backend/integration -run 'TestPostgresFriendRemoved|…DeadRematchOffer|…SurvivingGuest|…RestoredSeatIdentity|…LegacyAcceptingOffer|…Anonymous|…RemovalIsOrdered|…AnAccountNever|…TheRestart|…TheSurvivorOfARematch|…ARemovedAcceptor' -count=1 -v
+19/19 PASS
+ok  	github.com/Kamkmgamer/kamkmchess/backend/integration	58.028s
+exit=0
+
+go test ./backend/integration -run 'TestPostgresFriendMutualRematch|…RematchGivesBothGuests|…GuestRematch|…ConcurrentRematch|…RematchAcceptance|…LostAnswer|…AcceptanceCommits|…HTTPRoutes' -count=1 -v
+10/10 PASS
+ok  	github.com/Kamkmgamer/kamkmchess/backend/integration	19.403s
 exit=0
 
 go test ./backend/invite/... ./backend/httpapi/... -count=1
-ok  	github.com/Kamkmgamer/kamkmchess/backend/invite	0.119s
-ok  	github.com/Kamkmgamer/kamkmchess/backend/httpapi	7.086s
+ok  	github.com/Kamkmgamer/kamkmchess/backend/invite	0.097s
+ok  	github.com/Kamkmgamer/kamkmchess/backend/httpapi	6.971s
 exit=0
 
 go vet ./backend/invite/... ./backend/httpapi/... ./backend/integration/...
 exit=0
 ```
 
-The focused regressions of this round, one by one:
+The **whole** filter `Friend|Invite|Rematch` and the whole Go suite are run by
+the integrator on the assembled tree, because the host is shared. The earlier
+run of that filter, on the parent root `496235d` with the commits of this
+ticket on top of it, is **historical**:
+
+```
+go test ./backend/integration -run 'Friend|Invite|Rematch' -count=1
+ok  	github.com/Kamkmgamer/kamkmchess/backend/integration	156.903s
+exit=0
+```
+
+The focused regressions of this round, one by one (the current revision, after
+the round 7 correction):
 
 ```
 --- PASS: TestPostgresFriendSurvivingGuestKeepsItsOwnSeatCredential
@@ -673,6 +689,10 @@ outcome:
 
 The review is `D:/projects/kamkmchess/.scratch/online-swarm/matching-review-r5.md`.
 
+The dispositions below are the ones of that round. Where the round 6 and the
+round 7 rounds changed the behaviour, the later row is the current one and
+the row of this round is **historical**.
+
 | Finding | Disposition |
 | --- | --- |
 | **R5-01** the anonymized participant bypasses the rematch fence | **fixed.** A participant that carries the anonymized sentinel is a removed participant, and the removal ledger of the match is the match scoped record of a removal. The proposal, the acceptance and the credential recovery are refused with `invite.ErrRemoved`. |
@@ -682,7 +702,7 @@ The review is `D:/projects/kamkmchess/.scratch/online-swarm/matching-review-r5.m
 | **R5-05** the debug logging of the invitation id | **not ours.** The workspace worker owns the production composition. |
 | **R5-06** the rematch regression never exercises a rematch acceptance | **fixed.** The regression now asserts the refusal of the proposal instead of tolerating both outcomes, and three new regressions exercise the acceptance of a pending offer whose proposer was removed, the resume of an acceptance whose inviter was removed, and the cancellation of a removed participant. |
 | **R5-07** the auxiliary sanitation does not run for a removed guest | **not ours.** The privacy worker owns the sanitation of the guest rows. |
-| **R5-08** a dead rematch offer stays published | **fixed.** The proposal of a match whose participant was removed is refused, the acceptance of such an offer is refused, and the pending read retires the dead offer instead of publishing it. |
+| **R5-08** a dead rematch offer stays published | **fixed.** The proposal of a match whose participant was removed is refused, the acceptance of such an offer is refused, and the pending read does not publish the dead offer. The read is a **projection** since the round 6 correction: it never writes it, so a `GET` never changes the personal row of a removed participant (the round 6 finding R6-03). |
 | **R5-09** the interface can propose a rematch but never accept one | **not ours.** The workspace worker owns the interface. |
 
 The prior finding **F-1** is upheld as **not a defect**: the acceptance key is
@@ -693,6 +713,9 @@ changed.
 ## The findings of the round 6 review
 
 The review is `D:/projects/kamkmchess/.scratch/online-swarm/matching-review-r6.md`.
+
+The dispositions below are the ones of that round; the round 7 round changed
+the recovery of a rematch, so the row of R7-02 is the current one.
 
 | Finding | Disposition |
 | --- | --- |
@@ -761,8 +784,16 @@ it has to read:
 
 ## Known limitations
 
-1. The friend client is not composed into the application yet. That is the
-   work of the workspace worker; this ticket owns the typed client only.
+The list describes the state of the source at this revision. The entries that
+an earlier revision of this document carried are marked as superseded, and the
+history of the runs is kept below under its own heading.
+
+1. The friend client is composed into the application: the composition builds
+   the friend surface and the browser owned secret store
+   (`src/online/composition.ts`). What is still missing is the *product*
+   half of the rematch: the interface offers a rematch but never shows the
+   pending offer of the opponent and never accepts one (the round 5 finding
+   R5-09, owned by the workspace worker).
 2. A guest that lost the answer of an **invitation** acceptance still has to
    ask for the replacement explicitly with `rotateCredential`, because the
    service cannot tell a caller that holds no credential from one that holds
@@ -789,28 +820,37 @@ it has to read:
    gate of the foundation covers the friend path as well, as long as the gate
    sits inside `createMatchInTx` and not only inside `CreateAllocatedMatch`.
    The foundation worker owns that file; this ticket does not touch it.
-8. The refusal of a removed participant is conservative. A resumed
-   acceptance whose invitation names a removed participant is refused as
-   well, even though the recovery itself would not write the identifier of the
-   removed subject again. The refusal is the fail closed answer, and the
-   privacy sanitation of that invitation would break the recovery anyway.
-9. The **canonical writer** of the service (`requireParticipants` in
-   `backend/online/allocation_writer.go`) asks the same question about the
-   same identifier and has the same blind spot: it reads the participant of a
-   seat and asks the removal tables about it, so a seat that the sanitation
-   replaced with the anonymized sentinel passes its check. The friend surface
-   closes the hole for its own writes, and the foundation worker owns the
-   writer. The friend surface keeps its own copy of the sentinel constant
-   until the shared removal vocabulary owns one; the two must name the same
-   string.
-10. The pending read of a rematch offer retires a dead offer, so a read path
-    writes once for a dead offer and never again. The write touches only a row
-    that names nobody any more, and it takes no account scope lock, so it
-    cannot invert the order of the removal.
+8. **Superseded.** An earlier revision refused the resume of a surviving
+   acceptor as well, because the resume rechecked every participant of the
+   match. The resume of an invitation now rechecks the **acceptor** alone
+   (the round 6 finding R6-02) and the duplicate acceptance of a rematch
+   rechecks the **accepter** alone (the round 7 finding R7-02), so the
+   removal of the opponent does not take the seat of the survivor away. The
+   conservative refusal is gone.
+9. **Superseded.** The canonical writer of the service
+   (`requireParticipants` in `backend/online/allocation_writer.go`) refuses the
+   anonymized sentinel now, so a seat that the sanitation replaced cannot be
+   seated again, and the friend surface and the writer share the one
+   sentinel of the removal vocabulary (`subject.AnonymizedID`). The blind spot
+   this entry described is closed in the foundation.
+10. **Superseded.** The pending read of a rematch offer is a **projection**
+    now: it never writes, so a `GET` never changes the personal row of a
+    removed participant, and it never raises a database error for the offer of
+    an older build (the round 6 finding R6-03 and R6-04).
+11. The removal of the **accepter** of an accepted rematch offer still
+    aborts the removal with a check violation, because the shape of the offer
+    requires the record of the accepter. The privacy worker owns that
+    sanitation and its candidate keeps the shape of the offer; the friend
+    surface does not write that state, and the regression of the removed
+    accepter records the removal of the accepter directly.
 
 ## Status
 
 The implementation, the HTTP surface, the browser contract, the regressions
-and the comments of the migration are in the branch of this ticket. The
-acceptance scenarios of KHA-75 are covered by the recorded runs. Nothing
-here claims a deployment, a native acceptance or a public launch.
+and the comments of the migration are in the branch of this ticket.
+
+The acceptance scenarios of KHA-75 are **not run** in
+`docs/spec/online-play-acceptance.json`: the runs recorded here are the
+regressions of this ticket, and the acceptance matrix stays open until the
+owner records the evidence. Nothing here claims a deployment, a native
+acceptance or a public launch.
