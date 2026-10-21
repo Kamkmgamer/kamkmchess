@@ -253,12 +253,21 @@ func (h *HealthReporter) RefreshLiveness(ctx context.Context) error {
 	if !h.OverallHealthy() {
 		return nil
 	}
-	return h.refreshLiveness(ctx, time.Now().UTC())
+	// The database clock is authoritative. The liveness row is shared by
+	// every instance of the service, so the clock of one host may neither
+	// future-date it nor regress it.
+	var at time.Time
+	if err := h.db.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&at); err != nil {
+		return err
+	}
+	return h.refreshLiveness(ctx, at.UTC())
 }
 
 func (h *HealthReporter) refreshLiveness(ctx context.Context, at time.Time) error {
+	// The liveness never moves backwards. The record is read by the recovery
+	// of every instance, so a reader with a skewed clock may not regress it.
 	_, err := h.db.Exec(ctx, `INSERT INTO online_service_liveness(singleton,last_seen_at,updated_at) VALUES(true,$1,$1)
-ON CONFLICT (singleton) DO UPDATE SET last_seen_at=EXCLUDED.last_seen_at,updated_at=EXCLUDED.updated_at`, at.UTC())
+ON CONFLICT (singleton) DO UPDATE SET last_seen_at=GREATEST(online_service_liveness.last_seen_at,EXCLUDED.last_seen_at),updated_at=GREATEST(online_service_liveness.updated_at,EXCLUDED.updated_at)`, at.UTC())
 	return err
 }
 

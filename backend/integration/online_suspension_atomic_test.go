@@ -16,6 +16,51 @@ import (
 // service epochs, publish two adjustments and refund the clock of the
 // unfinished matches twice.
 
+// TestOnlinePlanDoesNotAddASecondPendingBoundaryForOneOutage covers the
+// overlapping boundary of one outage.
+//
+// A recovery opens the new epoch before it applies the boundary, so there is
+// a window in which the epoch moved and the boundary of the outage is still
+// pending. A plan in that window must find the pending boundary and change
+// nothing: one outage is one pending boundary, and the recovery applies it
+// once.
+func TestOnlinePlanDoesNotAddASecondPendingBoundaryForOneOutage(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	// The boundary of the outage is planned and still pending.
+	started := fixture.clock.Now()
+	if _, err := fixture.service.PlanSuspension(ctx, started, started); err != nil {
+		t.Fatalf("plan the interruption: %v", err)
+	}
+	// The recovery opened the new epoch, but the boundary is not applied
+	// yet.
+	if _, err := fixture.pool.Exec(ctx, `INSERT INTO online_service_epochs(epoch,started_at,note) VALUES(2,clock_timestamp(),'the recovery of the outage') ON CONFLICT (epoch) DO NOTHING`); err != nil {
+		t.Fatalf("open the epoch of the recovery: %v", err)
+	}
+	// A plan in that window finds the pending boundary.
+	if _, err := fixture.service.PlanSuspension(ctx, started, started); err != nil {
+		t.Fatalf("plan the interruption again: %v", err)
+	}
+	var pending int
+	if err := fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_suspension_boundaries WHERE adjusted_at IS NULL`).Scan(&pending); err != nil {
+		t.Fatal(err)
+	}
+	if pending != 1 {
+		t.Fatalf("pending boundaries = %d for one outage, want exactly 1", pending)
+	}
+	// The boundary of the outage is still the one of the first plan.
+	var boundaryID string
+	var startedAt time.Time
+	if err := fixture.pool.QueryRow(ctx, `SELECT boundary_id,started_at FROM online_suspension_boundaries WHERE adjusted_at IS NULL`).Scan(&boundaryID, &startedAt); err != nil {
+		t.Fatal(err)
+	}
+	// The database keeps microseconds, so the interval is compared with that
+	// resolution.
+	if delta := startedAt.UTC().Sub(started.UTC()); delta > time.Millisecond || delta < -time.Millisecond {
+		t.Fatalf("the pending boundary started at %v, want the interval of the first plan %v", startedAt.UTC(), started.UTC())
+	}
+}
+
 // TestOnlineTwoInstancesPlanOneInterruptionForOneOutage covers the race of
 // the planned interruption.
 //
@@ -50,16 +95,24 @@ func TestOnlineTwoInstancesPlanOneInterruptionForOneOutage(t *testing.T) {
 		}
 		start := make(chan struct{})
 		var group sync.WaitGroup
+		failures := make(chan error, len(instances))
 		for _, instance := range instances {
 			group.Add(1)
 			go func(s *online.Service) {
 				defer group.Done()
 				<-start
-				_ = s.SuspendForDependency(ctx, online.DependencyRules)
+				failures <- s.SuspendForDependency(ctx, online.DependencyRules)
 			}(instance)
 		}
 		close(start)
 		group.Wait()
+		close(failures)
+		// A planner that failed must not make the count below look right.
+		for failure := range failures {
+			if failure != nil {
+				t.Fatalf("the planner failed: %v", failure)
+			}
+		}
 		var planned int
 		if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_suspension_boundaries WHERE kind='planned'`).Scan(&planned); err != nil {
 			t.Fatal(err)

@@ -184,6 +184,23 @@ func (s *Service) PlanSuspension(ctx context.Context, startedAt, endedAt time.Ti
 	if err = LockGate(ctx, tx); err != nil {
 		return RecoveryBoundary{}, err
 	}
+	// The pending interruption is read inside the transaction, under the
+	// gate lock.
+	//
+	// A recovery opens the new epoch before it applies the boundary, so
+	// there is a window in which the epoch moved and the boundary of the
+	// outage is still pending. Two instances that detect the same outage
+	// and a plan in that window therefore find the boundary of the outage
+	// and change nothing: one outage is one pending boundary.
+	pending, err := s.pendingPlannedBoundary(ctx, tx)
+	if err != nil {
+		return RecoveryBoundary{}, err
+	}
+	if pending != "" {
+		// The interruption is already planned. The interval of the first
+		// plan is the timeline of the interruption.
+		return s.loadRecoveryBoundary(ctx, s.db, pending)
+	}
 	// The epoch is read under the gate lock, so the identity of the boundary
 	// belongs to the epoch the outage happened in.
 	epoch, err := currentServiceEpoch(ctx, tx)

@@ -183,7 +183,10 @@ would otherwise derive an unexpected interruption out of a service that never
 stopped, open a new epoch, refund the clock of every unfinished match and
 fence the runner leases of the peers. The refresh happens only while every
 dependency is healthy, so a service that cannot serve keeps the stale
-liveness — that record is how the recovery locates the interruption.
+liveness — that record is how the recovery locates the interruption. The
+liveness carries the clock of the database and never moves backwards, because
+the record is shared by every instance of the service and the clock of one
+host may neither future-date it nor regress it.
 
 One outage is one interruption. The identity of a planned boundary is its
 service epoch, not the moment it was planned, and the epoch is read under the

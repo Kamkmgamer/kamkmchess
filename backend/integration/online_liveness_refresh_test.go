@@ -63,6 +63,29 @@ func TestOnlineHealthyMonitorRefreshesTheDurableLiveness(t *testing.T) {
 	if age := time.Since(refreshed); age > online.ServiceLivenessTTL {
 		t.Fatalf("the liveness is %s old after the refresh, want at most the TTL %s", age, online.ServiceLivenessTTL)
 	}
+	// The liveness carries the clock of the database, not the clock of the
+	// host. The record is shared by every instance, so a host clock may
+	// neither future-date it nor regress it.
+	var databaseNow time.Time
+	if err = fixture.pool.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&databaseNow); err != nil {
+		t.Fatal(err)
+	}
+	if delta := refreshed.Sub(databaseNow.UTC()); delta > 2*time.Second || delta < -2*time.Second {
+		t.Fatalf("the liveness is %v away from the clock of the database, want the database time", delta)
+	}
+	// A record that is ahead of the database clock is not moved backwards.
+	if _, err = fixture.pool.Exec(ctx, `UPDATE online_service_liveness SET last_seen_at=clock_timestamp()+interval '10 minutes' WHERE singleton`); err != nil {
+		t.Fatalf("move the liveness ahead: %v", err)
+	}
+	// The monitor runs again over the record that is ahead.
+	time.Sleep(300 * time.Millisecond)
+	var ahead time.Time
+	if err = fixture.pool.QueryRow(ctx, `SELECT last_seen_at FROM online_service_liveness WHERE singleton`).Scan(&ahead); err != nil {
+		t.Fatal(err)
+	}
+	if !ahead.After(databaseNow.UTC().Add(time.Minute)) {
+		t.Fatalf("the liveness = %v, want the record that was ahead of the database clock", ahead.UTC())
+	}
 
 	// The runner lease of a peer survives the restart of a healthy instance.
 	if _, err = fixture.pool.Exec(ctx, `INSERT INTO online_runner_leases(lease_id,match_id,seat,control_epoch,generation,runner_id,status,acquired_at,expires_at,runner_epoch)
