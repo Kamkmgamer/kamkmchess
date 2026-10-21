@@ -4,7 +4,7 @@
 // a database, a network service or a credential.
 
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
@@ -16,7 +16,39 @@ import { mapScenarios, parseGoTestJson } from './integration-suite.mjs';
 import { percentiles } from './load-suite.mjs';
 import { auditServiceWiring, switchDefaultState } from './service-wiring.mjs';
 import { buildProbes, evaluateProbe } from '../../deploy/runtime-grants-probe.mjs';
-import { parseMigrationGrants, parsePolicy } from '../../deploy/runtime-grants.mjs';
+import { auditGrants, parseMigrationFunctions, parseMigrationGrants, parseMigrationTables, parsePolicy, scanGoUsage } from '../../deploy/runtime-grants.mjs';
+
+/**
+ * Runs the grant audit against a throwaway tree.
+ * @param {string} root
+ */
+async function auditGrantsFor(root) {
+  const policy = parsePolicy({ privileges: {}, functions: {} });
+  const tables = await parseMigrationTablesOf(root);
+  return { findings: auditGrants({ policy, tables, usage: new Map(), functions: await functionsOf(root) }) };
+}
+
+/**
+ * @param {string} root
+ * @returns {string[]}
+ */
+async function parseMigrationTablesOf(root) {
+  const directory = join(root, 'backend', 'migrations');
+  const tables = [];
+  for (const name of ['0001.sql']) {
+    const text = await readFile(join(directory, name), 'utf8');
+    tables.push(...parseMigrationTables(text));
+  }
+  return tables;
+}
+
+/**
+ * @param {string} root
+ */
+async function functionsOf(root) {
+  const text = await readFile(join(root, 'backend', 'migrations', '0001.sql'), 'utf8');
+  return parseMigrationFunctions(text);
+}
 
 const trees = [];
 
@@ -303,4 +335,27 @@ test('a delete the policy forbids must fail with a privilege refusal', () => {
   assert.equal(evaluateProbe(probe, { ok: false, stderr: 'ERROR: permission denied for table x' }).passed, true);
   assert.equal(evaluateProbe(probe, { ok: false, stderr: 'ERROR: relation does not exist' }).passed, false);
   assert.equal(evaluateProbe(probe, { ok: true, stderr: '' }).passed, false);
+});
+
+test('a plain function that nobody reviewed is a blocker, a trigger function is not', async () => {
+  const root = await makeTree({
+    'backend/migrations/0001.sql': [
+      'CREATE TABLE IF NOT EXISTS games (id text primary key);',
+      'CREATE OR REPLACE FUNCTION online_guard_games_update() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$;',
+      'CREATE OR REPLACE FUNCTION online_removed_account_request(p_owner_id text) RETURNS boolean AS $$ BEGIN RETURN true; END $$;',
+    ].join('\n'),
+    'backend/service.go': 'package service\n',
+  });
+  const report = await auditGrantsFor(root);
+  const codes = report.findings.map((finding) => finding.code);
+  // The trigger function cannot be called directly, so it is only a note.
+  assert.ok(codes.includes('trigger-functions-need-no-grant'));
+  // The plain function can be called directly and is not covered.
+  assert.ok(codes.includes('function-public-execute'));
+});
+
+test('an update with a table alias is still a table update', () => {
+  const usage = scanGoUsage('UPDATE online_queue_allocations a SET status = $1 WHERE id = $2');
+  assert.ok(usage.has('online_queue_allocations'));
+  assert.ok(usage.get('online_queue_allocations').has('UPDATE'));
 });

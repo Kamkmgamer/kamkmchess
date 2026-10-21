@@ -98,6 +98,24 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
             revokes.append('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ' + role + ';')
             revokes.append('REVOKE ALL ON SCHEMA public FROM ' + role + ';')
         sql('\n'.join(revokes))
+    # A function that is not a trigger function can be called directly, and
+    # PostgreSQL grants EXECUTE on it to PUBLIC. The deployment revokes that
+    # and grants EXECUTE to the runtime role only.
+    functions = sorted(policy.get('functions', {}))
+    if functions:
+        names = ', '.join("'" + name + "'" for name in functions)
+        sql("""
+DO $kamkmchess$
+DECLARE entry record;
+BEGIN
+  FOR entry IN SELECT p.oid::regprocedure::text AS signature
+               FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+               WHERE n.nspname = 'public' AND p.proname IN (""" + names + """) LOOP
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', entry.signature);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO kamkmchess_runtime', entry.signature);
+  END LOOP;
+END
+$kamkmchess$;""")
     backup_env = Path('backup.env')
     if 'DATABASE_URL=' not in backup_env.read_text():
         settings = dict(line.split('=', 1) for line in Path('postgres.env').read_text().splitlines())

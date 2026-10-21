@@ -389,6 +389,43 @@ export async function runProbe(options) {
       : `${unexpected.join(', ')} still hold(s) a privilege on the application tables`,
   });
 
+  // A function that is not a trigger function must not be callable by PUBLIC.
+  // PostgreSQL grants EXECUTE on a new function to PUBLIC, so the deployment
+  // has to take it away again.
+  const functionRows = await postgres.query(`
+    SELECT p.proname,
+           has_function_privilege('PUBLIC', p.oid, 'EXECUTE') AS public_execute,
+           p.prorettype::regtype::text AS returns
+    FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE n.nspname = '${schema}' AND p.proname NOT LIKE 'online\\_guard%'
+      AND p.proname NOT LIKE 'online\\_reject%';`);
+  /** @type {string[]} */
+  const publicCallable = [];
+  /** @type {string[]} */
+  const unreviewed = [];
+  const policyFunctions = Object.keys(policy.functions ?? {});
+  for (const line of functionRows.stdout.split(/\r?\n/)) {
+    const [name, publicExecute, returns] = line.split('|').map((part) => part.trim());
+    if (!name) continue;
+    if (returns === 'trigger') continue;
+    if (publicExecute === 'true') publicCallable.push(name);
+    if (!policyFunctions.includes(name)) unreviewed.push(name);
+  }
+  results.push({
+    id: 'public-cannot-call-plain-functions',
+    passed: publicCallable.length === 0,
+    detail: publicCallable.length === 0
+      ? 'PUBLIC cannot execute a plain function directly'
+      : `PUBLIC can still execute ${publicCallable.join(', ')}`,
+  });
+  results.push({
+    id: 'every-plain-function-is-reviewed',
+    passed: unreviewed.length === 0,
+    detail: unreviewed.length === 0
+      ? 'every plain function is covered by the policy'
+      : `the policy does not cover ${unreviewed.join(', ')}`,
+  });
+
   for (const statement of cleanup) {
     await postgres.query(statement);
   }

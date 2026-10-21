@@ -114,15 +114,24 @@ export function parseMigrationSequences(sql) {
 
 /**
  * Returns the functions a migration creates.
+ *
+ * A trigger function can only run as a trigger, so PostgreSQL refuses a direct
+ * call. A plain function can be called by anyone who holds EXECUTE, and
+ * PostgreSQL grants EXECUTE on a new function to PUBLIC.
  * @param {string} sql
- * @returns {string[]}
+ * @returns {{name: string, trigger: boolean}[]}
  */
 export function parseMigrationFunctions(sql) {
-  const functions = new Set();
-  for (const match of sql.matchAll(/CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) {
-    functions.add(match[1].toLowerCase());
+  /** @type {{name: string, trigger: boolean}[]} */
+  const functions = [];
+  const pattern = /CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([A-Za-z_][A-Za-z0-9_]*)\s*\([^)]*\)\s*RETURNS\s+([A-Za-z_][A-Za-z0-9_]*)/gi;
+  for (const match of sql.matchAll(pattern)) {
+    functions.push({
+      name: (match[1] ?? '').toLowerCase(),
+      trigger: (match[2] ?? '').toLowerCase() === 'trigger',
+    });
   }
-  return [...functions].sort();
+  return functions;
 }
 
 /**
@@ -191,7 +200,7 @@ export function scanGoUsage(source) {
   };
   for (const match of text.matchAll(/INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) record(match[1], 'INSERT');
   for (const match of text.matchAll(/DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) record(match[1], 'DELETE');
-  for (const match of text.matchAll(/UPDATE\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)\s+SET\b/gi)) record(match[1], 'UPDATE');
+  for (const match of text.matchAll(/UPDATE\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?[A-Za-z_][A-Za-z0-9_]*)?\s+SET\b/gi)) record(match[1], 'UPDATE');
   for (const match of text.matchAll(/\bFROM\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)\b/gi)) record(match[1], 'SELECT');
   return usage;
 }
@@ -220,6 +229,7 @@ export function parsePolicy(raw) {
   return {
     role: String(raw.role ?? 'kamkmchess_runtime'),
     unusedRoles: Array.isArray(raw.unusedRoles) ? raw.unusedRoles.map((name) => String(name)) : [],
+    functions: raw.functions && typeof raw.functions === 'object' ? raw.functions : {},
     schema: String(raw.schema ?? 'public'),
     privileges,
     rationale: raw.rationale ?? {},
@@ -270,12 +280,31 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
   }
 
   if (functions.length > 0) {
+    const plain = functions.filter((entry) => !entry.trigger).map((entry) => entry.name);
+    const triggerCount = functions.length - plain.length;
     findings.push(finding(
       'info',
       'trigger-functions-need-no-grant',
-      `The migrations create ${functions.length} guard function(s). PostgreSQL checks a trigger function's EXECUTE privilege when the trigger is created, so the runtime role needs no grant for them.`,
+      `The migrations create ${triggerCount} guard function(s). PostgreSQL checks a trigger function's EXECUTE privilege when the trigger is created, and it refuses a direct call, so the runtime role needs no grant for them.`,
       null,
     ));
+    for (const name of plain) {
+      if (policy.functions?.[name]) {
+        findings.push(finding(
+          'info',
+          'function-execute-reviewed',
+          `The function ${name} can be called directly, so the policy revokes EXECUTE from PUBLIC and grants it to ${policy.role} only.`,
+          null,
+        ));
+        continue;
+      }
+      findings.push(finding(
+        'blocker',
+        'function-public-execute',
+        `The function ${name} is not a trigger function, so PostgreSQL lets anyone with EXECUTE call it directly, outside the write path that owns it. The policy does not cover it.`,
+        `Add ${name} to the function section of the policy so the deployment revokes EXECUTE from PUBLIC.`,
+      ));
+    }
   }
 
   for (const table of [...migrated].sort()) {
@@ -391,6 +420,21 @@ export function renderGrantSql(policy, options = {}) {
     const granted = [...policy.privileges.get(table)].sort();
     lines.push(`REVOKE ALL ON TABLE ${policy.schema}.${table} FROM ${policy.role};`);
     lines.push(`GRANT ${granted.join(', ')} ON TABLE ${policy.schema}.${table} TO ${policy.role};`);
+  }
+  const functionNames = Object.keys(policy.functions ?? {}).sort();
+  if (functionNames.length > 0) {
+    const list = functionNames.map((name) => `'${name}'`).join(', ');
+    lines.push('-- A function that is not a trigger function can be called directly. PostgreSQL');
+    lines.push('-- grants EXECUTE on it to PUBLIC, so the deployment takes it away again.');
+    lines.push('DO $kamkmchess$');
+    lines.push('DECLARE entry record;');
+    lines.push('BEGIN');
+    lines.push(`  FOR entry IN SELECT p.oid::regprocedure::text AS signature FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = '${policy.schema}' AND p.proname IN (${list}) LOOP`);
+    lines.push(`    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', entry.signature);`);
+    lines.push(`    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO ${policy.role}', entry.signature);`);
+    lines.push('  END LOOP;');
+    lines.push('END');
+    lines.push('$kamkmchess$;');
   }
   return `${lines.join('\n')}\n`;
 }
@@ -520,8 +564,8 @@ export async function loadTree(root) {
   const tables = new Set();
   /** @type {Set<string>} */
   const sequences = new Set();
-  /** @type {Set<string>} */
-  const functions = new Set();
+  /** @type {{name: string, trigger: boolean}[]} */
+  const functions = [];
   /** @type {{role: string, table: string, privileges: string[]}[]} */
   const migrationGrants = [];
   /** @type {Set<string>} */
@@ -531,7 +575,7 @@ export async function loadTree(root) {
     const sql = await readFile(join(migrationDirectory, name), 'utf8');
     for (const table of parseMigrationTables(sql)) tables.add(table);
     for (const sequence of parseMigrationSequences(sql)) sequences.add(sequence);
-    for (const fn of parseMigrationFunctions(sql)) functions.add(fn);
+    for (const fn of parseMigrationFunctions(sql)) functions.push(fn);
     for (const grant of parseMigrationGrants(sql)) migrationGrants.push(grant);
     for (const table of parseMigrationReads(sql)) migrationReads.add(table);
   }
@@ -543,7 +587,7 @@ export async function loadTree(root) {
       for (const verb of verbs) usage.get(table).add(verb);
     }
   }
-  return { policy, tables: [...tables].sort(), sequences: [...sequences].sort(), functions: [...functions].sort(), migrationGrants, migrationReads: [...migrationReads].sort(), usage };
+  return { policy, tables: [...tables].sort(), sequences: [...sequences].sort(), functions, migrationGrants, migrationReads: [...migrationReads].sort(), usage };
 }
 
 /**

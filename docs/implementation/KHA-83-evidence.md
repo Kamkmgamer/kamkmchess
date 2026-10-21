@@ -24,10 +24,11 @@ Tested commit: `0b24151`.
 ## Measured locally (not a host measurement)
 
 The grant probe ran against the local PostgreSQL 17 fixture
-(`127.0.0.1:55467`, database `kamkmchess_online_test`):
+(`127.0.0.1:55467`, database `kamkmchess_online_test`) on the assembled
+schema (`0bb8f63`, migrations up to `0018_online_queue_removal_redaction`):
 
 ```
-209 probes, 0 failures
+212 probes, 0 failures
 ```
 
 The probe applies the reviewed policy to a throwaway role and schema, then
@@ -36,8 +37,25 @@ delete on every table the policy covers, and the refusals on every table it
 does not. It proves that the role can do exactly what the policy says and
 nothing else, that PUBLIC holds nothing on the application tables, that only
 the deployment role holds a privilege on them, and that the effective
-privileges match the policy table by table. The policy covers the 45 migrated
-tables.
+privileges match the policy table by table.
+
+It also proves the function boundary. PostgreSQL grants EXECUTE on a new
+function to PUBLIC, and a function that is not a trigger function can be
+called directly, outside the write path that owns it. The probe shows that
+PUBLIC cannot execute a plain function directly and that every plain function
+is covered by the policy. The trigger functions need no grant: PostgreSQL
+checks their EXECUTE privilege when the trigger is created and refuses a
+direct call.
+
+The privileges the assembled schema needs are covered:
+
+| Table | Verbs the runtime role holds | Why |
+| --- | --- | --- |
+| `online_friend_invitations` | SELECT, INSERT, UPDATE, DELETE | the auxiliary sanitation of a removed subject deletes the invitation |
+| `online_invitation_acceptances` | SELECT, INSERT, UPDATE, DELETE | the same sanitation deletes the acceptance |
+| `online_queue_entries` | SELECT, INSERT, UPDATE, DELETE | the same sanitation deletes the entry |
+| `online_queue_allocations` | SELECT, INSERT, UPDATE | the sanitation redacts the allocation in place |
+| `online_service_epochs` | SELECT, INSERT, UPDATE | the service gate records the recovered epoch |
 
 The deployment image is built and inspected locally by
 `node deploy/verify-runtime-image.mjs`:
@@ -51,7 +69,7 @@ at its configured entry path, and a real protocol request answered by the
 worker inside the image. The container runs as uid 65532 and carries no
 credential file. Nothing is pushed and nothing is deployed.
 
-The static audits are clean against the integrated tree:
+The static audits are clean against the assembled tree:
 
 | Audit | Result |
 | --- | --- |
@@ -77,10 +95,11 @@ It is **not** a capacity claim.
    the reviewed policy describes, and provisioning revokes the privileges of
    the unused roles, so no unused role keeps a grant. The grants themselves
    still exist in the migrations and are reported by the audit.
-3. **A new migration needs a policy entry.** When the service gate migration
-   lands, the audit names the missing table and `--propose` prints the entry
-   with the privileges the writer uses. A privacy cleanup that deletes rows
-   will need the matching `DELETE` in the policy.
+3. **A new migration needs a policy entry.** The audit names the missing
+   table and `--propose` prints the entry with the privileges the writer uses.
+   A privacy cleanup that deletes rows needs the matching `DELETE` in the
+   policy, and a plain function needs an entry in the function section so the
+   deployment revokes its EXECUTE from PUBLIC.
 
 ## Not run, and why
 
