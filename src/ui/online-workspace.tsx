@@ -659,18 +659,18 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
           onClick={() => setClockIndex(index)}>{choice.minutes}+{choice.increment}</button>)}
       </div>
       <div className="button-row">
-        <button className="button primary" type="button" disabled={busy || !composition.features.queue || !composition.accountSignedIn} onClick={() => void enterQueue({ kind: 'human' })}>Play yourself</button>
+        <IconButton icon="play" label="Play yourself" variant="primary" disabled={busy || !composition.features.queue || !composition.accountSignedIn} onClick={() => void enterQueue({ kind: 'human' })} />
         <button className="button" type="button" disabled={busy || !composition.features.queue || !composition.accountSignedIn || !agentLabel} onClick={() => void enterQueue({ kind: 'agent', modelLabel: agentLabel ?? 'Agent' })}>Watch agent</button>
-        <button className="button quiet" type="button" disabled={busy || !composition.features.queue || !composition.accountSignedIn} onClick={() => void enterQueue({ kind: 'human' }, 'new')}>Another entry</button>
+        <IconButton icon="plus" label="Another entry" disabled={busy || !composition.features.queue || !composition.accountSignedIn} onClick={() => void enterQueue({ kind: 'human' }, 'new')} />
       </div>
       {composition.features.queue && !composition.accountSignedIn && <p role="status">Sign in to join the queue. Friend games work without an account.</p>}
       {queue.detail && <p role="status">{queue.detail}</p>}
       {queue.options.length > 0 && <div className="button-row">
         {queue.options.includes('retry') && <button className="button" type="button" onClick={() => queueOption('retry')}>Retry</button>}
-        {queue.options.includes('play-yourself') && <button className="button" type="button" onClick={() => queueOption('play-yourself')}>Play yourself</button>}
+        {queue.options.includes('play-yourself') && <IconButton icon="play" label="Play yourself" variant="default" onClick={() => queueOption('play-yourself')} />}
         {queue.options.includes('keep-searching') && <button className="button" type="button" onClick={() => queueOption('keep-searching')}>Keep searching</button>}
         {queue.options.includes('rejoin') && <button className="button" type="button" onClick={() => queueOption('rejoin')}>Rejoin</button>}
-        {queue.options.includes('cancel') && <button className="button quiet" type="button" onClick={() => queueOption('cancel')}>Cancel</button>}
+        {queue.options.includes('cancel') && <IconButton icon="close" label="Cancel" onClick={() => queueOption('cancel')} />}
       </div>}
       {queue.assignment && <p role="status">Matched. {queue.assignment.opponentLabel}</p>}
 
@@ -684,7 +684,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
 
       <h3>Friend</h3>
       <div className="button-row">
-        <button className="button" type="button" disabled={busy || !composition.features.friends} onClick={() => void createInvitation()}>Invite a friend</button>
+        <IconButton icon="link" label="Invite a friend" variant="default" disabled={busy || !composition.features.friends} onClick={() => void createInvitation()} />
       </div>
       {invitationLink && <label className="online-field">Invitation link
         <input readOnly value={invitationLink} aria-label="Invitation link" />
@@ -694,7 +694,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       </label>
       <div className="button-row">
         <button className="button quiet" type="button" disabled={busy || !composition.features.friends} onClick={() => void previewInvitation()}>Preview</button>
-        <button className="button" type="button" disabled={busy || !invitation || invitation.status !== 'open'} onClick={() => void acceptInvitation()}>Accept</button>
+        <IconButton icon="check" label="Accept" variant="default" disabled={busy || !invitation || invitation.status !== 'open'} onClick={() => void acceptInvitation()} />
       </div>
       {invitation && <p role="status">
         {invitation.inviterLabel} · {invitation.inviterSeat} · {Math.round(invitation.timeControl.startingTimeMs / 60000)}+{Math.round(invitation.timeControl.incrementMs / 1000)}
@@ -780,7 +780,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
             <p>{agentDecisionText}</p>
             <div className="button-row">
               <button className="button" type="button" disabled={busy || view.status !== 'active'} onClick={() => void applyDecision(view.matchId, seat ?? 'white', 'retry')}>Retry</button>
-              <button className="button" type="button" disabled={busy || view.status !== 'active'} onClick={() => void applyDecision(view.matchId, seat ?? 'white', 'takeover')}>Take over</button>
+              <IconButton icon="account" label="Take over" variant="default" disabled={busy || view.status !== 'active'} onClick={() => void applyDecision(view.matchId, seat ?? 'white', 'takeover')} />
             </div>
             <div className="button-row" aria-label="Switch model">
               {composition.agentCatalog.map(entry => <button className="button" type="button" key={entry.id} disabled={busy || view.status !== 'active'}
@@ -797,7 +797,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
         {view.result !== null && <div className="button-row">
           <button className="button quiet" type="button" disabled={busy} onClick={() => void proposeRematch()}>Propose rematch</button>
           <button className="button quiet" type="button" disabled={busy} onClick={() => void readRematchOffer()}>Check for a rematch</button>
-          {rematchOffer && rematchOffer.matchId === focusedId && <button className="button" type="button" disabled={busy} onClick={() => void acceptRematch()}>Accept rematch</button>}
+          {rematchOffer && rematchOffer.matchId === focusedId && <IconButton icon="check" label="Accept rematch" variant="default" disabled={busy} onClick={() => void acceptRematch()} />}
         </div>}
         <div className="match-status" role="status">
           <h2 className="status-heading">{status}</h2>

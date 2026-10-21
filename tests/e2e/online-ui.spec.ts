@@ -127,6 +127,69 @@ async function point(page: import('@playwright/test').Page, square: string, flip
   };
 }
 
+test('the review cursor holds an earlier position while the live game moves on', async ({ browser }) => {
+  // The review cursor is the position the owner looks at. A live update must
+  // never throw the owner back to the live end, and the live button restores
+  // the latest position.
+  const loaded = await loadDescriptor();
+  expect(loaded).not.toBeNull();
+  const inviter = await browser.newContext();
+  const invitee = await browser.newContext();
+  const inviterPage = await inviter.newPage();
+  const inviteePage = await invitee.newPage();
+  try {
+    await inviterPage.goto('/play?online=1');
+    await inviterPage.getByRole('button', { name: 'Online play' }).click();
+    await inviterPage.getByRole('button', { name: 'New play' }).click();
+    await inviterPage.getByRole('button', { name: 'Invite a friend' }).click();
+    const link = await inviterPage.getByLabel('Invitation link').inputValue();
+    const invitationId = link.split('/invite/')[1] ?? '';
+    await inviterPage.getByRole('region', { name: 'Online play' }).getByRole('button', { name: 'Games', exact: true }).click();
+
+    await inviteePage.goto('/play?online=1');
+    await inviteePage.getByRole('button', { name: 'Online play' }).click();
+    await inviteePage.getByRole('button', { name: 'New play' }).click();
+    await inviteePage.getByLabel('Invitation code').fill(invitationId);
+    await inviteePage.getByRole('button', { name: 'Preview' }).click();
+    await inviteePage.getByRole('button', { name: 'Accept' }).click();
+    await expect(inviteePage.getByRole('region', { name: 'Online match board' })).toBeVisible();
+    await expect(inviterPage.getByRole('region', { name: 'Online match board' })).toBeVisible({ timeout: 20_000 });
+
+    // The inviter opens the game and the invitee answers the opening reply.
+    const first = await point(inviterPage, 'e2');
+    const firstTo = await point(inviterPage, 'e4');
+    await inviterPage.mouse.click(first.x, first.y);
+    await inviterPage.mouse.click(firstTo.x, firstTo.y);
+    await expect(inviterPage.getByRole('table', { name: 'Committed moves' }).getByRole('button')).toHaveText(['e4'], { timeout: 15_000 });
+    const reply = await point(inviteePage, 'e7', true);
+    const replyTo = await point(inviteePage, 'e5', true);
+    await inviteePage.mouse.click(reply.x, reply.y);
+    await inviteePage.mouse.click(replyTo.x, replyTo.y);
+    await expect(inviteePage.getByRole('table', { name: 'Committed moves' }).getByRole('button')).toHaveText(['e4', 'e5'], { timeout: 15_000 });
+
+    // The invitee looks at the position before the last move.
+    await inviteePage.getByRole('button', { name: 'Previous' }).click();
+    await expect(inviteePage.getByRole('button', { name: 'View move 1: e4' })).toHaveAttribute('aria-current', 'step');
+    await expect(inviteePage.getByRole('button', { name: 'View move 2: e5' })).not.toHaveAttribute('aria-current', 'step');
+
+    // The live game moves on. The review of the invitee holds its position.
+    const next = await point(inviterPage, 'g1');
+    const nextTo = await point(inviterPage, 'f3');
+    await inviterPage.mouse.click(next.x, next.y);
+    await inviterPage.mouse.click(nextTo.x, nextTo.y);
+    await expect(inviterPage.getByRole('table', { name: 'Committed moves' }).getByRole('button')).toHaveText(['e4', 'e5', 'Nf3'], { timeout: 20_000 });
+    await expect(inviteePage.getByRole('button', { name: 'View move 1: e4' })).toHaveAttribute('aria-current', 'step');
+    await expect(inviteePage.getByRole('button', { name: 'View move 3: Nf3' })).not.toHaveAttribute('aria-current', 'step');
+
+    // The live button restores the latest position.
+    await inviteePage.getByRole('button', { name: 'Live' }).click();
+    await expect(inviteePage.getByRole('button', { name: 'View move 3: Nf3' })).toHaveAttribute('aria-current', 'step');
+  } finally {
+    await inviter.close();
+    await invitee.close();
+  }
+});
+
 test('the first move and the opening reply are playable in the real service', async ({ browser }) => {
   const loaded = await loadDescriptor();
   expect(loaded).not.toBeNull();

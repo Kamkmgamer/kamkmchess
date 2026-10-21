@@ -73,7 +73,7 @@ describe('the online workspace screen (UX-03, UX-04)', () => {
     expect(markup).toContain('Play yourself');
     expect(markup).toContain('Watch agent');
     // The service closed the queue, so the entry actions stay disabled.
-    expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Play yourself<\/button>/);
+    expect(markup).toMatch(/<button[^>]*aria-label="Play yourself"[^>]*disabled=""/);
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Watch agent<\/button>/);
     composition.dispose();
   });
@@ -85,7 +85,7 @@ describe('the online workspace screen (UX-03, UX-04)', () => {
       fetch: (async () => new Response('{}', { status: 404 })) as unknown as typeof fetch,
     });
     const markup = renderToStaticMarkup(<OnlineWorkspace composition={composition} onClose={() => {}} initialTab="new" />);
-    expect(markup).toMatch(/<button[^>]*>Play yourself<\/button>/);
+    expect(markup).toMatch(/<button[^>]*aria-label="Play yourself"/);
     // Without an agent the agent entry stays unavailable.
     expect(markup).toMatch(/<button[^>]*disabled=""[^>]*>Watch agent<\/button>/);
     composition.dispose();
@@ -195,7 +195,7 @@ describe('the decisions of the agent seat', () => {
     expect(markup).toContain('aria-label="Agent decisions"');
     expect(markup).toContain('The agent is stopped.');
     expect(markup).toMatch(/<button[^>]*>Retry<\/button>/);
-    expect(markup).toMatch(/<button[^>]*>Take over<\/button>/);
+    expect(markup).toMatch(/<button[^>]*aria-label="Take over"/);
     composition.dispose();
   });
 
