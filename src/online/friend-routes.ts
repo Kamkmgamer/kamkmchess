@@ -143,33 +143,58 @@ export function createFriendSurface(options: FriendSurfaceOptions): FriendSurfac
       // invitation was already consumed by this browser. The record is
       // durable, so a reload still recovers.
       const rotateCredential = options.secrets.beginAcceptance(invitationId);
+      // The token of the records is captured before the acceptance is sent.
+      const context = options.secrets.context;
       try {
         const accepted = await (await clientFor()).acceptInvitation(invitationId, { control, acceptanceKey, rotateCredential });
+        if (options.secrets.context !== context) {
+          // The identity changed while the acceptance was on the wire. The
+          // record of the previous identity never reaches the current one,
+          // and the intent of the current one is never cleared. The
+          // acceptance intent of the identity that started the attempt
+          // stays, so the seat of that identity stays recoverable.
+          return accepted;
+        }
         // The credential of the seat is remembered before the acceptance is
         // forgotten, so a reload still owns the seat of the match. A lost
         // answer keeps the marker, so the next attempt asks for the explicit
-        // recovery once.
+        // recovery once. A credential that did not reach the device keeps the
+        // marker too: the record would be lost with the page.
         if (accepted.guestCredential) {
-          options.secrets.rememberAcceptedSeat(invitationId, {
+          const durable = options.secrets.rememberAcceptedSeat(invitationId, {
             guestId: accepted.guestCredential.guestId,
             matchId: accepted.guestCredential.matchId,
             seat: accepted.guestCredential.seat,
             token: accepted.guestCredential.token,
           });
+          if (durable) {
+            // The credential reached the device, so a reload finds it and the
+            // next attempt is a first acceptance.
+            options.secrets.forgetAcceptance(invitationId);
+          }
+          // A credential that did not reach the device keeps the acceptance
+          // intent: the record would be lost with the page, so the next
+          // attempt asks the service for the explicit recovery of the
+          // credential, because the invitation was probably consumed by this
+          // attempt.
+        } else {
+          // The seat needs no seat credential: the account credential
+          // authorizes it. The acceptance intent is settled.
+          options.secrets.forgetAcceptance(invitationId);
         }
-        options.secrets.forgetAcceptance(invitationId);
         return accepted;
       } catch (error) {
         // A refusal proves that the invitation was not consumed by this
         // attempt, so the acceptance intent is forgotten and the next attempt
         // is a first acceptance. A conflict and an unknown failure keep the
         // marker: the invitation may have been consumed, so the next attempt
-        // asks for the explicit recovery once.
+        // asks for the explicit recovery once. An answer of an older identity
+        // never clears the intent of the current one.
         const refused = error instanceof FriendError
           && error.status >= 400
           && error.status < 500
           && error.status !== 409;
-        if (refused) options.secrets.forgetAcceptance(invitationId);
+        if (refused && options.secrets.context === context) options.secrets.forgetAcceptance(invitationId);
         throw error;
       }
     },

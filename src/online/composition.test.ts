@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createOnlineComposition } from './composition';
+import { createFriendSecretStore } from './friend-secrets';
 import type { QueueEntry } from './contracts';
 import type { ModelSelection } from '../controller/index.js';
 import type { OnlineComposition } from './composition';
@@ -950,6 +951,33 @@ describe('the waiting entry of a reload is resumed with its original cutoff (R6-
     // The identity that came back owns its entry again.
     expect(composition.queueEntries.filter(entry => entry.state.phase === 'searching')).toHaveLength(1);
     expect(wires.filter(wire => wire.path.endsWith('/fallback'))).toHaveLength(0);
+    composition.dispose();
+  });
+});
+
+describe('the accepted seat of an invitation survives a reload (R6-07)', () => {
+  it('owns the seat of an accepted invitation again', async () => {
+    // The credential of an accepted seat is the authority of the seat of the
+    // match the invitation produced. It is kept on the device, so a reload
+    // still owns the seat.
+    const storage = createStorage();
+    const secrets = createFriendSecretStore({ storage, identity: 'guest' });
+    expect(secrets.rememberAcceptedSeat('invitation-0001', {
+      guestId: 'guest-1',
+      matchId: 'match-00000001',
+      seat: 'black',
+      token: 'seat-token',
+    })).toBe(true);
+    const { fetcher } = createFetchDouble({});
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+    });
+    // The seat of the accepted match is owned again, and the game of the
+    // accepted seat is attached again.
+    expect(composition.commandClient('match-00000001', 'black')).not.toBeNull();
+    expect(composition.workspace.games.map(game => game.matchId)).toContain('match-00000001');
     composition.dispose();
   });
 });

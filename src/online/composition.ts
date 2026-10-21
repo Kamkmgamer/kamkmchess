@@ -860,6 +860,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         if (tracked.identityKey === previousKey) proposedRematches.delete(rematchId);
       }
       restoreTrackedInvitations();
+      restoreAcceptedSeats();
       restorePersistedMatches();
       // The waiting entries of the identity are shown again, with the cutoff
       // the service gave them. The restoration reads the entries and never
@@ -1588,6 +1589,34 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   }
 
   /**
+   * Restores the seats of the invitations this browser accepted.
+   *
+   * The credential of an accepted seat is the authority of the seat of the
+   * match the invitation produced. It is kept on the device, so a reload
+   * still owns the seat: the seat is registered again and the game of the
+   * accepted seat is attached again.
+   */
+  function restoreAcceptedSeats(): void {
+    if (disposed) return;
+    for (const accepted of friendSecrets.listAcceptedSeats()) {
+      const credential = accepted.credential;
+      const key = `${credential.matchId}:${credential.seat}`;
+      // The seat of this browser is registered already.
+      if (seats.has(key)) continue;
+      const guest = createGuestCredential({
+        guestId: credential.guestId,
+        matchId: credential.matchId,
+        seat: credential.seat,
+        token: credential.token,
+      });
+      registerGuestCredential(guest, 'guest');
+      // The game of the accepted seat is attached again, so the owner still
+      // sees it after a reload.
+      workspace.attach({ matchId: credential.matchId, seat: credential.seat, credential: guest });
+    }
+  }
+
+  /**
    * Restores the invitations and the rematches of this identity.
    *
    * The inviter claims the seat of a consumed invitation even after a
@@ -2228,6 +2257,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   // The invitations of this identity are restored, so a reload still claims
   // the seat of a consumed invitation.
   restoreTrackedInvitations();
+  // The seats of the accepted invitations are restored, so a reload still
+  // owns the seat of the match it accepted.
+  restoreAcceptedSeats();
 
   /**
    * Disposes the composition.

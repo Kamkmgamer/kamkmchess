@@ -171,4 +171,120 @@ describe('the browser adapter of the friend surface', () => {
     secrets.setIdentity('account-1');
     expect(secrets.readAcceptanceKey('invitation-0003')).toBe(key);
   });
+
+  it('keeps the recovery marker when the credential did not reach the device', async () => {
+    // A browser that refuses the storage keeps the credential in memory, and
+    // the record would be lost with the page. The acceptance intent stays, so
+    // the next attempt asks the service for the explicit recovery of the
+    // credential.
+    const data = new Map<string, string>();
+    const storage = {
+      getItem(key: string) { return data.get(key) ?? null; },
+      setItem() { throw new Error('The storage is full.'); },
+      removeItem(key: string) { data.delete(key); },
+    };
+    const secrets = createFriendSecretStore({ storage, identity: 'guest' });
+    const bodies: (Record<string, unknown> | null)[] = [];
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(init?.body === undefined ? null : JSON.parse(String(init.body)) as Record<string, unknown>);
+      return new Response(JSON.stringify({
+        schemaVersion: 2,
+        match: { matchId: 'match-00000001' },
+        seat: 'black',
+        acceptanceId: 'acceptance-0001',
+        guestCredential: { guestId: 'guest-1', matchId: 'match-00000001', seat: 'black', token: 'seat-token', expiresAt: '2026-10-22T10:00:00Z' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    const surface = createFriendSurface({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher as unknown as typeof fetch,
+      secrets,
+    });
+    await surface.accept('invitation-0001', { kind: 'human' });
+    // The first acceptance never rotates a credential.
+    expect(bodies[0]?.rotateCredential).toBe(false);
+    // The credential did not reach the device, so the recovery intent stays
+    // and the next attempt asks for the explicit recovery.
+    await surface.accept('invitation-0001', { kind: 'human' });
+    expect(bodies[1]?.rotateCredential).toBe(true);
+  });
+
+  it('reports that the credential of an accepted seat reached the device', () => {
+    const storage = createStorage();
+    const secrets = createFriendSecretStore({ storage, identity: 'guest' });
+    const credential = {
+      guestId: 'guest-1',
+      matchId: 'match-00000001',
+      seat: 'black' as const,
+      token: 'seat-token',
+    };
+    // The record reached the device, so the caller may settle its recovery
+    // intent.
+    expect(secrets.rememberAcceptedSeat('invitation-0004', credential)).toBe(true);
+    expect(secrets.readAcceptedSeat('invitation-0004')).toEqual(credential);
+    // The browser reads the record back, so a reload still owns the seat.
+    expect(secrets.listAcceptedSeats()).toEqual([{ invitationId: 'invitation-0004', credential }]);
+  });
+
+  it('reports that the credential of an accepted seat did not reach the device', () => {
+    const data = new Map<string, string>();
+    const storage = {
+      getItem(key: string) { return data.get(key) ?? null; },
+      setItem() { throw new Error('The storage is full.'); },
+      removeItem(key: string) { data.delete(key); },
+    };
+    const secrets = createFriendSecretStore({ storage, identity: 'guest' });
+    // The record stayed in memory, so the caller keeps its recovery intent.
+    expect(secrets.rememberAcceptedSeat('invitation-0005', {
+      guestId: 'guest-1',
+      matchId: 'match-00000001',
+      seat: 'black',
+      token: 'seat-token',
+    })).toBe(false);
+  });
+
+  it('never writes the record of an acceptance into the records of another identity', async () => {
+    // The identity changes while the acceptance is on the wire. The answer
+    // of the previous identity never reaches the records of the current one,
+    // and the intent of the current one is never cleared.
+    const storage = createStorage();
+    const secrets = createFriendSecretStore({ storage, identity: 'account-1' });
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const bodies: (Record<string, unknown> | null)[] = [];
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(init?.body === undefined ? null : JSON.parse(String(init.body)) as Record<string, unknown>);
+      await gate;
+      return new Response(JSON.stringify({
+        schemaVersion: 2,
+        match: { matchId: 'match-00000001' },
+        seat: 'black',
+        acceptanceId: 'acceptance-0001',
+        guestCredential: { guestId: 'guest-1', matchId: 'match-00000001', seat: 'black', token: 'seat-token', expiresAt: '2026-10-22T10:00:00Z' },
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    const surface = createFriendSurface({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher as unknown as typeof fetch,
+      secrets,
+    });
+    const acceptance = surface.accept('invitation-0001', { kind: 'human' });
+    // The identity of the browser changes while the answer is on the wire.
+    secrets.setIdentity('account-2');
+    // The current identity owns an intent of its own.
+    secrets.beginAcceptance('invitation-0001');
+    release?.();
+    await acceptance;
+    // The record of the previous identity never reached the current one.
+    expect(secrets.readAcceptedSeat('invitation-0001')).toBeNull();
+    // The intent of the current identity is untouched: the next attempt of
+    // that identity asks for the explicit recovery.
+    await surface.accept('invitation-0001', { kind: 'human' });
+    expect(bodies[1]?.rotateCredential).toBe(true);
+    // The identity that started the attempt still owns its own intent, so
+    // its seat stays recoverable.
+    secrets.setIdentity('account-1');
+    const reloaded = createFriendSecretStore({ storage, identity: 'account-1' });
+    expect(reloaded.listAcceptedSeats()).toEqual([]);
+  });
 });

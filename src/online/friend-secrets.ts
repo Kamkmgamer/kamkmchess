@@ -22,12 +22,22 @@
  *   are used in the one request they belong to.
  */
 import { createAcceptanceKey } from './friends';
+import type { Seat } from './contracts';
 import type { ModelSelection } from '../controller/index.js';
 
 /** The local store of the accept intents and of the owner tokens. */
 export interface FriendSecretStore {
   /** The identity that owns the stored secrets. */
   readonly identity: string;
+  /**
+   * The token of the records of this browser.
+   *
+   * The token names the identity and the version of the records. It moves on
+   * every identity change, so a caller that captured it before an answer can
+   * tell that the identity changed while the answer was on the wire. The
+   * record of an older identity then never reaches the current one.
+   */
+  readonly context: string;
   /**
    * Changes the identity that owns the stored secrets.
    *
@@ -79,11 +89,23 @@ export interface FriendSecretStore {
    * Stores the seat credential of an accepted invitation.
    *
    * The record is durable: after a reload the browser still owns the seat of
-   * the match it accepted.
+   * the match it accepted. The answer is true when the record reached the
+   * device, and false when the browser refused the storage: the record would
+   * be lost with the page, so the caller keeps its recovery intent and the
+   * next attempt asks the service for the explicit recovery.
    */
-  rememberAcceptedSeat(invitationId: string, credential: AcceptedSeatCredential): void;
+  rememberAcceptedSeat(invitationId: string, credential: AcceptedSeatCredential): boolean;
   /** The stored seat credential of an accepted invitation, or null. */
   readAcceptedSeat(invitationId: string): AcceptedSeatCredential | null;
+  /**
+   * Every accepted seat of this identity.
+   *
+   * The browser reads the list to restore the seats it accepted, so a reload
+   * still owns them.
+   */
+  listAcceptedSeats(): readonly { readonly invitationId: string; readonly credential: AcceptedSeatCredential }[];
+  /** Forgets the accepted seat of an invitation. */
+  forgetAcceptedSeat(invitationId: string): void;
   /** Forgets the acceptance intent of an invitation. */
   forgetAcceptance(invitationId: string): void;
   /**
@@ -117,7 +139,7 @@ const DEFAULT_PREFIX = 'kamkmchess.online.friend-secrets.v1';
 export interface AcceptedSeatCredential {
   readonly guestId: string;
   readonly matchId: string;
-  readonly seat: string;
+  readonly seat: Seat;
   readonly token: string;
 }
 
@@ -131,6 +153,8 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
   const storage = options.storage ?? (typeof localStorage === 'undefined' ? undefined : localStorage);
   const prefix = options.prefix ?? DEFAULT_PREFIX;
   let identity = options.identity ?? 'guest';
+  /** The version of the records. It moves on every identity change. */
+  let version = 0;
   const random = options.random;
   const memory = new Map<string, string>();
 
@@ -145,6 +169,10 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
   const rematchKey = (owner: string): string =>
     `${prefix}:${encodeURIComponent(owner)}:rematches`;
 
+  /** The key of the list of the accepted seats of one identity. */
+  const acceptedListKey = (owner: string): string =>
+    `${prefix}:${encodeURIComponent(owner)}:accepted-seats`;
+
   function read(kind: string, id: string): string | null {
     const key = keyOf(kind, id);
     try {
@@ -156,13 +184,54 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
     return memory.get(key) ?? null;
   }
 
-  function write(kind: string, id: string, value: string): void {
-    const key = keyOf(kind, id);
+  /**
+   * Stores a value and reports whether it reached the device.
+   *
+   * A browser that refuses the storage keeps the value in memory for the
+   * lifetime of the page. The answer is false then, so the caller knows that
+   * the record did not survive a reload.
+   */
+  function writeKey(key: string, value: string): boolean {
     memory.set(key, value);
+    if (!storage) return false;
     try {
-      storage?.setItem(key, value);
+      storage.setItem(key, value);
+      return true;
     } catch {
       // The memory record is used instead.
+      return false;
+    }
+  }
+
+  function write(kind: string, id: string, value: string): boolean {
+    return writeKey(keyOf(kind, id), value);
+  }
+
+  /**
+   * Reads a list of records of the identity.
+   *
+   * The list of the memory is used when the browser refused the storage, so
+   * the page still knows its own records.
+   */
+  function readList(key: string): string[] {
+    let raw: string | null;
+    try {
+      raw = storage?.getItem(key) ?? null;
+    } catch {
+      raw = null;
+    }
+    if (raw === null) raw = memory.get(key) ?? null;
+    if (!raw) return [];
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const ids: string[] = [];
+      for (const item of parsed) {
+        if (typeof item === 'string' && item.length > 0) ids.push(item);
+      }
+      return ids;
+    } catch {
+      return [];
     }
   }
 
@@ -180,8 +249,15 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
     get identity() {
       return identity;
     },
+    get context() {
+      return `${identity}:${version}`;
+    },
     setIdentity(next: string) {
+      if (next === identity) return;
       identity = next;
+      // The version moves with the identity, so a record of an older
+      // identity never reaches the current one.
+      version += 1;
     },
     acceptanceKey(invitationId) {
       const existing = read('acceptance', invitationId);
@@ -254,16 +330,21 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
       remove('accepting', invitationId);
     },
     rememberAcceptedSeat(invitationId, credential) {
-      try {
-        write('accepted-seat', invitationId, JSON.stringify({
-          guestId: credential.guestId,
-          matchId: credential.matchId,
-          seat: credential.seat,
-          token: credential.token,
-        }));
-      } catch {
-        // The credential is kept in memory only.
-      }
+      const durable = write('accepted-seat', invitationId, JSON.stringify({
+        guestId: credential.guestId,
+        matchId: credential.matchId,
+        seat: credential.seat,
+        token: credential.token,
+      }));
+      // The list of the accepted seats is durable too, so a reload finds the
+      // seats this browser accepted.
+      const accepted = readList(acceptedListKey(identity)).filter(id => id !== invitationId);
+      accepted.push(invitationId);
+      const listed = writeKey(acceptedListKey(identity), JSON.stringify(accepted));
+      // The answer is true when the record reached the device. A record that
+      // stayed in memory would be lost with the page, so the caller keeps its
+      // recovery intent and asks the service for the credential again.
+      return durable && listed;
     },
     readAcceptedSeat(invitationId) {
       const raw = read('accepted-seat', invitationId);
@@ -271,7 +352,8 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
       try {
         const parsed = JSON.parse(raw) as Partial<AcceptedSeatCredential>;
         if (typeof parsed.guestId !== 'string' || typeof parsed.matchId !== 'string') return null;
-        if (typeof parsed.seat !== 'string' || typeof parsed.token !== 'string') return null;
+        if (parsed.seat !== 'white' && parsed.seat !== 'black') return null;
+        if (typeof parsed.token !== 'string') return null;
         return {
           guestId: parsed.guestId,
           matchId: parsed.matchId,
@@ -281,6 +363,36 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
       } catch {
         return null;
       }
+    },
+    listAcceptedSeats() {
+      const records: { invitationId: string; credential: AcceptedSeatCredential }[] = [];
+      for (const invitationId of readList(acceptedListKey(identity))) {
+        const credential = read('accepted-seat', invitationId);
+        if (!credential) continue;
+        try {
+          const parsed = JSON.parse(credential) as Partial<AcceptedSeatCredential>;
+          if (typeof parsed.guestId !== 'string' || typeof parsed.matchId !== 'string') continue;
+          if (parsed.seat !== 'white' && parsed.seat !== 'black') continue;
+          if (typeof parsed.token !== 'string') continue;
+          records.push({
+            invitationId,
+            credential: {
+              guestId: parsed.guestId,
+              matchId: parsed.matchId,
+              seat: parsed.seat,
+              token: parsed.token,
+            },
+          });
+        } catch {
+          // A record that cannot be read is skipped.
+        }
+      }
+      return records;
+    },
+    forgetAcceptedSeat(invitationId) {
+      remove('accepted-seat', invitationId);
+      const accepted = readList(acceptedListKey(identity)).filter(id => id !== invitationId);
+      writeKey(acceptedListKey(identity), JSON.stringify(accepted));
     },
     listOwnedInvitations() {
       const owned: string[] = [];
