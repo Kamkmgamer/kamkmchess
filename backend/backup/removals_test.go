@@ -306,6 +306,8 @@ type fakeAdmissionFence struct {
 	bound    []string
 	released []string
 	openErr  error
+	// owed are the removals the restores which did not finish still owe.
+	owed AppliedRemovalLedger
 }
 
 func (f *fakeAdmissionFence) BeginFence(restoreID string, takeover bool) (FenceHandle, error) {
@@ -314,6 +316,11 @@ func (f *fakeAdmissionFence) BeginFence(restoreID string, takeover bool) (FenceH
 	}
 	f.opened = append(f.opened, restoreID)
 	return &fakeFenceHandle{fence: f}, nil
+}
+
+// PendingRemovalRequirements returns the removals the fence still owes.
+func (f *fakeAdmissionFence) PendingRemovalRequirements(context.Context) (AppliedRemovalLedger, error) {
+	return f.owed, nil
 }
 
 // fakeFenceHandle is the ownership of the lifecycle of the fake fence.

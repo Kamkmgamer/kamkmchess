@@ -114,8 +114,11 @@ type commonFlags struct {
 	// takeover continues the lifecycle of a restore that crashed.
 	takeover bool
 	// fence is the path of the durable restore fence.
-	fence  string
-	asJSON bool
+	fence string
+	// evidence is the durable evidence of a restore that the operator
+	// restored from the protected backup of the evidence directory.
+	evidence string
+	asJSON   bool
 }
 
 type stringList []string
@@ -145,6 +148,7 @@ func parseFlags(name string, arguments []string, configure func(*flag.FlagSet, *
 	set.StringVar(&options.restoreID, "restore-id", "", "identifier of the restore a recovery acts on")
 	set.BoolVar(&options.takeover, "takeover", false, "continue the lifecycle of a restore that crashed: the marker of the crashed restore is replaced, the bundle is imported again and the removal ledger is applied again")
 	set.StringVar(&options.fence, "fence", os.Getenv("ONLINE_RESTORE_FENCE_PATH"), "parent directory of the durable restore fence; the restore creates the lock directory inside it and the service refuses to serve while it is open (defaults to ONLINE_RESTORE_FENCE_PATH)")
+	set.StringVar(&options.evidence, "evidence", "", "durable evidence of a restore (the file the restore wrote next to the fence); it proves the removal ledger a gate waits for when the evidence directory was lost")
 	set.BoolVar(&options.asJSON, "json", false, "print a machine-readable report")
 	if configure != nil {
 		configure(set, &options)
@@ -249,6 +253,31 @@ func recoverCommand(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
+	// The candidates that may prove the commitment of a gate whose durable
+	// evidence is gone. A candidate proves a gate only when its own digest is
+	// exactly the one the gate names, so a candidate that is larger or newer
+	// proves nothing and the gate stays closed.
+	candidates := make([]backup.AppliedRemovalLedger, 0, 3)
+	if found {
+		candidates = append(candidates, required)
+	}
+	if options.evidence != "" {
+		// The operator restored the evidence of a restore from the protected
+		// backup of the evidence directory. The evidence names the removal
+		// ledger the restore owed, and it proves the commitment of a gate when
+		// the digest of the ledger is exactly the one the gate names.
+		record, err := privacy.ReadRemovalRequirement(options.evidence)
+		if err != nil {
+			return fmt.Errorf("the durable evidence of the restore cannot be read: %w", err)
+		}
+		candidates = append(candidates, record.Ledger())
+		if !found {
+			// The evidence directory was lost, so the supplied evidence is the
+			// only description of what the restore owed: the recovery names it.
+			required = record.Ledger()
+			found = true
+		}
+	}
 	if !found {
 		// The restore left no evidence, so the ledger of the bundle and of the
 		// newer rotation copies is the only description of what it owed.
@@ -272,6 +301,15 @@ func recoverCommand(ctx context.Context, arguments []string) error {
 			return err
 		}
 		required = backup.AppliedRemovalLedger{Matches: merged, Subjects: mergedSubjects}
+		candidates = append(candidates, required)
+	}
+	released := 0
+	for _, candidate := range candidates {
+		count, err := removals.ReleaseRestoreGateWithProof(ctx, candidate)
+		if err != nil {
+			return err
+		}
+		released += count
 	}
 	if err = removals.RecoverRestore(ctx, options.restoreID, required); err != nil {
 		if errors.Is(err, privacy.ErrLedgerNotApplied) {
@@ -289,12 +327,16 @@ func recoverCommand(ctx context.Context, arguments []string) error {
 		return err
 	}
 	report := map[string]any{
-		"command":   "recover",
-		"recovered": true,
-		"restoreId": options.restoreID,
+		"command":       "recover",
+		"recovered":     true,
+		"restoreId":     options.restoreID,
+		"gatesReleased": released,
 	}
 	return emit(options.asJSON, report, func() {
 		fmt.Printf("recovered the restore %s; the service may serve traffic again\n", options.restoreID)
+		if released > 0 {
+			fmt.Printf("released %d restore gate(s) whose removal ledger a supplied ledger proved\n", released)
+		}
 	})
 }
 

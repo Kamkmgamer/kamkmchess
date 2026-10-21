@@ -219,6 +219,23 @@ func (l postgresRemovalLedger) PendingRemovalRequirements(ctx context.Context) (
 	return l.removals.PendingRemovalRequirements(ctx)
 }
 
+// ReleaseRestoreGateWithProof releases the restore gates whose awaited
+// removal ledger the candidate proves.
+//
+// The candidate is the durable evidence of a restore or the encrypted ledger
+// of a bundle. It proves a gate only when its own digest is exactly the one
+// the gate names, and the gate is released only when the database holds it.
+func (l postgresRemovalLedger) ReleaseRestoreGateWithProof(ctx context.Context, candidate backup.AppliedRemovalLedger) (int, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if !available {
+		return 0, nil
+	}
+	return l.removals.ReleaseRestoreGateWithProof(ctx, candidate)
+}
+
 // RestoreRequirement returns the removal ledger that a restore had to apply.
 //
 // The ledger is the durable evidence of the restore, so the operator does not

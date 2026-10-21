@@ -710,6 +710,64 @@ func (s *Service) ReleaseRestoreGate(ctx context.Context, restoreID string) erro
 	return s.dischargeRequirements(applied, keep)
 }
 
+// ReleaseRestoreGateWithProof releases the restore gates whose awaited
+// removal ledger the candidate proves.
+//
+// The gate names the digest of the removal ledger it waits for, and that
+// digest is one way: the only proof of the commitment is a removal ledger
+// whose own digest is exactly the one the gate names. A candidate that does
+// not match proves nothing, so the gate stays closed and the removals it
+// waits for stay owed. A newer or larger ledger is not the same commitment
+// and never proves one.
+//
+// The gate is released only when the applied removal ledger holds the
+// candidate: the proof says what the gate waits for, and the containment says
+// that the database holds it.
+//
+// The candidate is the durable evidence of a restore that the operator
+// restored from its backup, or the encrypted ledger of a bundle or of a
+// rotation copy. When no candidate proves a gate, the gate is retained: the
+// service stays closed and the operator has to restore the evidence of the
+// restore from the protected backup of the evidence directory.
+func (s *Service) ReleaseRestoreGateWithProof(ctx context.Context, candidate backup.AppliedRemovalLedger) (int, error) {
+	digest := gateDigest(requirementDigest(candidate))
+	applied, err := s.AppliedRemovalLedger(ctx)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := s.db.Query(ctx, `SELECT restore_id FROM online_restore_gates WHERE serving_allowed=false AND ledger_digest=$1`, digest)
+	if err != nil {
+		return 0, err
+	}
+	gates := make([]string, 0)
+	for rows.Next() {
+		var gate string
+		if err = rows.Scan(&gate); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		gates = append(gates, gate)
+	}
+	if err = rows.Err(); err != nil {
+		rows.Close()
+		return 0, err
+	}
+	rows.Close()
+	released := 0
+	for _, gate := range gates {
+		if !backup.RemovalLedgerContains(applied, candidate) {
+			// The database does not hold the removal ledger the gate waits
+			// for: the gate is retained and the service stays closed.
+			continue
+		}
+		if _, err = s.db.Exec(ctx, `UPDATE online_restore_gates SET serving_allowed=true, released_at=clock_timestamp() WHERE restore_id=$1 AND serving_allowed=false`, gate); err != nil {
+			return released, err
+		}
+		released++
+	}
+	return released, nil
+}
+
 // LedgerApplied reports whether every recorded removal is applied in the
 // database.
 //

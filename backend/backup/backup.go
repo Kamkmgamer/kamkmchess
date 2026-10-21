@@ -494,6 +494,27 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 			handle.Release()
 		}
 	}()
+	if request.Removals == nil {
+		// A restore without the removal ledger sink cannot replay the
+		// removals that the restores which did not finish still owe, and the
+		// import of the restore destroys the removals that only the live
+		// database carried. Such a restore would import the bundle and close
+		// the fence with those removals unapplied, and the service would serve
+		// them again.
+		//
+		// The fence owns the durable evidence of the removals, so the fence
+		// itself says whether any are owed. The check runs under the
+		// ownership of the lifecycle, so no other restore can create an
+		// obligation in the middle of it, and it runs before the import, so
+		// the database is not touched.
+		owed, err := request.AdmissionFence.PendingRemovalRequirements(ctx)
+		if err != nil {
+			return RestoreResult{}, err
+		}
+		if len(owed.Matches) > 0 || len(owed.Subjects) > 0 {
+			return RestoreResult{}, fmt.Errorf("%w: a restore without a removal ledger sink cannot run while removals are owed", ErrLedgerConflict)
+		}
+	}
 	live, err := request.Tombstones.ListTombstones(ctx)
 	if err != nil {
 		return RestoreResult{}, err
@@ -536,9 +557,10 @@ func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error)
 	}
 	carriesRemovals := len(removals) > 0 || len(subjectRemovals) > 0
 	if carriesRemovals && request.Removals == nil {
-		// A restore that carries removals needs the removal sink. The check
-		// happens before the import, so a restore that cannot replay its
-		// removals never touches the database.
+		// A restore that carries removals needs the removal sink, because the
+		// removals have to be replayed before the restored database serves
+		// traffic. The check happens before the import, so a restore that
+		// cannot replay its removals never touches the database.
 		return RestoreResult{}, fmt.Errorf("%w: a restore with removals needs a removal sink", ErrLedgerConflict)
 	}
 	// The marker of the lifecycle names the removal ledger the restore has to

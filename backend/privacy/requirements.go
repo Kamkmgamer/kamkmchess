@@ -29,6 +29,11 @@ package privacy
 // that the next restore has to apply, so a removal that a crashed restore owed
 // cannot be forgotten by the next restore, and it is discharged when the
 // database holds it.
+//
+// The close of a restore is the one exception: it keeps the evidence of the
+// restore that holds the fence, although the database holds that ledger. The
+// close is the moment the database and the evidence are in step, and the next
+// restore discharges that record with the removals it applies.
 
 import (
 	"bytes"
@@ -58,13 +63,16 @@ const (
 	requirementDigestLength = 64
 )
 
-// requirementRecord is the durable evidence of one restore.
+// RemovalRequirement is the durable evidence of one restore.
 //
 // The record names the restore that wrote it and the removal ledger the
 // restore had to apply. The digest is the digest of the ledger, so a record
 // whose content does not hash to its digest is refused instead of being
 // trusted.
-type requirementRecord struct {
+//
+// The record is the format of the evidence directory, and the format of the
+// evidence an operator hands to a recovery, so the two are the same file.
+type RemovalRequirement struct {
 	// RestoreID identifies the restore that wrote the record.
 	RestoreID string `json:"restoreId"`
 	// Digest is the digest of the removal ledger the record names.
@@ -79,8 +87,33 @@ type requirementRecord struct {
 }
 
 // Ledger returns the removal ledger the record names.
-func (r requirementRecord) Ledger() backup.AppliedRemovalLedger {
+func (r RemovalRequirement) Ledger() backup.AppliedRemovalLedger {
 	return backup.AppliedRemovalLedger{Matches: r.Matches, Subjects: r.Subjects}
+}
+
+// ReadRemovalRequirement reads the durable evidence of a restore from a file.
+//
+// The digest of the content has to be the digest the record names: a record
+// whose content was changed is refused instead of being trusted. The file is
+// the evidence of the evidence directory, so an operator that restored it from
+// a backup can hand it to a recovery.
+func ReadRemovalRequirement(path string) (RemovalRequirement, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return RemovalRequirement{}, err
+	}
+	var record RemovalRequirement
+	if err = json.Unmarshal(raw, &record); err != nil {
+		return RemovalRequirement{}, fmt.Errorf("privacy: the durable evidence of the removal ledger is unreadable")
+	}
+	if record.RestoreID == "" || record.Digest == "" {
+		return RemovalRequirement{}, fmt.Errorf("privacy: the durable evidence of the removal ledger is incomplete")
+	}
+	computed := backup.RemovalLedgerDigest(record.Matches, record.Subjects)
+	if hex.EncodeToString(computed) != record.Digest {
+		return RemovalRequirement{}, fmt.Errorf("privacy: the durable evidence of the removal ledger does not match its digest")
+	}
+	return record, nil
 }
 
 // requirementDirectory is the directory that holds the durable evidence.
@@ -110,7 +143,7 @@ func requirementPath(restoreID string) string {
 // then renamed over its name. The rename is atomic, so the evidence of a
 // restore is never half written: a crash of the host leaves either the old
 // record or the new one.
-func (s *Service) writeRequirement(record requirementRecord) error {
+func (s *Service) writeRequirement(record RemovalRequirement) error {
 	directory := s.requirementDirectory()
 	if directory == "" {
 		return errors.New("privacy: no restore fence path is configured")
@@ -168,33 +201,33 @@ func (s *Service) writeRequirement(record requirementRecord) error {
 //
 // The digest of the content has to be the digest the record names: a record
 // whose content was changed is refused instead of being trusted.
-func (s *Service) readRequirementFile(restoreID string) (requirementRecord, bool, error) {
+func (s *Service) readRequirementFile(restoreID string) (RemovalRequirement, bool, error) {
 	directory := s.requirementDirectory()
 	if directory == "" {
-		return requirementRecord{}, false, nil
+		return RemovalRequirement{}, false, nil
 	}
 	if !restoreIDPattern.MatchString(restoreID) {
 		// The name of the record is the identifier of the restore, so the
 		// identifier has to be a name and not a path.
-		return requirementRecord{}, false, nil
+		return RemovalRequirement{}, false, nil
 	}
 	raw, err := os.ReadFile(filepath.Join(directory, requirementPath(restoreID)))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return requirementRecord{}, false, nil
+			return RemovalRequirement{}, false, nil
 		}
-		return requirementRecord{}, false, err
+		return RemovalRequirement{}, false, err
 	}
-	var record requirementRecord
+	var record RemovalRequirement
 	if err = json.Unmarshal(raw, &record); err != nil {
-		return requirementRecord{}, false, fmt.Errorf("privacy: the durable evidence of the removal ledger is unreadable")
+		return RemovalRequirement{}, false, fmt.Errorf("privacy: the durable evidence of the removal ledger is unreadable")
 	}
 	if record.RestoreID != restoreID {
-		return requirementRecord{}, false, fmt.Errorf("privacy: the durable evidence of the removal ledger names another restore")
+		return RemovalRequirement{}, false, fmt.Errorf("privacy: the durable evidence of the removal ledger names another restore")
 	}
 	computed := backup.RemovalLedgerDigest(record.Matches, record.Subjects)
 	if hex.EncodeToString(computed) != record.Digest {
-		return requirementRecord{}, false, fmt.Errorf("privacy: the durable evidence of the removal ledger does not match its digest")
+		return RemovalRequirement{}, false, fmt.Errorf("privacy: the durable evidence of the removal ledger does not match its digest")
 	}
 	return record, true, nil
 }
@@ -203,25 +236,25 @@ func (s *Service) readRequirementFile(restoreID string) (requirementRecord, bool
 //
 // The digest names the evidence, so the fence of a restore finds the ledger it
 // bound and the gate of a restore finds the ledger it waits for.
-func (s *Service) readRequirement(digest string) (requirementRecord, bool, error) {
+func (s *Service) readRequirement(digest string) (RemovalRequirement, bool, error) {
 	digest = strings.TrimSpace(digest)
 	if len(digest) != requirementDigestLength {
-		return requirementRecord{}, false, nil
+		return RemovalRequirement{}, false, nil
 	}
 	records, err := s.listRequirements()
 	if err != nil {
-		return requirementRecord{}, false, err
+		return RemovalRequirement{}, false, err
 	}
 	for _, record := range records {
 		if record.Digest == digest {
 			return record, true, nil
 		}
 	}
-	return requirementRecord{}, false, nil
+	return RemovalRequirement{}, false, nil
 }
 
 // listRequirements lists the durable evidence that is still pending.
-func (s *Service) listRequirements() ([]requirementRecord, error) {
+func (s *Service) listRequirements() ([]RemovalRequirement, error) {
 	directory := s.requirementDirectory()
 	if directory == "" {
 		return nil, nil
@@ -233,7 +266,7 @@ func (s *Service) listRequirements() ([]requirementRecord, error) {
 		}
 		return nil, err
 	}
-	records := make([]requirementRecord, 0, len(entries))
+	records := make([]RemovalRequirement, 0, len(entries))
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".json") || strings.HasPrefix(name, ".") {
@@ -256,7 +289,7 @@ func (s *Service) listRequirements() ([]requirementRecord, error) {
 //
 // The evidence of a restore is the record that names it. A restore that has
 // no evidence never bound a removal ledger, so it has nothing to owe.
-func (s *Service) requirementForRestore(restoreID string) (requirementRecord, bool, error) {
+func (s *Service) requirementForRestore(restoreID string) (RemovalRequirement, bool, error) {
 	return s.readRequirementFile(restoreID)
 }
 
@@ -264,17 +297,17 @@ func (s *Service) requirementForRestore(restoreID string) (requirementRecord, bo
 //
 // The gate names the digest of the removal ledger it waits for, and that
 // digest names the durable evidence of the ledger.
-func (s *Service) requirementForGate(digest []byte) (requirementRecord, bool, error) {
+func (s *Service) requirementForGate(digest []byte) (RemovalRequirement, bool, error) {
 	records, err := s.listRequirements()
 	if err != nil {
-		return requirementRecord{}, false, err
+		return RemovalRequirement{}, false, err
 	}
 	for _, record := range records {
 		if bytes.Equal(gateDigest(record.Digest), digest) {
 			return record, true, nil
 		}
 	}
-	return requirementRecord{}, false, nil
+	return RemovalRequirement{}, false, nil
 }
 
 // PendingRemovalRequirements returns the removal ledger that the restores

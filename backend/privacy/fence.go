@@ -155,7 +155,7 @@ func (h *FenceHandle) Bind(required backup.AppliedRemovalLedger) error {
 	if existing.RestoreID != h.restoreID || existing.OwnershipToken != h.token {
 		return errors.New("privacy: the caller does not own the restore fence")
 	}
-	record := requirementRecord{
+	record := RemovalRequirement{
 		RestoreID:  h.restoreID,
 		Digest:     requirementDigest(required),
 		Matches:    required.Matches,

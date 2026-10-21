@@ -382,6 +382,14 @@ type AdmissionFence interface {
 	// marker of the crashed restore is replaced inside the marker directory,
 	// so the marker never disappears and the service stays closed.
 	BeginFence(restoreID string, takeover bool) (FenceHandle, error)
+	// PendingRemovalRequirements returns the removal ledger that the restores
+	// which did not finish still owe.
+	//
+	// The fence owns the durable evidence of the removals, so it is what
+	// knows which removals are owed. A restore that has no removal ledger
+	// sink cannot replay them, so it asks the fence before it imports
+	// anything.
+	PendingRemovalRequirements(ctx context.Context) (AppliedRemovalLedger, error)
 }
 
 // FenceHandle is the ownership of the restore lifecycle.
