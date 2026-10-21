@@ -5,6 +5,7 @@ import {
   createFetchFriendTransport,
   createFriendClient,
   isAcceptableInvitation,
+  isLocallyOwnedInvitation,
   needsCredentialRotation,
   needsGuestSeatCredential,
   parseInvitation,
@@ -73,6 +74,27 @@ describe('the friend client', () => {
     expect(calls[4]).toBe('POST /v1/online/invitations/inv_0123456789/seat-credential');
   });
 
+  it('asks for the replacement of a rematch credential when the browser needs it', async () => {
+    const bodies: unknown[] = [];
+    const transport: FriendTransport = {
+      async send(request) {
+        bodies.push(request.body);
+        return {
+          schemaVersion: 2,
+          rematch: { rematchId: 'rmt_1', matchId: 'match-1', status: 'accepted', proposerLabel: 'Guest', proposerSeat: 'black', timeControl: { startingTimeMs: 300000, incrementMs: 0 }, startingFen: null, expiresAt: '2026-10-21T10:00:00Z', newMatchId: 'match-2' },
+          match: { matchId: 'match-2', yourSeat: 'white' },
+          seat: 'white',
+          guestCredential: null,
+        };
+      },
+    };
+    const client = createFriendClient(transport);
+    await client.acceptRematch('rmt_1');
+    expect(bodies[0]).toEqual({ schemaVersion: 2, rotateCredential: false });
+    await client.acceptRematch('rmt_1', { rotateCredential: true });
+    expect(bodies[1]).toEqual({ schemaVersion: 2, rotateCredential: true });
+  });
+
   it('answers a missing pending rematch with null', async () => {
     const transport: FriendTransport = {
       async send() {
@@ -115,6 +137,21 @@ describe('the friend domain rules', () => {
     const key = createAcceptanceKey(() => 'abc');
     expect(key.length).toBeGreaterThanOrEqual(16);
     expect(key).toMatch(/^[A-Za-z0-9_-]{16,128}$/);
+  });
+
+  it('builds an acceptance key from a secure source by default', () => {
+    const key = createAcceptanceKey();
+    expect(key).toMatch(/^ak_[A-Za-z0-9_-]{16,128}$/);
+    // The default source carries 192 bits, so two keys never collide.
+    const other = createAcceptanceKey();
+    expect(other).not.toBe(key);
+  });
+
+  it('knows a link the browser created itself', () => {
+    const owned = new Set(['inv_0123456789']);
+    expect(isLocallyOwnedInvitation('inv_0123456789', owned)).toBe(true);
+    expect(isLocallyOwnedInvitation('inv_9876543210', owned)).toBe(false);
+    expect(isLocallyOwnedInvitation('', owned)).toBe(false);
   });
 });
 
@@ -166,5 +203,14 @@ describe('the fetch transport', () => {
     });
     const client = createFriendClient(transport);
     await expect(client.readInvitation('inv_1')).rejects.toMatchObject({ code: 'conflict', status: 409 });
+  });
+
+  it('tells an expired link apart from a spent one', async () => {
+    const transport = createFetchFriendTransport({
+      baseUrl: 'https://api.example',
+      fetch: async () => new Response(JSON.stringify({ error: 'expired' }), { status: 410 }),
+    });
+    const client = createFriendClient(transport);
+    await expect(client.readInvitation('inv_1')).rejects.toMatchObject({ code: 'expired', status: 410 });
   });
 });
