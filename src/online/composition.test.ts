@@ -952,6 +952,74 @@ describe('the disposal of a composition waits for its engine seats', () => {
     await disposal;
     expect(released).toBe(true);
   });
+
+  it('keeps the requester and the session usable until the release of the lease ended', async () => {
+    // The disposal invalidates the authority of the browser at once, and the
+    // transport of the composition stays usable while the engine seat
+    // releases the lease of its turn. A release that is still on the wire
+    // never loses its transport.
+    const { fetcher, wires } = createFetchDouble({
+      updates: {
+        snapshot: matchView({
+          clock: { ...matchView().clock, activeSeat: 'black', activeSince: '2026-10-21T10:00:00.000Z' },
+        }),
+      },
+    });
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let released = false;
+    let created = false;
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage: createStorage(),
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      createEngineSeat: () => {
+        created = true;
+        return {
+          seat: 'black',
+          stopped: false,
+          play: () => new Promise(() => undefined),
+          dispose: async () => { await gate; released = true; },
+        };
+      },
+    });
+    // The engine seat of the match is the one that holds the lease.
+    composition.registerGuestCredential(createGuestCredential({
+      guestId: 'guest-engine',
+      matchId: 'match-00000001',
+      seat: 'black',
+      token: 'engine-token',
+    }), 'guest');
+    composition.attachAndFocus('match-00000001', 'white');
+    await vi.waitFor(() => { expect(created).toBe(true); });
+    // The guest seat owns a requester and a session, and the account owns
+    // another pair.
+    const guest = composition.commandClient('match-00000001', 'black');
+    const account = composition.commandClient('match-00000001', 'white');
+    expect(guest).not.toBeNull();
+    expect(account).not.toBeNull();
+    const disposal = composition.disposeAsync();
+    await settle();
+    // The lease of the engine seat is still held.
+    expect(released).toBe(false);
+    const before = wires.length;
+    // The transport of the guest seat is still usable.
+    await guest?.resign().catch(() => undefined);
+    expect(wires.length).toBe(before + 1);
+    // The transport of the account is still usable too.
+    await account?.resign().catch(() => undefined);
+    expect(wires.length).toBe(before + 2);
+    // The release of the lease ends, and the transport goes away with it.
+    release?.();
+    await disposal;
+    expect(released).toBe(true);
+    const after = wires.length;
+    await guest?.resign().catch(() => undefined);
+    await account?.resign().catch(() => undefined);
+    expect(wires.length).toBe(after);
+  });
 });
 
 describe('the agent binding follows the seat, never the public label (B-26)', () => {

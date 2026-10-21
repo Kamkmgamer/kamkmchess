@@ -380,7 +380,9 @@ export interface OnlineComposition {
    *
    * The disposal itself is synchronous: the composition stops acting at once.
    * An engine seat releases the lease of its turn when the turn ends, so the
-   * promise settles when the seats released their leases. A caller that owns
+   * promise settles when the seats released their leases. The transport of
+   * the composition goes away with them, so a release that is still on the
+   * wire keeps a usable requester and a usable session. A caller that owns
    * the lifetime of the composition awaits it, so a page that navigates away
    * does not lose the release of a lease.
    */
@@ -955,27 +957,44 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     for (const listener of [...listeners]) listener();
   }
 
+  /**
+   * Releases the transport of one seat.
+   *
+   * The requester and the session of a seat are the transport of that seat.
+   * They go away after the engine seat of the match released its lease, so a
+   * release that is still on the wire keeps a usable transport.
+   */
+  function releaseSeatTransport(key: string): void {
+    const requester = guestRequesters.get(key);
+    if (requester) {
+      requester.dispose();
+      guestRequesters.delete(key);
+    }
+    const session = guestSessions.get(key);
+    if (session) {
+      session.dispose();
+      guestSessions.delete(key);
+    }
+  }
+
   /** Disposes the seat authority the previous account held. */
   function fenceAccountSeats(): void {
     for (const [key, registered] of [...seats]) {
       if (registered.owner !== 'account') continue;
+      // The authority of the seat is invalid at once.
       seats.delete(key);
-      const requester = guestRequesters.get(key);
-      if (requester) {
-        requester.dispose();
-        guestRequesters.delete(key);
-      }
-      const session = guestSessions.get(key);
-      if (session) {
-        session.dispose();
-        guestSessions.delete(key);
-      }
-      const engine = engineSeats.get(key);
-      if (engine) {
-        engine.dispose();
-        engineSeats.delete(key);
-      }
       engineTurns.delete(key);
+      const engine = engineSeats.get(key);
+      if (!engine) {
+        releaseSeatTransport(key);
+        continue;
+      }
+      engineSeats.delete(key);
+      // The engine seat releases the lease of its turn with a usable
+      // transport, and the transport of the seat goes away afterwards.
+      void engine.dispose().catch(() => undefined).then(() => {
+        releaseSeatTransport(key);
+      });
     }
   }
 
@@ -1654,24 +1673,20 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     if (previous && previous.credential !== credential) {
       // A re-minted credential replaces the old one. The old session and its
       // requester are released, so the seat never keeps a revoked token.
-      const requester = guestRequesters.get(key);
-      if (requester) {
-        requester.dispose();
-        guestRequesters.delete(key);
-      }
-      const session = guestSessions.get(key);
-      if (session) {
-        session.dispose();
-        guestSessions.delete(key);
-      }
       // The browser engine seat of the match used the revoked credential, so
-      // it is released and built again with the fresh one.
+      // it is released and built again with the fresh one. The engine seat
+      // releases the lease of its turn first, and the transport of the seat
+      // goes away afterwards.
       const engine = engineSeats.get(key);
-      if (engine) {
-        void engine.dispose().catch(() => undefined);
-        engineSeats.delete(key);
-      }
       engineTurns.delete(key);
+      if (engine) {
+        engineSeats.delete(key);
+        void engine.dispose().catch(() => undefined).then(() => {
+          releaseSeatTransport(key);
+        });
+      } else {
+        releaseSeatTransport(key);
+      }
     }
     seats.set(key, { credential, owner, identityKey: queueIdentity() });
     if (owner === 'guest') guestSeats.add(key);
@@ -2192,23 +2207,33 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     heartbeatTimer = null;
     workspace.dispose();
     queue.dispose();
-    accountParticipant?.dispose();
-    accountParticipant = null;
-    accountRequesterInstance?.dispose();
-    accountRequesterInstance = null;
+    // The authority of the browser is invalid at once: the seats, the engine
+    // turns and the listeners of this composition never act again.
     const engines = [...engineSeats.values()];
     engineSeats.clear();
-    engineCleanup = Promise.all(engines.map(engine => engine.dispose().catch(() => undefined)))
-      .then(() => undefined)
-      .catch(() => undefined);
-    for (const requester of guestRequesters.values()) requester.dispose();
-    for (const session of guestSessions.values()) session.dispose();
-    guestRequesters.clear();
-    guestSessions.clear();
     seats.clear();
     presenceClients.clear();
     engineTurns.clear();
     listeners.clear();
+    // The account session and the account requester leave the composition at
+    // once, so no answer of the previous identity can reach it. Their
+    // transport stays usable until the engine seats released their leases.
+    const account = accountParticipant;
+    const accountRequester = accountRequesterInstance;
+    accountParticipant = null;
+    accountRequesterInstance = null;
+    // The engine seats release the lease of their turn while the transport of
+    // the composition is still usable. The requesters and the sessions go
+    // away afterwards, so a release that is still on the wire is never lost.
+    engineCleanup = (async () => {
+      await Promise.all(engines.map(engine => engine.dispose().catch(() => undefined)));
+      account?.dispose();
+      accountRequester?.dispose();
+      for (const requester of guestRequesters.values()) requester.dispose();
+      for (const session of guestSessions.values()) session.dispose();
+      guestRequesters.clear();
+      guestSessions.clear();
+    })();
   }
   return {
     get features() {
@@ -2546,6 +2571,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       // composition never keeps a provider request or a heartbeat alive.
       for (const runner of agentRunners.values()) void runner.stop().catch(() => undefined);
       agentRunners.clear();
+      // The engine seats release the lease of their turn. The transport of
+      // the composition stays usable, because the composition is only
+      // suspended: it can be resumed, and the release is never lost.
       for (const engine of engineSeats.values()) void engine.dispose().catch(() => undefined);
       engineSeats.clear();
       engineTurns.clear();
