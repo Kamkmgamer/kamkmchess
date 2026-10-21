@@ -1334,7 +1334,7 @@ func TestPostgresTheRestoreWithoutARemovalSinkIsRefusedWhileRemovalsAreOwed(t *t
 // whose own digest is exactly the one the gate names. A supplied ledger that
 // proves the commitment releases the gate when the database holds it, and a
 // supplied ledger that proves nothing leaves the gate closed.
-func TestPostgresTheGateOfAMissingEvidenceIsReleasedByAProof(t *testing.T) {
+func TestPostgresTheGateOfAMissingEvidenceIsReleasedByTheRecovery(t *testing.T) {
 	fixture, removals, directory := evidenceFixture(t)
 	ctx := context.Background()
 	historyService := historyServiceFor(t, fixture)
@@ -1378,45 +1378,39 @@ func TestPostgresTheGateOfAMissingEvidenceIsReleasedByAProof(t *testing.T) {
 		t.Fatalf("the database holds %d pending gates, want the one of the restore", pending)
 	}
 	// A supplied ledger that is not the ledger the gate waits for proves
-	// nothing: the gate stays closed.
+	// nothing: the recovery refuses it and releases nothing.
 	other := live
 	other.Matches = append(append([]backup.RemovalRecord{}, live.Matches...), backup.RemovalRecord{
 		RemovalID: "rm_evidence_proof_other", SubjectKind: "account", SubjectID: privacy.SubjectReference("user_a"), MatchID: "evidence-proof-other-match", Scope: "explicit_removal", RemovedAt: time.Now().UTC(),
 	})
-	released, err := removals.ReleaseRestoreGateWithProof(ctx, other)
-	if err != nil {
+	if err = removals.RecoverRestore(ctx, "evidence-proof-restore", other); err == nil {
+		t.Fatal("the recovery accepted a ledger that is not the one the restore owed")
+	}
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed=false`).Scan(&pending); err != nil {
 		t.Fatal(err)
 	}
-	if released != 0 {
-		t.Fatalf("a supplied ledger that is not the awaited one released %d gates", released)
+	if pending != 1 {
+		t.Fatalf("the refused recovery released %d gates", 1-pending)
 	}
 	// The supported recovery: the operator supplies the removal ledger the
 	// gate waits for, its digest is exactly the one the gate names, and the
-	// database holds it, so the gate is released.
-	released, err = removals.ReleaseRestoreGateWithProof(ctx, live)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if released != 1 {
-		t.Fatalf("the proof released %d gates, want the one of the restore", released)
+	// database holds it, so the recovery releases the gate and closes the
+	// fence of the crashed restore.
+	if err = removals.RecoverRestore(ctx, "evidence-proof-restore", live); err != nil {
+		t.Fatalf("the recovery with the supplied ledger failed: %v", err)
 	}
 	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed=false`).Scan(&pending); err != nil {
 		t.Fatal(err)
 	}
 	if pending != 0 {
-		t.Fatalf("the database holds %d pending gates after the proof", pending)
-	}
-	// The recovery of the restore names the supplied ledger as well, so the
-	// fence of the crashed restore is closed and the service serves again.
-	if err = removals.RecoverRestore(ctx, "evidence-proof-restore", live); err != nil {
-		t.Fatalf("the recovery with the supplied ledger failed: %v", err)
+		t.Fatalf("the database holds %d pending gates after the recovery", pending)
 	}
 	allowed, err := removals.ServingAllowed(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !allowed {
-		t.Fatal("the service does not serve after the proof and the recovery")
+		t.Fatal("the service does not serve after the recovery released the gate")
 	}
 }
 
