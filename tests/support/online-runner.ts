@@ -138,6 +138,11 @@ export interface FakeOnlineService {
   revokeLease(reason?: string): void;
   /** Marks the lease of the seat as expired. */
   expireLease(): void;
+  /**
+   * Advances the service epoch, like a recovery of the service does. The
+   * leases of the older epoch are fenced by the service afterwards.
+   */
+  advanceServiceEpoch(): void;
   /** Applies the next command but loses its acknowledgement. */
   loseNextAcknowledgement(): void;
 }
@@ -233,6 +238,7 @@ export function createFakeOnlineService(options: {
   let leaseCounter = 0;
   let operationCounter = 0;
   let loseAcknowledgement = false;
+  let serviceEpoch = 1;
 
   function conflict(message: string): ProviderRunnerServiceError {
     return new ProviderRunnerServiceError('conflict', message, 409);
@@ -250,6 +256,13 @@ export function createFakeOnlineService(options: {
     if (current === null || current.leaseId !== body.leaseId) throw notFound('The lease does not exist.');
     if (current.runnerId !== body.runnerId) throw notFound('The lease belongs to another runner.');
     if (current.status !== 'active') throw conflict('The lease is not active.');
+    if (Date.parse(current.expiresAt) <= clock()) {
+      // The service closes an expired lease and never revives it.
+      current.status = 'expired';
+      current.revokedAt = new Date(clock()).toISOString();
+      current.revokedReason = 'expired';
+      throw conflict('The lease expired.');
+    }
     if (current.controlEpoch !== match.controlEpoch || body.controlEpoch !== match.controlEpoch) {
       throw conflict('The control epoch moved on.');
     }
@@ -264,11 +277,32 @@ export function createFakeOnlineService(options: {
     return current;
   }
 
+  /**
+   * Revokes the lease of a finished match.
+   *
+   * The service revokes the leases of a seat when the match ends, so a
+   * command that presents the lease of a finished match is fenced by the
+   * lease and not by the rules of the match.
+   */
+  function revokeFinishedLease(): void {
+    if (match.result === null) return;
+    if (lease !== null && lease.status === 'active') {
+      lease.status = 'revoked';
+      lease.revokedAt = new Date(clock()).toISOString();
+      lease.revokedReason = 'match_ended';
+    }
+  }
+
   function handleLease(body: RunnerLeaseRequestBody): ProviderRunnerLease {
     if (body.schemaVersion !== 2) throw new ProviderRunnerServiceError('refused', 'The schema version is unknown.', 400);
     if (body.seat !== match.seat) throw notFound('The seat is not a seat of this match.');
     if (body.controlEpoch !== match.controlEpoch) throw conflict('The control epoch moved on.');
-    if (match.result !== null) throw conflict('The match has ended.');
+    if (body.action !== 'release' && match.result !== null) {
+      // A finished match takes no lease. The service closes the lease of the
+      // seat and answers that the match is over.
+      revokeFinishedLease();
+      throw conflict('The match has ended.');
+    }
     const requestedTurn = body.turnVersion ?? 0;
     const turnVersion = requestedTurn === 0 ? match.version : requestedTurn;
     if (turnVersion !== match.version) throw conflict('The turn version moved on.');
@@ -294,7 +328,7 @@ export function createFakeOnlineService(options: {
         expiresAt: new Date(clock() + 30000).toISOString(),
         revokedAt: null,
         turnVersion,
-        runnerEpoch: 1,
+        runnerEpoch: serviceEpoch,
         // The uncertain request of the previous lease survives the lease change.
         pendingRequestId: current?.pendingRequestId ?? null,
         pendingRequestStartedAt: current?.pendingRequestStartedAt ?? null,
@@ -355,6 +389,7 @@ export function createFakeOnlineService(options: {
       if (stored !== undefined) return stored;
       const leaseId = submitOptions?.leaseId;
       const presented = leaseId !== undefined;
+      revokeFinishedLease();
       // The service fences every command that presents a lease: the lease
       // must be live and bound to the turn the command acts for. A command
       // that presents no lease is the owner acting for the seat.
@@ -362,6 +397,17 @@ export function createFakeOnlineService(options: {
         const current = lease;
         if (current === null || current.leaseId !== leaseId || current.status !== 'active') {
           // The service answers a fenced lease with a missing resource.
+          throw notFound('The lease does not accept a command.');
+        }
+        // The service fences a lease of an older control epoch, of an older
+        // service epoch and a lease that expired against its own clock.
+        if (current.controlEpoch !== match.controlEpoch) {
+          throw notFound('The lease does not accept a command.');
+        }
+        if (current.runnerEpoch !== serviceEpoch) {
+          throw notFound('The lease does not accept a command.');
+        }
+        if (Date.parse(current.expiresAt) <= clock()) {
           throw notFound('The lease does not accept a command.');
         }
         if (current.turnVersion !== submitOptions?.expectedVersion) {
@@ -581,6 +627,9 @@ export function createFakeOnlineService(options: {
       lease.status = 'revoked';
       lease.revokedAt = new Date(clock()).toISOString();
       lease.revokedReason = reason;
+    },
+    advanceServiceEpoch() {
+      serviceEpoch += 1;
     },
     expireLease() {
       if (lease === null || lease.status !== 'active') return;
@@ -823,6 +872,11 @@ export interface HoldableCommandPort {
   /** Answers the held command with a failure, as a lost transport would. */
   fail(index: number, error: unknown): void;
   /**
+   * Answers the held command with a receipt of the caller. The service never
+   * sees the command, so the state of the match stays as it is.
+   */
+  answer(index: number, receipt: Receipt): void;
+  /**
    * Fails every attempt of the commands that follow, as a lost transport
    * would. The command never reaches the service, so the runner never learns
    * whether it was applied.
@@ -870,6 +924,11 @@ export function createHoldableCommandPort(base: ProviderRunnerCommandPort): Hold
       const entry = held[index];
       if (entry === undefined) throw new Error('The command was not held.');
       entry.reject(error);
+    },
+    answer(index, receipt) {
+      const entry = held[index];
+      if (entry === undefined) throw new Error('The command was not held.');
+      entry.resolve(receipt);
     },
     failEveryAttempt(error) {
       failEvery = error;

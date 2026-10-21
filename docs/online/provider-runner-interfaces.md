@@ -91,6 +91,13 @@ the control changes and the spent recovery attempts.
   command stays retriable. The version and the control epoch of a receipt are
   facts of the service: they move on even when the receipt arrives late,
   because the next command of the runner has to carry them.
+- A command whose acknowledgement is lost is an uncertainty, whoever sent it.
+  The runner keeps the operation identifier of the command, the phase is
+  `uncertain`, and the owner may send the command again with the same
+  operation identifier. The handoff of the seat is no exception: a switch or
+  a takeover whose acknowledgement is lost leaves the seat in the state the
+  owner can recover from, and the command is replayed with the identifier it
+  was sent with.
 - The decision of the owner is bound to the request it settled. The guard of
   the turn asks whether the record in the store is one of them: that record
   may be passed once, and every other record fences the runner again. The
@@ -528,6 +535,9 @@ seat with an accepted move, exactly like the service does.
 | — | The command of a newer unknown decision stays retriable when an older command answers late |
 | — | The takeover that waits while the match ends reports an unknown outcome |
 | — | The acquisition of a lease settles no record the owner never decided about |
+| — | The command of a newer unknown decision is replayed with its operation identifier |
+| — | The fixture fences a lease of an older control epoch, of an older service epoch or an expired lease |
+| — | A receipt that arrives after the end of the match changes no lease |
 | — | The service fences a command that presents a lease and accepts the command of the owner |
 | — | The decision of the owner authorises one request, so a dropped turn is not billed twice |
 | — | The late rejection of an aborted request does not swallow the decision of the owner |
@@ -561,10 +571,12 @@ live readiness of the service.
   it.
 - The service fences every command that presents a lease: the lease must be
   live, of the match and the seat of the command, of the current control
-  epoch and bound to the turn the command acts for. A command that presents no
-  lease is the decision of the owner and stays allowed, except the move of an
-  agent seat and the spent recovery attempt of an agent seat: both are the
-  work of the browser runner and they need the lease of the seat. The
+  epoch, of the current service epoch and bound to the turn the command acts
+  for. A command that presents no lease is the decision of the owner and
+  stays allowed, except the move of an agent seat and the spent recovery
+  attempt of an agent seat: both are the work of the browser runner and they
+  need the lease of the seat. The service closes an expired lease and never
+  revives it, and it revokes the lease of a seat when the match ends. The
   fixtures apply that fence by default, so a tracked case never claims a
   fence the service does not apply.
 - The service resolves a declared label to a publishable one before it accepts

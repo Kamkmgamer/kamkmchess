@@ -2236,6 +2236,142 @@ describe('the competing owner actions of the runner', () => {
     expect(service.match.control.kind).toBe('human');
   });
 
+  it('replays the command of a newer unknown decision with its operation identifier', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = createHoldableCommandPort(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: commands.port,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+    // The acknowledgement of the move is lost, so the runner holds the
+    // operation identifier of the command and waits for the owner.
+    commands.failEveryAttempt(new Error('The network failed.'));
+    await until(() => runner.state.phase === 'uncertain', 'the uncertainty is open');
+    commands.failEveryAttempt(null);
+
+    // The owner retries. The command of the retry waits for the service.
+    commands.arm();
+    const retrying = runner.retry();
+    await until(() => commands.held.length === 1, 'the command of the retry is in flight');
+
+    // The owner switches the model while the retry waits. The acknowledgement
+    // of the switch is lost as well, so the runner holds its operation
+    // identifier for the replay.
+    commands.failEveryAttempt(new Error('The network failed.'));
+    const switched = await runner.switchModel('Second Agent');
+    expect(switched.kind).toBe('unknown');
+    commands.failEveryAttempt(null);
+
+    // The command of the older retry answers now. Its completion is stale and
+    // may not clear the bookkeeping of the newer command.
+    commands.answer(0, {
+      schemaVersion: 2,
+      matchId: service.match.matchId,
+      operationId: 'operation-retry-1',
+      outcome: 'accepted',
+      version: service.match.version,
+      controlEpoch: service.match.controlEpoch,
+      decidedAt: new Date(0).toISOString(),
+    });
+    await retrying;
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    // The owner retries again. The unknown command of the switch is replayed
+    // with its own operation identifier, so the service applies it once.
+    const retried = await runner.retry();
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+
+    const switches = service.recordedCommands.filter((command) => command.action.kind === 'set_control');
+    expect(retried.kind).toBe('accepted');
+    expect(switches).toHaveLength(1);
+    expect(switches[0]?.operationId).toBe(switches[0]?.operationId);
+    expect(service.match.control.modelLabel).toBe('Second Agent');
+    expect(provider.prompts).toHaveLength(1);
+  });
+
+  it('fences a command that presents a lease of an older epoch or an expired lease', async () => {
+    const clock = Date.now();
+    const service = createFakeOnlineService({ now: () => clock });
+    const lease = await service.leasePort('runner-a').acquire({ controlEpoch: 1, turnVersion: 1 });
+
+    // The control epoch of the match moves on. The lease of the seat belongs to
+    // the older epoch, so the service fences every command that presents it.
+    service.commands.submit({ kind: 'set_control', control: { kind: 'agent', modelLabel: 'Test Agent' } }, {
+      expectedVersion: service.match.version,
+    });
+    await expect(service.commands.submit(
+      { kind: 'set_control', control: { kind: 'human' } },
+      { expectedVersion: service.match.version, leaseId: lease?.leaseId },
+    )).rejects.toThrow(/lease/i);
+
+    // The lease of an older service epoch is fenced as well: a recovery of the
+    // service advances the epoch of the service.
+    const second = await service.leasePort('runner-a').acquire({ controlEpoch: 2, turnVersion: 2 });
+    service.advanceServiceEpoch();
+    await expect(service.commands.submit(
+      { kind: 'set_control', control: { kind: 'human' } },
+      { expectedVersion: service.match.version, leaseId: second?.leaseId },
+    )).rejects.toThrow(/lease/i);
+  });
+
+  it('changes no lease when the receipt of a move arrives after the end of the match', async () => {
+    const service = createFakeOnlineService();
+    const provider = createFakeProvider();
+    const commands = createHoldableCommandPort(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: commands.port,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    provider.answer('{"move":"e2e4"}');
+
+    // The move is on its way to the service when the match ends.
+    commands.arm();
+    await until(() => commands.held.length === 1, 'the move is in flight');
+    service.match.result = { kind: 'win', winner: 'black', reason: 'timeout' };
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+
+    // The receipt of the move arrives now. A decision of a finished match
+    // installs no lease and acquires none.
+    commands.answer(0, {
+      schemaVersion: 2,
+      matchId: service.match.matchId,
+      operationId: 'operation-move-1',
+      outcome: 'accepted',
+      version: service.match.version,
+      controlEpoch: service.match.controlEpoch,
+      decidedAt: new Date(0).toISOString(),
+    });
+    await new Promise((resolve) => { setTimeout(resolve, 40); });
+
+    const acquires = service.recordedLeaseBodies.filter((body) => body.action === 'acquire').length;
+    // The runner holds no lease, the service revoked the lease of the seat
+    // with the match, and no lease is taken again after the end of the match.
+    expect(runner.state.leaseId).toBeNull();
+    expect(service.lease?.status).not.toBe('active');
+    expect(acquires).toBe(1);
+    expect(provider.prompts).toHaveLength(1);
+    expect(runner.state.phase).toBe('idle');
+  });
+
   it('keeps the decision of the owner when the rejection of the request arrives later', async () => {
     const service = createFakeOnlineService();
     const prompts: unknown[] = [];

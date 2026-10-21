@@ -2927,7 +2927,20 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         }
         // A lost acknowledgement leaves the outcome unproven, so the owner may
         // retry. The interface never claims a success it cannot prove.
-        return outcome.kind === 'unacknowledged' || outcome.kind === 'superseded'
+        if (outcome.kind === 'unacknowledged') {
+          // The command may have been applied. The runner keeps the honest
+          // record of it, and the owner may send it again with the same
+          // operation identifier.
+          enterUncertainty({
+            kind: 'submission',
+            requestId: null,
+            operationId: pendingSubmission?.operationId ?? null,
+            startedAt: now(),
+            detail: outcome.detail,
+          });
+          return { kind: 'unknown', detail: withLeaseNote(outcome.detail, leaseNote) };
+        }
+        return outcome.kind === 'superseded'
           ? { kind: 'unknown', detail: withLeaseNote(outcome.detail, leaseNote) }
           : { kind: 'refused', detail: withLeaseNote(outcome.detail, leaseNote) };
       }
@@ -2989,7 +3002,20 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
           // silently.
           setPhase(phase, 'The service refused the takeover.');
         }
-        return outcome.kind === 'unacknowledged' || outcome.kind === 'superseded'
+        if (outcome.kind === 'unacknowledged') {
+          // The command may have been applied. The runner keeps the honest
+          // record of it, and the owner may send it again with the same
+          // operation identifier.
+          enterUncertainty({
+            kind: 'submission',
+            requestId: null,
+            operationId: pendingSubmission?.operationId ?? null,
+            startedAt: now(),
+            detail: outcome.detail,
+          });
+          return { kind: 'unknown', detail: withLeaseNote(outcome.detail, leaseNote) };
+        }
+        return outcome.kind === 'superseded'
           ? { kind: 'unknown', detail: withLeaseNote(outcome.detail, leaseNote) }
           : { kind: 'refused', detail: withLeaseNote(outcome.detail, leaseNote) };
       }
