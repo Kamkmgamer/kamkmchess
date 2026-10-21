@@ -470,15 +470,21 @@ test.describe('online clients against the local fixture', () => {
       // The interface follows the service it is bound to. The application
       // reads its own service, so the rendered action matches that answer and
       // never opens a surface that service keeps closed.
-      if (observed.answer.queue === true) {
-        await expect(playYourself).toBeEnabled();
-      } else {
-        await expect(playYourself).toBeDisabled();
-      }
       if (observed.url.startsWith(descriptor!.baseUrl)) {
         // The application and the probe read the same service, so both have
         // to see the same answer.
         expect(observed.answer.queue, 'the probe and the application read different service answers').toBe(queueEnabled);
+      }
+      if (observed.answer.queue === true) {
+        // The public queue is an account surface, so an open service does not
+        // open the action for every browser. This browser holds no account,
+        // so the action stays closed and the workspace says why instead of
+        // reaching the service with a guest credential.
+        await expect(playYourself).toBeDisabled();
+        await expect(page.getByRole('status').filter({ hasText: 'Sign in to join the queue' })).toBeVisible();
+      } else {
+        // The service keeps the queue closed, so the action is closed too.
+        await expect(playYourself).toBeDisabled();
       }
     } else {
       // The build carries no account configuration, so the workspace never
