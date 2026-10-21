@@ -440,10 +440,11 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
       for (const verb of verbs) reached.add(verb);
     }
     const stripped = (policy.unusedRoles ?? []).includes(role);
+    const objectKind = [...tables.keys()].some((name) => name.startsWith('SEQUENCE ')) ? 'object(s)' : 'table(s)';
     findings.push(finding(
       stripped ? 'warning' : 'blocker',
       stripped ? 'migration-grant-stripped-role' : 'migration-grants-unreviewed-role',
-      `The migrations grant ${[...reached].sort().join(', ')} on ${tables.size} object(s) to ${role}, a role the deployment does not connect as.`,
+      `The migrations grant ${[...reached].sort().join(', ')} on ${tables.size} ${objectKind} to ${role}, a role the deployment does not connect as.`,
       stripped
         ? `The deployment connects as ${policy.role}. Provisioning revokes the privileges of ${role} and the grant probe proves it holds nothing on a real database.`
         : `The deployment connects as ${policy.role}. List ${role} in the unused roles of the policy so the deployment strips it, or remove the grant from the migration.`,
