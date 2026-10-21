@@ -58,6 +58,19 @@ export async function readOnlineFixtureDescriptor(path = process.env.ONLINE_FIXT
 }
 
 /**
+ * The account id of one fixture account.
+ *
+ * The id is shaped like the id of a hosted identity provider, because the
+ * connection store of an **account** only accepts such an id: the namespace
+ * of an account is the key its connections are stored under. The token is
+ * minted for the same subject, so the service and the browser agree on the
+ * account.
+ */
+export function fixtureAccountId(index: number): string {
+  return `user_fixtureowner${String(index).padStart(4, '0')}aaaa`;
+}
+
+/**
  * Mints a short-lived session token for one of the fixture's accounts.
  *
  * The token is signed with the fixture's own key, so the service verifies it

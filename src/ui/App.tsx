@@ -7,7 +7,7 @@ import { MoveList } from './MoveList.js';
 import { OnlineWorkspace } from './online-workspace.js';
 import type { OnlineComposition } from '../online/composition.js';
 import { privateAgentEntryFor, privateAgentEntryForBinding, privateAgentId, readPrivateAgentCatalog, seatChoiceAvailable } from '../accounts/agent-catalog.js';
-import type { AgentDecisionOutcome, PrivateAgentEntry } from '../accounts/agent-catalog.js';
+import type { PrivateAgentEntry } from '../accounts/agent-catalog.js';
 import type { ConnectionNamespace, ConnectionStore } from '../providers/connections/index.js';
 
 /**
@@ -80,10 +80,11 @@ interface AppProps {
   /**
    * The namespace of the connections the online agent plays with.
    *
-   * The online composition owns it, so the private catalog is read from the
-   * same namespace the agent seat resolves its provider from.
+   * The namespace is resolved when it is needed, so the connections of the
+   * signed-in account are used and the guest connections of another identity
+   * never are.
    */
-  readonly onlineNamespace?: ConnectionNamespace;
+  readonly onlineResolveNamespace?: () => ConnectionNamespace;
   /**
    * The connection store the online agent plays with.
    *
@@ -122,7 +123,7 @@ function statusLabel(snapshot: ControllerSnapshotV1): string {
   return (snapshot.position.sideToMove === 'w' ? 'White' : 'Black') + ' to move';
 }
 
-export function App({ composition, initialSession, initialSnapshot, onOpenAccount, online, onOpenProfile, onlineNamespace, onlineConnectionStore, accountIdentity }: AppProps) {
+export function App({ composition, initialSession, initialSnapshot, onOpenAccount, online, onOpenProfile, onlineResolveNamespace, onlineConnectionStore, accountIdentity }: AppProps) {
   const [session, setSession] = useState(initialSession);
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [orientation, setOrientation] = useState<'white' | 'black'>(() =>
@@ -155,6 +156,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [onlineOpen, setOnlineOpen] = useState(false);
   /** The online game the owner is looking at. */
   const focusedMatchId = online?.workspace.focusedMatchId ?? null;
+  /** The generation of the identity of the composition. */
+  const identityGeneration = online?.identityGeneration ?? null;
   /** The invitation of a published link, when there is one. */
   const pendingInvitation = (online as unknown as Partial<PendingInvitationPort> | null)?.pendingInvitation
     ?? readInvitationFromAddress();
@@ -184,6 +187,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [pendingAgent, setPendingAgent] = useState<{
     readonly id: string;
     readonly request: number;
+    readonly generation: number | null;
     readonly identity: string | null;
     readonly online: OnlineComposition | null;
     readonly matchId: string | null;
@@ -197,7 +201,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
    */
   const agentRequest = useRef(0);
   /** The seat change that runs at this moment. It gates a second one. */
-  const agentAction = useRef<{ readonly id: string; readonly request: number } | null>(null);
+  const agentAction = useRef<{ readonly id: string; readonly request: number; readonly generation: number | null } | null>(null);
   /** True while the page of the application exists. */
   const mounted = useRef(true);
   /**
@@ -211,11 +215,17 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     readonly identity: string | null;
     readonly online: OnlineComposition | null;
     readonly matchId: string | null;
-  }>({ identity: accountIdentity ?? null, online: online ?? null, matchId: null });
+    readonly identityGeneration: number | null;
+  }>({ identity: accountIdentity ?? null, online: online ?? null, matchId: null, identityGeneration: null });
   // The context is written while the page renders, so it is current at the
   // moment a late answer arrives.
   // eslint-disable-next-line react-hooks/refs
-  agentContext.current = { identity: accountIdentity ?? null, online: online ?? null, matchId: focusedMatchId ?? null };
+  agentContext.current = {
+    identity: accountIdentity ?? null,
+    online: online ?? null,
+    matchId: focusedMatchId ?? null,
+    identityGeneration: online?.identityGeneration ?? null,
+  };
   useEffect(() => {
     mounted.current = true;
     return () => {
@@ -226,14 +236,14 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     };
   }, []);
   useEffect(() => {
-    // A new identity, a new composition or a new focus ends the running
-    // change: its answer belongs to a state that is gone. The pending state
-    // of the interface follows the context of the change, so it disappears
-    // with it.
+    // A new identity, a new composition, a new focus or a new generation of
+    // the identity ends the running change: its answer belongs to a state
+    // that is gone. The pending state of the interface follows the context of
+    // the change, so it disappears with it.
     agentRequest.current += 1;
     agentAction.current = null;
     return () => { agentRequest.current += 1; };
-  }, [accountIdentity, online, focusedMatchId]);
+  }, [accountIdentity, online, focusedMatchId, identityGeneration]);
   // The own agent of the owner is one of the connected models. The public
   // label is the name the other participants see; the private selection stays
   // in the browser and never reaches the service.
@@ -242,7 +252,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     let current = true;
     void readPrivateAgentCatalog({
       connectionStore: onlineConnectionStore ?? composition.connectionStore,
-      namespace: onlineNamespace ?? composition.namespace,
+      namespace: onlineResolveNamespace?.() ?? composition.namespace,
     }).then(entries => {
       if (current) setAgentCatalog(entries);
     }).catch(() => {
@@ -252,7 +262,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     // The catalog is read again when the online screen opens and when the
     // account changes, so a model that was connected after the page loaded
     // is known without opening the panel first.
-  }, [composition, online, onlineNamespace, onlineConnectionStore, catalogRefresh, onlineOpen, accountIdentity]);
+  }, [composition, online, onlineResolveNamespace, onlineConnectionStore, catalogRefresh, onlineOpen, accountIdentity]);
   // The chosen agent follows the catalog: the model of the current game when
   // it is connected, and otherwise the first connected model. The choice of
   // the owner wins over both.
@@ -301,6 +311,14 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     : null;
   const focusedEntry = privateAgentEntryForBinding(agentCatalog, focusedBinding);
   /**
+   * True when the binding of the focused seat names more than one model.
+   *
+   * Two private models may share the neutral public label, so the binding of
+   * a seat does not always name one model. The owner may then choose again.
+   */
+  const focusedAmbiguous = focusedBinding !== null &&
+    agentCatalog.filter(entry => entry.label === focusedBinding).length > 1;
+  /**
    * The key the composition resolves a choice of the owner with.
    *
    * A composition that publishes the private identity of every entry resolves
@@ -308,10 +326,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
    * choice by the unique local alias of the entry. The public label of a
    * model is never an identity: two private models may carry the same one.
    */
-  const choiceKey = useCallback((entry: PrivateAgentEntry): string => {
-    const published = online?.agentCatalog.find(item => item.label === entry.label) as { id?: string } | undefined;
-    return published?.id ?? entry.label;
-  }, [online]);
+  const choiceKey = useCallback((entry: PrivateAgentEntry): string => entry.id, []);
   /**
    * The seats of the owner that play an agent and have no binding yet.
    *
@@ -342,14 +357,15 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   /**
    * The seat change the interface shows.
    *
-   * A change that belongs to another identity, another composition or
-   * another game is not shown any more, so a change that was overtaken
-   * leaves no pending state behind.
+   * A change that belongs to another identity, another composition, another
+   * game or another generation of the identity is not shown any more, so a
+   * change that was overtaken leaves no pending state behind.
    */
   const pendingVisible = pendingAgent !== null &&
     pendingAgent.identity === (accountIdentity ?? null) &&
     pendingAgent.online === online &&
-    pendingAgent.matchId === focusedMatchId
+    pendingAgent.matchId === focusedMatchId &&
+    pendingAgent.generation === (online?.identityGeneration ?? null)
     ? pendingAgent.id
     : null;
   /**
@@ -370,22 +386,32 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     const matchId = focusedGame.matchId;
     const seat = focusedSeat;
     const identity = accountIdentity ?? null;
+    /**
+     * The generation of the identity, captured before the request.
+     *
+     * The generation of the composition is read again after the answer, so an
+     * identity that left and came back in the meantime would carry a new one.
+     * The captured generation is the one the answer belongs to.
+     */
+    const generation = composition.identityGeneration;
     const request = (agentRequest.current += 1);
-    agentAction.current = { id: entry.id, request };
-    setPendingAgent({ id: entry.id, request, identity, online: composition, matchId });
+    agentAction.current = { id: entry.id, request, generation };
+    setPendingAgent({ id: entry.id, request, generation, identity, online: composition, matchId });
     setAgentNotice('');
-    try {
-      const outcome = await composition.agentDecision(matchId, seat, 'switch-model', choiceKey(entry)) as unknown as AgentDecisionOutcome | undefined;
-      if (!mounted.current || request !== agentRequest.current) return;
+    /** True when the answer belongs to a state that is gone. */
+    const stale = (): boolean => {
+      if (!mounted.current || request !== agentRequest.current) return true;
+      if (composition.identityGeneration !== generation) return true;
       const context = agentContext.current;
-      if (context.identity !== identity || context.online !== composition || context.matchId !== matchId) {
-        setAgentNotice('The game changed. Choose the agent again.');
-        return;
-      }
-      // The composition answers with the outcome of the decision when it can
-      // prove it. A composition that answers void is checked against the seat
-      // itself.
-      if (outcome && outcome.kind !== 'accepted') {
+      return context.identity !== identity || context.online !== composition ||
+        context.matchId !== matchId || context.identityGeneration !== generation;
+    };
+    try {
+      const outcome = await composition.agentDecision(matchId, seat, 'switch-model', choiceKey(entry));
+      if (stale()) return;
+      // The composition answers with the outcome of the decision. A refused or
+      // an unknown outcome keeps the model the seat plays.
+      if (outcome.kind !== 'accepted') {
         setAgentNotice(outcome.detail);
         return;
       }
@@ -394,11 +420,13 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         setAgentNotice('The seat kept its model. The change was not accepted.');
         return;
       }
-      setAgentNotice(`${entry.label} plays this game now.`);
+      setAgentNotice(`${entry.displayName} plays this game now.`);
     } catch (error) {
-      if (!mounted.current || request !== agentRequest.current) return;
+      if (stale()) return;
       setAgentNotice(error instanceof Error ? error.message : 'The agent could not be changed.');
     } finally {
+      // A stale answer may clear its own bookkeeping only. It never clears
+      // the pending state of a newer request.
       if (mounted.current && request === agentRequest.current) {
         agentAction.current = null;
         setPendingAgent(null);
@@ -1007,7 +1035,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           <button className="button" type="button" disabled={entry.id === agentChoiceId || pendingVisible !== null}
             onClick={() => { setAgentChoice(entry.id); setAgentNotice(''); }}>Use for new games</button>
           {focusedGame && focusedSeat && <button className="button" type="button"
-            disabled={!seatChoiceAvailable({ entry, bound: focusedEntry }) || pendingVisible !== null}
+            disabled={!seatChoiceAvailable({ entry, bound: focusedEntry, ambiguous: focusedAmbiguous }) || pendingVisible !== null}
             onClick={() => void switchAgentForGame(entry)}>Use for this game</button>}
         </div>)}
         {agentCatalog.length === 0 && <p>No connected model yet. Connect one in a new game.</p>}

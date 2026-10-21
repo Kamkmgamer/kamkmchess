@@ -3,10 +3,8 @@ import {
   NEUTRAL_AGENT_LABEL,
   privateAgentId,
   publicAgentLabel,
-  publicSafeAgentLabel,
   readPrivateAgentCatalog,
   seatChoiceAvailable,
-  uniqueAgentLabels,
 } from './agent-catalog';
 import type { PrivateAgentEntry } from './agent-catalog';
 import type { ModelSelection } from '../controller/index.js';
@@ -100,7 +98,7 @@ describe('the private model catalog of the owner', () => {
       })),
       namespace: GUEST,
     });
-    expect(entries.map(entry => entry.label)).toEqual(['Model A']);
+    expect(entries.map(entry => entry.displayName)).toEqual(['Model A']);
     expect(entries[0]?.selection.connectionId).toBe('first');
     expect(entries[0]?.selection.modelRoutingId).toBe('model-a');
   });
@@ -128,9 +126,10 @@ describe('the private model catalog of the owner', () => {
       namespace: GUEST,
     });
     expect(entries).toHaveLength(2);
-    expect(entries[0]?.label).toBe('Custom model');
-    expect(entries[1]?.label).toBe('Custom model 2');
-    // The identity of an entry is its own private id, never the public label.
+    // The public label is the neutral one for both, and the private identity
+    // keeps them apart.
+    expect(entries[0]?.label).toBe(NEUTRAL_AGENT_LABEL);
+    expect(entries[1]?.label).toBe(NEUTRAL_AGENT_LABEL);
     expect(entries[0]?.id).not.toBe(entries[1]?.id);
     expect(entries[0]?.id).toBe(privateAgentId(entries[0]!.selection));
     expect(entries[1]?.id).toBe(privateAgentId(entries[1]!.selection));
@@ -161,42 +160,31 @@ describe('the private model catalog of the owner', () => {
 });
 
 describe('the public label of a model', () => {
-  it('never carries a route, a path, an address or a credential', () => {
+  it('publishes only a public name the service knows', () => {
+    expect(publicAgentLabel('gpt-4o')).toBe('GPT-4o');
+    expect(publicAgentLabel('GPT-4o')).toBe('GPT-4o');
+    expect(publicAgentLabel('claude-sonnet-4')).toBe('Claude Sonnet 4');
+    expect(publicAgentLabel('stockfish-19-lite')).toBe('Stockfish 19 Lite (browser)');
+  });
+
+  it('publishes an unknown name as the neutral one', () => {
+    // A name that only passes a character filter is still a private alias.
+    expect(publicAgentLabel('private-prod')).toBe(NEUTRAL_AGENT_LABEL);
     expect(publicAgentLabel('internal/team-model')).toBe(NEUTRAL_AGENT_LABEL);
     expect(publicAgentLabel('my-org/private-route-v2')).toBe(NEUTRAL_AGENT_LABEL);
     expect(publicAgentLabel('sk-live-abcdef0123456789')).toBe(NEUTRAL_AGENT_LABEL);
     expect(publicAgentLabel('https://api.internal.example/v1')).toBe(NEUTRAL_AGENT_LABEL);
-    expect(publicAgentLabel('my api key: secret')).toBe(NEUTRAL_AGENT_LABEL);
-    expect(publicAgentLabel(undefined)).toBe(NEUTRAL_AGENT_LABEL);
     expect(publicAgentLabel('')).toBe(NEUTRAL_AGENT_LABEL);
-    expect(publicAgentLabel('x'.repeat(41))).toBe(NEUTRAL_AGENT_LABEL);
   });
 
-  it('keeps a public model name', () => {
-    expect(publicAgentLabel('GPT-4o mini')).toBe('GPT-4o mini');
-    // A name with a character the shared label of a seat may not carry
-    // becomes the neutral one, so the seat can still declare it.
-    expect(publicAgentLabel('Stockfish 19 Lite (browser)')).toBe(NEUTRAL_AGENT_LABEL);
-  });
-});
-
-describe('the labels of the private catalog', () => {
-  it('keeps a label inside the shape a shared model label may have', () => {
-    expect(publicSafeAgentLabel('GPT-4o mini')).toBe('GPT-4o mini');
-    expect(publicSafeAgentLabel('sk-secret/route')).toBe('sk-secret route');
-    expect(publicSafeAgentLabel('---')).toBe('');
-    expect(publicSafeAgentLabel('a'.repeat(80))).toHaveLength(64);
-  });
-
-  it('numbers the labels that would collide', () => {
-    expect(uniqueAgentLabels(['A', 'A', 'A'])).toEqual(['A', 'A 2', 'A 3']);
-    expect(uniqueAgentLabels(['', ''])).toEqual([NEUTRAL_AGENT_LABEL, `${NEUTRAL_AGENT_LABEL} 2`]);
+  it('carries no ordinal, so two private models share the neutral name', () => {
+    expect(publicAgentLabel('private-a')).toBe(publicAgentLabel('private-b'));
   });
 });
 
 describe('the choice of a model for a seat', () => {
   const first = entry('first', 'Custom model', selection('first', 'model-a'));
-  const second = entry('second', 'Custom model 2', selection('second', 'model-b'));
+  const second = entry('second', 'Custom model', selection('second', 'model-b'));
 
   it('offers every model of the owner, also the one that plays the new games', () => {
     // The seat plays the second model, so the first model stays available:
@@ -204,5 +192,12 @@ describe('the choice of a model for a seat', () => {
     expect(seatChoiceAvailable({ entry: first, bound: second })).toBe(true);
     expect(seatChoiceAvailable({ entry: second, bound: second })).toBe(false);
     expect(seatChoiceAvailable({ entry: first, bound: null })).toBe(true);
+  });
+
+  it('keeps every model available when the binding of the seat is ambiguous', () => {
+    // Two private models share the neutral public label, so the binding of the
+    // seat names more than one model and the owner may choose again.
+    expect(seatChoiceAvailable({ entry: first, bound: null, ambiguous: true })).toBe(true);
+    expect(seatChoiceAvailable({ entry: second, bound: null, ambiguous: true })).toBe(true);
   });
 });

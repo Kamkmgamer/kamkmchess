@@ -24,7 +24,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { readdir } from 'node:fs/promises';
-import { readOnlineFixtureDescriptor, signInWithFixtureAccount, signInWithFixtureAccounts, switchFixtureAccount } from '../support/online-account-fixture';
+import { fixtureAccountId, readOnlineFixtureDescriptor, signInWithFixtureAccount, signInWithFixtureAccounts, switchFixtureAccount } from '../support/online-account-fixture';
 import type { OnlineFixtureDescriptor } from '../support/online-account-fixture';
 import { startSyntheticProvider } from '../support/synthetic-provider';
 
@@ -84,10 +84,7 @@ test.beforeAll(async () => {
 
 /** The first fixture account. */
 async function firstAccount(): Promise<string> {
-  const loaded = (await loadDescriptor())!;
-  const account = loaded.accounts[0];
-  if (!account) throw new Error('the fixture has no account');
-  return account.id;
+  return fixtureAccountId(0);
 }
 
 /** Opens the online screen of a signed-in browser. */
@@ -181,8 +178,19 @@ async function onlineClock(page: Page): Promise<string> {
   return ((await clock.textContent()) ?? '').trim();
 }
 
-/** Connects the local provider and selects one of its models. */
+/**
+ * Connects the local provider in the namespace of the signed-in account.
+ *
+ * The connections of an account live in the namespace of that account, so
+ * the model is connected in an account game. The online agent resolves its
+ * provider from the same namespace.
+ */
 async function connectLocalModel(page: Page, baseUrl: string, model: string): Promise<void> {
+  await page.getByRole('button', { name: 'Account and saved games' }).click();
+  await page.getByRole('button', { name: 'Games', exact: true }).click();
+  await page.getByRole('button', { name: 'New account game' }).click();
+  await page.getByRole('button', { name: 'Close account' }).click();
+  // The setup panel of the account game is opened from the top bar.
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.getByLabel('Game mode').selectOption('ai');
   await page.getByLabel('Provider').selectOption('custom');
@@ -277,9 +285,8 @@ test('the account change hides the games of the first account and restores the r
   test.setTimeout(300_000);
   const loaded = await loadDescriptor();
   expect(loaded).not.toBeNull();
-  const accounts = loaded!.accounts;
-  const first = accounts[0]?.id;
-  const second = accounts[1]?.id;
+  const first = fixtureAccountId(0);
+  const second = fixtureAccountId(1);
   if (!first || !second) throw new Error('the fixture has fewer than two accounts');
   // The page chooses its account with the query parameter, so a second page
   // load of the same browser can sign in as the other account.
@@ -321,9 +328,8 @@ test('the first account gets its game back when it signs in again', async ({ pag
   test.setTimeout(300_000);
   const loaded = await loadDescriptor();
   expect(loaded).not.toBeNull();
-  const accounts = loaded!.accounts;
-  const first = accounts[0]?.id;
-  const second = accounts[1]?.id;
+  const first = fixtureAccountId(0);
+  const second = fixtureAccountId(1);
   if (!first || !second) throw new Error('the fixture has fewer than two accounts');
   await signInWithFixtureAccounts(page, loaded!, [first, second]);
 
@@ -371,7 +377,7 @@ test('a late seat change never writes into the next account', async ({ page }) =
   test.setTimeout(300_000);
   const loaded = await loadDescriptor();
   expect(loaded).not.toBeNull();
-  const second = loaded!.accounts[1]?.id;
+  const second = fixtureAccountId(1);
   if (!second) throw new Error('the fixture has fewer than two accounts');
   const provider = await startSyntheticProvider({ models: ['synthetic-a', 'synthetic-b'] });
   try {

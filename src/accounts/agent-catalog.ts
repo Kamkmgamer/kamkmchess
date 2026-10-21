@@ -12,38 +12,61 @@
  *    protocol. It is never a public label and never a public routing id, so
  *    two private models that the service canonicalizes to the same public
  *    label stay two different models.
- * 2. The label of an entry is a public-safe display name. It is derived from
- *    the name the provider advertises, never from a routing id, a connection
- *    nickname or a credential. Two entries that would share a label get a
- *    local ordinal, so the label stays usable as a local key while the
- *    service still publishes its own canonical form of it.
+ * 2. The label of an entry is a public name the service knows. A name the
+ *    service does not know is a private routing identity or an alias of the
+ *    owner, so it is published as the neutral name and never as itself. The
+ *    name the provider advertises stays with the owner and is never
+ *    published.
  */
 import type { ModelSelection } from '../controller/index.js';
 import type { ConnectionNamespace, ConnectionStore } from '../providers/connections/index.js';
 import { controllerRevisionForConfig } from '../ui/opponent-selection.js';
 
-/**
- * The neutral public name of a model whose provider advertises no safe name.
- */
+/** The neutral public name of a model whose public name the service does not know. */
 export const NEUTRAL_AGENT_LABEL = 'Custom model';
 
 /**
- * The public label of a model.
+ * The public model names the service knows.
  *
- * A public label reaches the other participants and the public history, so
- * it never carries a route, a path, an address, a credential or an alias of
- * a connection. The name the provider advertises is used only when it
- * passes this policy; every other name becomes the neutral one.
+ * The list mirrors the allowlist of the service (the migration
+ * `0013_online_public_history.sql`): the key is the model key the service
+ * looks up, the value is the public name it publishes. A model that is not
+ * here is a private routing identity until its owner chooses a public label,
+ * so it is published as the neutral name.
  */
-export function publicAgentLabel(displayName: string | undefined): string {
-  const name = (displayName ?? '').trim();
-  if (name.length === 0 || name.length > 40) return NEUTRAL_AGENT_LABEL;
-  // A route, a path, an address or a separator never becomes a label.
-  if (/[/\\:@?#%&=+]/.test(name)) return NEUTRAL_AGENT_LABEL;
-  // A credential shape never becomes a label.
-  if (/(^|[^a-z0-9])(sk|pk|key|token|secret|bearer|api)[-_]/i.test(name)) return NEUTRAL_AGENT_LABEL;
-  if (!/^[A-Za-z0-9][A-Za-z0-9 ._'-]*$/.test(name)) return NEUTRAL_AGENT_LABEL;
-  return name;
+const KNOWN_PUBLIC_MODEL_LABELS: Readonly<Record<string, string>> = {
+  'gpt-4o': 'GPT-4o',
+  'gpt-4o-mini': 'GPT-4o mini',
+  'gpt-4.1': 'GPT-4.1',
+  'gpt-4.1-mini': 'GPT-4.1 mini',
+  'gpt-5': 'GPT-5',
+  'gpt-5-mini': 'GPT-5 mini',
+  'claude-3-5-sonnet': 'Claude 3.5 Sonnet',
+  'claude-3-5-haiku': 'Claude 3.5 Haiku',
+  'claude-3-7-sonnet': 'Claude 3.7 Sonnet',
+  'claude-sonnet-4': 'Claude Sonnet 4',
+  'claude-opus-4': 'Claude Opus 4',
+  'gemini-1.5-pro': 'Gemini 1.5 Pro',
+  'gemini-1.5-flash': 'Gemini 1.5 Flash',
+  'gemini-2.0-flash': 'Gemini 2.0 Flash',
+  'grok-2': 'Grok 2',
+  'grok-2-latest': 'Grok 2 latest',
+  'kimi-k2': 'Kimi K2',
+  'llama-3.3-70b': 'Llama 3.3 70B',
+  'deepseek-r1': 'DeepSeek R1',
+  'qwen3-235b': 'Qwen3 235B',
+  'stockfish-19-lite': 'Stockfish 19 Lite (browser)',
+};
+
+/**
+ * The public label of one model.
+ *
+ * The model key is looked up in the list the service knows. An unknown key is
+ * a private routing identity, so the neutral name is published instead of it.
+ */
+export function publicAgentLabel(modelKey: string): string {
+  const key = modelKey.trim().toLowerCase();
+  return KNOWN_PUBLIC_MODEL_LABELS[key] ?? NEUTRAL_AGENT_LABEL;
 }
 
 /** One connected model of the owner. */
@@ -54,13 +77,13 @@ export interface PrivateAgentEntry {
    * The id never leaves the browser and is never derived from a public label.
    */
   readonly id: string;
-  /** The public-safe label of the model. It is the key of the catalog. */
+  /** The public label of the model. The service knows this name. */
   readonly label: string;
   /**
    * The name the provider advertises.
    *
    * It is shown to the owner only. It never reaches the service, so a name
-   * that is not public-safe may be shown here.
+   * that is not public may be shown here.
    */
   readonly displayName: string;
   /** The private selection. It never leaves the browser. */
@@ -98,45 +121,6 @@ export function privateAgentId(selection: ModelSelection): string {
 }
 
 /**
- * Keeps a label inside the shape a shared model label may have.
- *
- * A route, a path or a credential never survives this filter.
- */
-export function publicSafeAgentLabel(value: string): string {
-  const cleaned = value
-    .replace(/[^A-Za-z0-9 ._'-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 64)
-    .trim();
-  return /^[A-Za-z0-9]/.test(cleaned) ? cleaned : '';
-}
-
-/**
- * The unique labels of the catalog.
- *
- * The first entry of a name keeps the name. The next ones get a local
- * ordinal, so two private models never share one local key.
- */
-export function uniqueAgentLabels(names: readonly string[]): string[] {
-  const used = new Set<string>();
-  const labels: string[] = [];
-  for (const name of names) {
-    const base = name.length > 0 ? name : NEUTRAL_AGENT_LABEL;
-    let label = base;
-    let ordinal = 1;
-    while (used.has(label)) {
-      ordinal += 1;
-      const suffix = ` ${ordinal}`;
-      label = `${base.slice(0, Math.max(1, 64 - suffix.length))}${suffix}`;
-    }
-    used.add(label);
-    labels.push(label);
-  }
-  return labels;
-}
-
-/**
  * Reads the private model catalog of the owner.
  *
  * A connection without a bound credential is not offered: the browser could
@@ -161,15 +145,14 @@ export async function readPrivateAgentCatalog(options: PrivateAgentCatalogOption
         profile,
         modelId: entry.id,
         // The name the provider advertises is shown to the owner only.
-        displayName: (entry.displayName ?? '').trim() || NEUTRAL_AGENT_LABEL,
-        // The label of the catalog is public: it is the label a seat may
-        // declare. A name that is not public-safe becomes the neutral one.
-        label: publicAgentLabel(entry.displayName),
+        displayName: (entry.displayName ?? '').trim() || entry.id,
+        // The public label is the name the service knows. An unknown model is
+        // published as the neutral name.
+        label: publicAgentLabel(entry.id),
       });
     }
   }
-  const labels = uniqueAgentLabels(candidates.map(candidate => candidate.label));
-  return candidates.map((candidate, index) => {
+  return candidates.map(candidate => {
     const profile = candidate.profile!;
     const selection: ModelSelection = {
       kind: 'model',
@@ -182,7 +165,7 @@ export async function readPrivateAgentCatalog(options: PrivateAgentCatalogOption
     };
     return {
       id: privateAgentId(selection),
-      label: labels[index]!,
+      label: candidate.label,
       displayName: candidate.displayName,
       selection,
       connectionId: profile.id,
@@ -205,40 +188,22 @@ export function privateAgentEntryFor(
   return entries.find(entry => entry.id === id) ?? null;
 }
 
-/** The binding of one seat of one match. */
-export interface SeatBinding {
-  /** The label the binding carries. */
-  readonly label: string;
-  /** The private selection the seat plays. */
-  readonly selection: ModelSelection;
-}
-
-/**
- * The outcome of an owner decision on an agent seat.
- *
- * The composition publishes the same shape. An outcome never carries a
- * routing identifier, a credential or a private selection.
- */
-export type AgentDecisionOutcome =
-  | { readonly kind: 'accepted'; readonly publicModelLabel: string }
-  | { readonly kind: 'refused'; readonly detail: string }
-  | { readonly kind: 'unknown'; readonly detail: string };
-
 /**
  * The catalog entry of a binding.
  *
- * A composition may publish the binding as the private identity of the
- * entry or as its label. The identity is preferred, so two private models
- * that share a label never swap.
+ * A binding is reported by its public label. The label resolves an entry only
+ * when it is unique, so two private models that share a public label are
+ * never confused with each other.
  */
 export function privateAgentEntryForBinding(
   entries: readonly PrivateAgentEntry[],
   binding: string | null,
 ): PrivateAgentEntry | null {
   if (!binding) return null;
-  return entries.find(entry => entry.id === binding)
-    ?? entries.find(entry => entry.label === binding)
-    ?? null;
+  const byId = entries.find(entry => entry.id === binding);
+  if (byId) return byId;
+  const byLabel = entries.filter(entry => entry.label === binding);
+  return byLabel.length === 1 ? byLabel[0]! : null;
 }
 
 /**
@@ -247,14 +212,19 @@ export function privateAgentEntryForBinding(
  * The answer compares the private identities, never the labels: the model
  * that already plays the seat is not offered again, and every other model of
  * the owner stays available, also the one that plays the new games.
+ *
+ * A seat whose binding cannot be resolved to one entry (two private models
+ * share a public label) keeps every model available: the rebind is the
+ * explicit choice of the owner and it is idempotent.
  */
 export function seatChoiceAvailable(input: {
   /** The model the owner wants to play on the seat. */
   readonly entry: PrivateAgentEntry;
   /** The model the seat plays now, if it plays one. */
   readonly bound: PrivateAgentEntry | null;
+  /** True when the binding of the seat names more than one model. */
+  readonly ambiguous?: boolean;
 }): boolean {
-  if (!input.bound) return true;
+  if (!input.bound || input.ambiguous) return true;
   return input.bound.id !== input.entry.id;
 }
-
