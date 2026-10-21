@@ -48,9 +48,11 @@ func SQLReference(column string) string {
 // The removal of the public replay of one match is not a removal request. It
 // keeps the participant, so it never closes a seat anywhere.
 //
-// The argument is the reference of the account, never the account identifier.
+// The argument is the reference of the account. The removal tables store the
+// reference directly, so the comparison is direct and never hashes the stored
+// value a second time.
 var AccountRemovedSQL = `SELECT EXISTS(
-  SELECT 1 FROM online_account_deletions WHERE ` + SQLReference("account_id") + ` = $1
+  SELECT 1 FROM online_account_deletions WHERE account_id = $1
   UNION ALL
   SELECT 1 FROM online_removal_requests WHERE subject_kind='account' AND subject_id = $1)`
 

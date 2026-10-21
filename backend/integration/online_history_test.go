@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -368,9 +367,13 @@ func TestPostgresOwnerChosenPublicLabelIsPublished(t *testing.T) {
 //
 // The lease is the fence of an agent action: a seat that is under agent
 // control acts through the browser runner that holds the lease of the seat.
-// The lease is taken from the real service, through the lease route when the
-// build mounts it and through the lease seam of the service otherwise, so the
-// test never weakens the production fence.
+// The lease is taken from the real service through the lease route, so the
+// test never weakens the production lease fence.
+//
+// A build that does not mount the lease route has no lease fence either, so
+// the helper reports that no lease is available and the agent command is sent
+// without one. Every other answer is a failure: a refused or unauthenticated
+// lease is a defect, not a reason to skip.
 func historyAcquireLease(t *testing.T, fixture *onlineAuthFixture, handler http.Handler, matchID string, seat online.Seat, turnVersion, controlEpoch int64) (string, bool) {
 	t.Helper()
 	subject := "user_a"
@@ -396,62 +399,14 @@ func historyAcquireLease(t *testing.T, fixture *onlineAuthFixture, handler http.
 		if leaseID != "" {
 			return leaseID, true
 		}
+		t.Fatalf("the runner lease answer carries no lease id: %s", response.Body.String())
 	}
-	if response.Code != http.StatusNotFound && response.Code != http.StatusServiceUnavailable {
-		t.Fatalf("the runner lease status=%d body=%s", response.Code, response.Body.String())
-	}
-	// The build does not mount the lease route. The service seam is used
-	// instead, so the test still drives the real lease.
-	return historyAcquireServiceLease(t, fixture.service, matchID, seat, turnVersion, controlEpoch)
-}
-
-// historyAcquireServiceLease takes the runner lease through the lease seam of
-// the online service.
-//
-// The seam is called reflectively, because the lease contract belongs to the
-// online service and the test must stay compilable in every build. A service
-// without the seam reports that no lease is available, and the caller sends
-// the command without one.
-func historyAcquireServiceLease(t *testing.T, service *online.Service, matchID string, seat online.Seat, turnVersion, controlEpoch int64) (string, bool) {
-	t.Helper()
-	method := reflect.ValueOf(service).MethodByName("AcquireRunnerLease")
-	if !method.IsValid() {
+	if response.Code == http.StatusNotFound {
+		// The build does not mount the lease route, so it has no lease fence.
 		return "", false
 	}
-	methodType := method.Type()
-	if methodType.NumIn() != 3 || methodType.NumOut() != 2 {
-		return "", false
-	}
-	request := reflect.New(methodType.In(2).Elem())
-	fields := map[string]any{
-		"SchemaVersion": online.ContractsSchemaVersion,
-		"MatchID":       matchID,
-		"Seat":          seat,
-		"RunnerID":      "runner-" + string(seat),
-		"TurnVersion":   turnVersion,
-		"ControlEpoch":  controlEpoch,
-	}
-	for name, value := range fields {
-		field := request.Elem().FieldByName(name)
-		if !field.IsValid() || !field.CanSet() {
-			return "", false
-		}
-		field.Set(reflect.ValueOf(value))
-	}
-	results := method.Call([]reflect.Value{reflect.ValueOf(context.Background()), reflect.ValueOf(online.ParticipantRef{Kind: online.ParticipantAccount, ID: "user_b"}), request.Elem()})
-	if err, _ := results[1].Interface().(error); err != nil {
-		t.Fatalf("acquire runner lease: %v", err)
-	}
-	lease := results[0]
-	if lease.Kind() == reflect.Ptr {
-		lease = lease.Elem()
-	}
-	leaseID := lease.FieldByName("LeaseID")
-	if !leaseID.IsValid() {
-		return "", false
-	}
-	value, _ := leaseID.Interface().(string)
-	return value, value != ""
+	t.Fatalf("the runner lease status=%d body=%s", response.Code, response.Body.String())
+	return "", false
 }
 
 // historyAgentCommand sends one command of an agent seat.

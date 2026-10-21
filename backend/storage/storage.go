@@ -29,9 +29,52 @@ var (
 	ErrDeleted         = errors.New("storage: deleted")
 	ErrInvalidArgument = errors.New("storage: invalid argument")
 	ErrUnavailable     = errors.New("storage: unavailable")
+	// ErrAccountFenced reports an account that may no longer use the private
+	// store.
+	//
+	// A deleted account is fenced: its private data was removed, so a write
+	// of that account is refused even when its session token still verifies.
+	ErrAccountFenced = errors.New("storage: the account is fenced")
 )
 
-type Store struct{ db *pgxpool.Pool }
+// Store is the owner-scoped private game store.
+type Store struct {
+	db   *pgxpool.Pool
+	gate AccountGate
+}
+
+// Querier is the read and write surface an account gate needs.
+//
+// A transaction and the connection pool both satisfy it, so a gate can be
+// consulted inside the transaction that writes a mutation.
+type Querier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}
+
+// AccountGate reports whether an account may still use the private store.
+//
+// The gate is the durable fence of a deleted account. It is consulted inside
+// the transaction of every write, so an account whose private data was
+// removed cannot write again, not even with a session token that still
+// verifies.
+type AccountGate interface {
+	// AccountAllowed reports whether the account may use the private store.
+	AccountAllowed(ctx context.Context, q Querier, owner string) (bool, error)
+}
+
+// Option configures the store.
+type Option func(*Store)
+
+// WithAccountGate binds the account gate of the store.
+//
+// The gate is optional: a store without one serves every account that
+// authenticates.
+func WithAccountGate(gate AccountGate) Option {
+	return func(s *Store) {
+		s.gate = gate
+	}
+}
 type Game struct {
 	ID             string     `json:"id"`
 	OwnerID        string     `json:"ownerId"`
@@ -90,11 +133,33 @@ type CommitResult struct {
 	Duplicate bool
 }
 
-func Open(_ context.Context, db *pgxpool.Pool) (*Store, error) {
+func Open(_ context.Context, db *pgxpool.Pool, options ...Option) (*Store, error) {
 	if db == nil {
 		return nil, ErrInvalidArgument
 	}
-	return &Store{db}, nil
+	store := &Store{db: db}
+	for _, option := range options {
+		option(store)
+	}
+	return store, nil
+}
+
+// allowAccount consults the account gate inside the write transaction.
+//
+// A gate that cannot be read refuses the write: the store fails closed
+// instead of writing for an account whose state is unknown.
+func (s *Store) allowAccount(ctx context.Context, q Querier, owner string) error {
+	if s.gate == nil {
+		return nil
+	}
+	allowed, err := s.gate.AccountAllowed(ctx, q, owner)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return ErrAccountFenced
+	}
+	return nil
 }
 func validateCheckpoint(raw []byte, gameID, owner string) error {
 	if !validUniqueJSON(raw) {
@@ -673,6 +738,11 @@ func (s *Store) Create(ctx context.Context, owner string, in CreateGame) (Game, 
 		return Game{}, err
 	}
 	defer tx.Rollback(ctx)
+	// The account gate is consulted inside the transaction, so a fenced
+	// account cannot create a game.
+	if err = s.allowAccount(ctx, tx, owner); err != nil {
+		return Game{}, err
+	}
 	var g Game
 	err = tx.QueryRow(ctx, `INSERT INTO games(game_id,owner_id,revision,ownership_epoch,checkpoint_json) VALUES($1,$2,1,1,$3) ON CONFLICT DO NOTHING RETURNING game_id,owner_id,revision,ownership_epoch,checkpoint_json,created_at,updated_at,deleted_at`, in.GameID, owner, in.CheckpointJSON).Scan(&g.ID, &g.OwnerID, &g.Revision, &g.Epoch, &g.CheckpointJSON, &g.CreatedAt, &g.UpdatedAt, &g.DeletedAt)
 	if err != nil {
@@ -847,6 +917,11 @@ func (s *Store) Commit(ctx context.Context, owner string, r CommitRequest) (Comm
 		return CommitResult{}, e
 	}
 	defer tx.Rollback(ctx)
+	// The account gate is consulted inside the transaction, so a fenced
+	// account cannot commit into a game.
+	if e = s.allowAccount(ctx, tx, owner); e != nil {
+		return CommitResult{}, e
+	}
 	// Serialize retries on the game row before consulting the operation ledger.
 	g, e := scanGame(tx.QueryRow(ctx, `SELECT `+gameCols+` FROM games WHERE owner_id=$1 AND game_id=$2 FOR UPDATE`, owner, r.GameID))
 	if errors.Is(e, pgx.ErrNoRows) {

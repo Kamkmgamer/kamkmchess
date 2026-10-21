@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/backup"
 	"github.com/Kamkmgamer/kamkmchess/backend/history"
 	"github.com/Kamkmgamer/kamkmchess/backend/httpapi"
 	"github.com/Kamkmgamer/kamkmchess/backend/migrations"
@@ -519,6 +523,81 @@ func TestPostgresPublicReadsAreRefusedWhileTheRestoreGateIsClosed(t *testing.T) 
 	open := onlineHTTPRequest(handler, http.MethodGet, "/v1/public/profiles/"+profileID+"/history", authTestOrigin, "", nil, "")
 	if open.Code != http.StatusOK {
 		t.Fatalf("the public history after the release status=%d body=%s", open.Code, open.Body.String())
+	}
+}
+
+// TestPostgresRestoreFenceSurvivesAFailedReplay covers the durable restore
+// fence.
+//
+// The fence is written before a restore imports anything, so a restore that
+// dies or that cannot replay the removal ledger leaves the service closed. The
+// fence lives outside the restored database, so it survives the schema
+// replacement and the crash of the restore process.
+func TestPostgresRestoreFenceSurvivesAFailedReplay(t *testing.T) {
+	fixture := newOnlineAuthFixture(t, moveEvaluator{})
+	fencePath := filepath.Join(t.TempDir(), "restore.fence")
+	removals, err := privacy.Open(context.Background(), fixture.pool, fixture.authorizer, privacy.Options{FencePath: fencePath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A fresh database serves traffic.
+	allowed, err := removals.ServingAllowed(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed {
+		t.Fatal("a fresh database must serve traffic")
+	}
+	// The restore writes the fence before it imports anything.
+	if err = removals.WriteFence("restore-failure", []byte("digest-of-the-merged-ledger")); err != nil {
+		t.Fatalf("write fence: %v", err)
+	}
+	if _, err = os.Stat(fencePath); err != nil {
+		t.Fatalf("the fence file is missing: %v", err)
+	}
+	// The service is closed while the fence is open.
+	allowed, err = removals.ServingAllowed(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed {
+		t.Fatal("a fenced database serves traffic")
+	}
+	// A replay that fails does not close the fence.
+	if err = removals.ApplyRemovalRecords(context.Background(), []backup.RemovalRecord{{
+		RemovalID:   "rm_missing",
+		SubjectKind: "account",
+		SubjectID:   privacy.SubjectReference("user_a"),
+		MatchID:     "match-that-does-not-exist",
+		Scope:       privacy.ScopeExplicitRemoval,
+		RemovedAt:   time.Now().UTC(),
+	}}); err != nil {
+		t.Fatalf("apply removal records: %v", err)
+	}
+	fenced, err := removals.FenceOpen()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fenced {
+		t.Fatal("the fence was closed by a replay that did not finish")
+	}
+	allowed, err = removals.ServingAllowed(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed {
+		t.Fatal("a fenced database serves traffic after a failed replay")
+	}
+	// The repair closes the fence.
+	if err = removals.ClearFence(); err != nil {
+		t.Fatalf("clear fence: %v", err)
+	}
+	allowed, err = removals.ServingAllowed(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowed {
+		t.Fatal("a repaired database does not serve traffic")
 	}
 }
 

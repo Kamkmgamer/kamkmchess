@@ -53,7 +53,10 @@ func (s *Service) ApplyRemovalRecords(ctx context.Context, records []backup.Remo
 			return err
 		}
 	}
-	return nil
+	// The private single-owner data of every deleted account is removed
+	// again: a restored database holds those rows again, and the removal
+	// ledger replays the removal.
+	return s.applyPrivateRemovals(ctx)
 }
 
 // applyRemovalRecord replays one removal.
@@ -63,9 +66,12 @@ func (s *Service) applyRemovalRecord(ctx context.Context, record backup.RemovalR
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var seat string
-	err = tx.QueryRow(ctx, `SELECT seat FROM online_seats WHERE match_id=$1 AND owner_kind=$2 AND `+subject.SQLReference("owner_id")+` = $3`,
-		record.MatchID, record.SubjectKind, record.SubjectID).Scan(&seat)
+	var (
+		seat    string
+		ownerID string
+	)
+	err = tx.QueryRow(ctx, `SELECT seat,owner_id FROM online_seats WHERE match_id=$1 AND owner_kind=$2 AND `+subject.SQLReference("owner_id")+` = $3`,
+		record.MatchID, record.SubjectKind, record.SubjectID).Scan(&seat, &ownerID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			// The removal was already applied: the seat no longer names the
@@ -109,8 +115,15 @@ func (s *Service) applyRemovalRecord(ctx context.Context, record backup.RemovalR
 			return err
 		}
 	}
-	if err = s.removePrivateOwnerData(ctx, tx, record.SubjectKind, record.SubjectID, record.Scope); err != nil {
+	if err = s.removePrivateOwnerData(ctx, tx, record.SubjectKind, record.SubjectID, ownerID, record.Scope); err != nil {
 		return err
+	}
+	// The account is fenced again: the restored database holds the sessions of
+	// the account, so the fence is re-applied with the removal.
+	if record.SubjectKind == string(online.ParticipantAccount) {
+		if err = s.fenceAccount(ctx, tx, ownerID, revocationReason(record.Scope)); err != nil {
+			return err
+		}
 	}
 	return tx.Commit(ctx)
 }
@@ -208,6 +221,10 @@ func (s *Service) ReleaseRestoreGate(ctx context.Context, restoreID string) erro
 // lost, and the check finds them. A service that starts on such a database
 // refuses to serve, because the erased game would be public again.
 //
+// The seat of the subject is matched by the one-way reference of the subject,
+// never by the raw identifier, and the kind of the participant is part of the
+// match.
+//
 // The check fails closed: an unreadable ledger is not an empty ledger.
 func (s *Service) LedgerApplied(ctx context.Context) (bool, error) {
 	var pending bool
@@ -215,8 +232,10 @@ func (s *Service) LedgerApplied(ctx context.Context) (bool, error) {
 		SELECT
 			EXISTS(
 				SELECT 1 FROM online_removal_ledger l
-				JOIN online_seats s ON s.match_id = l.match_id AND s.owner_id = l.subject_id
-				WHERE s.owner_id <> 'anonymized')
+				JOIN online_seats s ON s.match_id = l.match_id
+				WHERE `+subject.SQLReference("s.owner_id")+` = l.subject_id
+				  AND s.owner_kind = l.subject_kind
+				  AND s.owner_id <> 'anonymized')
 			OR EXISTS(
 				SELECT 1 FROM online_removal_ledger l
 				JOIN online_public_replays r ON r.match_id = l.match_id
@@ -229,11 +248,19 @@ func (s *Service) LedgerApplied(ctx context.Context) (bool, error) {
 
 // ServingAllowed reports whether the service may serve traffic.
 //
-// Two conditions have to hold: no restore gate is waiting for its removal
-// ledger, and every recorded removal is applied in the database.
+// Three conditions have to hold: no durable restore fence is open, no restore
+// gate is waiting for its removal ledger, and every recorded removal is
+// applied in the database.
 func (s *Service) ServingAllowed(ctx context.Context) (bool, error) {
+	fenced, err := s.FenceOpen()
+	if err != nil {
+		return false, err
+	}
+	if fenced {
+		return false, nil
+	}
 	var pending bool
-	if err := s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_restore_gates WHERE serving_allowed = false)`).Scan(&pending); err != nil {
+	if err = s.db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_restore_gates WHERE serving_allowed = false)`).Scan(&pending); err != nil {
 		return false, err
 	}
 	if pending {
