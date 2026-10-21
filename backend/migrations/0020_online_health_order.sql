@@ -16,9 +16,8 @@
 
 CREATE SEQUENCE IF NOT EXISTS online_service_health_order;
 
--- A sequence grants its usage to PUBLIC by default, like a table grants its
--- rights. The order of the checkpoints is private to the role that writes the
--- health of the service.
+-- Revoke any PUBLIC access from earlier grants or configured default ACLs.
+-- The order is private to the role that writes the health of the service.
 REVOKE ALL ON SEQUENCE online_service_health_order FROM PUBLIC;
 
 ALTER TABLE online_service_health ADD COLUMN IF NOT EXISTS observation_order bigint;
@@ -29,16 +28,24 @@ ALTER TABLE online_service_health ADD COLUMN IF NOT EXISTS observation_order big
 -- were written: two rows with the same moment have no order of their own, and
 -- the identity breaks that tie.
 WITH backfill AS (
-  SELECT checkpoint_id, row_number() OVER (ORDER BY recorded_at, checkpoint_id) AS ordinal
+  SELECT checkpoint_id,
+    COALESCE((SELECT max(observation_order) FROM online_service_health), 0)
+      + row_number() OVER (ORDER BY recorded_at, checkpoint_id) AS ordinal
   FROM online_service_health
+  WHERE observation_order IS NULL
 )
 UPDATE online_service_health AS checkpoint
 SET observation_order = backfill.ordinal
 FROM backfill
 WHERE checkpoint.checkpoint_id = backfill.checkpoint_id;
 
--- The sequence continues above the backfilled orders.
-SELECT setval('online_service_health_order', COALESCE((SELECT max(observation_order) FROM online_service_health), 0) + 1, false);
+-- Preserve allocated values, including values with no surviving checkpoint.
+-- A repeated application must preserve both the orders and the next value.
+SELECT setval('online_service_health_order',
+  GREATEST(last_value, COALESCE(checkpoints.greatest, last_value)),
+  is_called OR COALESCE(checkpoints.greatest >= last_value, false))
+FROM online_service_health_order,
+  (SELECT max(observation_order) AS greatest FROM online_service_health) AS checkpoints;
 
 ALTER TABLE online_service_health ALTER COLUMN observation_order SET DEFAULT nextval('online_service_health_order');
 ALTER TABLE online_service_health ALTER COLUMN observation_order SET NOT NULL;

@@ -15,6 +15,62 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func TestOnlineTheOrderMigrationPreservesExistingOrdersAndSequence(t *testing.T) {
+	for _, called := range []bool{false, true} {
+		name := "uncalled"
+		if called {
+			name = "called"
+		}
+		t.Run(name, func(t *testing.T) {
+			fixture := newPresenceFixture(t)
+			ctx := context.Background()
+			if _, err := fixture.pool.Exec(ctx, `INSERT INTO online_service_health(checkpoint_id,dependency,state,detail,recorded_at) VALUES
+('chk-preserve-01','rules','degraded','first','2026-01-01'),
+('chk-preserve-02','rules','healthy','second','2025-01-01')`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := fixture.pool.Exec(ctx, `SELECT setval('online_service_health_order',100,$1)`, called); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile("../migrations/0020_online_health_order.sql")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for attempt := 0; attempt < 2; attempt++ {
+				if _, err := fixture.pool.Exec(ctx, string(raw)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var orders []int64
+			if err := fixture.pool.QueryRow(ctx, `SELECT array_agg(observation_order ORDER BY checkpoint_id) FROM online_service_health`).Scan(&orders); err != nil {
+				t.Fatal(err)
+			}
+			if len(orders) != 2 || orders[0] != 1 || orders[1] != 2 {
+				t.Errorf("existing orders = %v, want [1 2]", orders)
+			}
+			var last int64
+			var stillCalled bool
+			if err := fixture.pool.QueryRow(ctx, `SELECT last_value,is_called FROM online_service_health_order`).Scan(&last, &stillCalled); err != nil {
+				t.Fatal(err)
+			}
+			if last != 100 || stillCalled != called {
+				t.Errorf("sequence = (%d, %t), want (100, %t)", last, stillCalled, called)
+			}
+			var next int64
+			if err := fixture.pool.QueryRow(ctx, `SELECT nextval('online_service_health_order')`).Scan(&next); err != nil {
+				t.Fatal(err)
+			}
+			want := int64(100)
+			if called {
+				want++
+			}
+			if next != want {
+				t.Errorf("next order = %d, want %d", next, want)
+			}
+		})
+	}
+}
+
 // The durable reporter of the health boundary.
 //
 // The reporter is written by the observations of the instance, and the
