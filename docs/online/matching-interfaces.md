@@ -264,9 +264,21 @@ The recheck knows a removed participant in three ways. A participant that
 carries the **anonymized sentinel** is a removed participant, because the
 privacy sanitation replaces the identifier of a removed subject with that
 constant. A participant whose account or of whose guest seat a removal was
-recorded is named by the durable removal records. A participant of a match
-that carries a row in the **removal ledger** was removed from that match, so a
-restore of an older backup cannot revive it either.
+recorded is named by the durable removal records. A participant whose **own**
+one-way reference is named by a row of the **removal ledger** of that match
+was removed from that match, so a restore of an older backup cannot revive it
+either.
+
+The ledger check is participant scoped: the removal of the opponent of a match
+does not take the seat of the survivor away. A surviving participant keeps its
+own seat, its own credential and its own writes, and the game stays live.
+
+The write names the participants it really writes for. A fresh acceptance
+creates the match of the inviter and the acceptor, so both are rechecked. A
+**resumed** acceptance creates nothing and writes no row of the inviter, so
+only the acceptor is rechecked, and the removal of the inviter does not take
+the seat of the acceptor away. The credential of a seat is recovered for the
+owner of that seat alone.
 
 The cancellation of an invitation is a write of the surface as well, so it is
 fenced the same way: the account scope lock of the inviter is taken before
@@ -274,8 +286,9 @@ the row lock of the invitation, and the removal of the inviter is rechecked
 after the lock.
 
 A rematch offer that can never be accepted any more is not published. The
-pending read retires it, so a dead offer is not the live offer of the match
-until it expires.
+pending read is a **projection**: it never writes, so a `GET` never changes
+the personal row of a removed participant and never raises a database error
+for an offer of an older build.
 
 The refusal is `403` with the code `not_authorized`, the same code as an
 unauthorized caller, so the error vocabulary of the surface does not change.

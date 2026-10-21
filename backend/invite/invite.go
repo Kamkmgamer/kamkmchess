@@ -582,6 +582,13 @@ func lockParticipants(ctx context.Context, tx pgx.Tx, participants ...online.Par
 		if participant.ID == "" {
 			continue
 		}
+		// The anonymized sentinel is not a participant. Every removed
+		// subject of the same kind carries the same sentinel, so a scope
+		// lock of it would be one global lock for all of them. The sentinel
+		// is refused by value, so it needs no lock at all.
+		if participant.ID == anonymizedParticipant {
+			continue
+		}
 		scopes = append(scopes, locks.AccountScope(string(participant.Kind), participant.ID))
 	}
 	return locks.LockAccountScopes(ctx, tx, scopes)
@@ -626,11 +633,17 @@ func recheckParticipants(ctx context.Context, q online.Querier, matchID string, 
 // is named by the durable removal records, compared through the one-way
 // reference of the subject.
 //
-// A participant of a match that carries a row in the removal ledger was
-// removed from that match. The ledger is the match scoped record of a
+// A participant of a match whose removal ledger names **that** participant
+// was removed from that match. The ledger is the match scoped record of a
 // removal, so it answers the question even when the seat row of an older
 // backup still names the removed subject.
+//
+// The ledger row names the removed subject, so the check is participant
+// scoped. A surviving participant of a match whose other participant was
+// removed keeps its own seat, its own credential and its own writes: the
+// removal of the opponent does not remove the survivor.
 func removedParticipants(ctx context.Context, q online.Querier, matchID string, participants ...online.ParticipantRef) (bool, error) {
+	references := make([]string, 0, len(participants))
 	for _, participant := range participants {
 		if participant.ID == "" {
 			continue
@@ -638,23 +651,25 @@ func removedParticipants(ctx context.Context, q online.Querier, matchID string, 
 		if participant.ID == anonymizedParticipant {
 			return true, nil
 		}
+		reference := subject.Reference(participant.ID)
 		query := subject.GuestRemovedSQL
 		if participant.Kind == online.ParticipantAccount {
 			query = subject.AccountRemovedSQL
 		}
 		var removed bool
-		if err := q.QueryRow(ctx, query, subject.Reference(participant.ID)).Scan(&removed); err != nil {
+		if err := q.QueryRow(ctx, query, reference).Scan(&removed); err != nil {
 			return false, err
 		}
 		if removed {
 			return true, nil
 		}
+		references = append(references, reference)
 	}
-	if matchID == "" {
+	if matchID == "" || len(references) == 0 {
 		return false, nil
 	}
 	var removed bool
-	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_removal_ledger WHERE match_id=$1)`, matchID).Scan(&removed); err != nil {
+	if err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_removal_ledger WHERE match_id=$1 AND subject_id = ANY($2))`, matchID, references).Scan(&removed); err != nil {
 		return false, err
 	}
 	return removed, nil
@@ -884,16 +899,11 @@ func (s *Service) accept(ctx context.Context, request AcceptRequest, invitation 
 		}
 		return Accepted{}, err
 	}
-	// The removal of a participant is rechecked after the locks, so a
-	// request that was authenticated before the removal cannot consume an
-	// invitation or create a personal row after it. The match of a resumed
-	// acceptance is the match the acceptance belongs to, so the removal
-	// ledger of that match refuses the resume as well.
-	if err = recheckParticipants(ctx, tx, matchIDOf(invitation.MatchID), participants...); err != nil {
-		closed = true
-		_ = tx.Rollback(ctx)
-		return Accepted{}, err
-	}
+	// The removal of a participant is rechecked in the claim, where the
+	// participants of the write are known: a fresh acceptance names the
+	// inviter and the acceptor, because it creates the match of both, and a
+	// resumed acceptance names the acceptor alone, because it only mints
+	// the credential of the seat the acceptor already holds.
 	acceptance, err := s.claim(ctx, tx, request, invitation, keyHash, status, expiresAt)
 	if err != nil {
 		closed = true
@@ -931,6 +941,15 @@ func (s *Service) claim(ctx context.Context, tx pgx.Tx, request AcceptRequest, i
 		// capability of a guest acceptance.
 		if request.Acceptor != nil && existing.AcceptorID != request.Acceptor.Participant.ID {
 			return acceptance{}, ErrConflict
+		}
+		// A resumed acceptance names the acceptor alone. It creates no
+		// match and it writes no row of another participant, so only the
+		// acceptor is rechecked: the removal of the inviter does not take
+		// the seat of the acceptor away, and the acceptance that already
+		// happened is not undone by it.
+		acceptor := online.ParticipantRef{Kind: online.ParticipantKind(existing.AcceptorKind), ID: existing.AcceptorID}
+		if err := recheckParticipants(ctx, tx, matchIDOf(invitation.MatchID), acceptor); err != nil {
+			return acceptance{}, err
 		}
 		return existing, nil
 	}
@@ -972,6 +991,14 @@ func (s *Service) claim(ctx context.Context, tx pgx.Tx, request AcceptRequest, i
 			return acceptance{}, idErr
 		}
 		acceptorID = guestID
+	}
+	// A fresh acceptance names the inviter and the acceptor, because it
+	// creates the match of both. The removal of either of them is refused
+	// before the invitation is consumed.
+	inviter := online.ParticipantRef{Kind: online.ParticipantKind(invitation.inviterKind), ID: invitation.inviterID}
+	acceptor := online.ParticipantRef{Kind: online.ParticipantKind(acceptorKind), ID: acceptorID}
+	if err := recheckParticipants(ctx, tx, "", inviter, acceptor); err != nil {
+		return acceptance{}, err
 	}
 	tag, err := tx.Exec(ctx, `UPDATE online_friend_invitations SET status='consumed',consumed_at=$2,acceptance_id=$3,version=version+1 WHERE invitation_id=$1 AND status='open' AND expires_at > $2`,
 		request.InvitationID, now, acceptanceID)
@@ -1024,11 +1051,42 @@ func (s *Service) claim(ctx context.Context, tx pgx.Tx, request AcceptRequest, i
 //
 // The match, the acceptance state and the credential commit together with the
 // consumption of the invitation.
+//
+// A fresh acceptance creates the canonical match here. A **resumed**
+// acceptance does not: the match of the acceptance exists, and it is named by
+// the stored acceptance. The seat of a participant that was removed in the
+// meantime is redacted in the invitation row, so the match is not created
+// again from it, and the resume never writes the row of a removed subject.
 func (s *Service) complete(ctx context.Context, tx pgx.Tx, acceptance acceptance, invitation Invitation, request AcceptRequest) (Accepted, error) {
+	matchID := matchIDOf(acceptance.MatchID)
+	if matchID == "" {
+		created, err := s.createMatch(ctx, tx, acceptance, invitation)
+		if err != nil {
+			return Accepted{}, err
+		}
+		matchID = created
+	}
+	accepted := Accepted{AcceptanceID: acceptance.AcceptanceID, MatchID: matchID, Seat: acceptance.Seat}
+	if acceptance.AcceptorKind == string(online.ParticipantGuest) {
+		credential, mintErr := s.mintAcceptanceCredential(ctx, tx, acceptance, matchID, request.Origin, request.RotateCredential)
+		if mintErr != nil {
+			return Accepted{}, mintErr
+		}
+		accepted.GuestCredential = credential
+	}
+	return accepted, nil
+}
+
+// createMatch writes the canonical match of a fresh acceptance.
+//
+// The match, the acceptance state and the consumption of the invitation
+// commit together, so a crash can never leave a spent invitation without a
+// game.
+func (s *Service) createMatch(ctx context.Context, tx pgx.Tx, acceptance acceptance, invitation Invitation) (string, error) {
 	inviterParticipant := online.ParticipantRef{Kind: online.ParticipantKind(invitation.inviterKind), ID: invitation.inviterID}
 	acceptorParticipant := online.ParticipantRef{Kind: online.ParticipantKind(acceptance.AcceptorKind), ID: acceptance.AcceptorID}
 	if inviterParticipant == acceptorParticipant {
-		return Accepted{}, fmt.Errorf("%w: the inviter cannot accept their own invitation", ErrInvalidContract)
+		return "", fmt.Errorf("%w: the inviter cannot accept their own invitation", ErrInvalidContract)
 	}
 	inviterControl := invitation.InviterControl
 	acceptorControl := online.SeatControl{Kind: online.ControlKind(acceptance.ControlKind), ModelLabel: acceptance.ModelLabel}
@@ -1049,32 +1107,24 @@ func (s *Service) complete(ctx context.Context, tx pgx.Tx, acceptance acceptance
 	}
 	cmd, err := online.NewAllocationCommand(inviterParticipant, setup, acceptance.AcceptanceID)
 	if err != nil {
-		return Accepted{}, err
+		return "", err
 	}
 	result, err := s.matches.CreateMatchInTx(ctx, tx, cmd)
 	if err != nil {
-		return Accepted{}, err
+		return "", err
 	}
 	matchID := result.Receipt.MatchID
 	// The acceptance state only moves forward. A retry of an acceptance
 	// that is already credentialed keeps its state.
 	if _, err = tx.Exec(ctx, `UPDATE online_invitation_acceptances SET status='matched',match_id=$2,updated_at=$3 WHERE acceptance_id=$1 AND status='pending'`,
 		acceptance.AcceptanceID, matchID, s.now()); err != nil {
-		return Accepted{}, err
+		return "", err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE online_friend_invitations SET match_id=$2 WHERE invitation_id=$1 AND status='consumed'`,
 		acceptance.InvitationID, matchID); err != nil {
-		return Accepted{}, err
+		return "", err
 	}
-	accepted := Accepted{AcceptanceID: acceptance.AcceptanceID, MatchID: matchID, Seat: acceptance.Seat}
-	if acceptance.AcceptorKind == string(online.ParticipantGuest) {
-		credential, mintErr := s.mintAcceptanceCredential(ctx, tx, acceptance, matchID, request.Origin, request.RotateCredential)
-		if mintErr != nil {
-			return Accepted{}, mintErr
-		}
-		accepted.GuestCredential = credential
-	}
-	return accepted, nil
+	return matchID, nil
 }
 
 // mintAcceptanceCredential mints the guest seat credential of an accepted
@@ -1685,10 +1735,15 @@ func (s *Service) RematchSeatCredential(ctx context.Context, request RematchSeat
 
 // PendingRematch returns the pending rematch offer of a finished match.
 //
-// An offer that can never be accepted any more is not published. A removed
-// participant cannot consent, so the offer of a match whose participant was
-// removed is retired instead of being the live offer of the match until it
-// expires.
+// The read is a projection: it never writes. An offer that can never be
+// accepted any more is filtered out of the answer, so a dead offer is never
+// published as the live offer of the match.
+//
+// A read that retired the offer instead would write the personal row of a
+// removed subject from a `GET` route, without the account scope lock that
+// orders every other write of the surface against the removal. The offer
+// keeps its row until the privacy sanitation of its proposer rewrites it, and
+// the acceptance of it is refused anyway.
 func (s *Service) PendingRematch(ctx context.Context, matchID string, participant online.ParticipantRef) (Rematch, bool, error) {
 	match, err := s.reader.GetMatch(ctx, matchID)
 	if err != nil {
@@ -1710,12 +1765,6 @@ func (s *Service) PendingRematch(ctx context.Context, matchID string, participan
 		return Rematch{}, false, err
 	}
 	if retired {
-		// The offer is retired. It names a participant that no longer
-		// exists, so it is declined and it is never published as the live
-		// offer of the match.
-		if _, err = s.db.Exec(ctx, `UPDATE online_rematch_offers SET status='declined',version=version+1,updated_at=$2 WHERE rematch_id=$1 AND status IN ('pending','accepting')`, offer.RematchID, s.now()); err != nil {
-			return Rematch{}, false, err
-		}
 		return Rematch{}, false, nil
 	}
 	return offer, true, nil

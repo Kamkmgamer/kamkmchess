@@ -265,6 +265,44 @@ Fixture: the local trust-authenticated PostgreSQL of the workspace
 `KHA41_REQUIRE_POSTGRES=1`). Every test creates its own schema and applies
 every migration, so the migration set is exercised as well.
 
+The current results were executed on the assembled revision of this round:
+the parent root `496235d` ("Record the probe result of the assembled schema")
+plus the commits of this ticket on top of it. The run below is the current
+one; the earlier runs of the same filter are **historical** and describe the
+older revisions of the branch, before the round 6 corrections.
+
+```
+go test ./backend/integration -run 'Friend|Invite|Rematch' -count=1
+ok  	github.com/Kamkmgamer/kamkmchess/backend/integration	156.903s
+exit=0
+
+go test ./backend/invite/... ./backend/httpapi/... -count=1
+ok  	github.com/Kamkmgamer/kamkmchess/backend/invite	0.119s
+ok  	github.com/Kamkmgamer/kamkmchess/backend/httpapi	7.086s
+exit=0
+
+go vet ./backend/invite/... ./backend/httpapi/... ./backend/integration/...
+exit=0
+```
+
+The focused regressions of this round, one by one:
+
+```
+--- PASS: TestPostgresFriendSurvivingGuestKeepsItsOwnSeatCredential
+--- PASS: TestPostgresFriendSurvivingGuestRecoversItsAcceptanceCredential
+--- PASS: TestPostgresFriendRestoredSeatIdentityIsRefused
+--- PASS: TestPostgresFriendLegacyAcceptingOfferIsReadWithoutAnError
+--- PASS: TestPostgresFriendRemovedInviterDoesNotTakeTheAcceptorSeatAway
+--- PASS: TestPostgresFriendRemovedParticipantCannotProposeOrAcceptARematch
+--- PASS: TestPostgresFriendRemovedProposerCannotHaveItsOfferAccepted
+--- PASS: TestPostgresFriendDeadRematchOfferIsNotPublished
+--- PASS: TestPostgresFriendRemovedParticipantCannotCancelItsInvitation
+--- PASS: TestPostgresFriendRemovedGuestNeverGetsAFreshCredential
+```
+
+The historical run of the same filter, recorded before the round 6
+corrections, is kept below for the record. It is **not** the current result:
+
 ```
 go test ./backend/integration -run 'Friend|Invite|Rematch' -count=1 -v
 --- PASS: TestPostgresFriendHTTPRoutesAndAnswers
@@ -454,19 +492,29 @@ The recheck has three parts, and each of them closes a hole of its own:
 * a participant whose account or of whose guest seat a removal was recorded is
   named by the durable removal records, compared through the one-way
   reference of the subject;
-* a participant of a match that carries a row in the **removal ledger** was
-  removed from that match. The ledger is the match scoped record of a
-  removal, so it answers the question even when the seat row of an older
-  backup still names the removed subject, and it is the record that survives
-  a restore of an older backup.
+* a participant whose **own** one-way reference is named by a row of the
+  **removal ledger** of that match was removed from that match. The ledger is
+  the match scoped record of a removal, so it answers the question even when
+  the seat row of an older backup still names the removed subject, and it is
+  the record that survives a restore of an older backup. The check is
+  **participant scoped**: the removal of the opponent of a match does not
+  take the seat of the survivor away, and the game stays live.
 
 The new refusal is `invite.ErrRemoved`, and the HTTP surface answers it with
 `403` and the code `not_authorized`, so the error vocabulary of the surface
 does not change.
 
+The write names the participants it really writes for. A fresh acceptance
+creates the match of the inviter and the acceptor, so both are rechecked. A
+**resumed** acceptance creates nothing and writes no row of the inviter, so
+only the acceptor is rechecked, and the removal of the inviter does not take
+the seat of the acceptor away. The credential of a seat is recovered for the
+owner of that seat alone.
+
 An offer that can never be accepted any more is not published. The pending
-read retires it, so a dead offer is not the live offer of the match until it
-expires twelve hours later.
+read is a **projection**: it never writes, so a `GET` never changes the
+personal row of a removed participant, and it never raises a database error
+for an offer of an older build.
 
 The regressions of the new file
 `backend/integration/online_friends_removal_test.go` prove the order and the
@@ -491,11 +539,23 @@ outcome:
   acceptance of a pending offer whose proposer was removed is refused, and no
   new match seats the anonymized participant)
 * `TestPostgresFriendDeadRematchOfferIsNotPublished` (the dead offer is not
-  published and is retired)
-* `TestPostgresFriendRemovedInviterCannotResumeItsAcceptance` (the sanitized
-  invitation carries the anonymized sentinel and the resume is refused)
+  published and the read never writes it)
+* `TestPostgresFriendLegacyAcceptingOfferIsReadWithoutAnError` (the offer of
+  an older build is read without a database error, its accepter is not
+  cleared and the wire answers `404` instead of `503`)
+* `TestPostgresFriendSurvivingGuestKeepsItsOwnSeatCredential` (the survivor
+  keeps the credential of its own live seat, over the service and over the
+  wire)
+* `TestPostgresFriendSurvivingGuestRecoversItsAcceptanceCredential` (the
+  survivor recovers the credential of its own seat after the removal of the
+  inviter, and no second match is created)
+* `TestPostgresFriendRestoredSeatIdentityIsRefused` (the seat of an older
+  backup that still names the removed subject is refused, because the ledger
+  row of the match names that participant)
+* `TestPostgresFriendRemovedInviterDoesNotTakeTheAcceptorSeatAway` (the
+  resumed acceptance answers the match of the surviving acceptor)
 * `TestPostgresFriendRemovedParticipantCannotCancelItsInvitation` (the
-  cancellation of a removed guest is refused and the invitation is not
+  cancellation of a removed participant is refused and the invitation is not
   cancelled)
 * `TestPostgresFriendRemovalAndTheInvitationWriteNeverDeadlock` (a pool of
   four connections, the removal and the acceptance race, both finish)
@@ -520,6 +580,24 @@ The prior finding **F-1** is upheld as **not a defect**: the acceptance key is
 the bearer capability of a guest acceptance by design, the service stores only
 its hash, and the high entropy of the key is kept. Nothing of that finding was
 changed.
+
+## The findings of the round 6 review
+
+The review is `D:/projects/kamkmchess/.scratch/online-swarm/matching-review-r6.md`.
+
+| Finding | Disposition |
+| --- | --- |
+| **R6-01** the match scoped ledger check refuses the surviving participant | **fixed.** The ledger check is **participant scoped**: the row has to name the one-way reference of a participant the write names. A surviving participant of a match whose opponent was removed keeps its own seat, its own credential and its own writes, and the game stays live. The restored-original protection is kept: a seat of an older backup that still names the removed subject is refused, because the ledger row of that match names that participant. |
+| **R6-02** the resumed acceptance rechecks the whole participant set | **fixed.** The write names the participants it really writes for. A fresh acceptance creates the match of the inviter and the acceptor, so both are rechecked. A resumed acceptance creates nothing and writes no row of the inviter, so only the acceptor is rechecked, and the match of the acceptance is not created again from the redacted invitation row. The surviving guest recovers the credential of its own seat. |
+| **R6-03** the pending read wrote the row of a removed participant | **fixed.** The pending read is a **projection**: it never writes. A `GET` never changes the personal row of a removed participant, and the read takes no account scope lock, so it cannot invert the order of the removal. |
+| **R6-04** the retirement of an `accepting` offer violated the check | **fixed with R6-03.** The read does not write at all, so the offer of an older build is answered without a database error, its accepter is not cleared and the wire answers `404` instead of `503`. The acceptance path of an `accepting` offer was already correct. |
+| **R6-05** two shipped regressions fail on the current root | **fixed.** The privacy worker now runs the auxiliary sanitation for the guest branch as well, so the rows of a removed guest are erased and the friend surface no longer reaches its own fence on those paths. The regressions now assert the **contractual denial** (`not found` for the erased invitation, `not authorized` for the redacted ownership), that no credential was minted and that no row was mutated. The privacy deletion is not undone to keep the identity of the error. |
+| **R6-06** the removal of the accepter of an `accepting` offer fails with a check violation | **not ours.** The privacy worker owns the sanitation of the guest and the accepter columns. The friend table and the privacy sanitation have to agree on how an `accepting` offer is retired; the friend surface does not write that state any more, and the read no longer needs to retire it. |
+| **R6-07** the scope lock of the sentinel is one global lock | **fixed.** The sentinel is not a participant, so it takes no scope lock at all. Every removed subject of the same kind shared one advisory lock before, and all the rematch acceptances of all the matches with a removed participant serialized on it. |
+
+The guest bearer capability dispute stays closed: the acceptance key is the
+whole capability of a guest acceptance, the service stores only its hash, and
+no fingerprint of an anonymous guest was added.
 
 ## The changed wire
 
