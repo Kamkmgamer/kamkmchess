@@ -8,9 +8,12 @@ function perft(position: Position, depth: number): number {
 }
 
 describe('chessops integration', () => {
+  // The perft asserts a move count, not a duration. Its timeout is a guard
+  // against a runaway expansion, so it may not turn the speed of the host into
+  // a failure of the move generator.
   it('matches the standard depth-three legal move count', () => {
     expect(perft(parsePosition('rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'), 3)).toBe(8902);
-  });
+  }, 60_000);
 
   it('keeps cached destinations immutable when transitions mutate engine clones', () => {
     const position = parsePosition('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1');

@@ -12,6 +12,11 @@ const scope = {
 };
 
 describe('fast mating witness discovery', () => {
+  // The budget of the search pass is three seconds and it stays three seconds:
+  // the case asserts that the fast witness path finds the mate before the
+  // exhaustive expansion of one state. The timeout of the case is only the
+  // guard against a hang, so it covers the worst case of the budget of both
+  // passes and the overhead of the fixture.
   it('resolves the post-b5 and castled Ruy Lopez positions before exhaustive expansion', async () => {
     const chess = new Chess();
     const opening = 'e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O'.split(' ');
@@ -26,7 +31,7 @@ describe('fast mating witness discovery', () => {
         expect(checkProofEvidence(query, result.evidence)).toMatchObject({ status: 'accepted', conclusion: 'not-dead' });
       }
     }
-  }, 10_000);
+  }, 30_000);
 
   it('finds checked motif witnesses through the authoritative pass within 500 ms', async () => {
     const start = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';

@@ -20,6 +20,9 @@ async function fixture(positionChecks?: GameControllerOptions['positionChecks'],
 }
 
 describe('live Lichess position checks', () => {
+  // The cases below assert a flow of thirty plies and a chain of undos, not
+  // a duration. Their timeout is a guard against a hang, so the speed of the
+  // host may not turn a correct behaviour into a failure.
   it('starts and plays thirty plies with no proof work or nested undo snapshots', async () => {
     const { controller, initial, store } = await fixture();
     try {
@@ -54,7 +57,7 @@ describe('live Lichess position checks', () => {
         expect(rewind.checkpoint.rules.moves).toHaveLength(remaining);
       }
     } finally { store.close(); }
-  });
+  }, 60_000);
 
   it('keeps repeated AI takebacks across reload without nested checkpoint snapshots', async () => {
     const model: ModelSelection = { kind: 'model', providerId: 'fixture', connectionId: 'fixture',
@@ -87,7 +90,7 @@ describe('live Lichess position checks', () => {
       expect(snapshot.checkpoint.selections.players.black).toEqual(model);
       expect(snapshot.adjudication.status).toBe('none');
     } finally { store.close(); }
-  });
+  }, 60_000);
 
   it('migrates and persists an old running setup check without retaining its graph', async () => {
     const { controller, initial, options, store } = await fixture('legacy-proof');
