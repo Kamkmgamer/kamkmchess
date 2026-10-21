@@ -1895,6 +1895,34 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   }
 
   /**
+   * Settles the request of the service under the epoch of the seat now.
+   *
+   * The service revokes the lease of the seat with a control change, so the
+   * request of the old epoch cannot be settled under that lease any more. The
+   * request is settled with a lease of the new epoch instead: the lease is
+   * taken for the settlement alone and given back right after it, because the
+   * runner of the old selection never plays the seat again.
+   *
+   * Only the request the owner decided about is closed, and only when the new
+   * lease still carries exactly that request. A newer request of another
+   * runner keeps its record.
+   */
+  async function settleServiceRequestOfNewEpoch(requestId: string | null): Promise<void> {
+    if (requestId === null) return;
+    // The lease of the old epoch was revoked by the control change.
+    dropLease();
+    const acquired = await acquireLease();
+    if (!acquired.ok) return;
+    try {
+      if (leaseRecord?.pendingRequestId === requestId) {
+        await clearPendingRequest(requestId);
+      }
+    } finally {
+      await releaseLease();
+    }
+  }
+
+  /**
    * The records of the uncertain work that a decision of the owner settles.
    *
    * The capture happens in the same tick as the decision of the owner, before
@@ -3041,6 +3069,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // another tab writes in the meantime is a different request, and this
       // decision neither settles it nor authorizes it.
       const decided = captureDecidedRecords();
+      // The request that the service recorded for the seat is captured before
+      // the settlement, so the decision of the owner settles exactly that
+      // request and never a newer one.
+      const serviceRequestId = decided.browserRequestId ?? leaseRecord?.pendingRequestId ?? null;
       uncertainty = null;
       // The owner decided. The uncertain work may be paid twice, so the pending
       // records of the browser and of the service are settled and the runner
@@ -3085,6 +3117,12 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
               superseded = false;
             }
             boundSeatControlEpoch = outcome.receipt.controlEpoch;
+          }
+          if (control?.kind === 'agent') {
+            // The control change that the receipt proves revoked the lease of
+            // the seat, so the request of the old epoch is settled with a lease
+            // of the new epoch.
+            await settleServiceRequestOfNewEpoch(serviceRequestId);
           }
           await releaseLease();
           if (!ownerActionIsCurrent(owner.token, owner.generation)) {
@@ -3139,6 +3177,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // another tab writes in the meantime is a different request, and this
       // decision neither settles it nor authorizes it.
       const decided = captureDecidedRecords();
+      // The request that the service recorded for the seat is captured before
+      // the handoff, so the decision of the owner settles exactly that request
+      // and never a newer one.
+      const serviceRequestId = decided.browserRequestId ?? leaseRecord?.pendingRequestId ?? null;
       // The handoff of the seat is the authority of the owner and it needs no
       // lease: the service accepts the command of the owner without a lease
       // and fences a stale runner with the control epoch and the version of
@@ -3196,6 +3238,10 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
       // provider again.
       advanceLifecycle();
       const owner = { token, generation: lifecycleGeneration };
+      // The control change revoked the lease of the seat, so the request of the
+      // old epoch is settled with a lease of the new epoch. The decision of the
+      // owner settles exactly the request it captured.
+      await settleServiceRequestOfNewEpoch(serviceRequestId);
       if (!await settleUncertainWork(owner, decided)) {
         return { kind: 'unknown', detail: 'A newer decision of the owner ended the switch.' };
       }

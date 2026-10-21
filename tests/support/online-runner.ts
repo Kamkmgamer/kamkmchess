@@ -149,6 +149,14 @@ export interface FakeOnlineService {
   advanceServiceEpoch(): void;
   /** Applies the next command but loses its acknowledgement. */
   loseNextAcknowledgement(): void;
+  /**
+   * Records another pending request on the lease of the seat.
+   *
+   * The service records the billable request of the runner that holds the
+   * lease. The test uses it for the race in which the request of another
+   * runner is recorded between the decision of the owner and the settlement.
+   */
+  setPendingRequest(requestId: string): void;
 }
 
 function cloneLease(lease: FakeLease): ProviderRunnerLease {
@@ -701,6 +709,11 @@ export function createFakeOnlineService(options: {
     },
     loseNextAcknowledgement() {
       loseAcknowledgement = true;
+    },
+    setPendingRequest(requestId: string) {
+      if (lease === null) throw new Error('The seat of the service holds no lease.');
+      lease.pendingRequestId = requestId;
+      lease.pendingRequestStartedAt = new Date(clock()).toISOString();
     },
   };
 }

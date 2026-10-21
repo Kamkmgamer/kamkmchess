@@ -2954,6 +2954,55 @@ describe('the recovery of an applied control change', () => {
   });
 });
 
+describe('the settlement of a switch that interrupted a billable request', () => {
+  it('settles the request of the old epoch with a lease of the new epoch', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    // The lease is fenced while the request may still be running, so the
+    // runner asks the owner and the record of the service stays open.
+    service.revokeLease('recovery');
+    provider.answer('{"move":"e2e4"}');
+    await until(() => runner.state.phase === 'uncertain', 'the runner asks the owner');
+    const uncertain = runner.state.uncertainty?.requestId;
+    expect(uncertain).toBeDefined();
+    expect(service.lease?.pendingRequestId).toBe(uncertain);
+
+    // The owner switches the model of the seat. The service accepts the change
+    // and revokes the lease of the seat with it.
+    const outcome = await runner.switchModel('Second Agent');
+    expect(outcome.kind).toBe('accepted');
+
+    // The request of the old epoch is settled with a lease of the new epoch:
+    // the lease of the seat carries no pending request any more, so the runner
+    // of the new selection may play the seat.
+    expect(service.lease?.pendingRequestId).toBeNull();
+    // The runner of the old selection never plays the seat again.
+    expect(provider.prompts).toHaveLength(1);
+  });
+
+  it('settles no newer request of the service when the switch of the owner settles the old one', async () => {
+    const { service, provider, runner } = createHarness({});
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await provider.waitForRequest();
+    service.revokeLease('recovery');
+    provider.answer('{"move":"e2e4"}');
+    await until(() => runner.state.phase === 'uncertain', 'the runner asks the owner');
+    const uncertain = runner.state.uncertainty?.requestId;
+    expect(uncertain).toBeDefined();
+
+    // Another runner of the seat recorded a newer request on the lease of the
+    // seat, so the request of this runner is not the one the lease carries.
+    service.setPendingRequest('request-newer');
+
+    const outcome = await runner.switchModel('Second Agent');
+    expect(outcome.kind).toBe('accepted');
+    // The newer request keeps its record: the decision of the owner settled
+    // exactly the request it captured.
+    expect(service.lease?.pendingRequestId).toBe('request-newer');
+  });
+});
+
 describe('the published model binding of the runner', () => {
   it('converts the canonical match view into the state of the runner', () => {
     const view: OnlineMatchView = {
