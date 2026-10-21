@@ -99,11 +99,20 @@ the control changes and the spent recovery attempts.
   epoch and the lease the command was sent with, never the facts the runner
   knows in the meantime. A command that presents no lease presents none
   again: the lease of the original command is part of its fingerprint.
-- A command the service refused is a command the service never applied. The
-  runner sends it again with the facts it knows now, exactly like the handoff
+- A command the service refused was not applied under the envelope it carried.
+  The service refuses a stale version or epoch, and it refuses a changed
+  payload under an operation identifier it already accepted. The runner sends a
+  refused command again with the facts it knows now, exactly like the handoff
   of the seat does, and the operation identifier stays the same. The service
-  never applies the command twice: a command the service did apply is
-  answered with its stored receipt.
+  applies a command at most once: an operation it accepted is answered with
+  its stored receipt, and a changed payload under an accepted operation
+  identifier is refused.
+- The bookkeeping of a refused command follows the command. The refusal of the
+  old envelope clears the record of the command, so the record is installed
+  again with the envelope of the last attempt, as long as the decision of the
+  owner is still the newest one. A command the service applied and never
+  answered therefore stays retriable, and a newer command that waits for its
+  acknowledgement keeps its own record.
 - A command whose acknowledgement is lost is an uncertainty, whoever sent it.
   The runner keeps the operation identifier of the command, the phase is
   `uncertain`, and the owner may send the command again with the same

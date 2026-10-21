@@ -2168,11 +2168,12 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
   /**
    * The envelope of a command that the runner sends again.
    *
-   * The service refused the envelope, so the command was never applied and the
-   * runner may send it again with the facts it knows now. The operation
-   * identifier stays the same, so the service never applies the command
-   * twice. A command that presented no lease presents none again: the handoff
-   * of the seat is the authority of the owner and needs no lease.
+   * The service refused the envelope, so the command was not applied under
+   * that envelope, and the runner may send it again with the facts it knows
+   * now. The operation identifier stays the same, so the service applies the
+   * command at most once. A command that presented no lease presents none
+   * again: the handoff of the seat is the authority of the owner and needs no
+   * lease.
    */
   function currentEnvelope(envelope: CommandEnvelope): CommandEnvelope {
     return {
@@ -2187,11 +2188,15 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
    * Sends the envelope of a command the owner replays.
    *
    * A command the service already applied is answered with the original
-   * receipt, because the replay carries the very same envelope. A command the
-   * service never applied is refused, because the version or the epoch of the
-   * match moved on while the acknowledgement was missing. The runner sends it
-   * again with the facts it knows now, exactly like the handoff of the seat
-   * does, and the operation identifier stays the same.
+   * receipt, because the replay carries the very same envelope. A refusal
+   * means that the command was not applied under the envelope it carried: the
+   * service refuses a stale version or epoch, and it refuses a changed payload
+   * under an operation identifier it already accepted. The runner sends the
+   * command again with the facts it knows now, exactly like the handoff of the
+   * seat does, and the operation identifier stays the same. The service applies
+   * a command at most once: an operation it accepted is answered with its
+   * stored receipt, and a changed payload under an accepted operation
+   * identifier is refused.
    */
   async function replayEnvelope(
     envelope: CommandEnvelope,
@@ -2208,13 +2213,16 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
     if (!submitFenceIsCurrent(fence)) {
       return { kind: 'superseded', detail: 'A newer decision of the owner ended the command.' };
     }
-    // The service refused the envelope of the command, so the command was
-    // never applied. The runner sends it again with the facts it knows now.
+    // The service refused the envelope of the command, so the command was not
+    // applied under it. The runner sends it again with the facts it knows now.
     const fresh = currentEnvelope(envelope);
     // The bookkeeping names the command that may have been applied, so it
-    // follows the envelope of the last attempt of that command. A newer
-    // command that waits for its acknowledgement keeps its own record.
-    if (pendingSubmission !== null && pendingSubmission.operationId === envelope.operationId) {
+    // follows the envelope of the last attempt of that command. The refusal of
+    // the old envelope cleared the record, so the record is installed again
+    // when it is still empty: a command that was applied and never answered
+    // stays retriable with the envelope it was sent with. A newer command that
+    // waits for its acknowledgement keeps its own record.
+    if (pendingSubmission === null || pendingSubmission.operationId === envelope.operationId) {
       pendingSubmission = fresh;
     }
     return sendEnvelope(fresh, fence);

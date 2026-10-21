@@ -88,6 +88,37 @@ function losingAcknowledgement(
   return port;
 }
 
+/**
+ * The command client whose transport the test controls.
+ *
+ * `offline` drops the command before it reaches the service, `lost` delivers
+ * the command and loses its acknowledgement, and `online` answers the command.
+ * A refusal of the service is never turned into a lost acknowledgement.
+ */
+function switchableTransport(
+  base: ProviderRunnerCommandPort,
+): ProviderRunnerCommandPort & { mode(next: 'offline' | 'lost' | 'online'): void } {
+  let current: 'offline' | 'lost' | 'online' = 'online';
+  const port: ProviderRunnerCommandPort & { mode(next: 'offline' | 'lost' | 'online'): void } = {
+    async submit(action, options) {
+      if (current === 'offline') {
+        throw new ProviderRunnerServiceError('transport', 'The network failed.', 0);
+      }
+      const receipt = await base.submit(action, options);
+      if (current === 'lost') {
+        throw new ProviderRunnerServiceError('transport', 'The acknowledgement was lost.', 0);
+      }
+      return receipt;
+    },
+    mode(next) {
+      current = next;
+    },
+    ...(base.setControlEpoch === undefined ? {} : { setControlEpoch: base.setControlEpoch.bind(base) }),
+    ...(base.setVersion === undefined ? {} : { setVersion: base.setVersion.bind(base) }),
+  };
+  return port;
+}
+
 interface Harness {
   readonly service: FakeOnlineService;
   readonly provider: FakeProvider;
@@ -2592,6 +2623,82 @@ describe('the envelope of a replayed command', () => {
       .toEqual(['e2e4']);
     // The service applied the switch of the seat exactly once.
     expect(service.match.controlEpoch).toBe(2);
+  });
+
+  it('keeps the refreshed envelope of an owner command the service refused and never answered', async () => {
+    const service = createFakeOnlineService({ sideToMove: 'black' });
+    const provider = createFakeProvider();
+    const transport = switchableTransport(service.commands);
+    const runner = createOnlineProviderRunner({
+      matchId: service.match.matchId,
+      seat: service.match.seat,
+      publicModelLabel: 'Test Agent',
+      leases: service.leasePort('runner-a'),
+      commands: transport,
+      provider,
+      pending: createMemoryPendingStore(),
+    });
+
+    // The seat is not to move, so the runner never asks the provider.
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+    expect(provider.prompts).toHaveLength(0);
+
+    // The owner switches the model while the transport is down. The command
+    // never reaches the service, so the service never applies it.
+    transport.mode('offline');
+    const switched = await runner.switchModel('Second Agent');
+    expect(switched.kind).toBe('unknown');
+    expect(service.recordedCommands.filter((command) => command.action.kind === 'set_control')).toHaveLength(0);
+
+    // Another tab of the owner changes the control of the seat. The canonical
+    // state of the match moves on, so the envelope of the switch is stale.
+    service.commands.submit(
+      { kind: 'set_control', control: { kind: 'agent', modelLabel: 'Test Agent' } },
+      { expectedVersion: service.match.version },
+    );
+    runner.applySnapshot(fakeSnapshot(service.match));
+    await until(() => runner.state.version === 2, 'the runner knows the new version');
+    expect(runner.state.controlEpoch).toBe(2);
+
+    // The owner retries. The replay of the original command is stale, so the
+    // service refuses it. The runner sends the command again with the facts it
+    // knows now, and the acknowledgement of that command is lost as well.
+    transport.mode('lost');
+    const retried = await runner.retry();
+    expect(retried.kind).toBe('unknown');
+    const switches = service.recordedCommands.filter((command) =>
+      command.action.kind === 'set_control' &&
+      command.action.control.modelLabel === 'Second Agent');
+    // The refusal of the original envelope and the attempts of the refreshed
+    // envelope are one operation.
+    expect(new Set(switches.map((command) => command.operationId)).size).toBe(1);
+    expect(switches.filter((command) => command.expectedVersion === 1)).toHaveLength(1);
+    expect(switches.filter((command) => command.expectedVersion === 2).length).toBeGreaterThan(0);
+    expect(switches[switches.length - 1]?.controlEpoch).toBe(2);
+    expect(switches[switches.length - 1]?.leaseId).toBeUndefined();
+    // The service applied the switch, but the browser never learned it.
+    expect(service.match.control.modelLabel).toBe('Second Agent');
+    expect(service.match.controlEpoch).toBe(3);
+
+    // The owner retries again. The command is replayed with the very same
+    // refreshed envelope, so the service answers with the stored receipt
+    // instead of accepting the switch a second time.
+    transport.mode('online');
+    const again = await runner.retry();
+    expect(again.kind).toBe('accepted');
+    const replays = service.recordedCommands.filter((command) =>
+      command.action.kind === 'set_control' &&
+      command.action.control.modelLabel === 'Second Agent');
+    expect(replays.length).toBe(switches.length + 1);
+    expect(replays[replays.length - 1]?.operationId).toBe(replays[0]?.operationId);
+    expect(replays[replays.length - 1]?.expectedVersion).toBe(2);
+    expect(replays[replays.length - 1]?.controlEpoch).toBe(2);
+    expect(replays[replays.length - 1]?.leaseId).toBeUndefined();
+    // The switch was applied exactly once and the provider was never asked.
+    expect(service.match.control.modelLabel).toBe('Second Agent');
+    expect(service.match.controlEpoch).toBe(3);
+    expect(provider.prompts).toHaveLength(0);
   });
 
   it('sends the envelope of a replayed command through the real command client', async () => {
