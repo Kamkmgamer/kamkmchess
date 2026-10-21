@@ -158,10 +158,16 @@ go run ./backend/backup/cmd/khabackup plan --file /backups/weekly-2026-W42.kha
 # 2. Execute, reapplying the newer daily ledger so nothing deleted since is resurrected.
 # The restore refuses to run without a durable fence, and it has to run as the
 # user the API reads the fence as, so the fence stays private and readable.
-docker compose -f postgres.compose.yml -f api.compose.yml exec --user 65532 \
-  postgres /opt/kamkmchess/khabackup restore --file /backups/weekly-2026-W42.kha \
-  --newer-ledger /backups/daily-2026-10-18.kha \
-  --fence /var/lib/kamkmchess/restore-fence/fence.json --apply
+# The restore runs as the user the API reads the fence as, so the fence
+# file stays private to that user and the API can observe it. The passphrase
+# and the database URL are never passed as arguments: they are read from the
+# environment, and the environment comes from the private backup file.
+docker compose -f postgres.compose.yml -f api.compose.yml exec --user 65532 postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khabackup restore --file /backups/weekly-2026-W42.kha \
+    --newer-ledger /backups/daily-2026-10-18.kha \
+    --fence /var/lib/kamkmchess/restore-fence/fence.json \
+    --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE --apply'
 ```
 
 The order inside a restore is fixed and tested:

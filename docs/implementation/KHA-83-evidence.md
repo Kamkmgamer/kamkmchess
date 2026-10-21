@@ -99,6 +99,16 @@ It is **not** a capacity claim.
    the restore runs as that user. The fence file keeps its private mode. The
    API therefore observes the open fence and refuses traffic during the
    restore, and observes the closed fence and resumes afterwards.
+
+   **What this proof is not.** It proves the shared ownership, the permission
+   boundary and the serving gate with the fence code and the gate of the
+   current privacy service. It is **not** the restore proof: the encrypted
+   restore with the real `pg_dump` and `psql`, a crash during the restore, a
+   wrong clear and an overlapping restore still need the stable fence
+   lifecycle of the privacy service. The candidate that introduces it
+   (`7413931`, `ed480a9`) is not integrated and the parent has it open, so
+   the lifecycle proof waits for that candidate rather than freezing an
+   unsafe interface.
 2. **The host has not been verified.** Apache flushing, finite stream
    delivery, the delivered CSP and CORS, the TLS chain, the private worker
    reachability and the capacity need the real host and an authorized staging

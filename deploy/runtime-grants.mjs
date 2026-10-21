@@ -44,6 +44,23 @@ function finding(severity, code, message, remediation = null) {
 }
 
 /**
+ * Returns the tables a migration writes.
+ *
+ * A trigger function writes as the role that caused the trigger, so the
+ * runtime role needs the privilege of the write even when no Go statement
+ * names the table.
+ * @param {string} sql
+ * @returns {string[]}
+ */
+export function parseMigrationWrites(sql) {
+  const writes = new Set();
+  for (const match of sql.matchAll(/INSERT\s+INTO\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) writes.add(match[1].toLowerCase());
+  for (const match of sql.matchAll(/UPDATE\s+(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*)(?:\s+(?:AS\s+)?[A-Za-z_][A-Za-z0-9_]*)?\s+SET\b/gi)) writes.add(match[1].toLowerCase());
+  for (const match of sql.matchAll(/DELETE\s+FROM\s+([A-Za-z_][A-Za-z0-9_]*)/gi)) writes.add(match[1].toLowerCase());
+  return [...writes].sort();
+}
+
+/**
  * Returns the tables a migration reads inside a SQL function.
  *
  * A trigger or normalization function reads its tables with the privileges of
@@ -253,8 +270,9 @@ export function parsePolicy(raw) {
  * @param {{policy: ReturnType<typeof parsePolicy>, tables: string[], usage: Map<string, Set<string>>}} input
  * @returns {Finding[]}
  */
-export function auditGrants({ policy, tables, usage, migrationGrants = [], sequences = [], functions = [], migrationReads = [] }) {
+export function auditGrants({ policy, tables, usage, migrationGrants = [], sequences = [], functions = [], migrationReads = [], migrationWrites = [] }) {
   const reads = new Set(migrationReads.map((table) => table.toLowerCase()));
+  const written = new Set(migrationWrites.map((table) => table.toLowerCase()));
   /** @type {Finding[]} */
   const findings = [];
   const migrated = new Set(tables.map((table) => table.toLowerCase()));
@@ -291,7 +309,9 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
     // The presentation for the roles the deployment does not connect as is
     // aggregated, because the finding names the role and its reach.
     const reached = new Set();
-    for (const verbs of tables.values()) for (const verb of verbs) reached.add(verb);
+    for (const verbs of tables.values()) {
+      for (const verb of verbs) reached.add(verb);
+    }
     const stripped = (policy.unusedRoles ?? []).includes(role);
     findings.push(finding(
       stripped ? 'warning' : 'blocker',
@@ -402,6 +422,18 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
     for (const verb of granted) {
       if (used.has(verb)) continue;
       if (verb === 'SELECT') continue;
+      if (written.has(table)) {
+        // A trigger function writes the table as the role that caused the
+        // trigger, so the privilege is used even when no Go statement names
+        // the table. Removing it would break the write.
+        findings.push(finding(
+          'info',
+          'grant-used-by-migration-function',
+          `The policy grants ${verb} on ${table}, which a migration function writes as the invoking role.`,
+          null,
+        ));
+        continue;
+      }
       findings.push(finding(
         'warning',
         'grant-unused-privilege',
@@ -603,6 +635,8 @@ export async function loadTree(root) {
   const migrationGrants = [];
   /** @type {Set<string>} */
   const migrationReads = new Set();
+  /** @type {Set<string>} */
+  const migrationWrites = new Set();
   for (const name of await readdir(migrationDirectory)) {
     if (!name.endsWith('.sql')) continue;
     const sql = await readFile(join(migrationDirectory, name), 'utf8');
@@ -611,6 +645,7 @@ export async function loadTree(root) {
     for (const fn of parseMigrationFunctions(sql)) functions.push(fn);
     for (const grant of parseMigrationGrants(sql)) migrationGrants.push(grant);
     for (const table of parseMigrationReads(sql)) migrationReads.add(table);
+    for (const table of parseMigrationWrites(sql)) migrationWrites.add(table);
   }
   const usage = new Map();
   for (const file of await goSources(root)) {
@@ -620,7 +655,7 @@ export async function loadTree(root) {
       for (const verb of verbs) usage.get(table).add(verb);
     }
   }
-  return { policy, tables: [...tables].sort(), sequences: [...sequences].sort(), functions, migrationGrants, migrationReads: [...migrationReads].sort(), usage };
+  return { policy, tables: [...tables].sort(), sequences: [...sequences].sort(), functions, migrationGrants, migrationReads: [...migrationReads].sort(), migrationWrites: [...migrationWrites].sort(), usage };
 }
 
 /**
@@ -637,8 +672,8 @@ function printFindings(findings) {
 async function main() {
   const arguments_ = process.argv.slice(2);
   const root = process.cwd();
-  const { policy, tables, usage, migrationGrants, migrationReads, sequences, functions } = await loadTree(root);
-  const findings = auditGrants({ policy, tables, usage, migrationGrants, sequences, functions, migrationReads });
+  const { policy, tables, usage, migrationGrants, migrationReads, migrationWrites, sequences, functions } = await loadTree(root);
+  const findings = auditGrants({ policy, tables, usage, migrationGrants, sequences, functions, migrationReads, migrationWrites });
 
   if (arguments_.includes('--emit')) {
     process.stdout.write(renderGrantSql(policy));

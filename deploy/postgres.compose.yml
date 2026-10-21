@@ -32,14 +32,20 @@ services:
     # directory. Without that ownership the API cannot read the fence at all
     # and refuses every request for the wrong reason.
     user: root
+    # The entrypoint prepares the shared fence directory and then hands the
+    # configured command to the database image. The arguments are forwarded,
+    # so the ssl, hba and memory settings below still reach PostgreSQL.
     entrypoint:
       - /bin/sh
       - -c
-      - >-
-        mkdir -p /var/lib/kamkmchess/restore-fence &&
-        chown 65532:65532 /var/lib/kamkmchess/restore-fence &&
-        chmod 700 /var/lib/kamkmchess/restore-fence &&
-        exec docker-entrypoint.sh postgres
+      - |
+        set -e
+        mkdir -p /var/lib/kamkmchess/restore-fence
+        chown 65532:65532 /var/lib/kamkmchess/restore-fence
+        chmod 700 /var/lib/kamkmchess/restore-fence
+        exec /usr/local/bin/docker-entrypoint.sh "$@"
+      - --
+
     command:
       - postgres
       - -c
