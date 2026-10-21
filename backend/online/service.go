@@ -942,6 +942,14 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 			markerID, match.MatchID, cmd.Action.RemoveReplay.Reason, decision); err != nil {
 			return CommandResult{}, err
 		}
+		// The published replay of the public history route is revoked by the
+		// same removal, so the removal reaches every public projection of
+		// the match. The identity of the row is kept, so the history of
+		// the removal stays readable.
+		if _, err = tx.Exec(ctx, `UPDATE online_public_replays SET replay_json='{}'::jsonb,revoked_at=$1,revocation_marker_id=$2 WHERE match_id=$3 AND revoked_at IS NULL`,
+			decision, markerID, match.MatchID); err != nil {
+			return CommandResult{}, err
+		}
 		event.Kind = EventReplayRemoved
 		receipt.Outcome = OutcomeReplayRemoved
 	default:
