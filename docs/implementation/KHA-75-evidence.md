@@ -300,6 +300,7 @@ lock discipline defect:
 
 ```
 go test ./backend/integration -run 'Friend|Invite|Rematch' -count=1 -v
+--- PASS: TestPostgresAccountDeletionSanitizesTheFriendAndQueueRecords
 --- PASS: TestPostgresFriendHTTPRoutesAndAnswers
 --- PASS: TestPostgresFriendFeatureStateRoute
 --- PASS: TestPostgresFriendInvitationTTLIsTwelveHours
@@ -315,11 +316,15 @@ go test ./backend/integration -run 'Friend|Invite|Rematch' -count=1 -v
 --- PASS: TestPostgresFriendConcurrentRematchAcceptanceCreatesOneMatch
 --- PASS: TestPostgresFriendCreationWaitsForTheAccountScopeLock
 --- PASS: TestPostgresFriendAcceptanceWaitsForTheAccountScopeLock
---- PASS: TestPostgresFriendRematchAcceptanceWaitsForTheAccountScopeLock
 --- PASS: TestPostgresFriendRemovedAccountCannotCreateAnInvitation
 --- PASS: TestPostgresFriendRemovedAccountCannotAcceptAnInvitation
 --- PASS: TestPostgresFriendRemovedParticipantCannotProposeOrAcceptARematch
+--- PASS: TestPostgresFriendRemovedInviterCannotResumeItsAcceptance
+--- PASS: TestPostgresFriendRemovedProposerCannotHaveItsOfferAccepted
+--- PASS: TestPostgresFriendDeadRematchOfferIsNotPublished
+--- PASS: TestPostgresFriendRemovedParticipantCannotCancelItsInvitation
 --- PASS: TestPostgresFriendRemovedGuestNeverGetsAFreshCredential
+--- PASS: TestPostgresFriendRematchAcceptanceWaitsForTheAccountScopeLock
 --- PASS: TestPostgresFriendRemovalAndTheInvitationWriteNeverDeadlock
 --- PASS: TestPostgresFriendContendedAcceptanceDoesNotStarveTheWinner
 --- PASS: TestPostgresFriendInvitationLinkAndChallengePaths
@@ -333,7 +338,16 @@ go test ./backend/integration -run 'Friend|Invite|Rematch' -count=1 -v
 --- PASS: TestPostgresFriendGuestInviterClaimsItsSeatCredential
 --- PASS: TestPostgresFriendMutualRematchReversesColorsAndKeepsTheSetup
 --- PASS: TestPostgresFriendRematchGivesBothGuestsTheirOwnCredential
-ok  	github.com/Kamkmgamer/kamkmchess/backend/integration	219.910s
+ok  	github.com/Kamkmgamer/kamkmchess/backend/integration	75.933s
+```
+
+The focused run of the round 5 work is the last one above; the earlier runs
+of the same filter are superseded by it. The unit packages of the surface:
+
+```
+go test ./backend/invite/... ./backend/httpapi/... -count=1
+ok  	github.com/Kamkmgamer/kamkmchess/backend/invite	0.092s
+ok  	github.com/Kamkmgamer/kamkmchess/backend/httpapi	6.528s
 ```
 
 The whole backend suite was run as well:
