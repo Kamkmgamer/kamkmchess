@@ -94,8 +94,10 @@ The deployment wires it as one shared volume:
 
 The setting names the **parent** of the fence, not a file. The restore writes
 the owner of the fence into `<parent>/restore-fence/owner` and takes the
-sibling `<parent>/restore-fence.lock`; the service only traverses the parent
-and reads the owner. The runbook in
+sibling `<parent>/restore-fence.lock`. The service does **not** read that
+owner marker: its admission check only *observes* the marker directory
+`<parent>/restore-fence`, and it refuses to serve while that directory
+exists. The runbook in
 [`MVP-operations.md`](../docs/implementation/MVP-operations.md) names the same
 parent, and the proof below compares the runbook, this note and the rendered
 compose configuration, so the three cannot drift apart again.
@@ -113,8 +115,9 @@ was not applied.
 The restore command runs inside the database container, so the setting is
 configured for that service as well, and the documented restore command names
 the fence path explicitly. The restore also has to run as the user the API
-reads the fence as: the marker is private to its owner, and the API refuses
-every request while it cannot read it. The secret file of the restore stays
+observes the fence as: the marker directory is private to its owner, and the
+API refuses every request while it cannot observe it. The secret file of the
+restore stays
 private as well: the shell of the container reads it as root and hands the
 values to the restore through the environment, so the restore user never
 reads a file it may not read.

@@ -22,10 +22,11 @@ services:
       - ./bin:/opt/kamkmchess:ro
       - ./backups:/backups
       - ./backup.env:/run/secrets/backup.env:ro
-      # The durable restore fence. The restore command writes and clears it
-      # here, and the API reads the same file from the same volume. A fence
-      # inside the database schema would be replaced by the restore it has to
-      # guard, and a container-local file would not survive a restart.
+      # The durable restore fence. The restore command writes the marker
+      # directory of the fence here and clears it when the restore is done,
+      # and the API observes the same marker directory from the same volume.
+      # A fence inside the database schema would be replaced by the restore it
+      # has to guard, and a container-local file would not survive a restart.
       - restorefence:/var/lib/kamkmchess/restore-fence
     # The shared fence directory belongs to the user the API reads it as, so
     # the restore can write a private file there and the API can traverse the

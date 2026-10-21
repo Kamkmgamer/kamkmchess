@@ -115,8 +115,11 @@ It is **not** a capacity claim.
   the **same** fence: the parent directory `/var/lib/kamkmchess/restore-fence`.
   A path below the parent is a different fence, and a restore that held it
   would leave the service serving during the import. The proof compares the
-  three names and measures that the service reads the fence the runbook
-  opens.
+  three names and measures that the service observes the fence the runbook
+  opens. The observation is the *existence* of the marker directory
+  `<parent>/restore-fence`: the admission check of the API does not read the
+  owner marker, and the service refuses to serve while that directory
+  exists.
 - The private secret of the restore stays private: the file is owned by the
   operator and has mode `0600`, so the restore user cannot read it. The
   documented command reads it as root and hands the values to the restore
@@ -139,7 +142,7 @@ It is **not** a capacity claim.
    | the API user observes the **open** fence the restore wrote | passed |
    | the API user observes the **closed** fence after the restore finished | passed |
    | the runbook, the configuration and the note name the same fence | passed |
-   | the service reads the fence the runbook opens | passed |
+   | the service observes the fence the runbook opens | passed |
    | the schema of the run is dropped in the selected target | passed |
 
    The remedy is a deployment choice, not a mode decision: the database

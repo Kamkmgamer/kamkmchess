@@ -161,21 +161,24 @@ go run ./backend/backup/cmd/khabackup plan --file /backups/weekly-2026-W42.kha
 # admissions, but it cannot take back a request that was already admitted, so a
 # write that is still in flight would not be excluded by the restored copy.
 # The restore refuses to run without a durable fence, and it has to run as the
-# user the API reads the fence as, so the fence stays private and readable.
+# user the API observes the fence as, so the marker directory stays private to
+# that user and the API can observe it.
 #
 # The secret file stays private: it is owned by the operator and has mode
 # 0600, so the restore user cannot read it. The shell of the container reads
 # it as root and hands the values to the restore through the environment; the
 # restore itself never reads the file and never sees a secret as an argument.
 # `gosu` drops to the restore user with that environment, so the fence stays
-# private to the user the API reads it as.
+# private to the user the API observes it as.
 #
 # The fence path is the **parent directory** the compose files configure in
 # both services with `ONLINE_RESTORE_FENCE_PATH`. The restore writes the owner
 # of the fence into `<parent>/restore-fence/owner` and takes the sibling
-# `<parent>/restore-fence.lock`. A path below the parent would be a *different*
-# fence: the restore would hold a fence the API never reads, and the API would
-# keep serving during the import.
+# `<parent>/restore-fence.lock`. The API does not read that owner marker: its
+# admission check only observes the marker directory `<parent>/restore-fence`,
+# and it refuses to serve while that directory exists. A path below the parent
+# would be a *different* fence: the restore would hold a fence the API never
+# observes, and the API would keep serving during the import.
 docker compose -f postgres.compose.yml -f api.compose.yml stop api
 docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
   set -a; . /run/secrets/backup.env; set +a

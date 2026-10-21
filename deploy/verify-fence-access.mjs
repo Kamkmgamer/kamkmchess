@@ -414,7 +414,7 @@ async function measureFence(io, endpoint, paths) {
   if (opened.code !== 0) {
     return { passed: false, detail: `the fence of the runbook could not be opened: ${(opened.stdout + opened.stderr).trim().split('\n').slice(0, 2).join(' | ')}` };
   }
-  // The service reads the fence from a read-only mount, the way the API
+  // The service observes the fence from a read-only mount, the way the API
   // container reads it.
   const readable = ['--mount', `type=volume,source=${paths.apiVolume},target=${configured},readonly`];
   const state = await probe(endpoint, { user: API_UID, args: ['state', configured], mounts: readable }, io);
@@ -422,8 +422,8 @@ async function measureFence(io, endpoint, paths) {
   return {
     passed: open,
     detail: open
-      ? `the service reads the fence the runbook opens (${configured})`
-      : `the service reads no fence at ${configured} while the runbook opens ${documented}`,
+      ? `the service observes the fence the runbook opens (${configured})`
+      : `the service observes no fence at ${configured} while the runbook opens ${documented}`,
   };
 }
 
@@ -525,7 +525,7 @@ export async function verifyFenceAccess(options = {}) {
       apiVolume,
     });
     steps.push({
-      id: 'the-service-reads-the-fence-the-runbook-opens',
+      id: 'the-service-observes-the-fence-the-runbook-opens',
       passed: measured.passed,
       detail: measured.detail,
     });

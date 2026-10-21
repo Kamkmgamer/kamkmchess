@@ -11,10 +11,11 @@ services:
       # Node runtime. The path is fixed by the image and is not configurable
       # per deployment, so a missing bundle cannot start the composition.
       ONLINE_RULES_WORKER_ENTRY: /opt/kamkmchess/rules-worker/worker.mjs
-      # The durable restore fence. The restore command writes this file in the
-      # shared volume and clears it only after the removal ledger was applied.
-      # The API reads the same file from the same volume and refuses to serve
-      # while the fence is open. The server must load this setting; an
+      # The durable restore fence. The restore command writes the marker
+      # directory of the fence into the shared volume and clears it only after
+      # the removal ledger was applied. The API observes the same marker
+      # directory from the same volume and refuses to serve while it exists;
+      # it never reads the owner marker. The server must load this setting; an
       # ignored setting silently disables the fence.
       ONLINE_RESTORE_FENCE_PATH: /var/lib/kamkmchess/restore-fence
     volumes:
