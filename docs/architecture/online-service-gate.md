@@ -257,12 +257,25 @@ instance whose worker is broken keeps its own state and its own claim path
 closed until its own worker answers again, and the recovery of a planned
 boundary is not gated on the shared state.
 
-The shared state is a **last-writer-wins record**: the broken instance keeps
-writing its own failure only when its own durable state changes, so a
-continuing failure does not overwrite a healthy checkpoint of a peer again.
-The shared state therefore says that the dependency was healthy at the last
-observation of an instance, and the local state of the broken instance is the
-evidence that its own worker is broken.
+The shared state is the newest **persisted observation** of a dependency, and
+the persistence is symmetric: a healthy observation and a degraded one are
+written when they are the newest, so a continuing failure of a broken instance
+degrades the shared state again after a healthy peer answered. The write is
+deduplicated against the shared state, so a stable state writes no row.
+
+The order of the checkpoints is the sequence of the database
+(`online_service_health_order`), not a clock: the newest checkpoint of a
+dependency is the one with the greatest order, whatever the clock of the host
+or of the database did, and a write that completes after a newer one does not
+become the newest checkpoint. The recorded_at of a checkpoint keeps the
+moment of the write for the history, and the liveness and the refund
+intervals keep their own time semantics.
+
+The observations of a dependency carry a revision. The observation of the
+instance replaces the pending one, so a newer observation is never lost behind
+an older one, and a flush acknowledges the observation it wrote by its
+revision, so a write that completes after a newer observation never replaces
+it.
 
 The durable report of a dependency is a database write, and it is **not** on
 the request path. The observations of the request paths (the participant

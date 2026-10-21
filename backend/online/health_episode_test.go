@@ -234,6 +234,25 @@ func TestEpisodeIgnoresABusyOrCancelledObservation(t *testing.T) {
 	}
 }
 
+// TestFlushKeepsTheNewestObservation covers the pending observation of a
+// dependency.
+//
+// The observation of the instance replaces the pending one, so a newer
+// observation is never lost behind an older one. The flush writes the
+// newest observation and acknowledges it by its revision, so a write that
+// completes after a newer observation never replaces it.
+func TestFlushKeepsTheNewestObservation(t *testing.T) {
+	reporter := NewHealthReporter(nil)
+	reporter.Record(DependencyRules, HealthHealthy, "the rules process answered")
+	reporter.Flush(context.Background())
+	reporter.Record(DependencyRules, HealthDegraded, "the rules process did not answer")
+	reporter.Record(DependencyRules, HealthHealthy, "the rules process answered")
+	reporter.Flush(context.Background())
+	if state := reporter.Current().Rules.State; state != HealthHealthy {
+		t.Fatalf("the flush replaced the newest healthy observation with %q", state)
+	}
+}
+
 // TestHealthReporterServesConcurrentReportsOfOneDependency covers the
 // concurrent reports of one dependency.
 //
