@@ -1,19 +1,22 @@
 # KHA-83 evidence — host verification for the online service
 
-Tested commit: `d88eafc` (the operations candidate). This file is committed on
-top of it and changes no measured artefact: every number and every step id
-below is the output of the tools at that commit. The measurements are
-**local**, against the fixture container of this machine; the host is not
-verified, and the local rehearsal of 2026-10-18 that
+Tested tree: the **root `33a23c1`** (the privacy candidate of the
+removal ledger and the durable evidence) with the operations candidate of
+this file applied. Every number and every step id below is the output of
+the tools on that tree, and the commit that carries this file names the
+exact tree it was measured on. The measurements are **local**, against the
+fixture container of this machine; the host is not verified, and the local
+rehearsal of 2026-10-18 that
 [`MVP-operations.md`](MVP-operations.md) records is a separate, older
 rehearsal that is not part of this candidate.
 
-The proofs were run against the **parent root `cefc854` with the privacy
-candidate `fbbd687` and `9906850` merged in**, because the fence helper of
-this candidate binds and closes with the removal ledger of the new
-interface and does not compile against the older one. The tree without the
-privacy candidate cannot build the helper, so the numbers above are the
-numbers of the integrated tree, not of the operations branch alone.
+The fence helper of this tree binds and closes with the removal ledger of
+the privacy candidate, and it builds and runs on it. The container proofs
+are reproduced by the workflow `container-proofs` of
+`.github/workflows/online-ops.yml`, which starts a `postgres:17.6`
+fixture and runs the three container proofs against it; the helpers reach
+the published port of the fixture through `host.docker.internal`, which a
+Linux engine resolves only with the mapping the proofs pass.
 
 ## What is prepared
 
@@ -96,6 +99,14 @@ The local load report is `docs/evidence/online/KHA-83-local-load.json` when a
 load run has been made. It is a loopback measurement with synthetic accounts.
 It is **not** a capacity claim.
 
+The recorded report measures **the rejection path only**: every one of its
+196 responses was answered `401`, including the 158 requests that carried a
+freshly minted fixture bearer token, so no request of that run was served
+and no game was read. Its latency percentiles describe how long the
+service took to refuse a request, not how it behaves under load. The
+harness now refuses to write a report in which nothing was served, and the
+measurement of a serving path is still **not run** and not claimed.
+
 ## The restore, the compose files and the evidence
 
 - The restore procedure **stops and drains the API** before the import and
@@ -149,6 +160,33 @@ It is **not** a capacity claim.
    as the restore user) and left a bundle and a stages file on the host; the
    native proof supersedes it. A test fails if any file of the repository
    ships that command again.
+
+## The interruption of a native restore
+
+`node scripts/online/restore-interruption-proof.mjs` kills the **real**
+restore of the real binary at a real barrier in front of the real psql, and
+it measures the two interruptions that decide whether a removed subject can
+come back.
+
+The kill during the import transaction is **measured green**: the barrier
+holds the transaction open with a marker statement, the restore is killed
+while the transaction is active, the transaction is rolled back, the live
+removals are still in the database, the record of the removed match is not
+revoked, and the recovery of the crashed restore closes the fence again.
+
+The kill after the commit and before the replay is **measured red**, and
+the reason is in the database, not in the proof: the import commits and
+replaces the tables the bundle carries, but the row of the removal request
+survives it, and the replay of the owed ledger then fails with a unique
+violation on `online_removal_requests_pkey`. The recovery refuses, the
+service stays closed, and the take-over fails with the same violation. The
+contract of the removal sink says that applying the same records twice
+leaves the database in the same state, and it is not met. This is reported
+to the privacy work; the proof does not work around it.
+
+The durable evidence of the owed ledger is written next to the marker of the
+lifecycle, and the access proof measures it: the directory is `0700` and
+the record is `0600`, both owned by the user of the service.
 
 ## Open blockers
 

@@ -143,12 +143,23 @@ export async function runLoad(options) {
     slowReader = await measureSlowReader(descriptor, matchId, token);
   }
 
+  // A report in which nothing was served measures the rejection path only,
+  // and it must never be presented as a load measurement.
+  const served = [...statuses.entries()]
+    .filter(([status]) => /^2|^3/.test(status))
+    .reduce((total, [, count]) => total + count, 0);
+  if (served === 0) {
+    const seen = Object.fromEntries([...statuses.entries()].sort());
+    throw new Error(`the load run served no request (${JSON.stringify(seen)}): it measures the rejection path only, so there is no load measurement to report`);
+  }
+
   return {
     clients,
     durationSeconds: Number(duration.toFixed(2)),
     requests,
     requestsPerSecond: Number((requests / duration).toFixed(2)),
     statuses: Object.fromEntries([...statuses.entries()].sort()),
+    servedResponses: served,
     readLatencyMs: percentiles(readLatencies),
     unauthorizedLatencyMs: percentiles(unauthorizedLatencies),
     readErrors,

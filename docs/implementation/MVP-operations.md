@@ -157,6 +157,10 @@ go run ./backend/backup/cmd/khabackup plan --file /backups/weekly-2026-W42.kha
 
 # 2. Execute, reapplying the newer daily ledger so nothing deleted since is resurrected.
 #
+# The two services mount **one** shared volume at the fence path. The path
+# alone is not enough: a service that mounts another volume never sees the
+# marker of the restore and keeps serving during the import.
+#
 # The service is stopped and drained before the import. The fence refuses new
 # admissions, but it cannot take back a request that was already admitted, so a
 # write that is still in flight would not be excluded by the restored copy.
@@ -195,6 +199,53 @@ docker compose -f postgres.compose.yml -f api.compose.yml start api
 # was already admitted: an accepted write that is still in flight would not
 # be excluded by the fence, and the restored copy would not carry it. The
 # drain is therefore part of the procedure and not a convenience.
+```
+
+Beside the marker of the lifecycle the fence parent holds a second
+directory, `<parent>/restore-requirements`, with the durable evidence of the
+removal ledger that every restore owed. The import replaces the schema of the
+target database, so a removal that only the live database carried would be
+destroyed by the import itself; the evidence lives outside the database, is
+written before the import starts, and is readable by its owner only
+(`0700` for the directory, `0600` for the records).
+
+That directory is **never cleaned by hand**. The newest record is retained on
+purpose: it is the evidence that the last restore closed the fence it owed,
+and the next restore discharges the records whose removals it applied. The
+directory belongs in the backup of the deployment, because a restore of a
+database without the evidence of the pending restores cannot replay the
+removals they owed.
+
+A restore that was killed leaves the marker of the lifecycle behind and the
+service stays closed, and the procedure is:
+
+```sh
+# The API is stopped and drained, so no write is admitted while the restore
+# runs. A removal that was admitted before the fence was taken can still
+# commit after the ledgers were read, and the import can lose it.
+docker compose -f postgres.compose.yml -f api.compose.yml stop api
+
+# The recovery of a restore that crashed: it names the restore from the
+# marker of the lifecycle, replays the removal ledger the restore owed from
+# the durable evidence, releases the gate and closes the fence. A database
+# that lost the removals is not released: the recovery refuses and the gate
+# stays closed.
+docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec gosu 65532:65532 /opt/kamkmchess/khabackup recover --file /backups/weekly-2026-W42.kha \
+    --restore-id <the restore of the marker> \
+    --fence /var/lib/kamkmchess/restore-fence \
+    --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE'
+
+# The take-over of a restore that crashed before the evidence was written: it
+# re-imports the bundle and replays the removal ledger again.
+docker compose -f postgres.compose.yml -f api.compose.yml exec postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec gosu 65532:65532 /opt/kamkmchess/khabackup restore --file /backups/weekly-2026-W42.kha \
+    --fence /var/lib/kamkmchess/restore-fence --takeover \
+    --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE --apply'
+
+docker compose -f postgres.compose.yml -f api.compose.yml start api
 ```
 
 The order inside a restore is fixed and tested:

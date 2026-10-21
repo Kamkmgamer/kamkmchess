@@ -144,6 +144,55 @@ export function redact(text, url) {
 }
 
 /**
+ * The steps the proof has to show.
+ *
+ * A step that did not run is a failure: a proof that skipped a case must
+ * never be green.
+ */
+export const REQUIRED_STEPS = [
+  'the-target-of-the-proof-is-accepted',
+  'the-target-addresses-the-published-port',
+  'the-runbook-and-the-configuration-name-the-same-fence',
+  'the-services-mount-the-same-fence-volume',
+  'the-proof-detects-a-diverging-fence-volume',
+  'the-service-observes-the-fence-the-runbook-opens',
+  'the-shared-fence-directory-is-prepared',
+  'the-database-user-cannot-write-the-fence',
+  'the-schema-of-the-run-is-owned',
+  'the-service-takes-the-fence',
+  'the-service-refuses-while-the-fence-is-held',
+  'the-service-serves-again-after-the-fence-is-closed',
+  'the-evidence-of-the-owed-ledger-is-owner-only',
+  'the-schema-of-the-run-is-dropped',
+];
+
+/**
+ * Completes the report of the proof.
+ *
+ * Every path out of the proof names the steps that did not run, so a run that
+ * stopped early is never green.
+ * @param {{id: string, passed: boolean, detail: string}[]} steps
+ * @param {string[]} logs
+ * @param {string[]} limits
+ * @returns {{steps: {id: string, passed: boolean, detail: string}[], logs: string[], limits: string[]}}
+ */
+export function completeReport(steps, logs, limits) {
+  for (const required of REQUIRED_STEPS) {
+    const marker = `the-step-${required}-ran`;
+    const index = steps.findIndex((step) => step.id === marker);
+    if (steps.some((step) => step.id === required)) {
+      // The step ran after the report was completed, so its marker is stale.
+      if (index >= 0) steps.splice(index, 1);
+      continue;
+    }
+    if (index < 0) {
+      steps.push({ id: marker, passed: false, detail: 'the step did not run, so the proof is not complete' });
+    }
+  }
+  return { steps, logs, limits };
+}
+
+/**
  * The schema the helper of this run uses.
  *
  * The helper derives the name from the run identifier it is given, so the
@@ -351,6 +400,7 @@ function helper(endpoint, user, args, detach, io) {
   return io('docker', [
     ...command,
     '--network', endpoint.network,
+    '--add-host', 'host.docker.internal:host-gateway',
     '--user', user,
     '--mount', `type=volume,source=${VOLUME},target=/backups`,
     '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
@@ -439,6 +489,7 @@ function probe(endpoint, options, io) {
   return io('docker', [
     'run', '--rm', '-i',
     '--network', endpoint.network,
+    '--add-host', 'host.docker.internal:host-gateway',
     '--user', options.user,
     ...options.mounts,
     '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
@@ -551,7 +602,7 @@ export async function verifyFenceAccess(options = {}) {
     const resolved = resolveTarget(options);
     if (!resolved.ok) {
       steps.push({ id: 'the-target-of-the-proof-is-accepted', passed: false, detail: resolved.detail });
-      return { steps, logs, limits: ['the target of the proof was refused'] };
+      return completeReport(steps, logs, ['the target of the proof was refused']);
     }
     target = resolved;
     steps.push({
@@ -572,7 +623,7 @@ export async function verifyFenceAccess(options = {}) {
         passed: false,
         detail: 'the target of the proof does not address the published port of the container',
       });
-      return { steps, logs, limits: ['the target of the proof does not address the fixture'] };
+      return completeReport(steps, logs, ['the target of the proof does not address the fixture']);
     }
     steps.push({
       id: 'the-target-addresses-the-published-port',
@@ -723,6 +774,24 @@ export async function verifyFenceAccess(options = {}) {
       detail: marker.stdout.trim() === 'open' ? 'the marker of the lifecycle is there' : `the marker state is ${marker.stdout.trim() || 'unknown'}`,
     });
 
+    // The evidence of the removal ledger the restore owed is written next
+    // to the marker of the lifecycle. It is a directory of mode 0700 with
+    // records of mode 0600, and it is never cleaned by hand.
+    const evidence = await io('docker', [
+      'run', '--rm', '--user', 'root:0', '--network', endpoint.network,
+      '--mount', `type=volume,source=${VOLUME},target=/backups`,
+      endpoint.image, 'sh', '-c',
+      `stat -c '%a %u' /backups/fence-${RUN}/restore-requirements /backups/fence-${RUN}/restore-requirements/restore-holder-${RUN}.json 2>&1`,
+    ]);
+    const evidenceText = (evidence.stdout + evidence.stderr).trim();
+    steps.push({
+      id: 'the-evidence-of-the-owed-ledger-is-owner-only',
+      passed: evidence.code === 0 && /\b700 65532\b/.test(evidenceText) && /\b600 65532\b/.test(evidenceText),
+      detail: evidence.code === 0
+        ? `the evidence of the owed ledger is there and private: ${evidenceText}`
+        : `the evidence of the owed ledger is missing: ${evidenceText}`,
+    });
+
     const port = holder.code === 0
       ? (await io('docker', ['port', holder.stdout.trim(), '8099/tcp'])).stdout.trim().split('\n')[0]?.split(':').pop() ?? ''
       : '';
@@ -730,7 +799,7 @@ export async function verifyFenceAccess(options = {}) {
     if (!port) {
       steps.push({ id: 'the-service-refuses-while-the-fence-is-held', passed: false, detail: 'the service published no port' });
       steps.push({ id: 'the-service-serves-again-after-the-fence-is-closed', passed: false, detail: 'the service published no port' });
-      return { steps, logs, limits: ['the service that holds the fence did not publish a port'] };
+      return completeReport(steps, logs, ['the service that holds the fence did not publish a port']);
     }
 
     const refusedTraffic = await fetch(`http://127.0.0.1:${port}/healthz`).catch(() => null);
@@ -763,13 +832,9 @@ export async function verifyFenceAccess(options = {}) {
       }
     }
 
-    return {
-      steps,
-      logs,
-      limits: [
-        'The proof runs against the local fixture container, not against the deployment host.',
-      ],
-    };
+    return completeReport(steps, logs, [
+      'The proof runs against the local fixture container, not against the deployment host.',
+    ]);
   } catch (error) {
     // A failure of the proof is a result and not a crash: the report names
     // the step that failed, and the exit code refuses the run.
@@ -778,7 +843,7 @@ export async function verifyFenceAccess(options = {}) {
       passed: false,
       detail: `the proof stopped: ${error instanceof Error ? error.message : String(error)}`,
     });
-    return { steps, logs, limits: ['the proof stopped with an error'] };
+    return completeReport(steps, logs, ['the proof stopped with an error']);
   } finally {
     const plan = planCleanup({
       keep: options.keep === true,
@@ -851,6 +916,9 @@ export async function verifyFenceAccess(options = {}) {
     if (plan.removeDirectory && volumes.length > 0) {
       await rm(DIRECTORY, { recursive: true, force: true });
     }
+    // The report is completed after the cleanup, because the cleanup can
+    // add the step that drops the schema of the run.
+    completeReport(steps, logs, []);
     // The secret of the target is never written to the report.
     if (target?.url) {
       for (const step of steps) step.detail = redact(step.detail, target.url);

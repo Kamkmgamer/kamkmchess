@@ -12,9 +12,17 @@
 //
 // Usage:
 //
-//	fenceprobe open  <path> <restore-id> <ledger-digest-hex>
-//	fenceprobe state  <path>
-//	fenceprobe close <path> <restore-id> <ledger-digest-hex>
+//	fenceprobe cert      <directory>
+//	fenceprobe fence-only <fence parent> <restore-id>
+//	fenceprobe watch     <fence parent> <database url> <port> <restore-id>
+//	fenceprobe serve     <fence parent> <database url> <port> <restore-id>
+//	fenceprobe state     <fence parent>
+//
+// The cert command writes a throwaway certificate for the loopback service.
+// The fence-only command admits the fence and gives it back, so a proof can
+// show who may write the fence. The watch command serves the serving gate
+// without taking the fence, and the serve command serves it and holds the
+// fence of a restore.
 //
 // The state command exits with 0 when the fence is closed and with 3 when it
 // is open, so a caller can act on the state without parsing the output.

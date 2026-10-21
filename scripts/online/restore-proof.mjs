@@ -101,6 +101,7 @@ function tool(args, env, command, endpoint) {
   return run('docker', [
     'run', '--rm', '-i',
     '--network', endpoint.network,
+    '--add-host', 'host.docker.internal:host-gateway',
     ...Object.entries(env).flatMap(([name, value]) => ['--env', `${name}=${value}`]),
     '--mount', `type=volume,source=${VOLUME},target=/backups`,
     '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
@@ -120,6 +121,7 @@ async function startHolder(endpoint, databaseUrl, restoreId, mode = 'serve') {
     // The container is kept, so the log of an early exit can still be read.
     'run', '--detach',
     '--network', endpoint.network,
+    '--add-host', 'host.docker.internal:host-gateway',
     '--user', '65532:65532',
     '--mount', `type=volume,source=${VOLUME},target=/backups`,
     '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
@@ -387,8 +389,15 @@ export function planCleanup(options) {
  */
 export function completeReport(steps, logs, limits) {
   for (const required of REQUIRED_STEPS) {
-    if (!steps.some((step) => step.id === required)) {
-      steps.push({ id: `the-step-${required}-ran`, passed: false, detail: 'the step did not run, so the proof is not complete' });
+    const marker = `the-step-${required}-ran`;
+    const index = steps.findIndex((step) => step.id === marker);
+    if (steps.some((step) => step.id === required)) {
+      // The step ran after the report was completed, so its marker is stale.
+      if (index >= 0) steps.splice(index, 1);
+      continue;
+    }
+    if (index < 0) {
+      steps.push({ id: marker, passed: false, detail: 'the step did not run, so the proof is not complete' });
     }
   }
   return { steps, logs, limits };

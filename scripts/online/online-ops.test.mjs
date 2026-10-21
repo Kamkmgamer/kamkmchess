@@ -15,8 +15,9 @@ import { buildPacket, evaluateEvidence, GATE_SCENARIOS } from './feature-gates.m
 import { mapScenarios, parseGoTestJson } from './integration-suite.mjs';
 import { percentiles } from './load-suite.mjs';
 import { auditServiceWiring, switchDefaultState } from './service-wiring.mjs';
-import { composeFencePaths, documentedFencePath, fencePathAgreement, fenceVolumeAgreement, fenceVolumeControl, holderDatabaseUrl, ownedSchemaName, planCleanup as planFenceCleanup, proofExitCode as fenceExitCode, readmeFencePath, resolveTarget, RUN_SCHEMA, targetFromEnvironment, verifyFenceAccess } from '../../deploy/verify-fence-access.mjs';
+import { composeFencePaths, completeReport as fenceCompleteReport, documentedFencePath, fencePathAgreement, fenceVolumeAgreement, fenceVolumeControl, holderDatabaseUrl, ownedSchemaName, planCleanup as planFenceCleanup, proofExitCode as fenceExitCode, readmeFencePath, REQUIRED_STEPS as FENCE_REQUIRED_STEPS, resolveTarget, RUN_SCHEMA, targetFromEnvironment, verifyFenceAccess } from '../../deploy/verify-fence-access.mjs';
 import { completeReport, createAndMigrate, insideDatabaseUrl, planCleanup as planRestoreCleanup, redactReport, reportFailure, REQUIRED_STEPS, RUN_SCHEMA as RESTORE_RUN_SCHEMA } from './restore-proof.mjs';
+import { barrierScript, REQUIRED_STEPS as INTERRUPTION_REQUIRED_STEPS } from './restore-interruption-proof.mjs';
 import { buildProbes, evaluateProbe } from '../../deploy/runtime-grants-probe.mjs';
 import { auditGrants, parseMigrationFunctions, parseMigrationGrants, parseMigrationReads, parseMigrationTables, parseMigrationWrites, parsePolicy, scanGoUsage } from '../../deploy/runtime-grants.mjs';
 
@@ -1122,4 +1123,51 @@ test('the manifest of the run carries neither form of the secret of the target',
   // The logs are still there, only the secret is gone.
   assert.equal(cleanup.manifest.logs.length, 2);
   assert.match(cleanup.manifest.logs[0], /\*\*\*/);
+});
+
+
+test('the barrier of the native import runs the real psql and pauses where it is told', () => {
+  const script = barrierScript();
+  // The real loader is called with the arguments the tool passes.
+  assert.match(script, /"\$REAL_PSQL" "\$@"/);
+  // The path of the loader is found in the image, not guessed.
+  assert.match(script, /command -v psql/);
+  // The marker holds the import transaction open.
+  assert.match(script, /pg_sleep/);
+  // The barrier tells the two cases apart.
+  assert.match(script, /during/);
+  assert.match(script, /after/);
+  // The name of the application identifies the backend of the barrier.
+  assert.match(script, /PGAPPNAME=kamkm_proof_barrier/);
+});
+
+test('the interruption proof names every case it has to show', () => {
+  for (const step of [
+    'the-import-is-killed-during-the-transaction',
+    'the-import-is-rolled-back',
+    'the-import-is-killed-after-the-commit',
+    'the-live-only-ledger-is-lost-from-the-database',
+    'the-durable-evidence-of-the-owed-ledger-exists',
+    'the-recovery-refuses-the-lost-ledger',
+    'the-take-over-replays-the-owed-ledger',
+    'the-service-admits-after-the-replay',
+    'the-removed-data-does-not-come-back',
+    'the-control-survives',
+  ]) {
+    assert.ok(INTERRUPTION_REQUIRED_STEPS.includes(step), `${step} is not a required step`);
+  }
+});
+
+test('a proof that skipped a case is never green', () => {
+  const report = fenceCompleteReport([], [], ['the proof stopped early']);
+  const missing = report.steps.filter((step) => step.id.endsWith('-ran'));
+  assert.equal(missing.length, FENCE_REQUIRED_STEPS.length);
+  assert.ok(missing.every((step) => step.passed === false));
+
+  const complete = fenceCompleteReport(
+    FENCE_REQUIRED_STEPS.map((id) => ({ id, passed: true, detail: '' })),
+    [],
+    [],
+  );
+  assert.equal(complete.steps.filter((step) => step.id.endsWith('-ran')).length, 0);
 });

@@ -97,7 +97,28 @@ the owner of the fence into `<parent>/restore-fence/owner` and takes the
 sibling `<parent>/restore-fence.lock`. The service does **not** read that
 owner marker: its admission check only *observes* the marker directory
 `<parent>/restore-fence`, and it refuses to serve while that directory
-exists. The runbook in
+exists.
+
+Beside the marker directory the parent holds a second directory,
+`<parent>/restore-requirements`, with the **durable evidence of the removal
+ledger every restore owed**. The import of a restore replaces the schema of
+the target database, so a removal that only the live database carried is
+destroyed by the import itself; the evidence of that removal lives outside
+the database, is written and flushed before the import starts, and holds the
+one-way references of the removed subjects and never an identifier. The
+directory is created by the service with mode `0700` and the records in it
+with mode `0600`, so only their owner reads them.
+
+The evidence is **never cleaned by hand**. It is the proof that a crashed
+restore owed a removal, and the next restore discharges it when the removal
+is applied; the newest record is retained on purpose, because it is the
+evidence that the last restore closed the fence it owed. The directory
+belongs in the backup of the deployment: a restore of a database without the
+evidence of the pending restores cannot replay the removals they owed. The
+restore procedure is in
+[`MVP-operations.md`](../docs/implementation/MVP-operations.md): the API is
+stopped and drained, the restore is run, and a restore that crashed is
+recovered with `khabackup recover` or continued with `--takeover`. The runbook in
 [`MVP-operations.md`](../docs/implementation/MVP-operations.md) names the same
 parent, and the proof below compares the runbook, this note and the rendered
 compose configuration, so the three cannot drift apart again.
@@ -131,6 +152,10 @@ runs as the database user, and reads it from the same volume as the API user.
 It also proves that the fence the runbook opens is the fence the service
 reads: the volume is mounted at the path of the configuration and at the path
 the runbook names, and the service has to see the marker the runbook wrote.
+The comparison covers the **volume** and not only the path: the two services
+have to mount the same named volume at the configured path, the API service
+read-only and the database service writable. A configuration that mounts
+another volume is rendered as well and has to be refused.
 At the moment it **passes**: the fence is written by the API user, so it is
 readable without loosening the mode; the fence code owns the mode and the
 deployment owns the user.
