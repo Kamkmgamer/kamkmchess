@@ -339,7 +339,16 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// The health monitor keeps the durable health in step with the
 	// dependencies, so a service outage never looks like an absent
 	// opponent.
-	stopHealth := StartHealthMonitor(ctx, pool, health, onlineService, HealthMonitorConfig{Interval: cfg.Online.HealthCheckInterval})
+	stopHealth := StartHealthMonitor(ctx, pool, health, onlineService, HealthMonitorConfig{
+		Interval: cfg.Online.HealthCheckInterval,
+		// The failures of the monitor are the classes of the rules client
+		// and the durable state of the service. They carry no secret, so
+		// they are logged: a closed gate has to be visible in the log of
+		// the instance that closed it.
+		OnError: func(err error) {
+			slog.Default().Error("the online health check failed", "error", err)
+		},
+	})
 	// The queue reconciliation loop expires the unresponsive entries,
 	// resolves the cutoffs that passed and finishes the pending
 	// allocations. It only runs when the queue is open.
