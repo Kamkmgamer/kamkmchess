@@ -736,13 +736,18 @@ func loadLatestRunnerLease(ctx context.Context, q queryer, matchID string, seat 
 // expired, it must belong to the current control epoch and to the current
 // service epoch, and it must be bound to the turn the command acts for.
 //
-// The check applies to every action, not only to the move. A stale runner
-// may not resign, spend a recovery attempt, or change the control of its
-// seat, because those actions end the game as surely as a move does.
+// The check applies to every action, not only to the move. A runner that
+// presents a stale lease may not resign, spend a recovery attempt, or change
+// the control of its seat, because those actions end the game as surely as a
+// move does.
 //
-// A command that presents no lease is the owner acting for itself. That
-// stays allowed, so an owner may always resign or cancel, and a seat that a
-// human controls never needs a lease.
+// A command that presents no lease is the authenticated owner acting for
+// itself. The owner's own resignation and cancellation stay allowed, so the
+// owner may always end its own game without a runner lease and without a
+// takeover first. That is a deliberate difference from a runner: a runner
+// always presents the lease of its seat, so a runner that lost the seat is
+// fenced by the lease it presents, and a runner that presents no lease is
+// treated as the owner.
 func (s *Service) authorizePresentedLease(ctx context.Context, tx pgx.Tx, match Match, cmd Command, decision time.Time) error {
 	if cmd.LeaseID == "" {
 		return nil
