@@ -312,7 +312,11 @@ func (h *HealthReporter) writeCheckpointIfChanged(ctx context.Context, dependenc
 	}
 	// The observation must still be the newest one of the instance: a newer
 	// observation replaced it while the writer waited for the lock.
-	if current, known := h.pendingRevision(dependency); known && current > revision {
+	//
+	// The revision is the lifetime of the observations and it is never
+	// removed, so an observation that was acknowledged in the meantime is
+	// not overwritten either.
+	if h.latestRevision(dependency) > revision {
 		return nil
 	}
 	// The shared state is the newest persisted observation of the dependency.
@@ -354,73 +358,16 @@ func (h *HealthReporter) writeCheckpointIfChanged(ctx context.Context, dependenc
 	return h.refreshLiveness(ctx, now.UTC())
 }
 
-// pendingRevision returns the revision of the newest pending observation of a
+// latestRevision returns the revision of the newest observation of a
 // dependency.
-func (h *HealthReporter) pendingRevision(dependency string) (uint64, bool) {
+//
+// The revision is the lifetime of the observations: it is never removed, so a
+// writer that waited for the durable lock compares against the newest
+// observation even when the pending one was acknowledged in the meantime.
+func (h *HealthReporter) latestRevision(dependency string) uint64 {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	report, known := h.pending[dependency]
-	if !known {
-		return 0, false
-	}
-	return report.revision, true
-}
-
-// writeCheckpoint writes one checkpoint of a dependency.
-//
-// The order of the checkpoints is the sequence of the database, so the newest
-// checkpoint of a dependency is the one with the greatest order, whatever the
-// clock of the host or of the database did. The order is allocated before the
-// commit, so a write that completes after a newer one does not become the
-// newest checkpoint.
-//
-// The write does not touch the local observation of the dependency: the
-// observation of the instance is newer than the write, and it is the local
-// state that the claim path reads.
-func (h *HealthReporter) writeCheckpoint(ctx context.Context, dependency string, state HealthState, detail string) error {
-	if h == nil {
-		return ErrInvalidArgument
-	}
-	if dependency == "" || !state.Valid() {
-		return ErrInvalidArgument
-	}
-	if len(detail) > 200 {
-		detail = detail[:200]
-	}
-	if h.db == nil {
-		// Without a database there is no durable state, so the observation
-		// is the state.
-		h.mu.Lock()
-		h.written[dependency] = state
-		h.mu.Unlock()
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, ReportBudget)
-	defer cancel()
-	var now time.Time
-	if err := h.db.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
-		return err
-	}
-	var order int64
-	if err := h.db.QueryRow(ctx, `SELECT nextval('online_service_health_order')`).Scan(&order); err != nil {
-		return err
-	}
-	if _, err := h.db.Exec(ctx, `INSERT INTO online_service_health(checkpoint_id,dependency,state,detail,recorded_at,observation_order) VALUES($1,$2,$3,$4,$5,$6)`,
-		healthCheckpointID(dependency, state, now.UTC()), dependency, string(state), detail, now.UTC(), order); err != nil {
-		// The checkpoint is not written, so the durable state stays the
-		// old one and the next observation writes it again.
-		return err
-	}
-	h.mu.Lock()
-	h.written[dependency] = state
-	h.mu.Unlock()
-	if !h.OverallHealthy() {
-		// The service is not healthy, so it is not alive. The liveness
-		// record keeps its last value, and the recovery locates the
-		// interruption from it.
-		return nil
-	}
-	return h.refreshLiveness(ctx, now.UTC())
+	return h.revision[dependency]
 }
 
 // RefreshDependency writes a checkpoint of a dependency when the shared state
@@ -438,7 +385,9 @@ func (h *HealthReporter) RefreshDependency(ctx context.Context, dependency strin
 	if h == nil || h.db == nil {
 		return nil
 	}
-	return h.writeCheckpointIfChanged(ctx, dependency, state, detail, 0)
+	// The revision of the current observation is captured here, so the
+	// stale guard of the write applies to the refresh as well.
+	return h.writeCheckpointIfChanged(ctx, dependency, state, detail, h.latestRevision(dependency))
 }
 
 // OverallHealthy reports whether every observed dependency is healthy.

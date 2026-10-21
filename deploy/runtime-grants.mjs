@@ -370,6 +370,7 @@ export function parsePolicy(raw) {
     role: String(raw.role ?? 'kamkmchess_runtime'),
     unusedRoles: Array.isArray(raw.unusedRoles) ? raw.unusedRoles.map((name) => String(name)) : [],
     functions: raw.functions && typeof raw.functions === 'object' ? raw.functions : {},
+    sequences: raw.sequences && typeof raw.sequences === 'object' ? raw.sequences : {},
     schema: String(raw.schema ?? 'public'),
     privileges,
     rationale: raw.rationale ?? {},
@@ -440,12 +441,25 @@ export function auditGrants({ policy, tables, usage, migrationGrants = [], seque
   }
 
   for (const sequence of sequences) {
-    findings.push(finding(
-      'blocker',
-      'sequence-missing-grant',
-      `The migration creates the sequence ${sequence}, which the policy does not grant.`,
-      `Grant USAGE, SELECT and UPDATE on the sequence ${sequence} in the policy, or remove the sequence.`,
-    ));
+    const granted = policy.sequences?.[sequence];
+    if (!granted) {
+      findings.push(finding(
+        'blocker',
+        'sequence-missing-grant',
+        `The migration creates the sequence ${sequence}, which the policy does not grant.`,
+        `Grant USAGE, SELECT and UPDATE on the sequence ${sequence} in the policy, or remove the sequence.`,
+      ));
+      continue;
+    }
+    const missing = ['USAGE', 'SELECT', 'UPDATE'].filter((verb) => !granted.includes(verb));
+    if (missing.length > 0) {
+      findings.push(finding(
+        'blocker',
+        'sequence-missing-privilege',
+        `The policy grants the sequence ${sequence} without ${missing.join(', ')}.`,
+        `Grant USAGE, SELECT and UPDATE on the sequence ${sequence} in the policy.`,
+      ));
+    }
   }
 
   if (functions.length > 0) {

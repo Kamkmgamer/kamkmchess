@@ -3,6 +3,9 @@
   "role": "kamkmchess_runtime",
   "schema": "public",
   "unusedRoles": ["kamkm_online_api", "kamkm_online_rules"],
+  "sequences": {
+    "online_service_health_order": ["USAGE", "SELECT", "UPDATE"]
+  },
   "functions": {
     "online_resolve_public_model_label": ["EXECUTE"],
     "online_neutral_model_label": ["EXECUTE"],

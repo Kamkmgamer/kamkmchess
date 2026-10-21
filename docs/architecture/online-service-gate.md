@@ -275,7 +275,10 @@ The observations of a dependency carry a revision. The observation of the
 instance replaces the pending one, so a newer observation is never lost behind
 an older one, and a flush acknowledges the observation it wrote by its
 revision, so a write that completes after a newer observation never replaces
-it.
+it. The guard of a stale write compares against the **lifetime** of the
+observations, which is never removed: the acknowledgement of a flush removes
+the pending observation, and an acknowledged observation must be protected as
+well.
 
 The durable report of a dependency is a database write, and it is **not** on
 the request path. The observations of the request paths (the participant

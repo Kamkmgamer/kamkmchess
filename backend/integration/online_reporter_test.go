@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -183,6 +184,145 @@ func TestOnlineTheSharedStateFollowsTheOrderAndNotTheClock(t *testing.T) {
 	}
 }
 
+// blockedMarker marks the context of the writer that waits for the barrier.
+type blockedMarker struct{}
+
+// barrierPool opens a pool whose acquisition waits for a release when the
+// context of the caller carries the marker.
+//
+// The barrier is an arrival barrier of the pool itself, so the order of the two
+// writers is decided by the test and not by a sleep.
+func barrierPool(t *testing.T, schema string) (*pgxpool.Pool, chan struct{}) {
+	t.Helper()
+	config, err := pgxpool.ParseConfig(os.Getenv(databaseEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.ConnConfig.RuntimeParams == nil {
+		config.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	config.MaxConns = 2
+	config.MinConns = 1
+	release := make(chan struct{})
+	config.BeforeAcquire = func(ctx context.Context, conn *pgx.Conn) bool {
+		if ctx.Value(blockedMarker{}) != nil {
+			<-release
+		}
+		return true
+	}
+	pool, err := pgxpool.NewWithConfig(context.Background(), config)
+	if err != nil {
+		t.Fatalf("open the barrier pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	return pool, release
+}
+
+// TestOnlineAnOldFlushCannotOverwriteANewerObservation covers the reversed
+// completion of two flushes.
+//
+// The older flush waits for the pool while the newer observation is flushed
+// and acknowledged. The older flush must not write its answer: the
+// acknowledgement removed the pending observation, so the guard has to compare
+// against the lifetime of the observations.
+func TestOnlineAnOldFlushCannotOverwriteANewerObservation(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		older   online.HealthState
+		newer   online.HealthState
+		blocked string
+	}{
+		{name: "the older flush is healthy", older: online.HealthHealthy, newer: online.HealthDegraded},
+		{name: "the older flush is degraded", older: online.HealthDegraded, newer: online.HealthHealthy},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newPresenceFixture(t)
+			ctx := context.Background()
+			var schema string
+			if err := fixture.pool.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+				t.Fatal(err)
+			}
+			pool, release := barrierPool(t, schema)
+			reporter := online.NewHealthReporter(pool)
+
+			// The older observation waits for the pool.
+			reporter.Record(online.DependencyRules, testCase.older, "the older observation")
+			older := make(chan struct{})
+			blocked := context.WithValue(ctx, blockedMarker{}, "older")
+			go func() {
+				defer close(older)
+				reporter.Flush(blocked)
+			}()
+			// The newer observation is flushed and acknowledged while the
+			// older one waits.
+			reporter.Record(online.DependencyRules, testCase.newer, "the newer observation")
+			reporter.Flush(ctx)
+			close(release)
+			<-older
+			// The newer observation survives the older flush.
+			reporter.Flush(ctx)
+
+			shared, err := reporter.SharedState(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if shared != testCase.newer {
+				t.Fatalf("the shared state = %q, want the newer observation %q", shared, testCase.newer)
+			}
+			local := reporter.Current()
+			if local.Rules.State != testCase.newer {
+				t.Fatalf("the local state = %q, want the newer observation %q", local.Rules.State, testCase.newer)
+			}
+			var newest string
+			if err = fixture.pool.QueryRow(ctx, `SELECT state FROM online_service_health WHERE dependency=$1 ORDER BY observation_order DESC LIMIT 1`, online.DependencyRules).Scan(&newest); err != nil {
+				t.Fatal(err)
+			}
+			if newest != string(testCase.newer) {
+				t.Fatalf("the newest checkpoint = %q, want the newer observation %q", newest, string(testCase.newer))
+			}
+		})
+	}
+}
+
+// TestOnlineALegalMoveDoesNotWaitForTheDurableWriteOfTheMonitor covers the
+// episode guard and the durable write.
+//
+// The monitor holds the durable write of its observation, and a legal move of
+// a healthy worker must not wait for it: the decision and the local
+// observation are one step under the guard, and the write happens after it.
+func TestOnlineALegalMoveDoesNotWaitForTheDurableWriteOfTheMonitor(t *testing.T) {
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	var schema string
+	if err := fixture.pool.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	pool, release := barrierPool(t, schema)
+	reporter := online.NewHealthReporter(pool)
+	service, err := online.Open(ctx, fixture.pool, moveEvaluator{}, online.WithHealthReporter(reporter))
+	if err != nil {
+		t.Fatalf("open the service: %v", err)
+	}
+	// The monitor of the instance observes the dependency, and its durable
+	// write waits for the pool.
+	monitoring := make(chan struct{})
+	blocked := context.WithValue(ctx, blockedMarker{}, "monitor")
+	go func() {
+		defer close(monitoring)
+		_ = service.ProbeRules(blocked)
+	}()
+	// The move of a healthy worker is accepted while the monitor waits.
+	moveCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err = service.ProbeRules(moveCtx); err != nil {
+		close(release)
+		t.Fatalf("the probe of the healthy worker: %v", err)
+	}
+	close(release)
+	<-monitoring
+}
+
 // TestOnlineTheNewerObservationSurvivesABlockedFlush covers the revision of
 // the observations of a dependency.
 //
@@ -283,19 +423,32 @@ func TestOnlineTheReporterServesConcurrentObservationsOfOneDependency(t *testing
 		}(index)
 	}
 	group.Wait()
-	// The durable state is one of the observations, and the rows of the
-	// dependency are the observations that changed it.
-	var distinct int
-	if err := fixture.pool.QueryRow(ctx, `SELECT count(DISTINCT state) FROM online_service_health WHERE dependency=$1`, online.DependencyRules).Scan(&distinct); err != nil {
+	// The controlled final observation is the newest one, and it is the one
+	// the shared state and the local state have to agree on.
+	reporter.Record(online.DependencyRules, online.HealthHealthy, "the final observation")
+	reporter.Flush(ctx)
+	shared, err := reporter.SharedState(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if distinct < 1 || distinct > 2 {
-		t.Fatalf("the durable states of the dependency = %d, want the observed ones", distinct)
+	if shared != online.HealthHealthy {
+		t.Fatalf("the shared state = %q after the concurrent observations, want the final observation %q", shared, online.HealthHealthy)
 	}
-	// The local state is the newest observation, and the durable rows are
-	// the observations that changed the durable state.
 	local := reporter.Current()
-	if local.Rules.State != online.HealthHealthy && local.Rules.State != online.HealthDegraded {
-		t.Fatalf("the local state of the dependency = %q after the concurrent observations", local.Rules.State)
+	if local.Rules.State != online.HealthHealthy {
+		t.Fatalf("the local state of the dependency = %q after the concurrent observations, want %q", local.Rules.State, online.HealthHealthy)
+	}
+	// The second flush writes nothing: the durable state is the final
+	// observation already.
+	var before, after int
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_service_health WHERE dependency=$1`, online.DependencyRules).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	reporter.Flush(ctx)
+	if err = fixture.pool.QueryRow(ctx, `SELECT count(*) FROM online_service_health WHERE dependency=$1`, online.DependencyRules).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Fatalf("the checkpoints of the dependency = %d after the stable flush, want %d", after, before)
 	}
 }

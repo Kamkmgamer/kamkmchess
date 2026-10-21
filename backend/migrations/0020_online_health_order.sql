@@ -39,13 +39,6 @@ ALTER TABLE online_service_health ALTER COLUMN observation_order SET NOT NULL;
 CREATE INDEX IF NOT EXISTS online_service_health_newest
   ON online_service_health(dependency, observation_order DESC);
 
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kamkm_online_api') THEN
-    GRANT USAGE ON SEQUENCE online_service_health_order TO kamkm_online_api;
-  END IF;
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kamkm_online_rules') THEN
-    GRANT USAGE ON SEQUENCE online_service_health_order TO kamkm_online_rules;
-  END IF;
-END
-$$;
+-- The sequence is granted by the deployment policy to the role that writes
+-- the health of the service. The rules process holds no SQL privilege at all,
+-- so it never receives the usage of the sequence.
