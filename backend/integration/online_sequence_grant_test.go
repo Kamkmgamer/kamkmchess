@@ -87,6 +87,9 @@ func TestOnlineTheRuntimeRoleCanWriteACheckpointWithTheOrderOfTheSequence(t *tes
 		t.Fatal(err)
 	}
 	defer runtime.Release()
+	// The connection returns to the pool without a role, so the next user of
+	// the connection is not the role of this test.
+	defer func() { _, _ = runtime.Exec(context.Background(), `RESET ROLE`) }()
 	if _, err = runtime.Exec(ctx, `SET ROLE `+runtimeRole); err != nil {
 		t.Fatalf("become the runtime role: %v", err)
 	}
@@ -127,6 +130,7 @@ func TestOnlineTheRuntimeRoleCanWriteACheckpointWithTheOrderOfTheSequence(t *tes
 		t.Fatal(err)
 	}
 	defer rules.Release()
+	defer func() { _, _ = rules.Exec(context.Background(), `RESET ROLE`) }()
 	if _, err = rules.Exec(ctx, `SET ROLE `+rulesRole); err != nil {
 		t.Fatalf("become the rules role: %v", err)
 	}
@@ -173,7 +177,15 @@ func TestOnlineTheLiveAuditOfTheSequenceReadsTheEffectiveRights(t *testing.T) {
 		t.Fatalf("create the role: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = fixture.pool.Exec(context.Background(), `DROP ROLE IF EXISTS `+runtimeRole)
+		// The role holds grants on the schema of the test, so its grants
+		// are dropped before the role itself. A failed cleanup is a failure
+		// of the test: a leaked role would outlive the schema.
+		if _, err := fixture.pool.Exec(context.Background(), `DROP OWNED BY `+runtimeRole); err != nil {
+			t.Errorf("drop the grants of the role %s: %v", runtimeRole, err)
+		}
+		if _, err := fixture.pool.Exec(context.Background(), `DROP ROLE `+runtimeRole); err != nil {
+			t.Errorf("drop the role %s: %v", runtimeRole, err)
+		}
 	})
 	if _, err := fixture.pool.Exec(ctx, `GRANT USAGE ON SCHEMA `+schema+` TO `+runtimeRole); err != nil {
 		t.Fatalf("grant the schema: %v", err)
@@ -208,13 +220,25 @@ func TestOnlineTheLiveAuditOfTheSequenceReadsTheEffectiveRights(t *testing.T) {
 	if !containsCode(blockers, "live-sequence-extra") {
 		t.Fatalf("the live audit of the drift reports %v, want the extra privileges of the sequence", blockers)
 	}
-	// A missing usage is a blocker.
+	// A missing usage is a blocker: the sequence is still there, so the role
+	// holds a privilege of it and not the usage the policy grants.
+	if _, err := fixture.pool.Exec(ctx, `REVOKE USAGE ON SEQUENCE `+schema+`.online_service_health_order FROM `+runtimeRole); err != nil {
+		t.Fatalf("revoke the usage: %v", err)
+	}
+	sequences, blockers = read()
+	if granted, ok := sequences["online_service_health_order"]; !ok || len(granted) == 0 {
+		t.Fatalf("the live rights of the sequence = %v, want the privileges the role still holds", sequences["online_service_health_order"])
+	}
+	if !containsCode(blockers, "live-sequence-missing-privilege") {
+		t.Fatalf("the live audit of the missing usage reports %v, want the missing usage of the sequence", blockers)
+	}
+	// A role without any privilege on the sequence has no entry at all.
 	if _, err := fixture.pool.Exec(ctx, `REVOKE ALL ON SEQUENCE `+schema+`.online_service_health_order FROM `+runtimeRole); err != nil {
 		t.Fatalf("revoke the sequence: %v", err)
 	}
 	_, blockers = read()
-	if !containsCode(blockers, "live-sequence-missing-privilege") {
-		t.Fatalf("the live audit of the missing usage reports %v, want the missing usage of the sequence", blockers)
+	if !containsCode(blockers, "live-sequence-missing") {
+		t.Fatalf("the live audit of the missing grant reports %v, want the missing grant of the sequence", blockers)
 	}
 }
 
@@ -238,10 +262,12 @@ func runLiveSequenceAudit(t *testing.T, config *pgx.ConnConfig, role, schema str
 	}
 	script := filepath.Join(t.TempDir(), "live-sequence-audit.mjs")
 	module := "file:///" + filepath.ToSlash(filepath.Join(root, "deploy", "runtime-grants.mjs"))
-	body := "import { readFileSync } from 'node:fs';\n" +
-		"import { auditLiveGrants, parsePolicy, readLiveSequenceGrants } from '" + module + "';\n" +
-		"const [databaseUrl, psqlPath, role, schema, policyPath] = process.argv.slice(2);\n" +
-		"const policy = parsePolicy(JSON.parse(readFileSync(policyPath, 'utf8')));\n" +
+	body := "import { auditLiveGrants, readLiveSequenceGrants } from '" + module + "';\n" +
+		"const [databaseUrl, psqlPath, role, schema] = process.argv.slice(2);\n" +
+		// The audit covers the sequences alone: the tables of the policy are
+		// not part of this reading, so the policy of the audit carries no
+		// table and the findings are the findings of the sequences.
+		"const policy = { role, schema, privileges: new Map(), sequences: { online_service_health_order: ['USAGE'] } };\n" +
 		"const sequences = await readLiveSequenceGrants(databaseUrl, psqlPath, role, schema);\n" +
 		"const findings = auditLiveGrants(policy, new Map(), sequences);\n" +
 		"const plain = Object.fromEntries([...sequences].map(([name, verbs]) => [name, [...verbs].sort()]));\n" +

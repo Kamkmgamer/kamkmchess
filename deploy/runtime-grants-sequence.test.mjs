@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { auditGrants, parsePolicy, renderGrantSql } from './runtime-grants.mjs';
+import { auditGrants, auditLiveGrants, parsePolicy, renderGrantSql } from './runtime-grants.mjs';
 
 // The grant of the sequence of the health checkpoints.
 //
@@ -63,4 +63,32 @@ test('the audit refuses a policy entry for a sequence that no migration creates'
     sequences: ['online_service_health_order'],
   });
   assert.ok(findings.some((finding) => finding.code === 'sequence-unknown-entry'));
+});
+
+// The live audit of the sequences, with the policy of the sequences alone.
+const sequencePolicy = {
+  role: 'kamkmchess_runtime',
+  schema: 'public',
+  privileges: new Map(),
+  sequences: { online_service_health_order: ['USAGE'] },
+};
+
+test('the live audit of the sequences is clear for the baseline of the policy', () => {
+  const findings = auditLiveGrants(sequencePolicy, new Map(), new Map([['online_service_health_order', new Set(['USAGE'])]]));
+  assert.deepEqual(findings.filter((finding) => finding.severity === 'blocker'), []);
+});
+
+test('the live audit of the sequences reports a drift', () => {
+  const findings = auditLiveGrants(sequencePolicy, new Map(), new Map([['online_service_health_order', new Set(['USAGE', 'SELECT', 'UPDATE'])]]));
+  assert.ok(findings.some((finding) => finding.code === 'live-sequence-extra'));
+});
+
+test('the live audit of the sequences reports a missing usage', () => {
+  const findings = auditLiveGrants(sequencePolicy, new Map(), new Map([['online_service_health_order', new Set(['SELECT'])]]));
+  assert.ok(findings.some((finding) => finding.code === 'live-sequence-missing-privilege'));
+});
+
+test('the live audit of the sequences reports a missing grant', () => {
+  const findings = auditLiveGrants(sequencePolicy, new Map(), new Map());
+  assert.ok(findings.some((finding) => finding.code === 'live-sequence-missing'));
 });
