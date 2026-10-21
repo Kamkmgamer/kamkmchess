@@ -171,8 +171,13 @@ come back.
 The kill during the import transaction is **measured green**: the barrier
 holds the transaction open with a marker statement, the restore is killed
 while the transaction is active, the transaction is rolled back, the live
-removals are still in the database, the record of the removed match is not
-revoked, and the recovery of the crashed restore closes the fence again.
+removals are still in the database and the record of the removed match is
+not revoked. The recovery of that restore then **refuses**, because the
+fixture of the proof is deliberately unsanitized: the request says verified
+and the ledger carries the removal, but the rows of the database are still
+there, and the check of the privacy service sees that. The take-over of the
+same restore replays the owed ledger, sanitizes the rows and closes the
+fence.
 
 The kill after the commit and before the replay is **measured green**:
 the real psql committed the import, the restore was killed before the

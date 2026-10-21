@@ -146,7 +146,8 @@ export const REQUIRED_STEPS = [
   'the-marker-names-the-restore-while-it-is-alive',
   'the-marker-names-the-restore-that-crashed',
   'the-marker-names-the-same-restore-after-the-crash',
-  'the-recovery-closes-the-fence-of-the-rolled-back-restore',
+  'the-recovery-refuses-the-unsanitized-fixture',
+  'the-take-over-replays-the-owed-ledger-of-the-rolled-back-restore',
   'the-import-is-killed-after-the-commit',
   'the-import-was-committed',
   'the-live-only-ledger-is-lost-from-the-database',
@@ -662,13 +663,37 @@ export async function runInterruptionProof(options = {}) {
       '--database-url-env', 'DATABASE_URL',
       '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
     ], { DATABASE_URL: insideDatabaseUrl(context.target.url, targetDuring), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
-    const afterRecovery = await removalState(context, targetDuring);
+    const gateDuring = await sql(targetDuring, `SELECT count(*) FROM online_restore_gates WHERE serving_allowed = false`);
     steps.push({
-      id: 'the-recovery-closes-the-fence-of-the-rolled-back-restore',
-      passed: recoveredDuring.code === 0 && afterRecovery.matches === '1' && afterRecovery.subjects === '1',
-      detail: recoveredDuring.code === 0
-        ? 'the recovery of the rolled back restore closed the fence, and the removals it owed are still applied'
-        : `the recovery of the rolled back restore failed: ${recoveredDuring.stderr.trim().split('\n').slice(-1)[0] ?? ''}`,
+      id: 'the-recovery-refuses-the-unsanitized-fixture',
+      passed: recoveredDuring.code !== 0
+        && /not applied in the database|is not applied/i.test(recoveredDuring.stderr + recoveredDuring.stdout),
+      detail: recoveredDuring.code !== 0
+        ? `the recovery refused the database whose rows are still unsanitized, and the gate of the restore stays closed (${gateDuring.text || 'unknown'} blocking gate): ${(recoveredDuring.stderr + recoveredDuring.stdout).trim().split('\n').slice(-1)[0] ?? ''}`
+        : 'the recovery closed the fence of a database whose rows are still unsanitized',
+    });
+    // The take-over of the same restore replays the owed ledger, sanitizes
+    // the rows and closes the fence.
+    const takeoverDuring = await tool([
+      'restore',
+      '--file', oldBundle,
+      '--newer-ledger', newerBundle,
+      '--fence', FENCE,
+      '--restore-id', duringOwner,
+      '--takeover',
+      '--database-url-env', 'DATABASE_URL',
+      '--passphrase-env', 'KHA_BACKUP_PASSPHRASE',
+      '--psql', '/fixtures/psql-none.sh',
+      '--apply',
+    ], { DATABASE_URL: insideDatabaseUrl(context.target.url, targetDuring), KHA_BACKUP_PASSPHRASE: PASSPHRASE });
+    const afterTakeoverDuring = await removalState(context, targetDuring);
+    const sanitizedDuring = await sql(targetDuring, `SELECT count(*) FROM games WHERE game_id = 'proof_private_game' AND checkpoint_json = '{}'::bytea`);
+    steps.push({
+      id: 'the-take-over-replays-the-owed-ledger-of-the-rolled-back-restore',
+      passed: takeoverDuring.code === 0 && afterTakeoverDuring.matches === '1' && afterTakeoverDuring.subjects === '1' && sanitizedDuring.text === '1',
+      detail: takeoverDuring.code === 0
+        ? `the take-over replayed the owed ledger of the rolled back restore (${afterTakeoverDuring.matches} match bound, ${afterTakeoverDuring.subjects} subject) and sanitized the private payload (${sanitizedDuring.text})`
+        : `the take-over of the rolled back restore failed: ${takeoverDuring.stderr.trim().split('\n').slice(-1)[0] ?? ''}`,
     });
 
     // ---- the kill after the commit --------------------------------------
