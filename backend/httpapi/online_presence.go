@@ -91,7 +91,8 @@ func (a *onlineAPI) presenceView(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	view, err := a.presence.GetPresence(r.Context(), principal.Participant, r.PathValue("matchID"))
+	ctx := onlineauth.WithPrincipal(r.Context(), principal)
+	view, err := a.presence.GetPresence(ctx, principal.Participant, r.PathValue("matchID"))
 	if err != nil {
 		writeOnlineError(w, err)
 		return
@@ -122,7 +123,8 @@ func (a *onlineAPI) heartbeat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
-	presence, err := a.presence.Heartbeat(r.Context(), principal.Participant, r.PathValue("matchID"), body.Seat)
+	ctx := onlineauth.WithPrincipal(r.Context(), principal)
+	presence, err := a.presence.Heartbeat(ctx, principal.Participant, r.PathValue("matchID"), body.Seat)
 	if err != nil {
 		writeOnlineError(w, err)
 		return
@@ -154,7 +156,8 @@ func (a *onlineAPI) keepWaiting(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
-	presence, err := a.presence.KeepWaiting(r.Context(), principal.Participant, r.PathValue("matchID"), body.Seat)
+	ctx := onlineauth.WithPrincipal(r.Context(), principal)
+	presence, err := a.presence.KeepWaiting(ctx, principal.Participant, r.PathValue("matchID"), body.Seat)
 	if err != nil {
 		writeOnlineError(w, err)
 		return
@@ -189,7 +192,8 @@ func (a *onlineAPI) claim(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
-	result, err := a.presence.ClaimAbandonment(r.Context(), principal.Participant, cmd)
+	ctx := onlineauth.WithPrincipal(r.Context(), principal)
+	result, err := a.presence.ClaimAbandonment(ctx, principal.Participant, cmd)
 	if err != nil {
 		writeOnlineError(w, err)
 		return
@@ -216,7 +220,8 @@ func (a *onlineAPI) readLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
-	lease, err := a.presence.GetSeatRunnerLease(r.Context(), principal.Participant, r.PathValue("matchID"), online.Seat(seat))
+	ctx := onlineauth.WithPrincipal(r.Context(), principal)
+	lease, err := a.presence.GetSeatRunnerLease(ctx, principal.Participant, r.PathValue("matchID"), online.Seat(seat))
 	if err != nil {
 		writeOnlineError(w, err)
 		return
@@ -247,6 +252,7 @@ func (a *onlineAPI) writeLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
+	ctx := onlineauth.WithPrincipal(r.Context(), principal)
 	req := online.RunnerLeaseRequest{
 		SchemaVersion: body.SchemaVersion,
 		MatchID:       r.PathValue("matchID"),
@@ -262,11 +268,11 @@ func (a *onlineAPI) writeLease(w http.ResponseWriter, r *http.Request) {
 	)
 	switch body.Action {
 	case "acquire":
-		lease, err = a.presence.AcquireRunnerLease(r.Context(), principal.Participant, req)
+		lease, err = a.presence.AcquireRunnerLease(ctx, principal.Participant, req)
 	case "renew":
-		lease, err = a.presence.RenewRunnerLease(r.Context(), principal.Participant, req)
+		lease, err = a.presence.RenewRunnerLease(ctx, principal.Participant, req)
 	case "release":
-		lease, err = a.presence.ReleaseRunnerLease(r.Context(), principal.Participant, req)
+		lease, err = a.presence.ReleaseRunnerLease(ctx, principal.Participant, req)
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
@@ -301,6 +307,7 @@ func (a *onlineAPI) runnerRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found")
 		return
 	}
+	ctx := onlineauth.WithPrincipal(r.Context(), principal)
 	req := online.RunnerRequestRequest{
 		SchemaVersion: body.SchemaVersion,
 		MatchID:       r.PathValue("matchID"),
@@ -317,9 +324,9 @@ func (a *onlineAPI) runnerRequest(w http.ResponseWriter, r *http.Request) {
 	)
 	switch body.Action {
 	case "begin":
-		lease, err = a.presence.BeginRunnerRequest(r.Context(), principal.Participant, req)
+		lease, err = a.presence.BeginRunnerRequest(ctx, principal.Participant, req)
 	case "clear":
-		lease, err = a.presence.ClearRunnerRequest(r.Context(), principal.Participant, req)
+		lease, err = a.presence.ClearRunnerRequest(ctx, principal.Participant, req)
 	default:
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
