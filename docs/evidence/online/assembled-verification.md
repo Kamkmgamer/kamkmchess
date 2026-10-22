@@ -12,17 +12,17 @@ The old records cited author-worktree commits `e283d271` and `9c6bc799`, which w
 
 ## Completed backend suite
 
-At `ab0dba56eaa837d1db3aaea0df2ed3d2773d65d1`, the assembled Linux run of `go test -race -timeout=60m -json -count=1 ./backend/... ./cmd/...` passed with 797 test and subtest passes, zero failures, zero individual skips and no data-race report. The integration package completed in 1453.141 seconds. Package-level skip entries were packages without tests. The current assembled backend and command sources are unchanged from that pin.
+At `ab0dba56eaa837d1db3aaea0df2ed3d2773d65d1`, the assembled Linux run of `go test -race -timeout=60m -json -count=1 ./backend/... ./cmd/...` passed with 797 test and subtest passes, zero failures, zero individual skips and no data-race report. The integration package completed in 1453.141 seconds. Package-level skip entries were packages without tests. This is a historical source pin; later review fixes changed the working-tree backend sources.
 
 The container used real PostgreSQL with `KHA41_REQUIRE_POSTGRES=1`, Node, psql and Python 3, and the pinned rules worker at `/workspace/build/rules-worker/worker.mjs`. It dropped `DAC_OVERRIDE` and `DAC_READ_SEARCH`. The suite exercised the actual fresh and stale deployment provisioner, live sequence-grant reader, and denied evidence write and removal. The worker SHA-256 was `13478854ff453216d915558e9caf87c3aa05891321003e3ed8f5ab7bb139f078`.
 
-The command used image `kamkmchess-online-grants:local`, the network of `kamkmchess-kha67-local`, a read-only repository mount and separate Go build and module caches. Raw JSON and stderr are retained locally in `.scratch/online-swarm/assembled-ab0dba5-final-linux-race.jsonl` and `assembled-ab0dba5-final-linux-race-stderr.log`. The checked-in KHA-80 report imports these observed outcomes.
+The command used image `kamkmchess-online-grants:local`, the network of `kamkmchess-kha67-local`, a read-only repository mount and separate Go build and module caches. Raw JSON and stderr are retained locally in `.scratch/online-swarm/assembled-ab0dba5-final-linux-race.jsonl` and `assembled-ab0dba5-final-linux-race-stderr.log`. The checked-in KHA-80 report imports these observed outcomes. Subsequent review fixes changed backend sources in the working tree, so this historical race result does not certify the current tree.
 
-The assembled Windows `go vet ./backend/...` and `go build ./...` also passed after the workspace integration. Their backend sources match the full-race pin.
+The assembled Windows `go vet ./backend/...` and `go build ./...` also passed after the workspace integration. The current-tree build and focused vet checks are listed below; neither is a replacement for the historical Linux race.
 
 ## Completed focused checks
 
-At `1e08868d71e3105288ba59af24f55ea3df310593`, the assembled fixture Chromium run passed all 21 cases in 231.977 seconds, with zero skips, failures or flaky results. The command was `pnpm exec playwright test tests/e2e/account-online.spec.ts tests/e2e/online-ui.spec.ts tests/e2e/online-requests.spec.ts tests/e2e/online-clients.spec.ts --project=chromium --reporter=json`. It used the fixture account build, a real PostgreSQL-backed service, `ONLINE_FIXTURE_STRICT=1`, the published invitation path `/invite/{invitationId}`, and a dedicated preview on port 5397. The raw report is `.scratch/online-swarm/final-fixture-browser.json`.
+At `1e08868d71e3105288ba59af24f55ea3df310593`, the assembled fixture Chromium run passed all 21 cases in 231.977 seconds, with zero skips, failures or flaky results. The command was `pnpm exec playwright test tests/e2e/account-online.spec.ts tests/e2e/online-ui.spec.ts tests/e2e/online-requests.spec.ts tests/e2e/online-clients.spec.ts --project=chromium --reporter=json`. It used the fixture account build, a real PostgreSQL-backed service, `ONLINE_FIXTURE_STRICT=1`, the published invitation path `/invite/{invitationId}`, and a dedicated preview on port 5397. The raw report is `.scratch/online-swarm/final-fixture-browser.json`. Subsequent review fixes changed product and browser-test sources in the working tree, so this historical browser result does not certify the current tree.
 
 These cases exercised account credential use, queue fallback, concurrent entries, account changes and restoration, waiting-entry reload with the original cutoff, a delayed seat change across accounts, model switching during a request and between models, guest invitation creation and acceptance, shared legal moves, the historical review cursor during a live move, duplicate-click ownership and the signed-out queue gate. The parent stopped its fixture and preview after the run.
 
@@ -48,7 +48,49 @@ Foundation review 15 confirmed the prior source corrections and identified three
 
 At `0d5d4e9`, the parent ran the exact CI Node selection of runtime-grants, sequence, provisioner and operations tests: 106 passed, zero failed or skipped. `node deploy/runtime-grants-provision.mjs` reported zero findings, and scoped lint passed. Mutation checks reject a missing sequence grant, missing table grant, unexpected grant and missing defensive revoke. Logs are `.scratch/online-swarm/final-node-ops.log`, `final-provision-gate.log` and `final-ci-lint.log`. The live probe still does not read the unused roles' sequence or function rights, and its diagnostic no longer claims it does.
 
-The parent reviewed the scoped corrections before integration. Backend sources remain identical to the full-race pin, and product and browser-test sources remain identical to the final browser pin `1e08868`. The later changes affect CI tooling, its tests and documentation. The next review is an independent review of the whole PR; this report does not claim that review has already approved it.
+The final integrated source candidate is pinned at `2600cbe71bc85691798bdc75d7910fba8f819e8d`. Independent final spec review found no actionable gaps, and the standards review found no hard violations; one suggestion about unused wrapper exports was explicitly a judgment call. The final worker-close polling change also received a fresh independent review with no actionable finding. MiniMax M3.1 Flash Free was absent from the live OpenCode model catalog, so that narrow delegated review used `opencode/beam-free` at high variant. Earlier race and browser results remain historical measurements because later review rounds changed their source files.
+
+## Final source pin and current-tree checks
+
+The reviewed implementation and tests are committed at
+`2600cbe71bc85691798bdc75d7910fba8f819e8d`. This evidence update is a later
+documentation-only commit; it does not change the measured source. The final
+engine-worker assertion passed the fresh full JavaScript check, three focused
+repeats and the full offline Chromium run below.
+
+At the source pin, a fresh `pnpm run check` passed 1,509 tests across 113
+files, lint, both TypeScript configurations and the production build. Vite
+retained its existing large-chunk advisory. The online-operations CI Node
+selection passed 253 tests with zero skips, and its runtime-grant,
+provisioning, service-wiring, cohort-enforcement, backup-coverage,
+evidence-ledger and release-gate audits passed. The tagged online fixture test
+passed. The check log is `.scratch/online-swarm/final-source-check.log`; the
+CI Node log is `.scratch/online-swarm/current-node-ops.log`.
+
+`go build ./...`, scoped `go vet` for the queue, HTTP API, integration and
+server application packages, and focused backend package tests passed. The
+focused package command was `go test ./backend/queue ./backend/httpapi
+./backend/invite ./backend/cohort ./backend/serverapp -count=1`; the queue
+package has no test files. No current-tree full PostgreSQL integration or
+Linux race run is claimed.
+
+The production-build offline Chromium regression command
+`pnpm exec playwright test tests/e2e/online-workspace.spec.ts
+tests/e2e/engines.spec.ts tests/e2e/play.spec.ts --project=chromium
+--reporter=json` passed all 33 tests with zero skips, failures or flaky
+results in 165.878 seconds. It ran with `KAMKM_E2E_PORT=55473`; the raw report
+is `.scratch/online-swarm/final-offline-browser-worker-poll.json`. The final
+worker-close assertion also passed three focused repeats before the full run.
+Scoped ESLint for `tests/e2e/engines.spec.ts`, `git diff --check`, and checks
+that the approved handoff and acceptance JSON were unchanged passed.
+
+Both `node scripts/online/feature-gates.mjs evaluate --gate friend` and the
+corresponding `queue` command still returned `blocked` (exit 1), with the
+documented release decision, cohort, runtime-cohort, local/native/host
+evidence and accepted friend-run requirements unmet. No deployment,
+production host-capacity measurement, live cohort or owner release decision
+was performed. The historical race/browser pins above and the bounded
+current-tree checks here do not replace those acceptance requirements.
 
 ## Earlier attempts and their limits
 
