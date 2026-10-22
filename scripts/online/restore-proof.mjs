@@ -27,7 +27,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
 
@@ -472,6 +472,10 @@ export async function runRestoreProof(options = {}) {
     if (built.code !== 0) throw new Error('the backup command could not be built');
     const builtHelper = await run('go', ['build', '-trimpath', '-tags', 'fenceprobe', '-o', helper, './tools/fenceprobe'], { env: { CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64' } });
     if (builtHelper.code !== 0) throw new Error('the fence helper could not be built');
+    // The holder runs as the restore user and writes its run-owned schema name
+    // into this throwaway bind mount. Keep production fence permissions
+    // unchanged while allowing that measurement file to be created.
+    await chmod(DIRECTORY, 0o777);
 
     // The databases of the run are registered as soon as they exist, so a
     // migration that fails still leaves a database the cleanup drops.

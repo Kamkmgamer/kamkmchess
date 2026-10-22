@@ -499,6 +499,9 @@ export async function runInterruptionProof(options = {}) {
     if (built.code !== 0) throw new Error('the backup command could not be built');
     const builtHelper = await run('go', ['build', '-trimpath', '-tags', 'fenceprobe', '-o', helper, './tools/fenceprobe'], { env: { CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64' } });
     if (builtHelper.code !== 0) throw new Error('the fence helper could not be built');
+    // The fence helper runs as the restore user and writes its run-owned
+    // schema name into this throwaway bind mount.
+    await chmod(DIRECTORY, 0o777);
     const builtEvidence = await run('go', ['build', '-trimpath', '-tags', 'restoreevidence', '-o', evidenceHelper, './tools/restoreevidence'], { env: { CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64' } });
     if (builtEvidence.code !== 0) throw new Error('the evidence helper could not be built');
 
