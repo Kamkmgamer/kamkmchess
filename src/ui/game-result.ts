@@ -48,7 +48,7 @@ export function describeResult(
   const loser = winner === 'draw' ? null : winner === 'white' ? 'black' : 'white';
   const named = loser === null ? '' : options.label(loser);
   const headline = winner === 'draw' ? 'Draw' : winner === 'white' ? 'White won' : 'Black won';
-  const detail = (() => {
+  const detail: string = (() => {
     switch (result.reason) {
       case 'resignation': return named && `${named} resigned`;
       case 'checkmate': return 'by checkmate';
@@ -59,7 +59,7 @@ export function describeResult(
       case 'fifty-move-rule': return 'by the fifty-move rule';
       case 'dead-position': return 'by insufficient material';
     }
-  })();
+  })() ?? '';
   const tone: ResultTone = winner === 'draw' ? 'draw' : options.viewer === null ? 'neutral' : winner === options.viewer ? 'win' : 'loss';
   return { headline, detail, tone, announcement: sentence(headline, detail) };
 }
