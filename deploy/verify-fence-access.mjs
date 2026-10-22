@@ -21,7 +21,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -692,6 +692,12 @@ export async function verifyFenceAccess(options = {}) {
       env: { CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64' },
     });
     if (built.code !== 0) throw new Error('the fence helper could not be built');
+    // The helper runs as the service user, while the proof directory belongs
+    // to the CI runner. It writes its run-owned schema name into this bind
+    // mount, so make only the throwaway directory writable before starting it.
+    // The directory contains no credentials and is removed in the guarded
+    // cleanup below.
+    await chmod(DIRECTORY, 0o777);
 
     const measured = await measureFence(io, endpoint, {
       documented: paths.documented,
