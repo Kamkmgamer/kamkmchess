@@ -170,7 +170,7 @@ func (s *Service) AbortPlannedSuspension(ctx context.Context, boundaryID string)
 // refresh the boot of the API would infer an unexpected interruption over the
 // same interval and refund the clock of the unfinished matches twice.
 //
-// The command refuses an interruption that is not planned and one that was
+// The command refuses an interruption that is not an operator restart and one that was
 // applied already: the recovery of an unexpected interruption belongs to the
 // service itself.
 func (s *Service) RecoverPlannedSuspension(ctx context.Context, boundaryID string) (RecoveryPlan, error) {
@@ -192,7 +192,7 @@ func (s *Service) RecoverPlannedSuspension(ctx context.Context, boundaryID strin
 	if err != nil {
 		return RecoveryPlan{}, err
 	}
-	if boundary.Kind != SuspensionPlanned {
+	if boundary.Kind != SuspensionRestart {
 		return RecoveryPlan{}, ErrInvalidArgument
 	}
 	if boundary.AbortedAt != nil {

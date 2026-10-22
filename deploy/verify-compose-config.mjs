@@ -100,6 +100,38 @@ async function cleanupProject(root, directory, project) {
 }
 
 /**
+ * Removes a throwaway directory even when a container wrote a root-owned
+ * bind-mounted path into it. The proof intentionally runs its service as
+ * root, while the CI runner owns the temporary directory, so a plain
+ * fs.rm() can otherwise fail on the evidence directory.
+ * @param {string} root
+ * @param {string} directory
+ * @param {string} helperImage
+ * @returns {Promise<string>} an error description, or an empty string
+ */
+async function removeThrowawayDirectory(root, directory, helperImage) {
+  try {
+    await rm(directory, { recursive: true, force: true });
+    return '';
+  } catch (error) {
+    const cleanup = await run('docker', [
+      'run', '--rm', '--user', '0:0', '--entrypoint', '/bin/sh',
+      '--mount', `type=bind,source=${directory},target=/cleanup`,
+      helperImage, '-c', 'rm -rf /cleanup/* /cleanup/.[!.]* /cleanup/..?*',
+    ], { cwd: root });
+    if (cleanup.code === 0) {
+      try {
+        await rm(directory, { recursive: true, force: true });
+        return '';
+      } catch (retryError) {
+        return `the throwaway directory could not be removed after root cleanup: ${retryError instanceof Error ? retryError.message : String(retryError)}`;
+      }
+    }
+    return `the throwaway directory could not be removed: ${error instanceof Error ? error.message : String(error)}; root cleanup failed: ${(cleanup.stdout + cleanup.stderr).trim()}`;
+  }
+}
+
+/**
  * Measures the reading of the private secret file.
  *
  * The file of the deployment is owned by the operator and has mode 0600, so
@@ -604,7 +636,8 @@ export async function verifyComposeConfig(root) {
         });
       }
     } finally {
-      await rm(brokenDirectory, { recursive: true, force: true });
+      const removed = await removeThrowawayDirectory(root, brokenDirectory, helper.image);
+      if (removed) steps.push({ id: 'the-broken-directory-is-removed', passed: false, detail: removed });
     }
     return { steps, settings: current.settings };
   } finally {
@@ -614,7 +647,10 @@ export async function verifyComposeConfig(root) {
     if (leftovers) {
       steps.push({ id: 'the-run-left-nothing-behind', passed: false, detail: leftovers });
     }
-    await rm(directory, { recursive: true, force: true });
+    const removedDirectory = await removeThrowawayDirectory(root, directory, helper.image);
+    if (removedDirectory) {
+      steps.push({ id: 'the-run-directory-is-removed', passed: false, detail: removedDirectory });
+    }
     const removed = await run('docker', ['image', 'rm', '--force', helper.image]);
     if (removed.code !== 0) {
       steps.push({ id: 'the-helper-image-is-removed', passed: false, detail: `the helper image could not be removed: ${(removed.stdout + removed.stderr).trim()}` });

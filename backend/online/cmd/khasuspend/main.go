@@ -187,7 +187,7 @@ func planCommand(ctx context.Context, arguments []string) error {
 	// The pending boundary is read before the plan, so the report tells the
 	// operator whether the plan created the boundary or reused the one that
 	// was already pending.
-	pending, err := service.PendingSuspension(ctx)
+	pending, err := service.PendingRestart(ctx)
 	if err != nil {
 		return err
 	}
@@ -324,7 +324,7 @@ func statusCommand(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
-	pending, err := service.PendingSuspension(ctx)
+	pending, err := service.PendingRestart(ctx)
 	if err != nil {
 		return err
 	}
@@ -365,7 +365,7 @@ func targetBoundary(ctx context.Context, service *online.Service, boundaryID str
 	if boundaryID != "" {
 		return boundaryID, nil
 	}
-	pending, err := service.PendingSuspension(ctx)
+	pending, err := service.PendingRestart(ctx)
 	if err != nil {
 		return "", err
 	}

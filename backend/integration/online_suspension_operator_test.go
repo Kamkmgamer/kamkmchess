@@ -49,8 +49,8 @@ func TestOnlineOperatorPlanIsIdempotentAndClosesTheGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("plan the interruption: %v", err)
 	}
-	if first.Kind != online.SuspensionPlanned {
-		t.Fatalf("the planned boundary has the kind %q, want %q", first.Kind, online.SuspensionPlanned)
+	if first.Kind != online.SuspensionRestart {
+		t.Fatalf("the planned boundary has the kind %q, want %q", first.Kind, online.SuspensionRestart)
 	}
 	second, err := fixture.service.PlanSuspendingNow(ctx)
 	if err != nil {
@@ -76,7 +76,7 @@ func TestOnlineOperatorPlanIsIdempotentAndClosesTheGate(t *testing.T) {
 		t.Fatalf("the durable gate = %+v after the plan, want a closed gate with the reason %q", state, online.GateReasonSuspensionPending)
 	}
 	// The pending interruption is the one of the plan.
-	pending, err := fixture.service.PendingSuspension(ctx)
+	pending, err := fixture.service.PendingRestart(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,8 +123,8 @@ func TestOnlineOperatorRecoveryAppliesTheBoundaryAndOpensTheGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recover the planned interruption: %v", err)
 	}
-	if plan.Kind != online.SuspensionPlanned {
-		t.Fatalf("the recovery reports the kind %q, want %q", plan.Kind, online.SuspensionPlanned)
+	if plan.Kind != online.SuspensionRestart {
+		t.Fatalf("the recovery reports the kind %q, want %q", plan.Kind, online.SuspensionRestart)
 	}
 	if plan.InterruptionMs != int64(2*time.Minute/time.Millisecond) {
 		t.Fatalf("the interruption = %d ms, want the planned two minutes", plan.InterruptionMs)
@@ -257,7 +257,7 @@ func TestOnlineOperatorAbortOpensTheGateWithoutARefund(t *testing.T) {
 		t.Fatalf("the abort wrote %d adjustments, want none", adjustments)
 	}
 	// The aborted plan is not pending any more.
-	pending, err := fixture.service.PendingSuspension(ctx)
+	pending, err := fixture.service.PendingRestart(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestOnlineOperatorCommandPlansRecoversAndAborts(t *testing.T) {
 		t.Fatalf("the plan did not report a closed gate: %s", planned.output)
 	}
 	var boundaries int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM online_suspension_boundaries WHERE kind='planned' AND aborted_at IS NULL`).Scan(&boundaries); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM online_suspension_boundaries WHERE kind='restart' AND aborted_at IS NULL`).Scan(&boundaries); err != nil {
 		t.Fatal(err)
 	}
 	if boundaries != 1 {
@@ -320,7 +320,7 @@ func TestOnlineOperatorCommandPlansRecoversAndAborts(t *testing.T) {
 	if repeated.code != 0 {
 		t.Fatalf("the repeated plan exited with %d: %s", repeated.code, repeated.output)
 	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM online_suspension_boundaries WHERE kind='planned' AND aborted_at IS NULL`).Scan(&boundaries); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM online_suspension_boundaries WHERE kind='restart' AND aborted_at IS NULL`).Scan(&boundaries); err != nil {
 		t.Fatal(err)
 	}
 	if boundaries != 1 {
@@ -343,7 +343,7 @@ func TestOnlineOperatorCommandPlansRecoversAndAborts(t *testing.T) {
 		t.Fatalf("the recovery did not report an open gate: %s", recovered.output)
 	}
 	var applied int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM online_suspension_boundaries WHERE kind='planned' AND adjusted_at IS NOT NULL`).Scan(&applied); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM online_suspension_boundaries WHERE kind='restart' AND adjusted_at IS NOT NULL`).Scan(&applied); err != nil {
 		t.Fatal(err)
 	}
 	if applied != 1 {
