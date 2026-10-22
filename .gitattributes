@@ -16,6 +16,10 @@ research/provider-stream-reference.md text eol=lf
 /backend/** text eol=lf
 /cmd/** text eol=lf
 /api/** text eol=lf
+# The operator programs of the deployment run inside the container under sh.
+# A checkout that rewrote their line endings would break them, so they are
+# kept in the line ending the shell of the image reads.
+/deploy/*.sh text eol=lf
 /go.mod text eol=lf
 /go.sum text eol=lf
 

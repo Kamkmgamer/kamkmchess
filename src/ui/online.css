@@ -1,0 +1,25 @@
+/* The online workspace (KHA-74).
+ *
+ * The screen reuses the board, the move list and the buttons of the offline
+ * workspace. These rules only add the compact navigation of the online
+ * sections, the concurrent game list and the confirmation block.
+ */
+.online-workspace { display: grid; gap: 14px; align-content: start; }
+.online-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+.online-tabs .icon-button[aria-pressed='true'] { background: var(--soft); color: var(--ink); }
+.online-panel { display: grid; gap: 12px; justify-items: start; }
+.online-clock { display: flex; gap: 8px; flex-wrap: wrap; }
+.online-games { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; width: 100%; }
+.online-games li { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.online-games button { text-align: left; }
+.online-game-status { color: var(--dim); font-size: 12px; }
+.online-confirm { display: grid; gap: 8px; justify-items: start; padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); }
+.online-confirm p { margin: 0; }
+.online-result { margin: 0; font-weight: 600; }
+.online-match .player-control { color: var(--dim); font-size: 12px; }
+.online-match .player-name strong { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The failure of an action is shown, not only announced. */
+.online-error { margin: 0; padding: 8px 10px; color: var(--error); background: var(--error-bg); border-radius: 6px; overflow-wrap: anywhere; }
+.online-error:empty { display: none; }
+/* The context of an entry tells the entries of the owner apart. */
+.online-entry-context { color: var(--dim); font-size: 12px; }

@@ -73,7 +73,10 @@ func TestPostgresOnlineWorkerFailureLeavesMatchUnchanged(t *testing.T) {
 			if err := os.WriteFile(entry, []byte(script), 0600); err != nil {
 				t.Fatal(err)
 			}
-			client, err := rulesworker.New(rulesworker.Config{Entry: entry, RequestTimeout: 200 * time.Millisecond})
+			// The start budget is small on purpose: this worker never
+			// answers, and the fixture is about the refusal, not about the
+			// patience of the client.
+			client, err := rulesworker.New(rulesworker.Config{Entry: entry, RequestTimeout: 200 * time.Millisecond, StartTimeout: 200 * time.Millisecond})
 			if err != nil {
 				t.Fatal(err)
 			}

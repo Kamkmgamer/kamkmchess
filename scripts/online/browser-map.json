@@ -1,0 +1,25 @@
+{
+  "mapVersion": 1,
+  "note": "Maps an acceptance scenario to the browser cases of tests/e2e/online-clients.spec.ts. A scenario is only recorded when the browser run passed and the case really exercises it. The recorded evidence is local: a real browser against the real service on loopback.",
+  "scenarios": {
+    "FRI-01": [
+      "a guest accepts a friend invitation and both browser clients observe the same accepted move",
+      "a consumed invitation cannot be accepted twice and a guest without a credential is refused"
+    ],
+    "FRI-03": [
+      "a guest accepts a friend invitation and both browser clients observe the same accepted move"
+    ],
+    "ARC-04": [
+      "a guest accepts a friend invitation and both browser clients observe the same accepted move"
+    ],
+    "ARC-06": [
+      "a consumed invitation cannot be accepted twice and a guest without a credential is refused"
+    ],
+    "MAT-03": [
+      "a guest accepts a friend invitation and both browser clients observe the same accepted move"
+    ],
+    "MAT-12": [
+      "a consumed invitation cannot be accepted twice and a guest without a credential is refused"
+    ]
+  }
+}

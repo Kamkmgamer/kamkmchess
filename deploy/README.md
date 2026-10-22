@@ -49,6 +49,7 @@ The following commands use a POSIX shell; in PowerShell set the equivalent
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/kamkmchess-api ./cmd/server
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/kamkmchess-migrate ./cmd/migrate
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/khabackup ./backend/backup/cmd/khabackup
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/khasuspend ./backend/online/cmd/khasuspend
 ```
 
 Upload the deployment files and `bin/` into the private server directory. Upload
@@ -67,20 +68,260 @@ docker compose -f postgres.compose.yml -f api.compose.yml up -d --build --wait
 
 `postgres.env`, `runtime.env`, `api.env`, and `backup.env` have mode 0600 and
 remain on the server. Provisioning preserves existing credentials. The runtime
-role can read and mutate only the five application tables; it cannot own the
+role can read and mutate only the application tables; it cannot own the
 schema, create roles or databases, or bypass row security. The API uses a pool
 of at most four connections. A browser build receives only the three public
 `KAMKM_PUBLIC_*` settings from `.env.example`.
 
+## The durable restore fence
+
+A restore replaces the schema of the target database. A fence inside that
+schema would be replaced with it, so a crash between the import and the
+replay of the removal ledger would leave the restored database with the old
+ledger and nothing inside it to say so. The fence therefore lives outside the
+database, in a marker directory that the restore writes before it imports
+anything and that it removes only after the newest merged removal ledger was
+replayed and verified.
+
+The deployment wires it as one shared volume:
+
+- the database service mounts `restorefence` at
+  `/var/lib/kamkmchess/restore-fence`, read-write, because the restore
+  command writes and clears the fence there;
+- the API service mounts the same volume at the same path, read-only, because
+  the service only reads it;
+- both services receive
+  `ONLINE_RESTORE_FENCE_PATH=/var/lib/kamkmchess/restore-fence`.
+
+The setting names the **parent** of the fence, not a file. The restore writes
+the owner of the fence into `<parent>/restore-fence/owner` and takes the
+sibling `<parent>/restore-fence.lock`. The service does **not** read that
+owner marker: its admission check only *observes* the marker directory
+`<parent>/restore-fence`, and it refuses to serve while that directory
+exists.
+
+Beside the marker directory the parent holds a second directory,
+`<parent>/restore-requirements`, with the **durable evidence of the removal
+ledger every restore owed**. The import of a restore replaces the schema of
+the target database, so a removal that only the live database carried is
+destroyed by the import itself; the evidence of that removal lives outside
+the database, is written and flushed before the import starts, and holds the
+one-way references of the removed subjects and never an identifier. The
+directory is created by the service with mode `0700` and the records in it
+with mode `0600`, so only their owner reads them.
+
+The evidence is **never cleaned by hand**. It is the proof that a crashed
+restore owed a removal, and the next restore discharges it when the removal
+is applied; the newest record is retained on purpose, because it is the
+evidence that the last restore closed the fence it owed. The directory
+belongs in the backup of the deployment: a restore of a database without the
+evidence of the pending restores cannot replay the removals they owed. The
+restore procedure is in
+[`MVP-operations.md`](../docs/implementation/MVP-operations.md): the API is
+stopped and drained, the restore is run, and a restore that crashed is
+recovered with `khabackup recover` or continued with `--takeover`. The runbook in
+[`MVP-operations.md`](../docs/implementation/MVP-operations.md) names the same
+parent, and the proof below compares the runbook, this note and the rendered
+compose configuration, so the three cannot drift apart again.
+
+A path below the parent is a *different* fence: a restore that holds it
+leaves the service serving during the import, because the service never sees
+an open fence.
+
+The volume must be the same volume for both services and it must outlive a
+container restart. A container-local file, a path inside the database schema
+or a path the two services do not share is not a fence: the service would
+never see an open fence and would serve a restored copy whose removal ledger
+was not applied.
+
+The restore command runs inside the database container, so the setting is
+configured for that service as well, and the documented restore command names
+the fence path explicitly. The restore also has to run as the user the API
+observes the fence as: the marker directory is private to its owner, and the
+API refuses every request while it cannot observe it. The secret file of the
+restore stays
+private as well: the shell of the container reads it as root and hands the
+values to the restore through the environment, so the restore user never
+reads a file it may not read.
+
+```sh
+node verify-fence-access.mjs      # proves the access with two throwaway containers
+```
+
+The proof writes a fence with the modes the restore uses, in a container that
+runs as the database user, and reads it from the same volume as the API user.
+It also proves that the fence the runbook opens is the fence the service
+reads: the volume is mounted at the path of the configuration and at the path
+the runbook names, and the service has to see the marker the runbook wrote.
+The comparison covers the **volume** and not only the path: the two services
+have to mount the same named volume at the configured path, the API service
+read-only and the database service writable. A configuration that mounts
+another volume is rendered as well and has to be refused.
+At the moment it **passes**: the fence is written by the API user, so it is
+readable without loosening the mode; the fence code owns the mode and the
+deployment owns the user.
+
+The server must load `ONLINE_RESTORE_FENCE_PATH` into its online configuration.
+`node scripts/online/service-wiring.mjs` reports it as a blocker while the
+setting is not read, so a configuration that silently disables the fence
+cannot pass the release gates.
+
+The setting is required. The server refuses to start when it is missing or
+blank, and the composed service refuses to serve without it: a service that
+never observes the fence would answer traffic from a restored database whose
+removal ledger was never replayed. The refusal names the setting and never
+its value. The path is the same one the compose files and the runbook use.
+
+## Runtime grants and the private rules runtime
+
+`runtime-grants.policy.json` lists the privileges of the runtime role table by
+table. It is explicit: there is no blanket grant, no default privilege and no
+grant on a table the application does not use.
+
+```sh
+node runtime-grants.mjs --check      # the policy against the migrations and the writer
+node runtime-grants.mjs --propose     # the entries a new migration still needs
+node runtime-grants.mjs --emit       # the SQL an operator reviews and runs
+node runtime-grants-provision.mjs     # the grants of provision-runtime.py against the policy
+node runtime-grants-probe.mjs        # the same grants executed against a real PostgreSQL
+```
+
+The check fails when a migration creates a table the policy does not cover,
+when the writer uses a verb the policy does not grant, when the policy grants
+a verb the writer never uses, and when a migration grants privileges of its
+own outside the reviewed policy.
+
+`provision-runtime.py` writes the SQL of the provisioning run by hand, so it is
+a second renderer of the policy. `runtime-grants-provision.mjs` captures the
+statements the real routine emits and compares them with the statements of the
+reviewed renderer: a policy entry the deployment does not render is a blocker,
+and a statement the deployment applies on its own is a blocker until it is
+listed as a deliberate defensive revoke. The capture needs a Python 3
+interpreter and no database.
+
+The probe creates a throwaway role and schema in a local database, applies the
+migrations and the grants, and then executes real statements as that role:
+reads, inserts, updates and deletes on every table the policy covers, and the
+refusals on every table it does not. A granted privilege is proven, not
+assumed.
+
+### The image carries the private rules runtime
+
+The API image is built on the pinned Node 24 runtime and carries the private
+rules bundle. The Go match authority runs the bundle as a child process; it
+has no public endpoint, no provider access and no database access.
+
+```sh
+pnpm build:rules-worker                 # build/rules-worker/worker.mjs
+cp build/rules-worker/worker.mjs build/rules-worker/LICENSE.txt \
+   build/rules-worker/THIRD_PARTY_NOTICES.txt deploy/rules-worker/
+node verify-runtime-image.mjs           # build and inspect the image locally
+```
+
+`verify-runtime-image.mjs` builds the image from the deploy context and proves
+the runtime composition inside it: the pinned Node version, the bundle at its
+configured entry path, a real protocol request answered by the worker, the
+non-root user and the absence of any credential file. It builds and inspects a
+local image only. It never pushes and never deploys.
+
+The `tools/onlinefixture` helper is behind the `onlinefixture` build tag and
+never ships in a production binary.
+
+## A planned restart of the API
+
+A restart of the API is an interruption, and an interruption is never charged
+to a player. The service has to know the interval of the interruption, so the
+restart is announced **before** the service stops: the announcement is a
+durable boundary, and the boundary closes the durable gate of the service.
+
+Without the announcement the service can only infer the interruption from the
+stale liveness record when it comes back. The inferred interval runs from the
+last moment the service was seen alive, so a restart that takes longer than
+the liveness TTL (30 seconds) is read as an unknown outage: every unfinished
+clock is refunded for the whole interval and the runner work of the old epoch
+is fenced.
+
+The announcement is a private operator command, `khasuspend`. It is not a
+public route: a route that closes the gate would be an unauthenticated way to
+stop the service. The command reads the database url only from the named
+environment variable of the private `backup.env`, which carries the
+administrative role of the deployment.
+
+```sh
+# 1. The planned interruption is persisted. The boundary closes the durable
+#    gate, so no mutation is admitted from this moment on. The plan is
+#    idempotent: a second run finds the pending boundary and writes nothing.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend plan --database-url-env DATABASE_URL'
+
+# 2. The API is stopped and drained.
+docker compose -f postgres.compose.yml -f api.compose.yml stop api
+
+# 3. The API is started again. Its own recovery applies the planned boundary:
+#    the announced interval is refunded to the unfinished matches, the
+#    canonical state is published before the resumed actions are accepted, and
+#    the durable gate opens again.
+docker compose -f postgres.compose.yml -f api.compose.yml start api
+
+# 4. The operator verifies the state of the gate.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend status --database-url-env DATABASE_URL'
+```
+
+Two more commands cover the rest of the procedure:
+
+- `khasuspend abort` cancels a plan that will not happen, for example when
+  the restart is called off. The durable gate opens again and no clock is
+  refunded, because no interruption took place. The row of the plan stays the
+  evidence that the plan existed.
+- `khasuspend recover` applies the planned boundary by hand, for the case in
+  which the API cannot finish its own recovery. It publishes the canonical
+  state, refunds the announced interval and opens the durable gate. It refuses
+  when no planned interruption is pending: the recovery of an *unexpected*
+  interruption belongs to the service itself and is never an operator
+  decision.
+
+The command exits with `0` when it did what it was asked and with `1` when it
+refused or failed. It never prints the database url, and it never accepts one
+as an argument.
+
 ## Backups and certificates
 
 `backup.sh` creates and authenticates encrypted daily and weekly logical
-exports, retaining seven daily and four weekly bundles. It uses the matching
+exports, retaining seven daily and four weekly bundles. The rotation it runs
+over `/backups` also retires every **ordinary** bundle of that directory that
+is **older than thirty days**, even when a slot of the count would keep it: the
+count alone cannot promise the thirty day target of the owner contract. A
+bundle the rotation may not delete - a protected one, a one without a creation
+time, a one dated after the reference time, or a one whose manifest cannot be
+read - is never deleted. Each of them leaves the retention **unresolved**, the
+rotation names it and exits with a **nonzero status**, and the run of the
+backup fails instead of claiming a clean backup. It uses the matching
 PostgreSQL 16 tools in the database container. The daily cron entry runs the
 certificate sync first, then the backup, and appends results to `operations.log`.
 `sync-postgres-tls.py` follows certificate cross-signatures, verifies the full
 chain and hostname, and reloads PostgreSQL after an AutoSSL renewal. The API's
 public certificate is managed directly by cPanel.
+
+The rotation only reaches `/backups` on this host. The offsite copies, the
+operator's own recovery copy and the schedule of the daily run are outside it
+and still need owner and host verification.
+
+The backup also copies the **durable evidence** of the removals a restore
+owed into `/backups/restore-evidence`, next to the bundles. The evidence
+lives next to the marker of the restore lifecycle, and the import of a
+restore destroys the removals it names, so the copy is the artefact that
+survives the loss of the evidence directory. The copy is made under the lock
+of the lifecycle and as the user that owns it, by
+`copy-restore-evidence.sh`, and it is inside the mounted directory of the
+bundles, so the backup that the operator copies off the server carries it.
+`check-restore-id.sh` reads the identifier of a restore out of the marker of
+the lifecycle and refuses everything the production rule refuses; both
+programs are mounted into the database container read-only. The rotation never
+descends into a subdirectory, so the evidence is not a candidate of the
+rotation and is never retired by the thirty day rule.
 
 The backup passphrase is in the server's private `backup.env`. An operator
 recovery copy and encrypted bundles are kept outside the server under

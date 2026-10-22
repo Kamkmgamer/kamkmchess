@@ -1,0 +1,117 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { auditGrants, auditLiveGrants, parseMigrationGrants, parsePolicy, renderGrantSql } from './runtime-grants.mjs';
+
+// The grant of the sequence of the health checkpoints.
+//
+// The order of the checkpoints comes from the default of the column, so the
+// role that writes the health of the service needs the usage of the sequence
+// and nothing else. The rules process holds no SQL privilege at all, so it
+// never receives the usage.
+
+const policy = parsePolicy(JSON.parse(readFileSync(new URL('./runtime-grants.policy.json', import.meta.url), 'utf8')));
+
+test('migration sequence grants to unused and unreviewed roles are audited', () => {
+  for (const [role, code, severity] of [
+    ['kamkm_online_rules', 'migration-grant-stripped-role', 'warning'],
+    ['unreviewed_rules', 'migration-grants-unreviewed-role', 'blocker'],
+  ]) {
+    const migrationGrants = parseMigrationGrants(`GRANT USAGE ON SEQUENCE public.online_service_health_order TO ${role};`);
+    assert.equal(migrationGrants.length, 1);
+    const findings = auditGrants({ policy, tables: [], usage: new Map(), migrationGrants });
+    assert.ok(findings.some((finding) => finding.code === code && finding.severity === severity));
+  }
+});
+
+test('migration sequence grants are compared with their own policy', () => {
+  for (const [privilege, blocked] of [['USAGE', false], ['SELECT', true]]) {
+    const migrationGrants = parseMigrationGrants(`GRANT ${privilege} ON SEQUENCE %I.online_service_health_order TO kamkmchess_runtime;`);
+    assert.equal(migrationGrants.length, 1);
+    const findings = auditGrants({ policy, tables: [], usage: new Map(), migrationGrants });
+    assert.equal(findings.some((finding) => finding.code === 'migration-grant-exceeds-policy'), blocked);
+  }
+  assert.deepEqual(parseMigrationGrants('GRANT EXECUTE ON FUNCTION public.worker() TO rules;'), []);
+  assert.deepEqual(parseMigrationGrants('GRANT USAGE ON SCHEMA public TO rules;'), []);
+});
+
+test('the deployment grants the sequence of the checkpoints explicitly', () => {
+  const sql = renderGrantSql(policy);
+  // The privileges the role may already hold are taken away first, so the
+  // grant of the policy is the whole set the role has.
+  assert.match(sql, /REVOKE ALL ON SEQUENCE public\.online_service_health_order FROM kamkmchess_runtime;/);
+  assert.match(sql, /GRANT USAGE ON SEQUENCE public\.online_service_health_order TO kamkmchess_runtime;/);
+});
+
+test('the policy grants the usage of the sequence and nothing else', () => {
+  assert.deepEqual(policy.sequences['online_service_health_order'], ['USAGE']);
+});
+
+test('the audit accepts the sequence of the policy', () => {
+  const findings = auditGrants({
+    policy,
+    tables: [],
+    usage: new Map(),
+    sequences: ['online_service_health_order'],
+  });
+  const blockers = findings.filter((finding) => finding.severity === 'blocker');
+  assert.deepEqual(blockers, []);
+});
+
+test('the audit refuses a sequence that the policy does not grant', () => {
+  const findings = auditGrants({
+    policy,
+    tables: [],
+    usage: new Map(),
+    sequences: ['online_service_health_order', 'online_service_missing_order'],
+  });
+  assert.ok(findings.some((finding) => finding.code === 'sequence-missing-grant'));
+});
+
+test('the audit refuses an unknown privilege of a sequence', () => {
+  const findings = auditGrants({
+    policy: { ...policy, sequences: { online_service_health_order: ['USAGE', 'DROP'] } },
+    tables: [],
+    usage: new Map(),
+    sequences: ['online_service_health_order'],
+  });
+  assert.ok(findings.some((finding) => finding.code === 'sequence-unknown-privilege'));
+});
+
+test('the audit refuses a policy entry for a sequence that no migration creates', () => {
+  const findings = auditGrants({
+    policy: { ...policy, sequences: { ...policy.sequences, online_service_absent_order: ['USAGE'] } },
+    tables: [],
+    usage: new Map(),
+    sequences: ['online_service_health_order'],
+  });
+  assert.ok(findings.some((finding) => finding.code === 'sequence-unknown-entry'));
+});
+
+// The live audit of the sequences, with the policy of the sequences alone.
+const sequencePolicy = {
+  role: 'kamkmchess_runtime',
+  schema: 'public',
+  privileges: new Map(),
+  sequences: { online_service_health_order: ['USAGE'] },
+};
+
+test('the live audit of the sequences is clear for the baseline of the policy', () => {
+  const findings = auditLiveGrants(sequencePolicy, new Map(), new Map([['online_service_health_order', new Set(['USAGE'])]]));
+  assert.deepEqual(findings.filter((finding) => finding.severity === 'blocker'), []);
+});
+
+test('the live audit of the sequences reports a drift', () => {
+  const findings = auditLiveGrants(sequencePolicy, new Map(), new Map([['online_service_health_order', new Set(['USAGE', 'SELECT', 'UPDATE'])]]));
+  assert.ok(findings.some((finding) => finding.code === 'live-sequence-extra'));
+});
+
+test('the live audit of the sequences reports a missing usage', () => {
+  const findings = auditLiveGrants(sequencePolicy, new Map(), new Map([['online_service_health_order', new Set(['SELECT'])]]));
+  assert.ok(findings.some((finding) => finding.code === 'live-sequence-missing-privilege'));
+});
+
+test('the live audit of the sequences reports a missing grant', () => {
+  const findings = auditLiveGrants(sequencePolicy, new Map(), new Map());
+  assert.ok(findings.some((finding) => finding.code === 'live-sequence-missing'));
+});

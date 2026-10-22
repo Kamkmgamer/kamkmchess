@@ -30,22 +30,38 @@ import (
 
 // lockProbe traces the participant advisory lock statements.
 //
-// It records the lock key the production code uses, so a test can hold the
-// same lock from another connection, and it can pause a chosen lock statement
-// so a test controls exactly when a command acquires the participant lock.
+// The service uses two lock protocols. The account scope is shared with the
+// privacy and the profile flows, so its key is derived in the database and the
+// statement carries the scope as a string. The guest seat scope is private to
+// the authorization service, so its statement carries the key as a number.
+//
+// The probe records every observation with its protocol and with the backend
+// identifier of the connection that took it, so a test waits for exactly the
+// lock it observed and never for an unrelated lock of the service.
 type lockProbe struct {
-	mu          sync.Mutex
-	key         int64
-	haveKey     bool
-	seen        int
-	pauseAt     int
-	paused      bool
-	reached     chan struct{}
-	entered     chan struct{}
-	release     chan struct{}
-	reachedOnce sync.Once
-	enterOnce   sync.Once
-	releaseOnce sync.Once
+	mu           sync.Mutex
+	observations []lockObservation
+	seen         int
+	pauseAt      int
+	paused       bool
+	reached      chan struct{}
+	entered      chan struct{}
+	release      chan struct{}
+	reachedOnce  sync.Once
+	enterOnce    sync.Once
+	releaseOnce  sync.Once
+}
+
+// lockObservation is one lock statement the probe saw.
+type lockObservation struct {
+	// scope is the shared account scope, taken as a string.
+	scope string
+	// key is the private guest seat key, taken as a number.
+	key int64
+	// pid is the backend identifier of the connection that took the lock.
+	pid uint32
+	// protocol is "account" or "seat".
+	protocol string
 }
 
 func newLockProbe(pauseAt int) *lockProbe {
@@ -57,16 +73,28 @@ func newLockProbe(pauseAt int) *lockProbe {
 	}
 }
 
-func (p *lockProbe) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+func (p *lockProbe) TraceQueryStart(ctx context.Context, conn *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	if !strings.Contains(data.SQL, "pg_advisory_xact_lock") {
 		return ctx
 	}
 	p.mu.Lock()
 	p.seen++
-	if !p.haveKey && len(data.Args) > 0 {
-		if key, ok := data.Args[0].(int64); ok {
-			p.key = key
-			p.haveKey = true
+	if len(data.Args) > 0 {
+		observation := lockObservation{pid: p.pidOf(conn)}
+		switch argument := data.Args[0].(type) {
+		case string:
+			// The shared account scope: the key is derived in the
+			// database, so the statement carries the scope.
+			observation.scope = argument
+			observation.protocol = "account"
+		case int64:
+			// The private guest seat scope: the statement carries the
+			// key.
+			observation.key = argument
+			observation.protocol = "seat"
+		}
+		if observation.protocol != "" {
+			p.observations = append(p.observations, observation)
 		}
 	}
 	occurrence := p.seen
@@ -83,6 +111,14 @@ func (p *lockProbe) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.T
 	return ctx
 }
 
+// pidOf returns the backend identifier of a traced connection.
+func (p *lockProbe) pidOf(conn *pgx.Conn) uint32 {
+	if conn == nil {
+		return 0
+	}
+	return conn.PgConn().PID()
+}
+
 func (p *lockProbe) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
 // Release lets a paused statement continue. It is safe to call more than
@@ -91,21 +127,69 @@ func (p *lockProbe) Release() {
 	p.releaseOnce.Do(func() { close(p.release) })
 }
 
-// LockKey returns the participant advisory lock key the production code used.
-func (p *lockProbe) LockKey(t *testing.T) int64 {
+// LockKey returns the participant advisory lock scope the production code used.
+//
+// It is the shared account scope, so the key is derived in the database and
+// the test holds exactly the same lock.
+func (p *lockProbe) LockKey(t *testing.T) string {
 	t.Helper()
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		p.mu.Lock()
-		key, ok := p.key, p.haveKey
+		scope := ""
+		for _, observation := range p.observations {
+			if observation.protocol == "account" {
+				scope = observation.scope
+			}
+		}
 		p.mu.Unlock()
-		if ok {
+		if scope != "" {
+			return scope
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the participant lock scope was never observed")
+	return ""
+}
+
+// SeatLockKey returns the guest seat advisory lock key the production code
+// used.
+//
+// The guest seat scope is private to the authorization service, so the key is
+// a number and the test holds exactly the same lock.
+func (p *lockProbe) SeatLockKey(t *testing.T) int64 {
+	t.Helper()
+	deadline := time.Now().Add(15 * time.Second)
+	for time.Now().Before(deadline) {
+		p.mu.Lock()
+		key := int64(0)
+		found := false
+		for _, observation := range p.observations {
+			if observation.protocol == "seat" {
+				key = observation.key
+				found = true
+			}
+		}
+		p.mu.Unlock()
+		if found {
 			return key
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("the participant lock key was never observed")
+	t.Fatal("the guest seat lock key was never observed")
 	return 0
+}
+
+// lastObservation returns the lock the probe saw last.
+//
+// It is the lock the paused statement waits for, so a wait for it is exact.
+func (p *lockProbe) lastObservation() (lockObservation, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.observations) == 0 {
+		return lockObservation{}, false
+	}
+	return p.observations[len(p.observations)-1], true
 }
 
 // revocationPause pauses a revocation after its revocation statement and
@@ -166,7 +250,7 @@ func probedPool(t *testing.T, fixture *onlineAuthFixture, tracer pgx.QueryTracer
 // connection. A command that needs the same lock waits until the returned
 // release function is called. The release function is safe to call more than
 // once, so a failing test never leaves the lock held.
-func holdParticipantLock(t *testing.T, pool *pgxpool.Pool, key int64) func() {
+func holdParticipantLock(t *testing.T, pool *pgxpool.Pool, scope string) func() {
 	t.Helper()
 	ctx := context.Background()
 	conn, err := pool.Acquire(ctx)
@@ -178,7 +262,7 @@ func holdParticipantLock(t *testing.T, pool *pgxpool.Pool, key int64) func() {
 		conn.Release()
 		t.Fatal(err)
 	}
-	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, key); err != nil {
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1))`, scope); err != nil {
 		_ = tx.Rollback(ctx)
 		conn.Release()
 		t.Fatal(err)
@@ -192,21 +276,38 @@ func holdParticipantLock(t *testing.T, pool *pgxpool.Pool, key int64) func() {
 	}
 }
 
-// waitForLockWait blocks until the database reports a lock that is not
-// granted. It is how a test proves that a command really waits instead of
-// racing.
-func waitForLockWait(t *testing.T, pool *pgxpool.Pool) {
+// waitForLockWait blocks until the database reports that the observed lock is
+// not granted.
+//
+// It waits for exactly the lock the probe saw last and for exactly the
+// connection that took it, so another lock of the service cannot make a test
+// believe that its own command is waiting. An observation it cannot name is
+// a failure, never a wildcard.
+func waitForLockWait(t *testing.T, pool *pgxpool.Pool, probe *lockProbe) {
 	t.Helper()
 	ctx := context.Background()
+	observation, ok := probe.lastObservation()
+	if !ok {
+		t.Fatal("no lock was observed, so no lock wait can be expected")
+	}
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
 		var waiting int
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE NOT granted`).Scan(&waiting); err == nil && waiting > 0 {
+		var err error
+		switch observation.protocol {
+		case "account":
+			err = pool.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE NOT granted AND locktype='advisory' AND pid=$1 AND ((classid::bigint<<32)|objid::bigint) = hashtext($2)`, observation.pid, observation.scope).Scan(&waiting)
+		case "seat":
+			err = pool.QueryRow(ctx, `SELECT count(*) FROM pg_locks WHERE NOT granted AND locktype='advisory' AND pid=$1 AND ((classid::bigint<<32)|objid::bigint) = $2`, observation.pid, observation.key).Scan(&waiting)
+		default:
+			t.Fatalf("the observed lock protocol %q is unknown", observation.protocol)
+		}
+		if err == nil && waiting > 0 {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("no lock wait was observed")
+	t.Fatal("no lock wait was observed for the observed lock")
 }
 
 // waitForDatabaseTime blocks until the database clock reaches the given
@@ -283,6 +384,9 @@ func TestPostgresOnlinePendingRevocationRejectsTheWaitingParticipantRead(t *test
 	defer pause.Release()
 
 	probe := newLockProbe(0)
+	// The release is registered before any wait, so a failing test never
+	// leaves a paused statement holding a transaction.
+	defer probe.Release()
 	readerPool := probedPool(t, fixture, probe)
 	reader, err := online.Open(ctx, readerPool, moveEvaluator{}, online.WithSeatAuthorizer(fixture.authorizer))
 	if err != nil {
@@ -295,7 +399,7 @@ func TestPostgresOnlinePendingRevocationRejectsTheWaitingParticipantRead(t *test
 	}()
 	// The reader has read the match and now waits for the participant lock.
 	waitSignal(t, probe.reached, "the participant lock request")
-	waitForLockWait(t, fixture.pool)
+	waitForLockWait(t, fixture.pool, probe)
 
 	pause.Release()
 	if err = <-revoked; err != nil {
@@ -341,6 +445,9 @@ func TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight(t *t
 	defer pause.Release()
 
 	probe := newLockProbe(0)
+	// The release is registered before any wait, so a failing test never
+	// leaves a paused statement holding a transaction.
+	defer probe.Release()
 	replayerPool := probedPool(t, fixture, probe)
 	replayer, err := online.Open(ctx, replayerPool, moveEvaluator{}, online.WithSeatAuthorizer(fixture.authorizer))
 	if err != nil {
@@ -355,7 +462,7 @@ func TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight(t *t
 		replay <- replayErr
 	}()
 	waitSignal(t, probe.reached, "the participant lock request")
-	waitForLockWait(t, fixture.pool)
+	waitForLockWait(t, fixture.pool, probe)
 
 	pause.Release()
 	if err = <-revoked; err != nil {
@@ -405,6 +512,9 @@ func TestPostgresOnlinePendingSessionRevocationRejectsTheWaitingCreateReplay(t *
 	defer pause.Release()
 
 	probe := newLockProbe(0)
+	// The release is registered before any wait, so a failing test never
+	// leaves a paused statement holding a transaction.
+	defer probe.Release()
 	replayerPool := probedPool(t, fixture, probe)
 	replayer, err := online.Open(ctx, replayerPool, moveEvaluator{}, online.WithSeatAuthorizer(fixture.authorizer))
 	if err != nil {
@@ -428,7 +538,7 @@ func TestPostgresOnlinePendingSessionRevocationRejectsTheWaitingCreateReplay(t *
 	case <-time.After(20 * time.Second):
 		t.Fatal("the create replay never reached the participant lock")
 	}
-	waitForLockWait(t, fixture.pool)
+	waitForLockWait(t, fixture.pool, probe)
 
 	pause.Release()
 	if err = <-revoked; err != nil {
@@ -476,6 +586,9 @@ func TestPostgresOnlineCommandThatWaitsPastTheReplyDeadlineAborts(t *testing.T) 
 	deadline := *state.Clock.ReplyDeadlineAt
 
 	probe := newLockProbe(2)
+	// The release is registered before any wait, so a failing test never
+	// leaves a paused statement holding a transaction.
+	defer probe.Release()
 	commandPool := probedPool(t, fixture, probe)
 	commander, err := online.Open(ctx, commandPool, timeoutEvaluator{winnerFor: timeoutWinForOpponent}, online.WithSeatAuthorizer(fixture.authorizer))
 	if err != nil {
@@ -520,7 +633,7 @@ func TestPostgresOnlineCommandThatWaitsPastTheReplyDeadlineAborts(t *testing.T) 
 	// The deadline passes while the command waits.
 	waitForDatabaseTime(t, fixture.pool, deadline)
 	probe.Release()
-	waitForLockWait(t, fixture.pool)
+	waitForLockWait(t, fixture.pool, probe)
 	release()
 
 	var got outcome
@@ -609,6 +722,9 @@ func TestPostgresOnlineCommandThatWaitsPastTheMainDeadlineTimesOut(t *testing.T)
 	deadline := *state.Clock.DeadlineAt
 
 	probe := newLockProbe(2)
+	// The release is registered before any wait, so a failing test never
+	// leaves a paused statement holding a transaction.
+	defer probe.Release()
 	commandPool := probedPool(t, fixture, probe)
 	commander, err := online.Open(ctx, commandPool, timeoutEvaluator{winnerFor: timeoutWinForOpponent}, online.WithSeatAuthorizer(fixture.authorizer))
 	if err != nil {
@@ -645,7 +761,7 @@ func TestPostgresOnlineCommandThatWaitsPastTheMainDeadlineTimesOut(t *testing.T)
 	defer release()
 	waitForDatabaseTime(t, fixture.pool, deadline)
 	probe.Release()
-	waitForLockWait(t, fixture.pool)
+	waitForLockWait(t, fixture.pool, probe)
 	release()
 
 	var got outcome
@@ -689,6 +805,9 @@ func TestPostgresOnlineExpiredCredentialIsRejectedAfterTheLockWait(t *testing.T)
 	fixture := newOnlineAuthFixture(t, moveEvaluator{})
 	ctx := context.Background()
 	probe := newLockProbe(0)
+	// The release is registered before any wait, so a failing test never
+	// leaves a paused statement holding a transaction.
+	defer probe.Release()
 	servicePool := probedPool(t, fixture, probe)
 	service, err := online.Open(ctx, servicePool, moveEvaluator{}, online.WithSeatAuthorizer(fixture.authorizer))
 	if err != nil {
@@ -712,7 +831,7 @@ func TestPostgresOnlineExpiredCredentialIsRejectedAfterTheLockWait(t *testing.T)
 		read <- readErr
 	}()
 	waitSignal(t, probe.reached, "the participant lock request")
-	waitForLockWait(t, fixture.pool)
+	waitForLockWait(t, fixture.pool, probe)
 	// The credential expires while the participant waits.
 	time.Sleep(400 * time.Millisecond)
 	release()
@@ -734,6 +853,9 @@ func TestPostgresOnlineExpiredCredentialCannotReplayAnAcceptedOperation(t *testi
 	fixture := newOnlineAuthFixture(t, moveEvaluator{})
 	ctx := context.Background()
 	probe := newLockProbe(0)
+	// The release is registered before any wait, so a failing test never
+	// leaves a paused statement holding a transaction.
+	defer probe.Release()
 	servicePool := probedPool(t, fixture, probe)
 	service, err := online.Open(ctx, servicePool, moveEvaluator{}, online.WithSeatAuthorizer(fixture.authorizer))
 	if err != nil {
@@ -763,7 +885,7 @@ func TestPostgresOnlineExpiredCredentialCannotReplayAnAcceptedOperation(t *testi
 		replay <- replayErr
 	}()
 	waitSignal(t, probe.reached, "the participant lock request")
-	waitForLockWait(t, fixture.pool)
+	waitForLockWait(t, fixture.pool, probe)
 	time.Sleep(400 * time.Millisecond)
 	release()
 

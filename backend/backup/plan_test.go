@@ -154,6 +154,140 @@ func TestPlanRotationProtectsAndKeepsUnprovableCopies(t *testing.T) {
 	}
 }
 
+// The maximum age is the limit of the owner contract: a bundle that is older
+// than thirty days is due, and a bundle that is exactly thirty days old is
+// still inside the limit. The boundary is the one the contract can be read
+// against, so it is proved here to the second.
+func TestPlanRotationEnforcesTheMaximumAgeOfThirtyDays(t *testing.T) {
+	reference := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	if MaxBundleAgeDays != 30 || MaxBundleAge != 30*24*time.Hour {
+		t.Fatalf("the maximum age is %d days (%s), want 30 days", MaxBundleAgeDays, MaxBundleAge)
+	}
+	candidates := []Candidate{
+		{Path: "one-second-inside", Label: "daily-2026-10-03", CreatedAt: reference.Add(-MaxBundleAge + time.Second), Bytes: 30},
+		{Path: "exactly-thirty-days", Label: "daily-2026-10-02", CreatedAt: reference.Add(-MaxBundleAge), Bytes: 10},
+		{Path: "one-second-too-old", Label: "daily-2026-10-01", CreatedAt: reference.Add(-MaxBundleAge - time.Second), Bytes: 20},
+	}
+	// The count is wide enough to keep every one of the three copies, so the
+	// only rule that can retire one of them is the maximum age.
+	plan, err := PlanRotation(candidates, reference, RetentionPolicy{Daily: 7, Weekly: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.MaxAgeDays != 30 {
+		t.Fatalf("the plan does not name the maximum age: %+v", plan)
+	}
+	kept := map[string]bool{}
+	for _, item := range plan.Keep {
+		kept[item.Path] = true
+	}
+	for _, path := range []string{"exactly-thirty-days", "one-second-inside"} {
+		if !kept[path] {
+			t.Fatalf("%s is inside the maximum age and must be kept: %+v", path, plan)
+		}
+	}
+	if len(plan.Prune) != 1 || plan.Prune[0].Path != "one-second-too-old" {
+		t.Fatalf("only the copy that passed the maximum age may be retired: %+v", plan.Prune)
+	}
+	if !contains(plan.Prune[0].Reason, "maximum age") {
+		t.Fatalf("the retirement reason does not name the maximum age: %q", plan.Prune[0].Reason)
+	}
+	if plan.PrunableBytes != 20 {
+		t.Fatalf("prunable bytes = %d, want 20", plan.PrunableBytes)
+	}
+	if len(plan.Unresolved) != 0 {
+		t.Fatalf("an ordinary bundle of the managed directory is not unresolved: %+v", plan.Unresolved)
+	}
+}
+
+// The count of the rotation is not a promise about the age of a copy: a
+// bundle that is older than the maximum age is retired even when a slot of
+// the count is free.
+func TestPlanRotationRetiresAnOldBundleEvenWhenASlotIsFree(t *testing.T) {
+	reference := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	candidates := []Candidate{
+		{Path: "old-weekly", Label: "weekly-2026-W40", CreatedAt: reference.AddDate(0, 0, -40), Bytes: 100},
+		{Path: "new-weekly", Label: "weekly-2026-W44", CreatedAt: reference.AddDate(0, 0, -1), Bytes: 100},
+	}
+	plan, err := PlanRotation(candidates, reference, RetentionPolicy{Daily: 1, Weekly: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Prune) != 1 || plan.Prune[0].Path != "old-weekly" {
+		t.Fatalf("the copy that passed the maximum age must be retired: %+v", plan.Prune)
+	}
+	if len(plan.Unresolved) != 0 {
+		t.Fatalf("the retirement of an ordinary copy resolves the retention: %+v", plan.Unresolved)
+	}
+}
+
+// A protected bundle is never deleted. When it is older than the maximum age
+// the obligation stays open, and the rotation has to say so instead of
+// reporting a success it cannot prove.
+func TestPlanRotationKeepsAProtectedOldBundleAndReportsItAsUnresolved(t *testing.T) {
+	reference := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	candidates := []Candidate{
+		{Path: "protected-old", Label: "weekly-2026-W40", CreatedAt: reference.AddDate(0, 0, -40), Protected: true},
+		{Path: "ordinary-old", Label: "weekly-2026-W41", CreatedAt: reference.AddDate(0, 0, -40)},
+	}
+	plan, err := PlanRotation(candidates, reference, RetentionPolicy{Daily: 1, Weekly: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range plan.Prune {
+		if item.Path == "protected-old" {
+			t.Fatalf("a protected bundle is never retired: %+v", plan.Prune)
+		}
+	}
+	kept := map[string]bool{}
+	for _, item := range plan.Keep {
+		kept[item.Path] = true
+	}
+	if !kept["protected-old"] {
+		t.Fatalf("the protected bundle is kept: %+v", plan.Keep)
+	}
+	if len(plan.Unresolved) != 1 || plan.Unresolved[0].Path != "protected-old" {
+		t.Fatalf("the protected old bundle has to be reported as unresolved: %+v", plan.Unresolved)
+	}
+	if !contains(plan.Unresolved[0].Reason, "protected") || !contains(plan.Unresolved[0].Reason, "maximum age") {
+		t.Fatalf("the unresolved reason does not explain the obligation: %q", plan.Unresolved[0].Reason)
+	}
+}
+
+// A bundle whose age cannot be proven leaves the obligation open, whether it
+// is protected or not: a bundle without a creation time and a bundle dated
+// after the reference time are both kept, and both are reported.
+func TestPlanRotationReportsUnprovableAgesAsUnresolved(t *testing.T) {
+	reference := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	candidates := []Candidate{
+		{Path: "undated", Label: "daily-2026-10-29"},
+		{Path: "future", Label: "daily-2026-11-05", CreatedAt: reference.AddDate(0, 0, 4)},
+		{Path: "protected-undated", Label: "daily-2026-10-28", Protected: true},
+	}
+	plan, err := PlanRotation(candidates, reference, RetentionPolicy{Daily: 7, Weekly: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Prune) != 0 {
+		t.Fatalf("a bundle of an unprovable age is never retired: %+v", plan.Prune)
+	}
+	unresolved := map[string]string{}
+	for _, item := range plan.Unresolved {
+		unresolved[item.Path] = item.Reason
+	}
+	for _, path := range []string{"undated", "future", "protected-undated"} {
+		if _, found := unresolved[path]; !found {
+			t.Fatalf("%s has to be reported as unresolved: %+v", path, plan.Unresolved)
+		}
+	}
+	if !contains(unresolved["undated"], "cannot be proven") {
+		t.Fatalf("the unresolved reason does not explain the missing proof: %q", unresolved["undated"])
+	}
+	if !contains(unresolved["future"], "cannot be proven") {
+		t.Fatalf("the unresolved reason does not explain the missing proof: %q", unresolved["future"])
+	}
+}
+
 func contains(haystack, needle string) bool {
 	return len(haystack) >= len(needle) && (haystack == needle || indexOf(haystack, needle) >= 0)
 }

@@ -1,0 +1,471 @@
+package integration
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/Kamkmgamer/kamkmchess/backend/online"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+)
+
+// The grant of the sequence of the checkpoints.
+//
+// The order of the checkpoints comes from the default of the column, so the
+// role that writes the health of the service needs the usage of the sequence
+// and nothing else. The rules process holds no SQL privilege at all, so it
+// can neither take the order nor write a checkpoint.
+//
+// The regression executes the **generated** grant SQL of the deployment, so it
+// proves the grants the deployment really applies and not a hand-written
+// approximation of them.
+func TestOnlineTheRuntimeRoleCanWriteACheckpointWithTheOrderOfTheSequence(t *testing.T) {
+	runSequenceGrantProof(t, generatedGrantSQL(t), false, false)
+}
+
+func TestOnlineTheProvisionedRuntimeRoleCanWriteACheckpoint(t *testing.T) {
+	generated := generatedProvisionGrantSQL(t)
+	t.Run("fresh", func(t *testing.T) { runSequenceGrantProof(t, generated, true, false) })
+	t.Run("stale", func(t *testing.T) { runSequenceGrantProof(t, generated, true, true) })
+}
+
+func runSequenceGrantProof(t *testing.T, generated string, provisioned, stale bool) {
+	t.Helper()
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	var schema string
+	if err := fixture.pool.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	// The roles of this test are unique, so a run beside another one cannot
+	// collide with them.
+	suffix := randomSchemaSuffix()
+	runtimeRole := "kha_test_runtime_" + suffix
+	rulesRole := "kha_test_rules_" + suffix
+	apiRole := "kha_test_api_" + suffix
+	roles := []string{runtimeRole, rulesRole}
+	if provisioned {
+		roles = append(roles, apiRole)
+	}
+	for _, role := range roles {
+		if _, err := fixture.pool.Exec(ctx, `CREATE ROLE `+role); err != nil {
+			t.Fatalf("create the role %s: %v", role, err)
+		}
+		t.Cleanup(func() {
+			if _, err := fixture.pool.Exec(context.Background(), `DROP OWNED BY `+role); err != nil {
+				t.Errorf("drop the grants of the role %s: %v", role, err)
+			}
+			if _, err := fixture.pool.Exec(context.Background(), `DROP ROLE `+role); err != nil {
+				t.Errorf("drop the role %s: %v", role, err)
+			}
+		})
+	}
+
+	// The generated grant SQL of the deployment, with the schema of the test
+	// in place of the schema of the policy.
+	var statements []string
+	for _, line := range strings.Split(generated, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "ON DATABASE") || (!provisioned && !strings.Contains(line, "SEQUENCE")) {
+			continue
+		}
+		statements = append(statements, strings.ReplaceAll(line, "public.", schema+"."))
+	}
+	if len(statements) == 0 {
+		t.Fatalf("the generated grant SQL carries no statement for the sequence of the checkpoints: %s", generated[:min(len(generated), 600)])
+	}
+	// The role of the deployment holds the privileges of the policy: the usage
+	// of the sequence and the insert into the health table.
+	if _, err := fixture.pool.Exec(ctx, `GRANT USAGE ON SCHEMA `+schema+` TO `+runtimeRole); err != nil {
+		t.Fatalf("grant the schema: %v", err)
+	}
+	if _, err := fixture.pool.Exec(ctx, `GRANT SELECT, INSERT ON TABLE `+schema+`.online_service_health TO `+runtimeRole); err != nil {
+		t.Fatalf("grant the health table: %v", err)
+	}
+	if provisioned {
+		// Seed stale direct and PUBLIC privileges. Provisioning must remove
+		// them, including the unused roles' function and sequence privileges.
+		for _, role := range []string{rulesRole, apiRole} {
+			if _, err := fixture.pool.Exec(ctx, `GRANT USAGE ON SCHEMA `+schema+` TO `+role+`;
+GRANT ALL ON ALL TABLES IN SCHEMA `+schema+` TO `+role+`;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA `+schema+` TO `+role+`;
+GRANT ALL ON ALL FUNCTIONS IN SCHEMA `+schema+` TO `+role); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if stale {
+			if _, err := fixture.pool.Exec(ctx, `GRANT ALL ON SEQUENCE online_service_health_order TO PUBLIC, `+runtimeRole); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Execute whole SQL blocks, including the function DO block.
+		statements = []string{strings.Join(statements, "\n")}
+	}
+	for _, statement := range statements {
+		// The statements of the deployment name the role of the policy; the
+		// role of this test takes its place.
+		statement = strings.ReplaceAll(statement, "kamkmchess_runtime", runtimeRole)
+		statement = strings.ReplaceAll(statement, "kamkm_online_rules", rulesRole)
+		statement = strings.ReplaceAll(statement, "kamkm_online_api", apiRole)
+		statement = strings.ReplaceAll(statement, "SCHEMA public", "SCHEMA "+schema)
+		statement = strings.ReplaceAll(statement, "'public'", "'"+schema+"'")
+		if _, err := fixture.pool.Exec(ctx, statement); err != nil {
+			t.Fatalf("the generated grant failed: %v (%s)", err, statement)
+		}
+	}
+	if provisioned {
+		for _, role := range []string{rulesRole, apiRole} {
+			var held bool
+			if err := fixture.pool.QueryRow(ctx, `SELECT
+has_schema_privilege($1,current_schema(),'USAGE') OR
+EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema() AND CASE WHEN c.relkind='S' THEN has_sequence_privilege($1,c.oid,'USAGE,SELECT,UPDATE') ELSE false END) OR
+EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=current_schema() AND CASE WHEN c.relkind='r' THEN has_table_privilege($1,c.oid,'SELECT,INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') ELSE false END) OR
+EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname=current_schema() AND has_function_privilege($1,p.oid,'EXECUTE'))`, role).Scan(&held); err != nil {
+				t.Fatal(err)
+			}
+			if held {
+				t.Errorf("unused role %s still holds SQL privileges", role)
+			}
+		}
+	}
+
+	runtime, err := fixture.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Release()
+	// The connection returns to the pool without a role, so the next user of
+	// the connection is not the role of this test.
+	defer func() { _, _ = runtime.Exec(context.Background(), `RESET ROLE`) }()
+	if _, err = runtime.Exec(ctx, `SET ROLE `+runtimeRole); err != nil {
+		t.Fatalf("become the runtime role: %v", err)
+	}
+	// The checkpoint takes its order from the default of the column.
+	if _, err = runtime.Exec(ctx, `INSERT INTO online_service_health(checkpoint_id,dependency,state,detail,recorded_at) VALUES('chk-runtime-0001',$1,'healthy','the rules process answered',clock_timestamp())`, online.DependencyRules); err != nil {
+		t.Fatalf("the runtime role cannot write a checkpoint: %v", err)
+	}
+	var order int64
+	if err = runtime.QueryRow(ctx, `SELECT observation_order FROM online_service_health WHERE checkpoint_id='chk-runtime-0001'`).Scan(&order); err != nil {
+		t.Fatal(err)
+	}
+	if order <= 0 {
+		t.Fatalf("the order of the checkpoint = %d, want the order of the sequence", order)
+	}
+	// The policy grants the usage and nothing else, so the other privileges
+	// of the sequence are absent.
+	for _, privilege := range []string{"SELECT", "UPDATE"} {
+		var held bool
+		if err = runtime.QueryRow(ctx, `SELECT has_sequence_privilege($1,'online_service_health_order',$2)`, runtimeRole, privilege).Scan(&held); err != nil {
+			t.Fatal(err)
+		}
+		if held {
+			t.Fatalf("the runtime role holds %s on the sequence of the checkpoints, which the policy does not grant", privilege)
+		}
+	}
+	if _, err = runtime.Exec(ctx, `RESET ROLE`); err != nil {
+		t.Fatal(err)
+	}
+
+	// The rules process holds no SQL privilege: it can neither take the order
+	// of the sequence nor write a checkpoint. It sees the schema, so its
+	// refusal is the permission of the sequence and not the visibility of it.
+	if _, err = fixture.pool.Exec(ctx, `GRANT USAGE ON SCHEMA `+schema+` TO `+rulesRole); err != nil {
+		t.Fatalf("grant the schema to the rules role: %v", err)
+	}
+	rules, err := fixture.pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rules.Release()
+	defer func() { _, _ = rules.Exec(context.Background(), `RESET ROLE`) }()
+	if _, err = rules.Exec(ctx, `SET ROLE `+rulesRole); err != nil {
+		t.Fatalf("become the rules role: %v", err)
+	}
+	if _, err = rules.Exec(ctx, `SELECT nextval('online_service_health_order')`); err == nil {
+		t.Fatal("the rules role took the order of the sequence")
+	} else {
+		var denied *pgconn.PgError
+		if !errors.As(err, &denied) || denied.Code != "42501" {
+			t.Fatalf("the rules role failed to take the order with %v, want a permission refusal (42501)", err)
+		}
+	}
+	if _, err = rules.Exec(ctx, `INSERT INTO online_service_health(checkpoint_id,dependency,state,detail,recorded_at) VALUES('chk-rules-0001',$1,'healthy','the rules process answered',clock_timestamp())`, online.DependencyRules); err == nil {
+		t.Fatal("the rules role wrote a checkpoint")
+	} else {
+		var denied *pgconn.PgError
+		if !errors.As(err, &denied) || denied.Code != "42501" {
+			t.Fatalf("the rules role failed to write a checkpoint with %v, want a permission refusal (42501)", err)
+		}
+	}
+}
+
+// TestOnlineTheLiveAuditOfTheSequenceReadsTheEffectiveRights drives the live
+// reading of the sequences of the deployment.
+//
+// The reading uses the catalogue of the database and the effective rights of
+// the role, so it sees the privileges the role holds through PUBLIC and the
+// privileges the policy does not grant. The baseline of the policy is clear,
+// a drift of the sequence is a blocker, and a missing usage is a blocker.
+func TestOnlineTheLiveAuditOfTheSequenceReadsTheEffectiveRights(t *testing.T) {
+	// The live reading of the deployment uses the psql adapter, so the test
+	// needs the client of the database.
+	if _, err := exec.LookPath("psql"); err != nil {
+		t.Skip("the live reading of the sequences needs the psql client of the database")
+	}
+	fixture := newPresenceFixture(t)
+	ctx := context.Background()
+	var schema string
+	if err := fixture.pool.QueryRow(ctx, `SELECT current_schema()`).Scan(&schema); err != nil {
+		t.Fatal(err)
+	}
+	suffix := randomSchemaSuffix()
+	runtimeRole := "kha_test_runtime_" + suffix
+	if _, err := fixture.pool.Exec(ctx, `CREATE ROLE `+runtimeRole); err != nil {
+		t.Fatalf("create the role: %v", err)
+	}
+	t.Cleanup(func() {
+		// The role holds grants on the schema of the test, so its grants
+		// are dropped before the role itself. A failed cleanup is a failure
+		// of the test: a leaked role would outlive the schema.
+		if _, err := fixture.pool.Exec(context.Background(), `DROP OWNED BY `+runtimeRole); err != nil {
+			t.Errorf("drop the grants of the role %s: %v", runtimeRole, err)
+		}
+		if _, err := fixture.pool.Exec(context.Background(), `DROP ROLE `+runtimeRole); err != nil {
+			t.Errorf("drop the role %s: %v", runtimeRole, err)
+		}
+	})
+	if _, err := fixture.pool.Exec(ctx, `GRANT USAGE ON SCHEMA `+schema+` TO `+runtimeRole); err != nil {
+		t.Fatalf("grant the schema: %v", err)
+	}
+	// The baseline of the policy: the usage of the sequence and nothing else.
+	if _, err := fixture.pool.Exec(ctx, `GRANT USAGE ON SEQUENCE `+schema+`.online_service_health_order TO `+runtimeRole); err != nil {
+		t.Fatalf("grant the sequence: %v", err)
+	}
+	read := func() (map[string][]string, []string) {
+		output := runLiveSequenceAudit(t, fixture.pool.Config().ConnConfig, runtimeRole, schema)
+		var result struct {
+			Sequences map[string][]string `json:"sequences"`
+			Blockers  []string            `json:"blockers"`
+		}
+		if err := json.Unmarshal(output, &result); err != nil {
+			t.Fatalf("read the live audit: %v (%s)", err, output)
+		}
+		return result.Sequences, result.Blockers
+	}
+	sequences, blockers := read()
+	if granted, ok := sequences["online_service_health_order"]; !ok || len(granted) != 1 || granted[0] != "USAGE" {
+		t.Fatalf("the live rights of the sequence = %v, want the usage of the policy", sequences["online_service_health_order"])
+	}
+	if len(blockers) != 0 {
+		t.Fatalf("the live audit of the baseline reports %v", blockers)
+	}
+	// A drift of the sequence is a blocker.
+	if _, err := fixture.pool.Exec(ctx, `GRANT SELECT, UPDATE ON SEQUENCE `+schema+`.online_service_health_order TO `+runtimeRole); err != nil {
+		t.Fatalf("grant the extra privileges: %v", err)
+	}
+	_, blockers = read()
+	if !containsCode(blockers, "live-sequence-extra") {
+		t.Fatalf("the live audit of the drift reports %v, want the extra privileges of the sequence", blockers)
+	}
+	// A missing usage is a blocker: the sequence is still there, so the role
+	// holds a privilege of it and not the usage the policy grants.
+	if _, err := fixture.pool.Exec(ctx, `REVOKE USAGE ON SEQUENCE `+schema+`.online_service_health_order FROM `+runtimeRole); err != nil {
+		t.Fatalf("revoke the usage: %v", err)
+	}
+	sequences, blockers = read()
+	if granted, ok := sequences["online_service_health_order"]; !ok || len(granted) == 0 {
+		t.Fatalf("the live rights of the sequence = %v, want the privileges the role still holds", sequences["online_service_health_order"])
+	}
+	if !containsCode(blockers, "live-sequence-missing-privilege") {
+		t.Fatalf("the live audit of the missing usage reports %v, want the missing usage of the sequence", blockers)
+	}
+	// A role without any privilege on the sequence has no entry at all.
+	if _, err := fixture.pool.Exec(ctx, `REVOKE ALL ON SEQUENCE `+schema+`.online_service_health_order FROM `+runtimeRole); err != nil {
+		t.Fatalf("revoke the sequence: %v", err)
+	}
+	_, blockers = read()
+	if !containsCode(blockers, "live-sequence-missing") {
+		t.Fatalf("the live audit of the missing grant reports %v, want the missing grant of the sequence", blockers)
+	}
+}
+
+// containsCode reports whether the findings carry a code.
+func containsCode(codes []string, wanted string) bool {
+	for _, code := range codes {
+		if code == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+// runLiveSequenceAudit reads the live rights of the sequences and audits them
+// with the policy of the deployment.
+func runLiveSequenceAudit(t *testing.T, config *pgx.ConnConfig, role, schema string) []byte {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(t.TempDir(), "live-sequence-audit.mjs")
+	module := "file:///" + filepath.ToSlash(filepath.Join(root, "deploy", "runtime-grants.mjs"))
+	body := "import { auditLiveGrants, readLiveSequenceGrants } from '" + module + "';\n" +
+		"const [databaseUrl, psqlPath, role, schema] = process.argv.slice(2);\n" +
+		// The audit covers the sequences alone: the tables of the policy are
+		// not part of this reading, so the policy of the audit carries no
+		// table and the findings are the findings of the sequences.
+		"const policy = { role, schema, privileges: new Map(), sequences: { online_service_health_order: ['USAGE'] } };\n" +
+		"const sequences = await readLiveSequenceGrants(databaseUrl, psqlPath, role, schema);\n" +
+		"const findings = auditLiveGrants(policy, new Map(), sequences);\n" +
+		"const plain = Object.fromEntries([...sequences].map(([name, verbs]) => [name, [...verbs].sort()]));\n" +
+		"process.stdout.write(JSON.stringify({ sequences: plain, blockers: findings.filter((finding) => finding.severity === 'blocker').map((finding) => finding.code) }));\n"
+	if err := os.WriteFile(script, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	databaseURL := liveAuditDatabaseURL(config)
+	command := exec.Command("node", script, databaseURL, "psql", role, schema, filepath.Join(root, "deploy", "runtime-grants.policy.json"))
+	command.Dir = root
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("read the live rights of the sequences: %v (%s)", err, stderr.String())
+	}
+	return output
+}
+
+// liveAuditDatabaseURL builds the url of the database for the live audit.
+//
+// The audit reads the live rights of the sequences with the psql client, so
+// the client needs the credentials of the fixture. A client without a
+// password asks the server for one and waits for the answer on the terminal
+// of the runner, so the run of the test blocks there until the budget of the
+// suite is gone. The password of the fixture belongs in the url of the audit
+// and never in its arguments.
+func liveAuditDatabaseURL(config *pgx.ConnConfig) string {
+	credentials := url.User(config.User)
+	if config.Password != "" {
+		credentials = url.UserPassword(config.User, config.Password)
+	}
+	return fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=disable", credentials.String(), config.Host, config.Port, config.Database)
+}
+
+// pythonInterpreter returns the interpreter that runs the provisioning
+// routine.
+//
+// The routine is a Python 3 script and the name of the interpreter differs
+// between the hosts: a Linux image carries python3 and no python alias, while
+// a Windows host often carries only python. A candidate is used only when it
+// really is Python 3, because a host may also carry an alias that opens the
+// store instead of running the script.
+//
+// The proof of the provisioning needs an interpreter, so a host without one
+// fails the test with the reason it was refused. The proof is never skipped.
+func pythonInterpreter(t *testing.T) string {
+	t.Helper()
+	refused := make([]string, 0, 2)
+	for _, name := range []string{"python3", "python"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			refused = append(refused, name+" is not on the PATH")
+			continue
+		}
+		probe := exec.Command(path, "-c", "import sys; sys.exit(0 if sys.version_info[0] == 3 else 1)")
+		if output, err := probe.CombinedOutput(); err != nil {
+			refused = append(refused, fmt.Sprintf("%s is not a Python 3 interpreter (%v: %s)", path, err, strings.TrimSpace(string(output))))
+			continue
+		}
+		return path
+	}
+	t.Fatalf("the provisioning proof needs a Python 3 interpreter: %s", strings.Join(refused, "; "))
+	return ""
+}
+
+// generatedProvisionGrantSQL captures SQL from the actual provisioning routine.
+func generatedProvisionGrantSQL(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := t.TempDir()
+	for name, body := range map[string][]byte{
+		"runtime.env": []byte("DATABASE_URL=unused-fixture-url\n"),
+		"api.env":     {},
+		"backup.env":  []byte("DATABASE_URL=unused-fixture-url\n"),
+	} {
+		if err := os.WriteFile(filepath.Join(directory, name), body, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy, err := os.ReadFile(filepath.Join(root, "deploy", "runtime-grants.policy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "runtime-grants.policy.json"), policy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Call the actual main routine. Only external execution, directory changes
+	// and credential files are isolated; no grant-rendering logic is copied.
+	const script = `import contextlib, importlib.util, io, json, sys
+from unittest.mock import patch
+spec = importlib.util.spec_from_file_location('provision_runtime', sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+statements = []
+def capture(statement, database='kamkmchess'):
+    if statement.startswith('SELECT 1'):
+        return '1'
+    statements.append(statement)
+    return ''
+module.sql = capture
+with patch.object(module.os, 'chdir'), patch.object(module.subprocess, 'run'), contextlib.redirect_stdout(io.StringIO()):
+    module.main()
+print(json.dumps(statements))
+`
+	command := exec.Command(pythonInterpreter(t), "-B", "-c", script, filepath.Join(root, "deploy", "provision-runtime.py"))
+	command.Dir = directory
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run the actual provisioning routine: %v (%s)", err, output)
+	}
+	var statements []string
+	if err := json.Unmarshal(output, &statements); err != nil {
+		t.Fatalf("read the provisioning SQL: %v (%s)", err, output)
+	}
+	return strings.Join(statements, "\n")
+}
+
+// generatedGrantSQL renders the grant SQL of the deployment.
+func generatedGrantSQL(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("node", filepath.Join(root, "deploy", "runtime-grants.mjs"), "--emit")
+	command.Dir = root
+	command.Env = append(os.Environ(), "NODE_NO_WARNINGS=1")
+	// The renderer has to succeed, and the SQL and the warnings of the audit
+	// are separate streams: the SQL is the standard output and a failure is
+	// never read as a grant.
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("render the grant SQL of the deployment: %v (%s)", err, stderr.String())
+	}
+	if len(output) == 0 {
+		t.Fatal("the deployment rendered no grant SQL")
+	}
+	return string(output)
+}

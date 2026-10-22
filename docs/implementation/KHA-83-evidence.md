@@ -1,0 +1,416 @@
+# KHA-83 evidence — host verification for the online service
+
+Tested tree: the **root `ec84214`** with the operations candidate of this
+file applied. Every number and every step id below is the output of the tools
+on that tree, and the commit that carries this file names the exact tree it
+was measured on. The measurements are **local**, against the fixture
+container of this machine; the host is not verified, and the local rehearsal
+of 2026-10-18 that [`MVP-operations.md`](MVP-operations.md) records is a
+separate, older rehearsal that is not part of this candidate.
+
+The content of that tree, in the order it was integrated:
+
+| Content | Commits on the root | Written on |
+| --- | --- | --- |
+| the lifecycle of a restore around its import, the cancellation of a refused restore and the recovery of the crashed marker | `3c2348c`, `70b0755`, `cc4857a`, `e7f2adc` | the branch of the privacy worker, as `3a4aed6`, `daa2a5f`, `4e86892`, `1616aa8` |
+| the operations proof of the restore and the runbook of the recovery | `dbbc370`, `0b3d191`, `65d16ed`, `3039022`, `1e7c30e`, `eb42579`, `96745bb`, `c100f28`, `70efe4e`, `50bbe5a`, `a9f8031` | the branch of the operations worker, as `f19d265`, `800bbfd`, `a5f3632`, `33fce9e`, `f76f73e`, `19662fe`, `d84750a`, `97a9d03`, `fa0c477`, `55de406`, `a852307` |
+
+The commits of the second row are the ones a reader of the root can check
+out. The commits of the third column are the same content on the branches of
+the workers, and they are **not** ancestors of the root: they are named here
+so that the difference between a branch and the root is visible, not to claim
+that the root contains them.
+
+Two measurements of this file were made by other workers and were **not**
+repeated on this tree. They are named with the tree they came from, and that
+tree is not an ancestor of the root either: the grant probe below ran on
+`d88eafc` of the branch `t3/online-ops-evidence-gates`, and the native
+restore proof of the lifecycle ran on the same tree. Everything else below
+was measured on the tree of this candidate.
+
+The fence helper of this tree binds and closes with the removal ledger of
+the privacy candidate, and it builds and runs on it. The container proofs
+are reproduced by the workflow `container-proofs` of
+`.github/workflows/online-ops.yml`, which starts a `postgres:17.6`
+fixture and runs the four container proofs against it; the helpers reach
+the published port of the fixture through `host.docker.internal`, which a
+Linux engine resolves only with the mapping the proofs pass.
+
+## What is prepared
+
+- **Private rules runtime.** `tools/onlinefixture` and the pinned Node 24
+  bundle give the Go authority a private rules process with no public
+  endpoint, no provider access and no database access. The bundle build is
+  pinned to chessops 0.15.1 and the rules policy `online-rules/1`; the
+  dependency inventory and the notices are written next to the artifact by
+  `scripts/build-rules-worker.mjs`.
+- **Least-privilege runtime grants.** `deploy/runtime-grants.policy.json`
+  lists the privileges of every migrated table explicitly. `pnpm run
+  grants:check` compares the policy with the migrations and with the writer's
+  own statements; `pnpm run grants:probe` applies the grants to a real
+  PostgreSQL and executes statements as the role.
+- **Backup coverage and the removal ledger.** `pnpm run online:backup` audits
+  the dump and the restore path and prints the restore hooks.
+- **Local load harness.** `pnpm run online:load` produces a synthetic local
+  load report with the request rate, the latency percentiles, the database
+  connections and the slow-reader behaviour.
+
+## Measured locally (not a host measurement)
+
+The grant probe ran against the local PostgreSQL 17 fixture
+(`127.0.0.1:55467`, database `kamkmchess_online_test`) on the schema of
+the tree at `d88eafc` of the branch `t3/online-ops-evidence-gates` (migrations
+up to `0019_privacy_auxiliary_redaction`). That tree is **not** an ancestor
+of the root and the probe was **not** repeated on it:
+
+```
+221 probes, 0 failures
+```
+
+The probe applies the reviewed policy to a throwaway role and schema, then
+executes real statements as that role: a read, an insert, an update and a
+delete on every table the policy covers, and the refusals on every table it
+does not. It proves that the role can do exactly what the policy says and
+nothing else, that PUBLIC holds nothing on the application tables, that only
+the deployment role holds a privilege on them, and that the effective
+privileges match the policy table by table.
+
+It also proves the function boundary. PostgreSQL grants EXECUTE on a new
+function to PUBLIC, and a function that is not a trigger function can be
+called directly, outside the write path that owns it. The probe shows that
+PUBLIC cannot execute a plain function directly and that every plain function
+is covered by the policy. The trigger functions need no grant: PostgreSQL
+checks their EXECUTE privilege when the trigger is created and refuses a
+direct call.
+
+The policy lists 45 tables. Some of the privileges the assembled schema
+needs:
+
+| Table | Verbs the runtime role holds | Why |
+| --- | --- | --- |
+| `online_friend_invitations` | SELECT, INSERT, UPDATE, DELETE | the auxiliary sanitation of a removed subject deletes the invitation |
+| `online_invitation_acceptances` | SELECT, INSERT, UPDATE, DELETE | the same sanitation deletes the acceptance |
+| `online_queue_entries` | SELECT, INSERT, UPDATE, DELETE | the same sanitation deletes the entry |
+| `online_queue_allocations` | SELECT, INSERT, UPDATE | the sanitation redacts the allocation in place |
+| `online_service_epochs` | SELECT, INSERT, UPDATE | the service gate records the recovered epoch |
+
+The deployment image is built and inspected locally by
+`node deploy/verify-runtime-image.mjs`:
+
+```
+9 checks, 0 failures
+```
+
+The image carries the pinned Node 24.22.0 runtime, the private rules bundle
+at its configured entry path, and a real protocol request answered by the
+worker inside the image. The container runs as uid 65532 and carries no
+credential file. Nothing is pushed and nothing is deployed.
+
+The static audits are clean against the assembled tree:
+
+| Audit | Result |
+| --- | --- |
+| `node deploy/runtime-grants.mjs` | clear (7 findings), 45 tables in the policy, no blocker; the 40 tables the migrations grant to the unused role are reported once, and the policy role is compared table by table |
+| `node scripts/online/service-wiring.mjs` | the feature route is served, both switches are read with a closed default, the restore fence is loaded and shared |
+| `node scripts/online/backup-coverage.mjs` | the dump covers the database, the game and the online removal ledgers are reapplied, the restore gate is consulted before serving |
+
+The local load report is `docs/evidence/online/KHA-83-local-load.json` when a
+load run has been made. It is a loopback measurement with synthetic accounts.
+It is **not** a capacity claim.
+
+The recorded report measures **the rejection path only**: every one of its
+196 responses was answered `401`, including the 158 requests that carried a
+freshly minted fixture bearer token, so no request of that run was served
+and no game was read. Its latency percentiles describe how long the
+service took to refuse a request, not how it behaves under load. The
+harness now refuses to write a report in which nothing was served, and the
+measurement of a serving path is still **not run** and not claimed.
+
+## The restore, the compose files and the evidence
+
+- The restore procedure **stops and drains the API** before the import and
+  starts it again afterwards. The fence refuses new admissions, but it cannot
+  take back a request that was already admitted: an accepted write that is
+  still in flight would not be excluded by the restored copy. The drain is
+  part of the procedure, and the evidence does not claim that new admissions
+  are refused to drain work in flight.
+- The database service and the API service are started **together**: the API
+  file refers to the database service, so
+  `docker compose -f postgres.compose.yml -f api.compose.yml` is the only
+  usable invocation. The API file alone fails with an undefined service.
+- The shell argument of the database entrypoint is written in the escaped form
+  (`"$$@"`). The reviewer of round four verified that the plain and the
+  escaped form forward the arguments identically, so the change is a
+  portability and clarity change, **not** a fix for a lost argument. The
+  proof reads the settings from the running server either way.
+- The native restore stages are prepared and green: the database tools of the
+  server, the backup command built from the checked-in source, a database of
+  the run with the checked-in migrations, an encrypted bundle created and
+  verified with the real tool, and the bundle copied to the host. The restore,
+  the wrong clear, the overlap and the take-over **are** run now, by
+  `node scripts/online/restore-proof.mjs`, against the fence lifecycle of the
+  privacy service: the restore is refused without a fence, a second restore
+  is refused while the fence is held, a close with a digest that does not
+  belong to the fence is refused, the death of the holder leaves the marker,
+  the take-over finishes and closes the fence, and the service serves again
+  afterwards. The **crash of the restore during its import** is run by
+  `node scripts/online/restore-interruption-proof.mjs`, which kills the real
+  restore of the real binary at a real barrier in front of the real psql and
+  measures both kill boundaries and the recovery of a copied protected
+  record.
+- The runbook, the deployment note and the rendered compose configuration name
+  the **same** fence: the parent directory `/var/lib/kamkmchess/restore-fence`.
+  A path below the parent is a different fence, and a restore that held it
+  would leave the service serving during the import. The proof compares the
+  three names and measures that the service observes the fence the runbook
+  opens. The observation is the *existence* of the marker directory
+  `<parent>/restore-fence`: the admission check of the API does not read the
+  owner marker, and the service refuses to serve while that directory
+  exists.
+- The private secret of the restore stays private: the file is owned by the
+  operator and has mode `0600`, so the restore user cannot read it. The
+  documented command reads it as root and hands the values to the restore
+  through the environment (`gosu 65532:65532`), so the restore user receives
+  them without ever reading the file. `node deploy/verify-compose-config.mjs`
+  measures that inside the real service container, with a negative control:
+  the restore user is refused the file, the documented reading side hands the
+  values over, and the file is still `0600` and owned by root afterwards.
+   The compose proof reports 19 steps, all of them passed on the tree of this
+   candidate.
+- The protected copy of the durable evidence of a restore is **durable** and
+  it is measured to be so. The copy is written onto `/backups/restore-evidence`,
+  which is inside the bind mount of the deployment that holds the encrypted
+  bundles, and the backup procedure of the deployment runs the very program
+  that writes it, so the copy is covered by the backup of the deployment.
+  The compose proof measures this inside the real service container: the
+  record of the owed ledger is staged in the fence volume, the copy program
+  of the repository copies it, and the copy is then read **outside** the
+  container, so a file that is visible on the host is on a mounted path and a
+  file that is not would die with the container. The proof also measures the
+  permissions of the durable path (the directory is `0700` and the record is
+  `0600`, both owned by the restore user `65532`), the ownership of the lock
+  of the lifecycle (the file is created by the restore user with mode
+  `0600`, so the restore can open it), and the negative control: while a
+  restore holds the lock of the lifecycle, the copy is refused with the
+  documented exit code `75`, so the copy is never a half written record of a
+  restore that is running. A copy that fails for any other reason keeps its
+  own reason and its own exit code, so the backup procedure can tell it from
+  a running restore and **fails the backup** instead of reporting a
+  complete protected backup.
+- The identifier of a restore is read by a program of the deployment
+  (`deploy/check-restore-id.sh`) that applies the **production rule** before
+  the identifier is used to build a path: an alphanumeric first character and
+  eight to one hundred and twenty eight characters in total. The compose
+  proof runs that program inside the real service container against fixture
+  markers and measures that it reads the identifier of a well formed marker
+  and refuses one with a leading dot, one that is too short, one that is too
+  long and one that carries a path separator.
+- The superseded `scripts/online/prepare-restore-fixture.mjs` is **removed**.
+   It wrote the restore command that cannot run (it sourced the private file
+   as the restore user) and left a bundle and a stages file on the host; the
+   native proof supersedes it. A test fails if any file of the repository
+   ships that command again.
+
+## The interruption of a native restore
+
+`node scripts/online/restore-interruption-proof.mjs` kills the **real**
+restore of the real binary at a real barrier in front of the real psql, and
+it measures the interruptions that decide whether a removed subject can come
+back. The report of the run on the tree named above has **47 steps, all of
+them passed**.
+
+Every case of the proof has a fence of its own, a marker of its own, a
+database of its own and an application name of its own, so the marker, the
+lock and the evidence directory of one case can never be mistaken for the
+state of another case. The owner of the fence is read while the restore is
+alive, the identifier is validated as a name before it is used in a path,
+and the record of the owed ledger is opened with the production reader of the
+privacy service, which refuses a record that names another restore or
+another removal ledger. The content of the record is never printed.
+
+Every kill of the proof binds the exit code of the kill **and** the liveness
+of the container afterwards, and every refusal binds the **reason** of the
+refusal and not only its exit code: a recovery that failed for another
+reason, a fence conflict or a held lock, would leave the proof red instead
+of green. The step that says that the record of the owed ledger was written
+before the import opens the record with the production reader and compares
+its digest with the digest the marker names, because the marker alone only
+proves that the restore took the lifecycle.
+
+The kill during the import transaction is **measured green**, and it is a
+real mid-import proof: the barrier of the "during" case waits for the
+destructive statement of the real dump (the `DROP TABLE` of the relation of
+the removal ledger), and the statements it writes then run inside the
+transaction of the real import. The first of them refuses the load when the
+relation is still there, so a barrier that did not run after the destructive
+statement aborts the import instead of pretending that it did. The second
+writes a marker from inside the transaction, and the proof reads it: the
+marker names the backend and says that the relation of the removal ledger
+is gone. The third holds the transaction open. From the outside, the proof
+reads the same backend in `pg_stat_activity` (its own application name, its
+own database, an open transaction, the marker statement) and reads the
+granted `AccessExclusiveLock` of that backend on that relation in
+`pg_locks`. The kill lands while the transaction is open and after the
+import already destroyed the removal ledger of the live database, and the
+rollback restores it: the live removals are still there, the record of the
+removed match is not revoked and the live only row of the target survived.
+
+The recovery of that restore then **refuses**, and the refusal is the
+correct one: the fixture of the proof is deliberately unsanitized, so the
+rows of the database are not the erasure of a removal and the recovery keeps
+the service closed. The **take-over** of the same restore replays the owed
+ledger, sanitizes the rows and closes the fence. The recovery of an
+unsanitized database does not close the fence, and the proof says so.
+
+The kill after the commit and before the replay is **measured green**: the
+real psql committed the import, the restore was killed before the removal
+ledger was replayed, the import replaced the table of the live only row of
+the target, and the removals that only the live database carried are gone
+from the database. The recovery refuses that database and keeps the service
+closed, the take-over replays the exact ledger the restore owed from the
+durable evidence, and the service admits again only after the replay.
+
+The copied protected record is **measured green** in two different cases, and
+the two are told apart:
+
+* the **refusal**: the import committed and the removals are gone from the
+  database, the record of the run is copied to a protected place (a
+  directory of mode `0700` and a record of mode `0600`, both owned by the
+  restore user `65532`), the evidence directory of the run is removed (only
+  that directory, and the resolved path is verified before it is removed),
+  and the recovery takes the copy alone - **no bundle and no passphrase** -
+  and refuses, because the database lost the removals. The obligation of
+  the next import is durable: the refused recovery writes the record again,
+  so a restore that comes next replays what the crashed restore owed.
+* the **success**: the take-over applies the owed ledger, the removals are
+  applied and erased, and the lifecycle of a restore that crashed after its
+  replay is staged with the production code of the privacy service (the
+  lifecycle is opened, the removal ledger the database really holds is bound
+  to it, the durable evidence of it is written, and the helper ends without
+  closing the fence). The record of that lifecycle is copied to the
+  protected place and the evidence directory is lost again, and the real
+  binary recovers the restore from the copy alone: the fence is closed, the
+  service admits again, and the removed data is still erased.
+  **The boundary of this case is staged and not killed**: the replay is the
+  real replay of the real take-over and the close of the restore is the one
+  that never ran, but the process that died is the helper and not the
+  restore. The two kill boundaries of the restore itself are the two cases
+  above, and they are real kills.
+
+The next import without a removal ledger sink is **measured green** with the
+real library: the helper calls `backup.Restore` without the removal ledger
+sink, against a real database and a real encrypted bundle, with a counter on
+the importer. The refusal is the conflict of the owed removals, the importer
+ran **zero** times, and the authoritative ledger and the rows of the database
+are unchanged. The refusal also gives the lifecycle back and puts the marker
+of the crashed restore back byte for byte, so the crashed restore stays
+recoverable.
+
+The barrier of the proof is a program of its own for every case, with the
+mode written into it, because the environment of the loader is an explicit
+allowlist of the production code and never carries a switch of the proof.
+The proof does not change that allowlist.
+
+The durable evidence of the owed ledger is written next to the marker of the
+lifecycle, and the access proof measures it: the directory is `0700` and
+the record is `0600`, both owned by the user of the service. The
+interruption proof measures it as well, while the restore is dead and the
+removals it owed are still missing from the database.
+
+## Open blockers
+
+1. **The fence access is fixed in the deployment, and the proof is green.**
+   `node deploy/verify-fence-access.mjs` runs the real fence code of the
+   privacy service in throwaway containers against a volume this run created:
+
+   The tool reports 15 steps, and every one of them passed on the tree of
+   this candidate (the run was made on the branch copy of that tree, which is
+   integrated as `a9f8031`):
+
+   | Step id | Result |
+   | --- | --- |
+   | `the-target-of-the-proof-is-accepted` | passed |
+   | `the-target-addresses-the-published-port` | passed |
+   | `the-runbook-and-the-configuration-name-the-same-fence` | passed |
+   | `the-services-mount-the-same-fence-volume` | passed |
+   | `the-proof-detects-a-diverging-fence-volume` | passed |
+   | `the-service-observes-the-fence-the-runbook-opens` | passed |
+   | `the-shared-fence-directory-is-prepared` | passed |
+   | `the-database-user-cannot-write-the-fence` | passed |
+   | `the-schema-of-the-run-is-owned` | passed |
+   | `the-service-takes-the-fence` | passed |
+   | `the-evidence-of-the-owed-ledger-is-owner-only` | passed |
+   | `the-service-refuses-while-the-fence-is-held` | passed (503) |
+   | `the-service-serves-again-after-the-fence-is-closed` | passed (200) |
+   | `the-schema-of-the-run-is-dropped` | passed |
+
+   The remedy is a deployment choice, not a mode decision: the database
+   service prepares the shared directory for the user the API observes it as,
+   and the restore runs as that user. The marker keeps its private mode. The
+   API therefore observes the open fence and refuses traffic during the
+   restore, and observes the closed fence and resumes afterwards.
+
+   **What this proof is not.** It proves the shared ownership, the permission
+   boundary, the serving gate, the agreement between the runbook, the note and
+   the rendered configuration, and the agreement of the two services on the
+   **volume** (a configuration that mounts another volume is rendered and has
+   to be refused). The encrypted restore itself is proved by
+   `node scripts/online/restore-proof.mjs`, which runs the real
+   `khabackup` against the fence lifecycle of the privacy service and reports
+   18 steps, all of them passed on the tree `d88eafc` of the branch
+   `t3/online-ops-evidence-gates`; that run was **not** repeated on the tree
+   of this candidate. The **crash of the restore
+   during its import** is run by
+   `node scripts/online/restore-interruption-proof.mjs`, which kills the real
+   restore of the real binary at a real barrier in front of the real psql and
+   reports 47 steps, all of them passed on the tree named above.
+2. **The host has not been verified.** Apache flushing, finite stream
+   delivery, the delivered CSP and CORS, the TLS chain, the private worker
+   reachability and the capacity need the real host and an authorized staging
+   session. No staging authorization is recorded, so these stay **not run**
+   and the release gates report the host requirement as external.
+3. **The migrations grant privileges of their own.** The online migrations
+   create `kamkm_online_api` and `kamkm_online_rules` and grant the first one
+   `SELECT, INSERT, UPDATE, DELETE` on the online tables, including the
+   append-only ones. The audit now sees all 40 of those tables. The
+   deployment connects as `kamkmchess_runtime`, the role the reviewed policy
+   describes, and provisioning revokes the privileges of the unused roles, so
+   no unused role keeps a grant. The grants themselves still exist in the
+   migrations.
+4. **The removal marker is a consistency check, not an authorisation
+   boundary.** The runtime role can write the removal request the redaction
+   guard demands, so the marker does not stop an actor that already controls
+   the API's SQL. The ownership proof in the application layer is the actual
+   boundary. Nothing in the deployment changes that, and the grant policy
+   does not grant `DELETE` on the removal requests.
+5. **A new migration needs a policy entry.** The audit names the missing
+   table and `--propose` prints the entry with the privileges the writer uses.
+   A privacy cleanup that deletes rows needs the matching `DELETE` in the
+   policy, and a plain function needs an entry in the function section so the
+   deployment revokes its EXECUTE from PUBLIC.
+
+## Not run, and why
+
+- Apache flushing, finite stream delivery, the delivered CSP and CORS, the TLS
+  chain and the private worker reachability need the real host and an
+  authorized staging session. No staging authorization is recorded, so these
+  stay **not run**.
+- The sustainable clients and games, the pool use, the CPU, the memory, the
+  storage and the connection counts of the host need the host. The local
+  numbers are not transferable.
+- The backup rotation, the private offsite copy and the restore rehearsal on
+  the host are not executed here.
+- The container proofs are reproduced by the workflow `container-proofs` on a
+  Linux engine, and the fixture of that workflow is published on every
+  interface because the helpers of the proofs reach it through
+  `host.docker.internal`. The report above was measured on the local engine
+  of the developer, so the Linux run of the proofs is **not measured here**.
+- The crash **after** the replay of the removal ledger is staged with the
+  production code of the privacy service and not killed: the replay is the
+  real replay of a real take-over and the close of the restore is the one
+  that never ran, but the process that died is the helper. The two kill
+  boundaries of the restore itself are real kills.
+
+**No deployment and no feature enablement happened.** The host record
+`docs/evidence/online/KHA-83-host.json` does not exist yet, so the release
+gates report the host requirement as external.

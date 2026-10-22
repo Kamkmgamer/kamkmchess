@@ -2,8 +2,10 @@ package online
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // Querier is the read surface shared by the connection pool and by a single
@@ -12,6 +14,15 @@ import (
 // acceptance transaction.
 type Querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// WriteQuerier is the write surface of a queryable transaction.
+//
+// A caller that can write may use it to take the shared locks of the service
+// inside its own transaction.
+type WriteQuerier interface {
+	Querier
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
 // SeatAuthorizer re-checks participant authorization inside the writer.
@@ -37,6 +48,22 @@ type Option func(*Service)
 // the writer keeps only its built-in seat ownership checks.
 func WithSeatAuthorizer(authorizer SeatAuthorizer) Option {
 	return func(s *Service) { s.authorizer = authorizer }
+}
+
+// ClockSource reads the authoritative time of the writer.
+//
+// The production source reads the database clock, so every writer of a match
+// judges a deadline against the same clock. A fixture source replaces it with
+// a movable time, which is what makes the lease and grace boundaries
+// reachable without waiting for them.
+type ClockSource func(ctx context.Context, q Querier) (time.Time, error)
+
+// WithClockSource installs the authoritative clock of the writer.
+//
+// The floor still applies: a reading that is older than the last accepted
+// timestamp of a match never moves an accepted event time backwards.
+func WithClockSource(source ClockSource) Option {
+	return func(s *Service) { s.clock = source }
 }
 
 // authorizeCredential re-checks the presented credential inside the caller's

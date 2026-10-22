@@ -20,6 +20,16 @@ export type IconName = keyof typeof paths;
 export function Icon({ name }: { name: IconName }) {
   return <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]} /></svg>;
 }
-export function IconButton({ icon, label, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { icon: IconName; label: string }) {
-  return <button type="button" className="button quiet icon-button" aria-label={label} title={label} {...props}><Icon name={icon} /></button>;
+
+/**
+ * An icon-only action.
+ *
+ * The button carries the name of its action twice: as the accessible name
+ * and as the hover label. The focus of the button stays visible, and the
+ * target of the button keeps the size of the other controls of the screen.
+ * The variant keeps the emphasis of the action it replaces.
+ */
+export function IconButton({ icon, label, variant = 'quiet', ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { icon: IconName; label: string; variant?: 'default' | 'primary' | 'quiet' }) {
+  const className = variant === 'default' ? 'button icon-button' : `button ${variant} icon-button`;
+  return <button type="button" className={className} aria-label={label} title={label} {...props}><Icon name={icon} /></button>;
 }

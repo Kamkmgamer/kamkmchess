@@ -751,6 +751,7 @@ func TestPostgresOnlineServerLifecycleSettlesADueMatchAndStopsOnRelease(t *testi
 			RulesWorkerEntry:      entry,
 			DeadlineSweepInterval: 20 * time.Millisecond,
 			DeadlineSweepBatch:    10,
+			RestoreFencePath:      t.TempDir(),
 		},
 	})
 	if err != nil {

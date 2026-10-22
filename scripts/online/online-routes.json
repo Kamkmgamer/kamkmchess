@@ -1,0 +1,42 @@
+{
+  "manifestVersion": 2,
+  "provisional": false,
+  "source": "docs/online/matching-interfaces.md (KHA-75/KHA-76 route contract), docs/architecture/online-updates.md and docs/architecture/online-presence-recovery-runner.md (KHA-70/KHA-71/KHA-73 presence, claim and runner routes)",
+  "note": "The route contract of the operational tooling. The tooling reads this manifest, compares it with the routes the production code registers, and reports a route the production code does not register as not_implemented. A scenario that depends on such a route is never counted as a passed acceptance scenario. A closed surface answers 404, so the tooling reads GET /v1/online/features first and reports a closed surface as 'disabled', never as a passed scenario. The API owner adds a route here in the same change that serves it.",
+  "routes": [
+    { "id": "features", "method": "GET", "path": "/v1/online/features", "family": "features", "state": "existing" },
+
+    { "id": "friend-invitation-create", "method": "POST", "path": "/v1/online/invitations", "family": "friend", "state": "existing" },
+    { "id": "friend-invitation-read", "method": "GET", "path": "/v1/online/invitations/{invitationID}", "family": "friend", "state": "existing" },
+    { "id": "friend-invitation-accept", "method": "POST", "path": "/v1/online/invitations/{invitationID}/accept", "family": "friend", "state": "existing" },
+    { "id": "friend-invitation-cancel", "method": "POST", "path": "/v1/online/invitations/{invitationID}/cancel", "family": "friend", "state": "existing" },
+    { "id": "friend-seat-credential", "method": "POST", "path": "/v1/online/invitations/{invitationID}/seat-credential", "family": "friend", "state": "existing" },
+    { "id": "rematch-propose", "method": "POST", "path": "/v1/online/rematches", "family": "friend", "state": "existing" },
+    { "id": "rematch-accept", "method": "POST", "path": "/v1/online/rematches/{rematchID}/accept", "family": "friend", "state": "existing" },
+    { "id": "rematch-seat-credential", "method": "POST", "path": "/v1/online/rematches/{rematchID}/seat-credential", "family": "friend", "state": "existing" },
+    { "id": "rematch-read", "method": "GET", "path": "/v1/online/matches/{matchID}/rematch", "family": "friend", "state": "existing" },
+
+    { "id": "queue-entry-create", "method": "POST", "path": "/v1/online/queue/entries", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-read", "method": "GET", "path": "/v1/online/queue/entries/{entryID}", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-ready", "method": "POST", "path": "/v1/online/queue/entries/{entryID}/ready", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-cancel", "method": "POST", "path": "/v1/online/queue/entries/{entryID}/cancel", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-keep-searching", "method": "POST", "path": "/v1/online/queue/entries/{entryID}/keep-searching", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-heartbeat", "method": "POST", "path": "/v1/online/queue/entries/{entryID}/heartbeat", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-match", "method": "POST", "path": "/v1/online/queue/entries/{entryID}/match", "family": "queue", "state": "existing" },
+    { "id": "queue-entry-fallback", "method": "POST", "path": "/v1/online/queue/entries/{entryID}/fallback", "family": "queue", "state": "existing" },
+
+    { "id": "match-command", "method": "POST", "path": "/v1/online/matches/{matchID}/commands", "family": "match", "state": "existing" },
+    { "id": "match-live", "method": "GET", "path": "/v1/online/matches/{matchID}", "family": "match", "state": "existing" },
+    { "id": "match-updates", "method": "GET", "path": "/v1/online/matches/{matchID}/updates", "family": "match", "state": "existing" },
+    { "id": "match-replay", "method": "GET", "path": "/v1/online/matches/{matchID}/replay", "family": "match", "state": "existing" },
+    { "id": "match-operation", "method": "GET", "path": "/v1/online/matches/{matchID}/operations/{operationID}", "family": "match", "state": "existing" },
+
+    { "id": "presence-read", "method": "GET", "path": "/v1/online/matches/{matchID}/presence", "family": "presence", "state": "existing" },
+    { "id": "presence-heartbeat", "method": "POST", "path": "/v1/online/matches/{matchID}/presence", "family": "presence", "state": "existing" },
+    { "id": "presence-keep-waiting", "method": "POST", "path": "/v1/online/matches/{matchID}/presence/keep-waiting", "family": "presence", "state": "existing" },
+    { "id": "match-claim", "method": "POST", "path": "/v1/online/matches/{matchID}/claim", "family": "presence", "state": "existing" },
+    { "id": "runner-lease-read", "method": "GET", "path": "/v1/online/matches/{matchID}/runner/lease", "family": "presence", "state": "existing" },
+    { "id": "runner-lease-write", "method": "POST", "path": "/v1/online/matches/{matchID}/runner/lease", "family": "presence", "state": "existing" },
+    { "id": "runner-request", "method": "POST", "path": "/v1/online/matches/{matchID}/runner/request", "family": "presence", "state": "existing" }
+  ]
+}

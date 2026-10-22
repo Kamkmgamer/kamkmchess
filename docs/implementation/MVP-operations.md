@@ -22,8 +22,9 @@ Scope boundaries that the rest of the repository depends on:
 
 | Path | Purpose |
 | --- | --- |
-| `backend/backup/` | Container format, rotation planner, deletion-ledger recovery |
+| `backend/backup/` | Container format, rotation planner with the thirty day maximum age, deletion-ledger recovery |
 | `backend/backup/cmd/khabackup/` | The `khabackup` operator command |
+| `backend/online/cmd/khasuspend/` | The `khasuspend` operator command of a planned restart |
 | `scripts/release/kha-backup.ps1` | Windows operator wrapper for `khabackup` |
 | `scripts/release/readiness-audit.mjs` | Offline deployment and boundary audit |
 | `scripts/release/readiness-audit.test.mjs` | Offline tests for that audit |
@@ -56,7 +57,7 @@ a secret, and it exits non-zero when a blocker is present. It checks:
 | Server boundary | No Go file references a model provider key or provider host; every API handler resolves a verified owner from context |
 | Identity | A Clerk browser SDK, when present, has CSP script/connect/frame origins. With no SDK installed, the audit reports an **external** gap rather than a pass |
 | Account storage | `CLOUD_STORAGE_ENABLED` is documented and disabled, and `api/index.go` enforces the gate with a generic `no-store` 503 |
-| Backup | Tooling and command are present, the runbook exists, and the local rehearsal record is checked in. Hosted rotation and a private destination are reported as **external** gaps until an operator runs them |
+| Backup | Tooling and command are present, the runbook exists, and the local rehearsal record is checked in. The rotation enforces the thirty day maximum age of the repo-managed bundles. Hosted rotation, the offsite copies and the schedule of the host are reported as **external** gaps until an operator runs and verifies them |
 | Hygiene | `.env` ignored, lockfiles and the Node pin present, `engines.node` agrees with `.node-version` |
 
 Severity is `blocker`, `warning`, `external` or `info`. `external` means only an
@@ -146,6 +147,63 @@ after the reference time, because a future date usually means a clock problem.
 Two bundles claiming one label is an error, not a coin flip. A file in the
 directory that cannot be parsed is reported as unreadable and left alone.
 
+#### The maximum age of thirty days
+
+The count of the rotation is not a promise about the age of a copy: seven daily
+and four weekly copies span more than thirty days when the rotation did not
+run, and a copy that never claims a slot can stay forever. The rotation
+therefore applies a **second and independent rule**: an ordinary bundle of the
+managed directory that is older than thirty days is retired even when a slot of
+the count would keep it.
+
+The boundary is exact and it is proved by the tests:
+
+| Age of the bundle at the reference time | Result |
+| --- | --- |
+| younger than thirty days | kept by the count of the rotation |
+| exactly thirty days | kept: it is still inside the maximum |
+| older than thirty days (one second is enough) | retired, even when a slot is free |
+
+A bundle the rotation may not delete is **never** deleted:
+
+* a **protected** bundle (`--protect LABEL`) is kept whatever its age;
+* a bundle **without a creation time** is kept;
+* a bundle **dated after the reference time** is kept;
+* a bundle whose **manifest cannot be read** is left alone.
+
+Every one of those leaves the retention of the directory **unresolved**: the
+plan names it under `unresolved`, with the reason, and the command exits with
+a **nonzero status** while it remains. The run of the backup therefore cannot
+claim success while an old recovery copy is still there. `deploy/backup.sh`
+runs the rotation with `--apply`, so the daily run fails loudly instead of
+reporting a clean backup.
+
+The operator resolves an unresolved bundle explicitly, never by ignoring the
+failure: retire the bundle (delete it, or move it to the private destination
+that holds the recovery copies), or - when the bundle is protected - remove the
+protection so the rotation can retire it by age. A protection is not a
+retention exemption: it only says the rotation never deletes that bundle. A
+bundle without a creation time and a bundle dated after the reference time are
+operator questions: inspect the bundle, retire it when it is no longer needed,
+and check the clock of the host.
+
+The rotation never descends into a subdirectory. The durable evidence of the
+restores lives in `/backups/restore-evidence`, next to the bundles, and it is
+not a candidate of the rotation: the evidence of a restore is never retired by
+the age rule.
+
+**What this does not prove.** The rotation only sees the managed directory of
+the host. A copy of the bundles on an offsite store, a copy on the operator's
+own machine and a copy in any other destination are **not** covered by the
+maximum age, and the rotation can neither reach nor prove them. The schedule
+that runs `deploy/backup.sh` is a property of the host, not of this tree. The
+deployed store inventory and the schedule therefore still need owner and host
+verification, and the `recovery_sanitized_at` of a removal is **not** set by
+the rotation: a local rotation cannot prove that the external copies were
+sanitized, so the sanitization ledger of `backend/privacy/ledger.go` stays
+unset. See
+[`docs/online-history-privacy-contract.md`](../online-history-privacy-contract.md).
+
 Delete an applied bundle from a *separate* private destination if the operator's
 retention requires it; this tool only rotates its own directory.
 
@@ -156,9 +214,218 @@ retention requires it; this tool only rotates its own directory.
 go run ./backend/backup/cmd/khabackup plan --file /backups/weekly-2026-W42.kha
 
 # 2. Execute, reapplying the newer daily ledger so nothing deleted since is resurrected.
-go run ./backend/backup/cmd/khabackup restore --file /backups/weekly-2026-W42.kha \
-  --newer-ledger /backups/daily-2026-10-18.kha --apply
+#
+# The two services mount **one** shared volume at the fence path. The path
+# alone is not enough: a service that mounts another volume never sees the
+# marker of the restore and keeps serving during the import.
+#
+# The service is stopped and drained before the import. The fence refuses new
+# admissions, but it cannot take back a request that was already admitted, so a
+# write that is still in flight would not be excluded by the restored copy.
+# The restore refuses to run without a durable fence, and it has to run as the
+# user the API observes the fence as, so the marker directory stays private to
+# that user and the API can observe it.
+#
+# The secret file stays private: it is owned by the operator and has mode
+# 0600, so the restore user cannot read it. The shell of the container reads
+# it as root and hands the values to the restore through the environment; the
+# restore itself never reads the file and never sees a secret as an argument.
+# `gosu` drops to the restore user with that environment, so the fence stays
+# private to the user the API observes it as.
+#
+# The fence path is the **parent directory** the compose files configure in
+# both services with `ONLINE_RESTORE_FENCE_PATH`. The restore writes the owner
+# of the fence into `<parent>/restore-fence/owner` and takes the sibling
+# `<parent>/restore-fence.lock`. The API does not read that owner marker: its
+# admission check only observes the marker directory `<parent>/restore-fence`,
+# and it refuses to serve while that directory exists. A path below the parent
+# would be a *different* fence: the restore would hold a fence the API never
+# observes, and the API would keep serving during the import.
+docker compose -f postgres.compose.yml -f api.compose.yml stop api
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec gosu 65532:65532 /opt/kamkmchess/khabackup restore --file /backups/weekly-2026-W42.kha \
+    --newer-ledger /backups/daily-2026-10-18.kha \
+    --fence /var/lib/kamkmchess/restore-fence \
+    --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE --apply'
+docker compose -f postgres.compose.yml -f api.compose.yml start api
+
+# The restore names itself: the command line of the restore cannot name it,
+# and the identifier of the restore is the one the marker of the lifecycle
+# carries. The operator reads it there when a restore has to be recovered.
+
+# The API is stopped and drained before the restore, and it is started again
+# after the removal ledger was replayed and the fence was closed.
+#
+# The fence refuses new admissions, but it cannot take back a request that
+# was already admitted: an accepted write that is still in flight would not
+# be excluded by the fence, and the restored copy would not carry it. The
+# drain is therefore part of the procedure and not a convenience.
 ```
+
+Beside the marker of the lifecycle the fence parent holds a second
+directory, `<parent>/restore-requirements`, with the durable evidence of the
+removal ledger that every restore owed. The import replaces the schema of the
+target database, so a removal that only the live database carried would be
+destroyed by the import itself; the evidence lives outside the database, is
+written before the import starts, and is readable by its owner only
+(`0700` for the directory, `0600` for the records).
+
+The record of a restore is named after the restore:
+`<parent>/restore-requirements/<restore-id>.json`. There is no other suffix
+and no other name. The recovery reads the record of the restore it names, and
+a record with another name is a record of another restore.
+
+That directory is **never cleaned by hand**, and neither is the gate of a
+restore. The newest record is retained on purpose: it is the evidence that
+the last restore closed the fence it owed, and the next restore discharges
+the records whose removals it applied. A record is removed by the restore
+that applied the removal, never by an operator.
+
+The directory belongs in the **protected backup** of the deployment, next to
+the encrypted bundles, and it is restored with them: a restore of a database
+without the evidence of the pending restores cannot replay the removals they
+owed. The file of one restore can also be restored on its own, and the
+recovery then proves the ledger it owes against the digest the marker names
+(`--evidence`).
+
+The copy is made by `deploy/copy-restore-evidence.sh`, and the backup
+procedure of the deployment runs the very same program, so the copy is in the
+backup of the deployment with the bundles. The destination is
+`/backups/restore-evidence`: `/backups` is the bind mount of the deployment
+that holds the encrypted bundles, so the copy survives the recreation of the
+container and it is covered by the backup that the operator copies off the
+server. A path outside a mounted directory would be lost with the container
+it lives in, and the artefact whose whole purpose is to survive the loss of
+the evidence directory may not be such a path.
+
+### The identifier of the restore
+
+The identifier of a restore is the one the marker of the lifecycle names. The
+command line of the restore cannot name it, so the operator reads it with
+`deploy/check-restore-id.sh`, which **validates it before it is used in a
+path**: the identifier becomes the name of a file, so a name that carries a
+path separator is refused.
+
+The rule of the program is the rule of the production code: an alphanumeric
+first character and eight to one hundred and twenty eight characters in
+total (`^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$`). The program is the one the
+proofs exercise, so the rule of the procedure and the rule of the code cannot
+drift apart.
+
+```sh
+# The marker of the lifecycle names the restore that crashed, and the
+# identifier is checked against the rule of the production code.
+RESTORE_ID=$(docker compose -f postgres.compose.yml -f api.compose.yml \
+  exec -T postgres sh /opt/kamkmchess-operator/check-restore-id.sh \
+  /var/lib/kamkmchess/restore-fence/restore-fence/owner)
+```
+
+The identifier is handed to the container as a **positional argument** of the
+shell. It is never an environment variable of the host and never a part of a
+path that the container builds, and `sh -c 'program' name argument` sets `$0`
+to `name` and `$1` to the argument, so the program inside the container reads
+the identifier from its own argument.
+
+### The protected copy of the evidence
+
+The copy of the records is made **while the lock of the lifecycle is held**,
+by the user that owns the lifecycle. Stopping the API stops the service, not
+a restore: the restore is a separate process of the database container and
+it writes the evidence directory itself. The lock of the lifecycle
+(`<parent>/restore-fence.lock`) is held by a running restore for the whole
+lifecycle of the restore and is released by the operating system when the
+restore dies, so it is the proof that no restore is running.
+
+```sh
+# The API is stopped and drained, so the service admits nothing while the
+# copy is made.
+docker compose -f postgres.compose.yml -f api.compose.yml stop api
+
+# The copy is made by the program of the deployment, under the lock of the
+# lifecycle and as the user that owns it. The destination is inside the
+# directory of the bundles, which is the bind mount of the deployment and the
+# directory the backup procedure owns.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres \
+  sh /opt/kamkmchess-operator/copy-restore-evidence.sh /backups/restore-evidence
+
+# The protected copy is in the backup of the deployment, with the bundles,
+# and it is restored to the same private path before a recovery that needs it.
+```
+
+The lock of the lifecycle is taken **as the user that owns it**, so the file
+of the lock is created by that user with the mode the production code opens
+it with (`0600`, owned by `65532`). A lock file that the operator created as
+root would be refused by the restore later, and the deployment could neither
+restore nor recover.
+
+The exit codes of the copy program are the ones the caller needs: `0` when
+the evidence was copied or when there was nothing to copy, `75` when a
+restore holds the lock of the lifecycle (the copy is deferred to the next
+run), and `1` when the copy failed for any other reason. The backup
+procedure of the deployment tells the two apart: the deferral is written to
+the log and the backup continues, and every other failure **fails the
+backup**, because the protected backup of the evidence is then incomplete
+and must never be reported as complete.
+
+### The recovery of a restore that crashed
+
+A restore that was killed leaves the marker of the lifecycle behind and the
+service stays closed, and the procedure is:
+
+```sh
+# The API is stopped and drained, so no write is admitted while the restore
+# runs. A removal that was admitted before the fence was taken can still
+# commit after the ledgers were read, and the import can lose it.
+docker compose -f postgres.compose.yml -f api.compose.yml stop api
+
+# The recovery of a restore that crashed. It does **not** replay anything:
+# it verifies that the removal ledger the restore owed is applied and erased
+# in the database, releases the gate and closes the fence. A database that
+# lost the removals is not released: the recovery refuses and the gate stays
+# closed, and only the take-over below imports and replays.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec gosu 65532:65532 /opt/kamkmchess/khabackup recover --file /backups/weekly-2026-W42.kha \
+    --restore-id "$1" \
+    --fence /var/lib/kamkmchess/restore-fence \
+    --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE' \
+  khabackup "$RESTORE_ID"
+
+# The recovery of a restore whose evidence directory was lost: the evidence
+# of the restore is read from the protected copy of the record, and the
+# recovery proves the ledger it owes against the digest the marker names.
+#
+# The recovery reads **no bundle and no passphrase**: the copy of the record
+# is the only description of what the restore owed. The command carries no
+# --file and no --passphrase-env, and the passphrase is removed from the
+# environment before the privileges are dropped, so the restore user never
+# has it.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  unset KHA_BACKUP_PASSPHRASE
+  exec gosu 65532:65532 /opt/kamkmchess/khabackup recover \
+    --restore-id "$1" \
+    --evidence "$2" \
+    --fence /var/lib/kamkmchess/restore-fence \
+    --database-url-env DATABASE_URL' \
+  khabackup "$RESTORE_ID" "/backups/restore-evidence/$RESTORE_ID.json"
+
+# The take-over of a restore that crashed before the evidence was written: it
+# re-imports the bundle and replays the removal ledger again.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec gosu 65532:65532 /opt/kamkmchess/khabackup restore --file /backups/weekly-2026-W42.kha \
+    --fence /var/lib/kamkmchess/restore-fence --takeover \
+    --database-url-env DATABASE_URL --passphrase-env KHA_BACKUP_PASSPHRASE --apply'
+
+docker compose -f postgres.compose.yml -f api.compose.yml start api
+```
+
+A take-over that is refused before its import gives the lifecycle back and
+puts the marker of the crashed restore back byte for byte, so the crashed
+restore stays recoverable and the operator resolves it with the recovery
+above.
 
 The order inside a restore is fixed and tested:
 
@@ -179,7 +446,89 @@ the rotation expires them, and reapplying tombstones through the rotation is
 what stops an older copy from bringing it back. There is no application age
 purge: an account is retained until the owner deletes it.
 
-If a restore fails at any step before step 4, the target database is unchanged.
+If a restore fails before the import commits, the target database is
+unchanged. A restore that fails **after** the import committed and before the
+removal ledger was replayed leaves the restored database without the removals
+that only the live database carried: the recovery refuses it, the gate stays
+closed, and the take-over replays the owed ledger from the durable evidence.
+
+### A planned restart of the API
+
+A restart of the API is an interruption, and an interruption is never charged
+to a player. The interval of the interruption has to be known, so the restart
+is announced **before** the service stops. The announcement is a durable
+boundary, and the boundary closes the durable gate of the service.
+
+Without the announcement the service can only infer the interruption from the
+stale liveness record when it comes back. The inferred interval runs from the
+last moment the service was seen alive, so a restart that lasts longer than
+the liveness TTL of thirty seconds is read as an unknown outage: every
+unfinished clock is refunded for the whole interval and the runner work of the
+old epoch is fenced.
+
+The announcement is the private operator command `khasuspend`. There is no
+public route for it: a route that closes the gate would be an unauthenticated
+way to stop the service. The database url is read only from the environment
+variable that the operator names, it is never accepted as an argument and it
+is never printed.
+
+The command runs inside the database container, with the private
+`backup.env` of the deployment. That file carries the administrative role, and
+the administrative role owns the tables of the online service. The command
+needs those privileges: the recovery of a planned interruption refreshes the
+liveness of the service, and a role without the update privilege on the
+liveness cannot write it.
+
+```sh
+# 1. The planned interruption is persisted. The durable gate closes, so no
+#    mutation is admitted from this moment on. The plan is idempotent: a
+#    second run finds the pending boundary and writes no second one.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend plan --database-url-env DATABASE_URL'
+
+# 2. The API is stopped and drained.
+docker compose -f postgres.compose.yml -f api.compose.yml stop api
+
+# 3. The API is started again. Its own recovery applies the planned boundary:
+#    the announced interval is refunded to the unfinished matches, the
+#    canonical state is published before a resumed action is accepted, and the
+#    durable gate opens again.
+docker compose -f postgres.compose.yml -f api.compose.yml start api
+
+# 4. The operator verifies the state of the gate.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend status --database-url-env DATABASE_URL'
+```
+
+The two remaining commands cover the rest of the procedure:
+
+```sh
+# The restart was called off. The plan is cancelled, the durable gate opens
+# again and no clock is refunded, because no interruption took place. The row
+# of the plan stays the evidence that the plan existed.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend abort --database-url-env DATABASE_URL'
+
+# The API could not finish its own recovery. The operator applies the planned
+# boundary by hand: the announced interval is refunded, the canonical state is
+# published and the durable gate opens again.
+#
+# The command refuses when no planned interruption is pending. The recovery of
+# an *unexpected* interruption belongs to the service itself and is never an
+# operator decision.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend recover --database-url-env DATABASE_URL'
+```
+
+The exit code of the command is `0` when it did what it was asked and `1` when
+it refused or failed. A refusal never leaves the service in a state the
+operator did not ask for: the plan refuses without the named environment
+variable, the recovery refuses without a pending planned interruption, and the
+abort refuses when the interruption was applied already.
 
 ### Recovery situations and what to do
 
@@ -254,9 +603,24 @@ The Go tests are offline and deterministic: they use a fake dumper, a fake
 ledger and a fake restorer, so no database, network or credential is needed.
 They cover wrong-passphrase rejection, ciphertext and manifest tampering,
 owner-only bundle permissions, the size bound, canonical ledger encoding, the
-seven-daily/four-weekly rotation and its refusals, the apply/refresh/keep
-deletion recovery, "no database write before authentication", and that a failed
-load does not run recovery.
+seven-daily/four-weekly rotation and its refusals, the thirty day maximum age
+with its exact boundary, the unresolved retention of a protected bundle and of
+an unreadable bundle, the apply/refresh/keep deletion recovery, "no database
+write before authentication", and that a failed load does not run recovery.
+
+The rotation tests never run `--apply` against a real path: the new tests
+print the plan and read the directory, so the maximum age is proved without a
+deletion.
+
+```sh
+node scripts/online/backup-coverage.mjs             # the local retention policy of the audit
+node --test scripts/online/online-ops.test.mjs       # the mutations of the audit
+```
+
+The audit reads the repository only. It reports the local retention policy of
+the managed directory - the declared maximum age, the failure of the rotation
+on an unresolved bundle, the rotation of the deployment and the evidence
+outside the pruning - and it certifies nothing about the deployed store.
 
 ## What is still open
 
@@ -268,7 +632,18 @@ These are external gaps. The tooling above does not close any of them.
   game deletions. Daily server backups and certificate checks are scheduled.
 * **Recurring offsite copies remain open.** Encrypted bundles stay in a private
   server directory, with an initial recovery copy outside the server. The daily
-  cron does not synchronize that separate recovery copy.
+  cron does not synchronize that separate recovery copy. The thirty day maximum
+  age of the rotation reaches the managed directory of the host and **nothing
+  else**: the offsite copies are not covered by it, the deployed store
+  inventory is not known to this tree, and the schedule that runs the rotation
+  is a property of the host. Both still need owner and host verification.
+* **The sanitization ledger of a removal stays unset.** The rotation retires
+  the local copies of the managed directory; it cannot prove that an offsite
+  copy was sanitized, so `recovery_sanitized_at` is not written and
+  `PendingRecoverySanitizations` and `MarkRecoverySanitized` still have no
+  production caller. The thirty day target of the contract is therefore still
+  **not met** by this tree; the local rotation only enforces the age of the
+  bundles it manages.
 * **No free-tier capacity has been measured.** Archive growth, quotas, inactivity
   pauses and read-only modes are unrecorded. If free operation cannot hold the
   contract, that constraint returns to the owner before a purchase.

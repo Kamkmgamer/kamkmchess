@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,6 +22,76 @@ type Service struct {
 	rulesPolicyVersion string
 	authorizer         SeatAuthorizer
 	deadlineScan       deadlineScan
+	health             *HealthReporter
+	// clock reads the authoritative time of the writer. It is the database
+	// clock in production and a movable source in the deterministic fixtures.
+	clock ClockSource
+	// cancellation tells whether an evaluation was cancelled by its
+	// caller rather than failed by the dependency.
+	cancellation func(error) bool
+	// busyClassifier tells whether an evaluation found the rules process
+	// occupied by a running request.
+	busyClassifier func(error) bool
+	// recoveryRequired closes the mutation path until the canonical
+	// recovery has published the adjusted state.
+	recoveryRequired atomic.Bool
+	// recovered records that the canonical recovery completed.
+	recovered atomic.Bool
+
+	// episodeMu serializes the transitions of the failure episode.
+	//
+	// The monitor is one goroutine, but a participant request evaluates the
+	// rules process on another one, so a success and a failure of the
+	// dependency can complete at the same time.
+	episodeMu sync.Mutex
+	// episodeOpen records that the failure episode of this instance is
+	// open.
+	episodeOpen bool
+	// episodeEpoch is the service epoch of the first observation of the
+	// open failure episode of this instance.
+	//
+	// The episode is the unresolved failure of the rules dependency of this
+	// instance. Its identity is the epoch of its first observation, and it
+	// does not change while the episode is open, so every failure of the
+	// same outage plans the same interruption, even when a peer recovered
+	// it in between. Zero means that the epoch of the first observation was
+	// unknown.
+	episodeEpoch int64
+	// episodeFirstSeq is the number of the first observation of the open
+	// episode.
+	//
+	// The identity of the episode belongs to the earliest observation. An
+	// observation that is older and arrives later may only refine it while
+	// no interruption was planned with it.
+	episodeFirstSeq int64
+	// episodeBoundary is the identity of the planned interruption of the
+	// open episode.
+	//
+	// It is the boundary of the outage, so the next plan of the same outage
+	// finds it and changes nothing. It is empty while no interruption was
+	// planned yet.
+	episodeBoundary string
+	// episodePlanned records that an interruption was planned with the
+	// identity of the episode.
+	//
+	// The identity of a planned interruption is immutable: an observation
+	// that arrives later may not move the boundary of the outage. A new
+	// episode starts without it.
+	episodePlanned bool
+	// latestFailureSeq is the number of the newest failed observation.
+	//
+	// A success that is not newer than it answered before that failure, so
+	// the failure is the current one and the episode stays open.
+	latestFailureSeq int64
+	// latestSuccessSeq is the number of the newest successful observation.
+	//
+	// A failure that is older than it is stale: the dependency answered
+	// after that failure was made, so the failure is not the current one.
+	latestSuccessSeq int64
+	// observationSeq numbers the observations of the rules dependency, so
+	// the order of a success and of a failure is decided by the moment they
+	// were made and not by the moment they completed.
+	observationSeq atomic.Int64
 }
 
 // Open binds the online writer to a pool. It does not mutate schema.
@@ -61,6 +133,11 @@ func (s *Service) Execute(ctx context.Context, actor ParticipantRef, cmd Command
 	}
 	if err := cmd.Validate(); err != nil {
 		return CommandResult{}, err
+	}
+	// The canonical state of an interrupted service is published before
+	// resumed actions are accepted, so a mutation waits for the recovery.
+	if s.recoveryRequired.Load() && !s.recovered.Load() {
+		return CommandResult{}, ErrUnavailable
 	}
 	switch cmd.Action.Kind {
 	case ActionCreateMatch:
@@ -135,14 +212,30 @@ func (s *Service) createMatch(ctx context.Context, actor ParticipantRef, cmd Com
 	if s.evaluator == nil {
 		return CommandResult{}, ErrUnavailable
 	}
+	// The gate is checked before the rules process runs.
+	//
+	// The authoritative check stays inside the acceptance transaction, so a
+	// creation that raced a suspension is still refused there. The early
+	// check only keeps the refused traffic away from the worker: a closed
+	// gate must not start a worker, and it must not hold the slot that the
+	// repair of the closed gate needs.
+	if state, gateErr := s.gateState(ctx, s.db); gateErr != nil || !state.Open {
+		return CommandResult{}, ErrUnavailable
+	}
 	// Validate the immutable setup with no transaction or database lock held.
+	seq := s.observationSeq.Add(1)
+	causal, _ := s.causalEpoch(ctx)
 	if err = s.evaluator.ValidateSetup(ctx, BuildRulesInput(match, match.Moves, "")); err != nil {
 		if errors.Is(err, ErrInvalidContract) || errors.Is(err, ErrActionNotAllowed) {
 			return CommandResult{}, err
 		}
+		// Keep the epoch observed before evaluation. A peer may have recovered
+		// the outage while this evaluation was still waiting for the worker.
+		s.observeFailure(ctx, causal, seq, err, false)
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	tx, err := s.db.Begin(ctx)
+	s.observeSuccess(ctx, seq, false)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -258,7 +351,7 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 			return s.resolveOpeningExpired(ctx, actor, cmd, fingerprint, snapshot)
 		}
 		if snapshot.Clock.IsExpired(sampled) {
-			return s.resolveExpiredMatch(ctx, actor, cmd, fingerprint, snapshot)
+			return s.resolveExpiredMatch(ctx, actor, cmd.MatchID, cmd.OperationID, cmd.Seat, fingerprint, snapshot)
 		}
 	}
 	if snapshot.Status != MatchActive {
@@ -275,8 +368,21 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 	if s.evaluator == nil {
 		return CommandResult{}, ErrUnavailable
 	}
+	// The gate is checked before the rules process runs.
+	//
+	// The authoritative check stays inside the acceptance transaction, so a
+	// command that raced a suspension is still refused there and a command
+	// that started before the gate closed may still commit. The early check
+	// only keeps the refused traffic away from the worker: a closed gate
+	// must not start a worker, and it must not hold the slot that the
+	// repair of the closed gate needs.
+	if state, gateErr := s.gateState(ctx, s.db); gateErr != nil || !state.Open {
+		return CommandResult{}, ErrUnavailable
+	}
 	input := BuildRulesInput(snapshot, snapshot.Moves, cmd.Action.SubmitMove.UCI)
 	// External rules evaluation happens with no database lock or transaction held.
+	seq := s.observationSeq.Add(1)
+	causal, _ := s.causalEpoch(ctx)
 	candidate, err := s.evaluator.Evaluate(ctx, input)
 	if err != nil {
 		// A refused proposal is a contract outcome, not an unavailable
@@ -284,11 +390,15 @@ func (s *Service) submitMove(ctx context.Context, actor ParticipantRef, cmd Comm
 		if errors.Is(err, ErrActionNotAllowed) || errors.Is(err, ErrStaleCandidate) || errors.Is(err, ErrInvalidContract) {
 			return CommandResult{}, err
 		}
+		// Keep the epoch observed before evaluation, including when a peer
+		// recovered the outage before this failure reached the caller.
+		s.observeFailure(ctx, causal, seq, err, false)
 		return CommandResult{}, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
 	if err = candidate.Validate(); err != nil {
 		return CommandResult{}, err
 	}
+	s.observeSuccess(ctx, seq, false)
 	return s.applyWorkerCandidate(ctx, actor, cmd, fingerprint, candidate)
 }
 
@@ -349,13 +459,13 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 	if candidate.EvaluatedVersion != cmd.ExpectedVersion || candidate.ControlEpoch != cmd.ControlEpoch {
 		return CommandResult{}, ErrStaleCandidate
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
 	defer tx.Rollback(ctx)
 
-	match, clock, decision, err := lockMatch(ctx, tx, cmd.MatchID)
+	match, clock, decision, err := s.lockMatch(ctx, tx, cmd.MatchID)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -390,17 +500,24 @@ func (s *Service) applyWorkerCandidate(ctx context.Context, actor ParticipantRef
 	// The first sample happened before the authorization lock, so a command
 	// that waited for a revocation, or for a busy seat, must not be judged
 	// against a clock reading from before that wait.
-	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+	if decision, err = s.sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+		return CommandResult{}, err
+	}
+	// The runner lease fences the acceptance itself. A reply from a runner
+	// whose lease was revoked, whose lease expired, whose control epoch is
+	// older, whose service epoch was fenced by a recovery, or whose lease
+	// belongs to another turn never becomes an accepted move.
+	if err = s.authorizeRunnerLease(ctx, tx, match, cmd, decision); err != nil {
 		return CommandResult{}, err
 	}
 	// The opening reply window is reconciled before any other deadline. An
 	// unanswered reply ends the match, so a late intent cannot become a move.
 	if clock.ReplyExpired(decision) && match.Status == MatchActive {
-		return s.commitOpeningAbort(ctx, tx, cmd, fingerprint, match, clock, decision)
+		return s.commitOpeningAbort(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint, match, clock, decision)
 	}
 	if clock.IsExpired(decision) && match.Status == MatchActive {
 		_ = tx.Rollback(ctx)
-		return s.resolveExpiredMatch(ctx, actor, cmd, fingerprint, match)
+		return s.resolveExpiredMatch(ctx, actor, cmd.MatchID, cmd.OperationID, cmd.Seat, fingerprint, match)
 	}
 	if match.Status != MatchActive {
 		return CommandResult{}, ErrMatchEnded
@@ -489,13 +606,13 @@ func (s *Service) executeOffer(ctx context.Context, actor ParticipantRef, cmd Co
 	if err != nil {
 		return CommandResult{}, err
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
 	defer tx.Rollback(ctx)
 
-	match, clock, decision, err := lockMatch(ctx, tx, cmd.MatchID)
+	match, clock, decision, err := s.lockMatch(ctx, tx, cmd.MatchID)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -518,15 +635,15 @@ func (s *Service) executeOffer(ctx context.Context, actor ParticipantRef, cmd Co
 	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
 		return CommandResult{}, err
 	}
-	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+	if decision, err = s.sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
 		return CommandResult{}, err
 	}
 	if clock.ReplyExpired(decision) && match.Status == MatchActive {
-		return s.commitOpeningAbort(ctx, tx, cmd, fingerprint, match, clock, decision)
+		return s.commitOpeningAbort(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint, match, clock, decision)
 	}
 	if clock.IsExpired(decision) && match.Status == MatchActive {
 		_ = tx.Rollback(ctx)
-		return s.resolveExpiredMatch(ctx, actor, cmd, fingerprint, match)
+		return s.resolveExpiredMatch(ctx, actor, cmd.MatchID, cmd.OperationID, cmd.Seat, fingerprint, match)
 	}
 	if match.Status != MatchActive {
 		return CommandResult{}, ErrMatchEnded
@@ -630,13 +747,13 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 	if err != nil {
 		return CommandResult{}, err
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
 	defer tx.Rollback(ctx)
 
-	match, clock, decision, err := lockMatch(ctx, tx, cmd.MatchID)
+	match, clock, decision, err := s.lockMatch(ctx, tx, cmd.MatchID)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -668,17 +785,23 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 	// The first sample happened before the authorization lock, so a command
 	// that waited for a revocation, or for a busy seat, must not be judged
 	// against a clock reading from before that wait.
-	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+	if decision, err = s.sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+		return CommandResult{}, err
+	}
+	// A command that presents a runner lease may only act while the lease
+	// is live. A stale runner may not resign, spend a recovery attempt or
+	// change the control of its seat.
+	if err = s.authorizePresentedLease(ctx, tx, match, cmd, decision); err != nil {
 		return CommandResult{}, err
 	}
 	// The opening reply window is reconciled before any other deadline. An
 	// unanswered reply ends the match, so a late intent cannot become a move.
 	if clock.ReplyExpired(decision) && match.Status == MatchActive {
-		return s.commitOpeningAbort(ctx, tx, cmd, fingerprint, match, clock, decision)
+		return s.commitOpeningAbort(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint, match, clock, decision)
 	}
 	if clock.IsExpired(decision) && match.Status == MatchActive {
 		_ = tx.Rollback(ctx)
-		return s.resolveExpiredMatch(ctx, actor, cmd, fingerprint, match)
+		return s.resolveExpiredMatch(ctx, actor, cmd.MatchID, cmd.OperationID, cmd.Seat, fingerprint, match)
 	}
 	if match.Status != MatchActive && cmd.Action.Kind != ActionRemovePublicReplay {
 		return CommandResult{}, ErrMatchEnded
@@ -692,6 +815,10 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeAccepted, Version: nextVersion, ControlEpoch: match.ControlEpoch, DecidedAt: decision}
 	switch cmd.Action.Kind {
 	case ActionResign:
+		// A resignation is the owner's own decision. The owner's manual
+		// resign never presents a runner lease, so it is never fenced by a
+		// missing lease. A runner that resigns presents its lease, and a
+		// stale lease is refused like every other stale action.
 		other, _ := cmd.Seat.Other()
 		result := &Result{Kind: ResultWin, Winner: &other, Reason: ReasonResignation}
 		match.Status = MatchCompleted
@@ -795,12 +922,21 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 			return CommandResult{}, err
 		}
 	case ActionRecordRecoveryAttempt:
-		if err := requireSideToMove(match.PositionFEN, match.Clock, cmd.Seat); err != nil {
-			return CommandResult{}, err
-		}
+		// A spent recovery attempt is what the agent reports about its own
+		// turn, so an agent seat needs the lease of its runner. The owner
+		// never spends that budget by hand.
 		seat, ok := match.Seat(cmd.Seat)
 		if !ok {
 			return CommandResult{}, ErrNotAuthorized
+		}
+		// A spent recovery attempt is what the agent reports about its own
+		// turn, so an agent seat needs the lease of its runner. The owner
+		// never spends that budget by hand.
+		if seat.Control.Kind != ControlHuman && cmd.LeaseID == "" {
+			return CommandResult{}, ErrNotAuthorized
+		}
+		if err := requireSideToMove(match.PositionFEN, match.Clock, cmd.Seat); err != nil {
+			return CommandResult{}, err
 		}
 		switch cmd.Action.Recovery.Attempt {
 		case RecoveryIllegalMove:
@@ -851,6 +987,15 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		if err := control.Validate(); err != nil {
 			return CommandResult{}, err
 		}
+		// The declared label is resolved to the label that may be published
+		// before it is accepted. The accepted event, the stored event and the
+		// returned receipt therefore carry the same publishable label, and a
+		// private routing identity never reaches a response body.
+		resolvedControl, err := s.resolveDeclaredControl(ctx, tx, match.MatchID, cmd.Seat, control)
+		if err != nil {
+			return CommandResult{}, err
+		}
+		control = resolvedControl
 		match.ControlEpoch++
 		clock = match.Clock
 		for i := range match.Seats {
@@ -861,6 +1006,13 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		}
 		if _, err = tx.Exec(ctx, `UPDATE online_seats SET control_kind=$1,model_label=$2,control_epoch=$3,updated_at=$4 WHERE match_id=$5 AND seat=$6`,
 			string(control.Kind), control.ModelLabel, match.ControlEpoch, decision, match.MatchID, string(cmd.Seat)); err != nil {
+			return CommandResult{}, err
+		}
+		// The control change fences the runner of that seat at once. The old
+		// runner may still have a provider request in flight, so the lease
+		// that carries the uncertain request is closed, not silently
+		// dropped.
+		if err = revokeSeatRunnerLease(ctx, tx, match.MatchID, cmd.Seat, decision, LeaseRevokeControlChange); err != nil {
 			return CommandResult{}, err
 		}
 		event.Kind = EventControlChange
@@ -883,6 +1035,21 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 		}
 		if _, err = tx.Exec(ctx, `INSERT INTO online_deletion_markers(marker_id,marker_kind,subject_kind,subject_id,match_id,reason,requested_at,applied_at) VALUES($1,'replay_removal','match',$2,$2,$3,$4,$4)`,
 			markerID, match.MatchID, cmd.Action.RemoveReplay.Reason, decision); err != nil {
+			return CommandResult{}, err
+		}
+		// The published replay of the public history route is revoked by the
+		// same removal, so the removal reaches every public projection of
+		// the match. The identity of the row is kept, so the history of
+		// the removal stays readable.
+		if _, err = tx.Exec(ctx, `UPDATE online_public_replays SET replay_json='{}'::jsonb,revoked_at=$1,revocation_marker_id=$2 WHERE match_id=$3 AND revoked_at IS NULL`,
+			decision, markerID, match.MatchID); err != nil {
+			return CommandResult{}, err
+		}
+		// The removal is recorded in the durable removal ledger, so a restore
+		// of an older backup replays it before the restored database serves
+		// traffic. Without the record, a bundle that was sealed before this
+		// removal would restore the public replay of the match.
+		if err = recordReplayRemoval(ctx, tx, match.MatchID, markerID, cmd.Action.RemoveReplay.Reason, decision); err != nil {
 			return CommandResult{}, err
 		}
 		event.Kind = EventReplayRemoved
@@ -943,7 +1110,7 @@ func requireSideToMove(positionFEN string, clock ClockState, seat Seat) error {
 // re-checking the identical position, version, control epoch, and active seat.
 // When no timeout-capable evaluator exists the writer fails closed: a flag fall
 // never manufactures a win for the side that did not flag.
-func (s *Service) resolveExpiredMatch(ctx context.Context, actor ParticipantRef, cmd Command, fingerprint [32]byte, snapshot Match) (CommandResult, error) {
+func (s *Service) resolveExpiredMatch(ctx context.Context, actor ParticipantRef, matchID, operationID string, seat Seat, fingerprint [32]byte, snapshot Match) (CommandResult, error) {
 	if snapshot.Clock.ActiveSeat == nil {
 		return CommandResult{}, ErrConflict
 	}
@@ -971,40 +1138,40 @@ func (s *Service) resolveExpiredMatch(ctx context.Context, actor ParticipantRef,
 		return CommandResult{}, err
 	}
 
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
 	defer tx.Rollback(ctx)
-	match, clock, decision, err := lockMatch(ctx, tx, cmd.MatchID)
+	match, clock, decision, err := s.lockMatch(ctx, tx, matchID)
 	if err != nil {
 		return CommandResult{}, err
 	}
 	// The credential is re-checked after the timeout policy was evaluated and
 	// before any stored receipt is returned.
-	if err = s.authorizeCredential(ctx, tx, cmd.MatchID, actor); err != nil {
+	if err = s.authorizeCredential(ctx, tx, matchID, actor); err != nil {
 		return CommandResult{}, err
 	}
-	if duplicate, dupErr := loadReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint[:]); dupErr == nil {
+	if duplicate, dupErr := loadReceipt(ctx, tx, matchID, operationID, fingerprint[:]); dupErr == nil {
 		return duplicate, nil
 	} else if !errors.Is(dupErr, ErrNotFound) {
 		return CommandResult{}, dupErr
 	}
 	match.Clock = clock
-	if match.Moves, err = loadMoves(ctx, tx, cmd.MatchID); err != nil {
+	if match.Moves, err = loadMoves(ctx, tx, matchID); err != nil {
 		return CommandResult{}, err
 	}
-	if seat, ok := match.Seat(cmd.Seat); !ok || seat.Participant != actor {
+	if owner, ok := match.Seat(seat); !ok || owner.Participant != actor {
 		return CommandResult{}, ErrNotAuthorized
 	}
-	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
+	if err = s.authorizeSeat(ctx, tx, matchID, actor, seat); err != nil {
 		return CommandResult{}, err
 	}
 	// The decision time is re-sampled after every participant lock is held.
 	// The first sample happened before the authorization lock, so a command
 	// that waited for a revocation, or for a busy seat, must not be judged
 	// against a clock reading from before that wait.
-	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+	if decision, err = s.sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
 		return CommandResult{}, err
 	}
 	if match.Status != MatchActive {
@@ -1019,7 +1186,7 @@ func (s *Service) resolveExpiredMatch(ctx context.Context, actor ParticipantRef,
 	if BuildRulesInput(match, match.Moves, "").InputHash != facts.EvaluatedInputHash {
 		return CommandResult{}, ErrStaleCandidate
 	}
-	return s.commitTimeout(ctx, tx, cmd, fingerprint, match, expired, decision, result)
+	return s.commitTimeout(ctx, tx, match.MatchID, operationID, fingerprint, match, expired, decision, result)
 }
 
 // resolveOpeningExpired adjudicates an opening reply window that was already
@@ -1029,12 +1196,12 @@ func (s *Service) resolveOpeningExpired(ctx context.Context, actor ParticipantRe
 	if snapshot.Clock.ReplySeat == nil {
 		return CommandResult{}, ErrConflict
 	}
-	tx, err := s.db.Begin(ctx)
+	tx, err := s.beginMutation(ctx, actor)
 	if err != nil {
 		return CommandResult{}, err
 	}
 	defer tx.Rollback(ctx)
-	match, clock, decision, err := lockMatch(ctx, tx, cmd.MatchID)
+	match, clock, decision, err := s.lockMatch(ctx, tx, cmd.MatchID)
 	if err != nil {
 		return CommandResult{}, err
 	}
@@ -1062,7 +1229,7 @@ func (s *Service) resolveOpeningExpired(ctx context.Context, actor ParticipantRe
 	if err = s.authorizeSeat(ctx, tx, cmd.MatchID, actor, cmd.Seat); err != nil {
 		return CommandResult{}, err
 	}
-	if decision, err = sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
+	if decision, err = s.sampleDecision(ctx, tx, match.UpdatedAt); err != nil {
 		return CommandResult{}, err
 	}
 	if match.Status != MatchActive {
@@ -1071,7 +1238,7 @@ func (s *Service) resolveOpeningExpired(ctx context.Context, actor ParticipantRe
 	if !clock.ReplyExpired(decision) {
 		return CommandResult{}, ErrStaleCandidate
 	}
-	return s.commitOpeningAbort(ctx, tx, cmd, fingerprint, match, clock, decision)
+	return s.commitOpeningAbort(ctx, tx, cmd.MatchID, cmd.OperationID, fingerprint, match, clock, decision)
 }
 
 // applyDeadlineResult ends a match with a deadline outcome.
@@ -1113,7 +1280,7 @@ func (s *Service) applyDeadlineResult(ctx context.Context, tx pgx.Tx, match Matc
 // The window needs no chess rules, so the abort is committed in the same
 // transaction that reconciled it. The caller holds the match row lock and has
 // sampled a decision time at or after the reply deadline.
-func (s *Service) commitOpeningAbort(ctx context.Context, tx pgx.Tx, cmd Command, fingerprint [32]byte, match Match, clock ClockState, decision time.Time) (CommandResult, error) {
+func (s *Service) commitOpeningAbort(ctx context.Context, tx pgx.Tx, matchID, operationID string, fingerprint [32]byte, match Match, clock ClockState, decision time.Time) (CommandResult, error) {
 	if clock.ReplySeat == nil {
 		return CommandResult{}, ErrConflict
 	}
@@ -1123,12 +1290,12 @@ func (s *Service) commitOpeningAbort(ctx context.Context, tx pgx.Tx, cmd Command
 	if err != nil {
 		return CommandResult{}, err
 	}
-	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeOpeningExpired, Version: event.Version, ControlEpoch: match.ControlEpoch, DecidedAt: decision, Event: &event, Result: result}
+	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: operationID, Outcome: OutcomeOpeningExpired, Version: event.Version, ControlEpoch: match.ControlEpoch, DecidedAt: decision, Event: &event, Result: result}
 	raw, err := marshalReceipt(receipt)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if err := insertReceipt(ctx, tx, cmd, fingerprint[:], raw, event.Version, match.ControlEpoch, decision); err != nil {
+	if err := insertMatchReceipt(ctx, tx, match.MatchID, operationID, fingerprint[:], raw, event.Version, match.ControlEpoch, decision); err != nil {
 		return CommandResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1140,17 +1307,17 @@ func (s *Service) commitOpeningAbort(ctx context.Context, tx pgx.Tx, cmd Command
 // commitTimeout applies an already-validated timeout adjudication. The caller
 // holds the match row lock and has confirmed the decision time is past the
 // deadline for the expired seat.
-func (s *Service) commitTimeout(ctx context.Context, tx pgx.Tx, cmd Command, fingerprint [32]byte, match Match, expired Seat, decision time.Time, result *Result) (CommandResult, error) {
+func (s *Service) commitTimeout(ctx context.Context, tx pgx.Tx, matchID, operationID string, fingerprint [32]byte, match Match, expired Seat, decision time.Time, result *Result) (CommandResult, error) {
 	event, err := s.applyDeadlineResult(ctx, tx, match, match.Clock, decision, EventTimeout, expired, result)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: cmd.OperationID, Outcome: OutcomeDeadlineExpired, Version: event.Version, ControlEpoch: match.ControlEpoch, DecidedAt: decision, Event: &event, Result: result}
+	receipt := Receipt{SchemaVersion: ContractsSchemaVersion, MatchID: match.MatchID, OperationID: operationID, Outcome: OutcomeDeadlineExpired, Version: event.Version, ControlEpoch: match.ControlEpoch, DecidedAt: decision, Event: &event, Result: result}
 	raw, err := marshalReceipt(receipt)
 	if err != nil {
 		return CommandResult{}, err
 	}
-	if err := insertReceipt(ctx, tx, cmd, fingerprint[:], raw, event.Version, match.ControlEpoch, decision); err != nil {
+	if err := insertMatchReceipt(ctx, tx, match.MatchID, operationID, fingerprint[:], raw, event.Version, match.ControlEpoch, decision); err != nil {
 		return CommandResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1189,6 +1356,16 @@ func (s *Service) updateMatch(ctx context.Context, tx pgx.Tx, match Match, decis
 	if err != nil {
 		return err
 	}
+	// A finished match carries no live lease. The revocation is part of the
+	// terminal transition, so a runner of the finished match is fenced at
+	// once instead of at its next renewal. The pending request of a lease
+	// stays on the lease, because it is the record of a provider request that
+	// may still be running.
+	if match.Result != nil {
+		if err = revokeMatchRunnerLeases(ctx, tx, match.MatchID, decision, LeaseRevokeMatchEnded); err != nil {
+			return err
+		}
+	}
 	// A version transition makes every offer that is bound to an earlier
 	// version inapplicable, so the pending offers of a match are exactly the
 	// ones that can still be accepted.
@@ -1204,7 +1381,29 @@ func (s *Service) updateMatch(ctx context.Context, tx pgx.Tx, match Match, decis
 	return nil
 }
 
+// publishProjection publishes the public projection of a finished match.
+//
+// The caller holds the match row lock, so the publication and the removal of
+// the same match are ordered instead of racing: either the removal was
+// recorded first and the publication refuses to publish, or the publication
+// published first and the removal revokes or anonymizes the published
+// payload.
+//
+// A match whose shared replay was erased is never published. The result of the
+// match stays in the shared state, but the public projection of an erased
+// match must not come back, and a match that was removed while it was still
+// running must not publish when it finishes.
 func (s *Service) publishProjection(ctx context.Context, tx pgx.Tx, match Match) error {
+	erased, err := MatchErased(ctx, tx, match.MatchID)
+	if err != nil {
+		return err
+	}
+	if erased {
+		// The shared replay of this match was erased. The public projection
+		// of an erased match is not published, so the public URL of the match
+		// stays empty.
+		return nil
+	}
 	projection, err := BuildPublicProjection(match)
 	if err != nil {
 		return err
@@ -1506,7 +1705,7 @@ func loadMatchWithLock(ctx context.Context, q queryer, matchID, lockClause strin
 // a separate statement afterwards. A single SELECT ... FOR UPDATE with
 // clock_timestamp() could evaluate the clock expression before a lock wait, so
 // it is deliberately not used.
-func lockMatch(ctx context.Context, tx pgx.Tx, matchID string) (Match, ClockState, time.Time, error) {
+func (s *Service) lockMatch(ctx context.Context, tx pgx.Tx, matchID string) (Match, ClockState, time.Time, error) {
 	match, err := scanMatch(tx.QueryRow(ctx, `SELECT `+matchColumns+` FROM online_matches WHERE match_id=$1 FOR UPDATE`, matchID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Match{}, ClockState{}, time.Time{}, ErrNotFound
@@ -1514,7 +1713,7 @@ func lockMatch(ctx context.Context, tx pgx.Tx, matchID string) (Match, ClockStat
 	if err != nil {
 		return Match{}, ClockState{}, time.Time{}, err
 	}
-	decision, err := sampleDecision(ctx, tx, match.UpdatedAt)
+	decision, err := s.sampleDecision(ctx, tx, match.UpdatedAt)
 	if err != nil {
 		return Match{}, ClockState{}, time.Time{}, err
 	}
@@ -1546,6 +1745,47 @@ func sampleDecision(ctx context.Context, tx pgx.Tx, floor time.Time) (time.Time,
 		return time.Time{}, err
 	}
 	return decision.UTC(), nil
+}
+
+// now reads the authoritative time of the writer outside a transaction.
+//
+// It uses the configured clock source when there is one, so the recovery
+// boundaries of the deterministic fixtures are exact.
+func (s *Service) now(ctx context.Context, q Querier) (time.Time, error) {
+	if s.clock != nil {
+		reading, err := s.clock(ctx, q)
+		if err != nil {
+			return time.Time{}, err
+		}
+		return reading.UTC(), nil
+	}
+	var reading time.Time
+	if err := q.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&reading); err != nil {
+		return time.Time{}, err
+	}
+	return reading.UTC(), nil
+}
+
+// sampleDecision samples the authoritative clock of the writer.
+//
+// A configured clock source replaces the database clock. It exists for the
+// deterministic fixtures, which need a fixed and movable time to reach the
+// lease and grace boundaries without waiting for them. The production default
+// reads the database clock, so every writer of a match judges a deadline
+// against the same clock.
+func (s *Service) sampleDecision(ctx context.Context, tx pgx.Tx, floor time.Time) (time.Time, error) {
+	if s.clock == nil {
+		return sampleDecision(ctx, tx, floor)
+	}
+	decision, err := s.clock(ctx, tx)
+	if err != nil {
+		return time.Time{}, err
+	}
+	decision = decision.UTC()
+	if decision.Before(floor) {
+		return floor.UTC(), nil
+	}
+	return decision, nil
 }
 
 func scanMatch(row pgx.Row) (Match, error) {
@@ -1714,14 +1954,27 @@ func insertEvent(ctx context.Context, tx pgx.Tx, e Event) error {
 		}
 		offerJSON = string(raw)
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO online_events(match_id,version,event_kind,seat,control_epoch,decision_at,accepted_at,move_uci,move_san,resulting_fen,result,control_kind,control_model_label,takeback_target_version,recovery_attempt,offer_json) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15::jsonb)`,
-		e.MatchID, e.Version, string(e.Kind), seatValue(e.Seat), e.ControlEpoch, e.DecisionAt.UTC(), moveUCI, moveSAN, fen, resultJSON, controlKind, controlLabel, e.TakebackTargetVersion, recoveryAttempt, offerJSON)
+	var recoveryShift any
+	if e.RecoveryShiftMs != nil {
+		recoveryShift = *e.RecoveryShiftMs
+	}
+	_, err := tx.Exec(ctx, `INSERT INTO online_events(match_id,version,event_kind,seat,control_epoch,decision_at,accepted_at,move_uci,move_san,resulting_fen,result,control_kind,control_model_label,takeback_target_version,recovery_attempt,offer_json,recovery_shift_ms) VALUES($1,$2,$3,$4,$5,$6,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15::jsonb,$16)`,
+		e.MatchID, e.Version, string(e.Kind), seatValue(e.Seat), e.ControlEpoch, e.DecisionAt.UTC(), moveUCI, moveSAN, fen, resultJSON, controlKind, controlLabel, e.TakebackTargetVersion, recoveryAttempt, offerJSON, recoveryShift)
 	return err
 }
 
 func insertReceipt(ctx context.Context, tx pgx.Tx, cmd Command, hash []byte, raw []byte, version, controlEpoch int64, at time.Time) error {
+	return insertMatchReceipt(ctx, tx, cmd.MatchID, cmd.OperationID, hash, raw, version, controlEpoch, at)
+}
+
+// insertMatchReceipt writes the durable receipt of one accepted operation.
+//
+// The scope is the match and the operation identifier, so a retried operation
+// returns its stored bytes and a changed payload that reuses an accepted
+// operation identifier is refused.
+func insertMatchReceipt(ctx context.Context, tx pgx.Tx, matchID, operationID string, hash []byte, raw []byte, version, controlEpoch int64, at time.Time) error {
 	_, err := tx.Exec(ctx, `INSERT INTO online_operation_receipts(scope_kind,scope_id,operation_id,request_hash,result_json,version,control_epoch,accepted_at) VALUES('match',$1,$2,$3,$4,$5,$6,$7)`,
-		cmd.MatchID, cmd.OperationID, hash, raw, version, controlEpoch, at.UTC())
+		matchID, operationID, hash, raw, version, controlEpoch, at.UTC())
 	return err
 }
 

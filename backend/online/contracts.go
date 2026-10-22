@@ -263,6 +263,14 @@ const (
 	EventRecoveryAttempt EventKind = "recovery_attempt"
 	// EventIllegalMoveLoss ends the match after the fourth illegal attempt.
 	EventIllegalMoveLoss EventKind = "illegal_move_loss"
+	// EventAbandonmentClaim ends the match with the optional abandonment win
+	// that a participant claims after the opponent stayed offline through the
+	// reconnect grace period.
+	EventAbandonmentClaim EventKind = "abandonment_claim"
+	// EventRecoveryAdjustment records the canonical deadline adjustment of an
+	// interrupted service. It publishes the adjusted clock before resumed
+	// actions are accepted.
+	EventRecoveryAdjustment EventKind = "recovery_adjustment"
 )
 
 type Event struct {
@@ -285,6 +293,9 @@ type Event struct {
 	TakebackTargetVersion *int64 `json:"takebackTargetVersion,omitempty"`
 	// RecoveryAttempt names the spent recovery attempt an event records.
 	RecoveryAttempt *RecoveryAttemptKind `json:"recoveryAttempt,omitempty"`
+	// RecoveryShiftMs is the time the recovery adjustment moved the armed
+	// deadline. It is the only payload of a recovery adjustment event.
+	RecoveryShiftMs *int64 `json:"recoveryShiftMs,omitempty"`
 }
 
 type MatchSeat struct {
@@ -772,6 +783,80 @@ func (c SeatControl) Validate() error {
 	}
 }
 
+// RunnerRequestEnvelope is the wire envelope of the provider request
+// record.
+//
+// The envelope is the shared contract of the browser runner and the service:
+// the browser sends it, the service decodes it strictly, and both read the
+// same fields. An unknown field is refused, so a body cannot smuggle a second
+// action or a second seat past the reader.
+type RunnerRequestEnvelope struct {
+	// SchemaVersion is the contract version of the envelope.
+	SchemaVersion int `json:"schemaVersion"`
+	// Action is begin or clear.
+	Action string `json:"action"`
+	// Seat is the seat the request belongs to.
+	Seat Seat `json:"seat"`
+	// RunnerID identifies the browser runner.
+	RunnerID string `json:"runnerId"`
+	// LeaseID names the lease the request belongs to.
+	LeaseID string `json:"leaseId"`
+	// RequestID is the opaque identifier of the provider request.
+	RequestID string `json:"requestId"`
+	// ControlEpoch is the control epoch the runner believes is current.
+	ControlEpoch int64 `json:"controlEpoch"`
+	// TurnVersion is the match version the runner acts for.
+	TurnVersion int64 `json:"turnVersion"`
+}
+
+// The actions of the provider request envelope.
+const (
+	// RunnerRequestBegin records that a billable request started.
+	RunnerRequestBegin = "begin"
+	// RunnerRequestClear records that the provider request settled.
+	RunnerRequestClear = "clear"
+)
+
+// ParseRunnerRequestEnvelope decodes a strict provider request envelope.
+//
+// Unknown fields, trailing data and contract violations are refused.
+func ParseRunnerRequestEnvelope(raw []byte) (RunnerRequestEnvelope, error) {
+	var envelope RunnerRequestEnvelope
+	if err := decodeStrict(raw, &envelope); err != nil {
+		return RunnerRequestEnvelope{}, fmt.Errorf("%w: runner request envelope: %v", ErrInvalidContract, err)
+	}
+	if err := envelope.Validate(); err != nil {
+		return RunnerRequestEnvelope{}, err
+	}
+	return envelope, nil
+}
+
+// Validate checks the provider request envelope.
+func (e RunnerRequestEnvelope) Validate() error {
+	if e.SchemaVersion != ContractsSchemaVersion {
+		return fmt.Errorf("%w: runner request schema version", ErrInvalidContract)
+	}
+	if e.Action != RunnerRequestBegin && e.Action != RunnerRequestClear {
+		return fmt.Errorf("%w: runner request action", ErrInvalidContract)
+	}
+	if e.Seat != SeatWhite && e.Seat != SeatBlack {
+		return fmt.Errorf("%w: runner request seat", ErrInvalidContract)
+	}
+	if !idPattern.MatchString(e.LeaseID) {
+		return fmt.Errorf("%w: runner request lease id", ErrInvalidContract)
+	}
+	if !runnerIDShape(e.RunnerID) || !runnerIDShape(e.RequestID) {
+		return fmt.Errorf("%w: runner request identity", ErrInvalidContract)
+	}
+	if e.ControlEpoch < 1 {
+		return fmt.Errorf("%w: runner request control epoch", ErrInvalidContract)
+	}
+	if e.TurnVersion < 0 {
+		return fmt.Errorf("%w: runner request turn version", ErrInvalidContract)
+	}
+	return nil
+}
+
 type Command struct {
 	SchemaVersion   int    `json:"schemaVersion"`
 	MatchID         string `json:"matchId"`
@@ -779,7 +864,13 @@ type Command struct {
 	ExpectedVersion int64  `json:"expectedVersion"`
 	Seat            Seat   `json:"seat"`
 	ControlEpoch    int64  `json:"controlEpoch"`
-	Action          Action `json:"action"`
+	// LeaseID binds the command to the browser runner lease that produced
+	// it. It is required by the server when the seat is controlled by an
+	// agent or an engine, and it is optional for a human seat. A lease of an
+	// older control epoch, a revoked lease, and a lease of an older turn are
+	// all fenced in the acceptance transaction.
+	LeaseID string `json:"leaseId,omitempty"`
+	Action  Action `json:"action"`
 }
 
 // ParseCommand decodes a strict command envelope. Unknown fields, trailing
@@ -810,6 +901,9 @@ func (c Command) Validate() error {
 	}
 	if c.ControlEpoch < 1 {
 		return fmt.Errorf("%w: control epoch", ErrInvalidContract)
+	}
+	if c.LeaseID != "" && !idPattern.MatchString(c.LeaseID) {
+		return fmt.Errorf("%w: lease id", ErrInvalidContract)
 	}
 	if err := c.Action.Validate(); err != nil {
 		return err
@@ -1089,6 +1183,21 @@ type RunnerLease struct {
 	AcquiredAt    time.Time   `json:"acquiredAt"`
 	ExpiresAt     time.Time   `json:"expiresAt"`
 	RevokedAt     *time.Time  `json:"revokedAt"`
+	// TurnVersion is the match version the lease acts for. It is nil for a
+	// lease that was taken before the turn was known.
+	TurnVersion *int64 `json:"turnVersion"`
+	// RunnerEpoch is the service epoch that owns the lease. A lease of an
+	// older epoch was fenced by a service recovery.
+	RunnerEpoch int64 `json:"runnerEpoch"`
+	// PendingRequestID names a provider request that may still be running.
+	// It is the honest record of uncertain billable work.
+	PendingRequestID *string `json:"pendingRequestId"`
+	// PendingRequestStartedAt is when that request started.
+	PendingRequestStartedAt *time.Time `json:"pendingRequestStartedAt"`
+	// RevokedReason explains why the lease ended.
+	RevokedReason *string `json:"revokedReason"`
+	// LastRenewedAt is when the lease was last renewed.
+	LastRenewedAt *time.Time `json:"lastRenewedAt"`
 }
 
 type DeletionMarker struct {
@@ -1193,6 +1302,7 @@ func CommandFingerprint(actor ParticipantRef, c Command) ([32]byte, error) {
 		ExpectedVersion int64           `json:"expectedVersion"`
 		Seat            Seat            `json:"seat"`
 		ControlEpoch    int64           `json:"controlEpoch"`
+		LeaseID         string          `json:"leaseId,omitempty"`
 		Actor           ParticipantRef  `json:"actor"`
 		Action          json.RawMessage `json:"action"`
 	}
@@ -1203,6 +1313,7 @@ func CommandFingerprint(actor ParticipantRef, c Command) ([32]byte, error) {
 		ExpectedVersion: c.ExpectedVersion,
 		Seat:            c.Seat,
 		ControlEpoch:    c.ControlEpoch,
+		LeaseID:         c.LeaseID,
 		Actor:           actor,
 		Action:          action,
 	})

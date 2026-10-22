@@ -394,11 +394,20 @@ func TestPostgresOnlineUpdatesStreamEndsBeforeTheCredentialExpiry(t *testing.T) 
 func TestPostgresOnlineUpdatesIdleStreamHoldsNoDatabaseConnection(t *testing.T) {
 	fixture := newOnlineAuthFixture(t, moveEvaluator{})
 	issued := createGuestMatch(t, fixture, "match-updates-idle")
-	server := onlineUpdatesServer(t, fixture, httpapi.OnlineOptions{
-		UpdatesStreamMaxDuration: 600 * time.Millisecond,
-		UpdatesPollInterval:      2 * time.Second,
+	options := httpapi.OnlineOptions{
+		AllowedOrigins:           []string{authTestOrigin},
+		UpdatesStreamMaxDuration: 20 * time.Second,
+		UpdatesPollInterval:      time.Minute,
 		UpdatesHeartbeatInterval: 100 * time.Millisecond,
-	})
+	}
+	handler := httpapi.CORSWithHeaders([]string{authTestOrigin}, httpapi.OnlineRequestHeaders,
+		httpapi.NewOnline(fixture.service, fixture.authorizer, options))
+	finished := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(finished)
+		handler.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
 	response := updatesStreamRequest(t, server, "/v1/online/matches/match-updates-idle/updates", map[string]string{
 		httpapi.GuestCredentialHeader: issued.Credential.Secret,
 	})
@@ -418,12 +427,16 @@ func TestPostgresOnlineUpdatesIdleStreamHoldsNoDatabaseConnection(t *testing.T) 
 			t.Fatalf("idle heartbeat %d: frame=%+v err=%v", i, frame, err)
 		}
 	}
-	// The stream ends, and the pool is free again.
-	for {
-		_, err := readLiveSSEFrame(reader)
-		if err != nil {
-			break
-		}
+	// End the idle wait explicitly instead of requiring three scheduled
+	// heartbeats to fit a short stream window on a loaded host. Await the
+	// handler before checking that cancellation left the pool free.
+	if err := response.Body.Close(); err != nil {
+		t.Fatalf("close the idle stream: %v", err)
+	}
+	select {
+	case <-finished:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the idle stream did not stop after its consumer closed")
 	}
 	if acquired := int(fixture.pool.Stat().AcquiredConns()); acquired != 0 {
 		t.Fatalf("the pool kept %d connections after the stream ended", acquired)

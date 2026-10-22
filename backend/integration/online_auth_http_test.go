@@ -16,14 +16,14 @@ import (
 )
 
 // onlineHTTPFixture is the production composition of the online API: the real
-// writer, the real authorization service, the real database, and the real
-// CORS policy.
+// writer, the real authorization service, the real history publisher, the
+// real database, and the real CORS policy.
 func onlineHTTPFixture(t *testing.T, fixture *onlineAuthFixture) http.Handler {
 	t.Helper()
 	return httpapi.CORSWithHeaders(
 		[]string{authTestOrigin},
 		httpapi.OnlineRequestHeaders,
-		httpapi.NewOnline(fixture.service, fixture.authorizer, httpapi.OnlineOptions{AllowedOrigins: []string{authTestOrigin}}),
+		httpapi.NewOnlineWithPublicReplay(fixture.service, fixture.authorizer, httpapi.OnlineOptions{AllowedOrigins: []string{authTestOrigin}}, historyServiceFor(t, fixture)),
 	)
 }
 

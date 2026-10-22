@@ -679,8 +679,22 @@ func TestPostgresOnlineRecoveryBudgetsSurviveControlChangesAndTakebacks(t *testi
 		t.Fatalf("the control change reset the spent budget: %+v", seat)
 	}
 	// The accepted move of that seat starts the budget again. The control
-	// change raised the control epoch, so the commands carry it.
-	if _, err = service.Execute(ctx, alice, moveOnlineCommandAt(matchID, "op-recovery-white-2", online.SeatWhite, 5, 2, "g1f3")); err != nil {
+	// change raised the control epoch, so the commands carry it. The seat is
+	// an agent seat now, so the move carries the lease of that seat.
+	lease, err := service.AcquireRunnerLease(ctx, alice, online.RunnerLeaseRequest{
+		SchemaVersion: online.ContractsSchemaVersion,
+		MatchID:       matchID,
+		Seat:          online.SeatWhite,
+		RunnerID:      "runner-recovery-01",
+		TurnVersion:   5,
+		ControlEpoch:  2,
+	})
+	if err != nil {
+		t.Fatalf("acquire the runner lease: %v", err)
+	}
+	whiteMove := moveOnlineCommandAt(matchID, "op-recovery-white-2", online.SeatWhite, 5, 2, "g1f3")
+	whiteMove.LeaseID = lease.LeaseID
+	if _, err = service.Execute(ctx, alice, whiteMove); err != nil {
 		t.Fatalf("accepted move: %v", err)
 	}
 	afterMove, err := service.GetMatch(ctx, matchID)
@@ -712,8 +726,22 @@ func TestPostgresOnlineRecoveryBudgetsSurviveControlChangesAndTakebacks(t *testi
 		t.Fatalf("the takeback reset the spent budget: %+v", seat)
 	}
 	// The restored turn is the one White spent the attempt in, so the next
-	// attempt continues that turn instead of starting a fresh allowance.
-	if _, err = service.Execute(ctx, alice, recoveryAttemptOnlineCommandAt(matchID, "op-recovery-attempt-2", online.SeatWhite, 9, 2, online.RecoveryIllegalMove)); err != nil {
+	// attempt continues that turn instead of starting a fresh allowance. The
+	// seat is an agent seat, so the attempt carries the lease of its runner.
+	attemptLease, err := service.AcquireRunnerLease(ctx, alice, online.RunnerLeaseRequest{
+		SchemaVersion: online.ContractsSchemaVersion,
+		MatchID:       matchID,
+		Seat:          online.SeatWhite,
+		RunnerID:      "runner-recovery-01",
+		TurnVersion:   afterTakeback.Version,
+		ControlEpoch:  afterTakeback.ControlEpoch,
+	})
+	if err != nil {
+		t.Fatalf("acquire the runner lease: %v", err)
+	}
+	attemptCommand := recoveryAttemptOnlineCommandAt(matchID, "op-recovery-attempt-2", online.SeatWhite, 9, 2, online.RecoveryIllegalMove)
+	attemptCommand.LeaseID = attemptLease.LeaseID
+	if _, err = service.Execute(ctx, alice, attemptCommand); err != nil {
 		t.Fatalf("recovery attempt after the takeback: %v", err)
 	}
 	afterAttempt, err := service.GetMatch(ctx, matchID)

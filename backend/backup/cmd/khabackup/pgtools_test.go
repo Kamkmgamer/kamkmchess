@@ -3,7 +3,43 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/Kamkmgamer/kamkmchess/backend/backup"
+	"github.com/Kamkmgamer/kamkmchess/backend/privacy"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestPendingRestoreEvidenceDoesNotRequireTheImportedDatabase(t *testing.T) {
+	// Opening the service only binds the pool. The fence and evidence are
+	// filesystem operations and must not query it, including during recovery.
+	service, err := privacy.Open(t.Context(), &pgxpool.Pool{}, nil, privacy.Options{FencePath: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle, err := service.BeginFence("restore-pending-evidence", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer handle.Release()
+	required := backup.AppliedRemovalLedger{Subjects: []backup.SubjectRemovalRecord{{
+		RecordID: "rs_pending", SubjectKind: "account", SubjectRef: "subject-reference",
+		Scope: "explicit_removal", RemovedAt: time.Now().UTC(),
+	}}}
+	if err = handle.Bind(required); err != nil {
+		t.Fatal(err)
+	}
+	// No SQL pool is available to the adapter. The owed ledger must still
+	// survive and be returned to the next restore.
+	ledger := postgresRemovalLedger{removals: service}
+	got, err := ledger.PendingRemovalRequirements(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !backup.RemovalLedgerContains(got, required) {
+		t.Fatal("the next restore lost the removals recorded outside the database")
+	}
+}
 
 func TestDsnEnvKeepsTheConnectionStringOutOfArguments(t *testing.T) {
 	connections, err := dsnEnv("postgres://kamkmchess:hunter2@db.example.internal:6543/kamkmchess?sslmode=require")

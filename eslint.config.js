@@ -17,7 +17,7 @@ export default defineConfig([
     extends: [reactHooks.configs.flat.recommended, reactRefresh.configs.vite],
   },
   {
-    files: ['*.{js,ts}', 'api/**/*.ts', 'server/**/*.ts', 'scripts/**/*.mjs', 'tests/**/*.ts'],
+    files: ['*.{js,ts}', 'api/**/*.ts', 'server/**/*.ts', 'scripts/**/*.mjs', 'deploy/**/*.mjs', 'tests/**/*.ts'],
     languageOptions: { globals: globals.node },
   },
   {

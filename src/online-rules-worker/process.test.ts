@@ -13,6 +13,7 @@ const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
 const INITIAL = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 let workerEntry = '';
+let workerDirectory = '';
 
 function requestLine(fen = INITIAL, intent?: unknown): string {
   return JSON.stringify({
@@ -81,9 +82,11 @@ class WorkerProcess {
 
 beforeAll(async () => {
   const outDir = await mkdtemp(join(tmpdir(), 'kha66-rules-worker-'));
+  workerDirectory = outDir;
   await build({
     configFile: false,
     root: repoRoot,
+    publicDir: false,
     logLevel: 'silent',
     build: {
       ssr: join(repoRoot, 'src/online-rules-worker/main.ts'),
@@ -99,7 +102,7 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  if (workerEntry) await rm(join(workerEntry, '..'), { recursive: true, force: true });
+  if (workerDirectory) await rm(workerDirectory, { recursive: true, force: true });
 });
 
 describe('[KHA-66] private worker process protocol', () => {

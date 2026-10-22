@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/backup"
+	"github.com/Kamkmgamer/kamkmchess/backend/privacy"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -139,6 +140,219 @@ func runTool(ctx context.Context, binary string, arguments []string, stdin io.Re
 		return fmt.Errorf("%s failed: %w", binary, err)
 	}
 	return nil
+}
+
+// postgresRemovalLedger reads and reapplies the online removal ledger.
+//
+// The online removal ledger is the record that an erased shared game or a
+// removed identity must not come back. A backup carries it, and a restore
+// replays it before the restored database serves traffic.
+//
+// A database without the online tables simply has no removals, so the private
+// single-owner backup tooling keeps working against a database that never had
+// the online schema.
+type postgresRemovalLedger struct {
+	pool     *pgxpool.Pool
+	removals *privacy.Service
+}
+
+// available reports whether the online removal ledger exists in the database.
+//
+// A read that fails is not an absent ledger. The caller fails closed: an
+// unreadable ledger is not an empty ledger.
+func (l postgresRemovalLedger) available(ctx context.Context) (bool, error) {
+	var exists bool
+	err := l.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='online_removal_ledger')`).Scan(&exists)
+	if err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+// RecoverRestore releases the gate of a restore that crashed after its
+// removal ledger was applied.
+//
+// The recovery is identity bound: the restore is named, the applied removal
+// ledger has to be the ledger of the restore, and a wrong clear is refused.
+func (l postgresRemovalLedger) RecoverRestore(ctx context.Context, restoreID string, required backup.AppliedRemovalLedger) error {
+	available, err := l.available(ctx)
+	if err != nil {
+		return err
+	}
+	if !available {
+		return errors.New("the online removal ledger is missing; the restored database must not serve traffic")
+	}
+	return l.removals.RecoverRestore(ctx, restoreID, required)
+}
+
+// BeginFence takes the ownership of the restore lifecycle.
+//
+// The ownership is held for the whole lifecycle of the restore, from the
+// admission until the fence is closed. A restore that finds the ownership
+// held is a live restore, and it is never displaced.
+func (l postgresRemovalLedger) BeginFence(restoreID string, takeover bool) (backup.FenceHandle, error) {
+	return l.removals.BeginFence(restoreID, takeover)
+}
+
+// AppliedLedgerDigest is the digest of the removal ledger that is applied in the
+// database.
+func (l postgresRemovalLedger) AppliedLedgerDigest(ctx context.Context) (string, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !available {
+		return "", nil
+	}
+	return l.removals.AppliedLedgerDigest(ctx)
+}
+
+// PendingRemovalRequirements returns the removal ledger that the restores
+// which did not finish still owe.
+//
+// The removals that only the live database carried are destroyed by the import
+// of a restore, so they are kept as durable evidence outside the database. The
+// restore merges that evidence into the removal ledger it has to apply.
+func (l postgresRemovalLedger) PendingRemovalRequirements(ctx context.Context) (backup.AppliedRemovalLedger, error) {
+	// This evidence lives outside the imported schema. Its existence cannot
+	// depend on which tables the restored database currently contains.
+	return l.removals.PendingRemovalRequirements(ctx)
+}
+
+// PendingRestoreGates counts the restore gates that wait for their release.
+func (l postgresRemovalLedger) PendingRestoreGates(ctx context.Context) (int, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if !available {
+		return 0, nil
+	}
+	return l.removals.PendingRestoreGates(ctx)
+}
+
+// ServingAllowed reports whether the service may serve traffic.
+func (l postgresRemovalLedger) ServingAllowed(ctx context.Context) (bool, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !available {
+		return true, nil
+	}
+	return l.removals.ServingAllowed(ctx)
+}
+
+// RestoreRequirement returns the removal ledger that a restore had to apply.
+//
+// The ledger is the durable evidence of the restore, so the operator does not
+// have to rebuild it from the bundle and the rotation copies.
+func (l postgresRemovalLedger) RestoreRequirement(restoreID string) (backup.AppliedRemovalLedger, bool, error) {
+	return l.removals.RestoreRequirement(restoreID)
+}
+
+// RecordRestore records that the database was restored from a backup.
+func (l postgresRemovalLedger) RecordRestore(ctx context.Context, restoreID string) (string, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !available {
+		return "", nil
+	}
+	return l.removals.RecordRestore(ctx, restoreID)
+}
+
+// ReleaseRestoreGate releases the restore gate after the removal ledger was
+// replayed.
+//
+// The release is refused while the ledger is not applied, so a restored
+// database never serves traffic with the rows of a removed game.
+func (l postgresRemovalLedger) ReleaseRestoreGate(ctx context.Context, restoreID string) error {
+	available, err := l.available(ctx)
+	if err != nil {
+		return err
+	}
+	if !available {
+		return nil
+	}
+	return l.removals.ReleaseRestoreGate(ctx, restoreID)
+}
+
+// ListRemovalRecords reads the online removal ledger of the live database.
+func (l postgresRemovalLedger) ListRemovalRecords(ctx context.Context) ([]backup.RemovalRecord, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !available {
+		return nil, nil
+	}
+	return l.removals.ListRemovalRecords(ctx)
+}
+
+// ListSubjectRemovalRecords reads the subject level removal ledger.
+func (l postgresRemovalLedger) ListSubjectRemovalRecords(ctx context.Context) ([]backup.SubjectRemovalRecord, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !available {
+		return nil, nil
+	}
+	return l.removals.ListSubjectRemovalRecords(ctx)
+}
+
+// ApplySubjectRemovalRecords replays the subject level removal ledger.
+//
+// The subject stays removed after a restore, even when the restored database
+// has no deletion record of its own.
+func (l postgresRemovalLedger) ApplySubjectRemovalRecords(ctx context.Context, records []backup.SubjectRemovalRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	available, err := l.available(ctx)
+	if err != nil {
+		return err
+	}
+	if !available {
+		return errors.New("the online removal ledger is missing; the restored database must not serve traffic")
+	}
+	return l.removals.ApplySubjectRemovalRecords(ctx, records)
+}
+
+// AppliedRemovalLedger returns the removal ledger that is applied in the
+// database.
+func (l postgresRemovalLedger) AppliedRemovalLedger(ctx context.Context) (backup.AppliedRemovalLedger, error) {
+	available, err := l.available(ctx)
+	if err != nil {
+		return backup.AppliedRemovalLedger{}, err
+	}
+	if !available {
+		return backup.AppliedRemovalLedger{}, nil
+	}
+	return l.removals.AppliedRemovalLedger(ctx)
+}
+
+// ApplyRemovalRecords replays the online removal ledger after a restore.
+//
+// The replay is the privacy service, so the restored rows are removed exactly
+// as the original removal removed them.
+//
+// A ledger that cannot be read is an error, never an empty ledger: a restore
+// that cannot apply its removals must not report that it applied them.
+func (l postgresRemovalLedger) ApplyRemovalRecords(ctx context.Context, records []backup.RemovalRecord) error {
+	if len(records) == 0 {
+		return nil
+	}
+	available, err := l.available(ctx)
+	if err != nil {
+		return err
+	}
+	if !available {
+		return errors.New("the online removal ledger is missing; the restored database must not serve traffic")
+	}
+	return l.removals.ApplyRemovalRecords(ctx, records)
 }
 
 // postgresLedger reads and reapplies the durable deletion ledger.

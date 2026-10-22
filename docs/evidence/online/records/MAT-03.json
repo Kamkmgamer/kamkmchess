@@ -1,0 +1,10 @@
+{
+  "scenarioId": "MAT-03",
+  "status": "partial",
+  "kind": "local",
+  "commit": "ab0dba56eaa837d1db3aaea0df2ed3d2773d65d1",
+  "command": "go test -race -timeout=60m -json -count=1 ./backend/... ./cmd/...",
+  "expected": "Duplicate, stale, illegal and wrong-seat intents neither advance state nor mint clock increments.",
+  "actual": "Mapped database tests: TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt=pass; TestPostgresOnlineNonMemberCannotReadOrCommand=pass.",
+  "notes": "Database source ab0dba56eaa837d1db3aaea0df2ed3d2773d65d1. The named tests cover a subset of the approved scenario; their passing does not close it. The separate browser run at 1e08868d71e3105288ba59af24f55ea3df310593 is not included in this record. See docs/evidence/online/assembled-verification.md for the broader results and limits. Native accessibility, deployed-host capacity, cohorts and release approval remain unverified."
+}

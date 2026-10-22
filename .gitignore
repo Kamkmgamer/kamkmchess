@@ -12,6 +12,10 @@ node_modules/
 .vercel/
 /deploy/*.env
 /deploy/tls/
+# The protected operator inputs of the account cohorts. They carry the opaque
+# account subjects of a cohort, they are never committed, and the release
+# gates read only their count and their commitment.
+/.secrets/
 *.tsbuildinfo
 *.zip
 *.log

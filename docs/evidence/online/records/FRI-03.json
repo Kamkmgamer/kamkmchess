@@ -1,0 +1,10 @@
+{
+  "scenarioId": "FRI-03",
+  "status": "partial",
+  "kind": "local",
+  "commit": "1e08868d71e3105288ba59af24f55ea3df310593",
+  "command": "pnpm exec playwright test tests/e2e/account-online.spec.ts tests/e2e/online-ui.spec.ts tests/e2e/online-requests.spec.ts tests/e2e/online-clients.spec.ts --project=chromium --reporter=json",
+  "expected": "Invitee sees assigned color, minutes/increment and custom FEN; link preview has inviter/Guest, board where relevant and no invented final pairing.",
+  "actual": "Mapped browser cases: a guest accepts a friend invitation and both browser clients observe the same accepted move=passed.",
+  "notes": "browser source 1e08868d71e3105288ba59af24f55ea3df310593. These named tests cover parts of the approved scenario; their passing does not close the whole scenario. See docs/evidence/online/assembled-verification.md for package results, earlier failed attempts and limits. The earlier record set cited author-worktree commits e283d271 and 9c6bc799, which were not ancestors of the assembled branch. Native accessibility, deployed-host capacity, cohorts and release approval remain unverified."
+}

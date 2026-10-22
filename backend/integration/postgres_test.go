@@ -41,6 +41,16 @@ func randomSchemaSuffix() string {
 
 func testPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
+	return testPoolWith(t, nil)
+}
+
+// testPoolWith opens an isolated pool and lets the caller bound it.
+//
+// The caller may change the configuration of the pool before it is opened, so
+// a test can prove a behaviour that only appears when the pool is saturated
+// and a second connection cannot be acquired.
+func testPoolWith(t *testing.T, adjust func(*pgxpool.Config)) *pgxpool.Pool {
+	t.Helper()
 	dsn := os.Getenv(databaseEnv)
 	if dsn == "" {
 		if os.Getenv("KHA41_REQUIRE_POSTGRES") == "1" {
@@ -73,6 +83,9 @@ func testPool(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	if adjust != nil {
+		adjust(cfg)
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -7,19 +7,29 @@
 // provider, never prints a connection string or a passphrase, and never applies
 // a restore or a rotation without an explicit --apply.
 //
+// The rotation of the managed directory keeps the seven newest daily and the
+// four newest weekly bundles and retires every ordinary bundle that passed
+// the maximum age of thirty days. It never deletes a protected bundle: a
+// bundle it may not delete leaves the retention unresolved, and the rotation
+// then fails instead of reporting a success it cannot prove.
+//
 // Usage:
 //
 //	khabackup create  --out FILE (--class daily|weekly) --database-url-env NAME --passphrase-env NAME [--pg-dump PATH]
 //	khabackup verify  --file FILE --passphrase-env NAME
 //	khabackup inspect --file FILE
 //	khabackup plan    --file FILE --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...]
-//	khabackup restore --file FILE --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...] --apply
+//	khabackup restore --file FILE --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...] [--takeover] --apply
+//	khabackup recover --file FILE --restore-id ID --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...]
+//	khabackup recover --evidence FILE --restore-id ID --database-url-env NAME
 //	khabackup rotate  --dir DIR [--daily N] [--weekly N] [--protect LABEL ...] [--apply]
 //	khabackup ledger  --file FILE [--file FILE ...] --passphrase-env NAME
 package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -32,6 +42,7 @@ import (
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/backup"
+	"github.com/Kamkmgamer/kamkmchess/backend/privacy"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -60,6 +71,8 @@ func run(ctx context.Context, arguments []string) error {
 		return planCommand(ctx, arguments[1:])
 	case "restore":
 		return restoreCommand(ctx, arguments[1:])
+	case "recover":
+		return recoverCommand(ctx, arguments[1:])
 	case "rotate":
 		return rotateCommand(arguments[1:])
 	case "ledger":
@@ -72,9 +85,29 @@ khabackup seals, verifies, rotates and restores encrypted PostgreSQL exports.
   verify  --file FILE --passphrase-env NAME
   inspect --file FILE
   plan    --file FILE --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...]
-  restore --file FILE --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...] --apply
+  restore --file FILE --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...] [--takeover] --apply
+  recover --file FILE --restore-id ID --database-url-env NAME --passphrase-env NAME [--newer-ledger FILE ...]
+  recover --evidence FILE --restore-id ID --database-url-env NAME
   rotate  --dir DIR [--daily N] [--weekly N] [--protect LABEL ...] [--apply]
   ledger  --file FILE [--file FILE ...] --passphrase-env NAME
+
+The --fence path is the parent directory of the durable restore fence. The
+operator prepares that directory; the restore creates the lock directory
+inside it, and the service reads it.
+
+The --evidence path is the durable evidence of a restore: the file the restore
+wrote next to the fence, restored from the protected backup of the evidence
+directory. A recovery that is given the evidence of a restore does not need the
+bundle of the restore, and the bundle is only read when there is no evidence
+at all.
+When both are named, the evidence wins and the bundle is not read.
+
+The rotation keeps the seven newest daily and the four newest weekly bundles
+and retires every ordinary bundle that passed the maximum age of thirty days.
+A bundle the rotation may not delete - a protected one, one without a creation
+time, one dated after the reference time, or one whose manifest cannot be read
+- leaves the retention of the directory unresolved, and the rotation exits with
+a failure while such a bundle remains.
 
 Secrets are read only from the environment variable named by --passphrase-env
 and --database-url-env. Nothing is provisioned and no network service is used.`))
@@ -98,7 +131,16 @@ type commonFlags struct {
 	daily          int
 	weekly         int
 	apply          bool
-	asJSON         bool
+	// restoreID names the restore a recovery acts on.
+	restoreID string
+	// takeover continues the lifecycle of a restore that crashed.
+	takeover bool
+	// fence is the path of the durable restore fence.
+	fence string
+	// evidence is the durable evidence of a restore that the operator
+	// restored from the protected backup of the evidence directory.
+	evidence string
+	asJSON   bool
 }
 
 type stringList []string
@@ -125,6 +167,10 @@ func parseFlags(name string, arguments []string, configure func(*flag.FlagSet, *
 	set.IntVar(&options.daily, "daily", backup.DefaultDailyCopies, "daily copies to keep")
 	set.IntVar(&options.weekly, "weekly", backup.DefaultWeeklyCopies, "weekly copies to keep")
 	set.BoolVar(&options.apply, "apply", false, "actually apply the plan; without it nothing is written or deleted")
+	set.StringVar(&options.restoreID, "restore-id", "", "identifier of the restore a recovery acts on")
+	set.BoolVar(&options.takeover, "takeover", false, "continue the lifecycle of a restore that crashed: the marker of the crashed restore is replaced, the bundle is imported again and the removal ledger is applied again")
+	set.StringVar(&options.fence, "fence", os.Getenv("ONLINE_RESTORE_FENCE_PATH"), "parent directory of the durable restore fence; the restore creates the lock directory inside it and the service refuses to serve while it is open (defaults to ONLINE_RESTORE_FENCE_PATH)")
+	set.StringVar(&options.evidence, "evidence", "", "durable evidence of a restore (the file the restore wrote next to the fence); it proves the removal ledger a gate waits for when the evidence directory was lost")
 	set.BoolVar(&options.asJSON, "json", false, "print a machine-readable report")
 	if configure != nil {
 		configure(set, &options)
@@ -176,6 +222,162 @@ func openPool(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	return pool, nil
 }
 
+// recoverCommand releases the gate of a restore that crashed after its
+// removal ledger was applied.
+//
+// The recovery is identity bound: the restore is named, the removal ledger
+// that is applied in the database has to be the ledger of the bundle and of
+// the newer rotation copies, and a wrong clear is refused.
+//
+// The ledger of the restore is the durable evidence of the restore, and the
+// evidence is what the recovery uses. The bundle and the rotation copies are
+// the fallback for a restore that left no evidence: they are the ledger of the
+// bundle, and the recovery refuses them when the fence of the restore names
+// another ledger.
+func recoverCommand(ctx context.Context, arguments []string) error {
+	options, err := parseFlags("recover", arguments, nil)
+	if err != nil {
+		return err
+	}
+	if options.restoreID == "" {
+		return errors.New("--restore-id is required")
+	}
+	if options.fence == "" {
+		return errors.New("a recovery needs the durable restore fence; set --fence or ONLINE_RESTORE_FENCE_PATH")
+	}
+	if options.file == "" && options.evidence == "" {
+		return errors.New("a recovery needs the durable evidence of the restore (--evidence) or the bundle of the restore (--file)")
+	}
+
+	url, connections, err := databaseURL(options.databaseURLEnv)
+	if err != nil {
+		return err
+	}
+	pool, err := openPool(ctx, url)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	_ = connections
+	removals, err := openRemovalLedger(ctx, pool, options.fence)
+	if err != nil {
+		return err
+	}
+	// The removal ledger the restore had to apply is the durable evidence of
+	// the restore. It survives the crash of the restore and the import of its
+	// bundle, so the recovery can name the ledger even when the removals it
+	// covers are not in the database any more.
+	//
+	// The recovery is identity bound: the ledger it is given has to be the
+	// ledger the fence of the restore names, and the recovery refuses every
+	// other one. The proof of a gate whose evidence is gone is the same
+	// ledger, and the recovery applies it under the ownership of the
+	// lifecycle, never outside it.
+	required, found, err := removals.RestoreRequirement(options.restoreID)
+	if err != nil {
+		return err
+	}
+	if options.evidence != "" {
+		// The operator handed a file to the recovery, so the file is opened
+		// and validated, even when the evidence directory still holds a record
+		// of the restore: a file that names another restore, that does not
+		// match its own digest or that conflicts with the record of the
+		// directory is refused instead of being ignored.
+		record, err := privacy.ReadRemovalRequirement(options.evidence)
+		if err != nil {
+			return fmt.Errorf("the durable evidence of the restore cannot be read: %w", err)
+		}
+		if record.RestoreID != options.restoreID {
+			return fmt.Errorf("the durable evidence names the restore %q, not %q", record.RestoreID, options.restoreID)
+		}
+		if found {
+			directory := fmt.Sprintf("%x", backup.RemovalLedgerDigest(required.Matches, required.Subjects))
+			supplied := fmt.Sprintf("%x", backup.RemovalLedgerDigest(record.Matches, record.Subjects))
+			if directory != supplied {
+				return errors.New("the durable evidence of the restore conflicts with the record of the evidence directory")
+			}
+		}
+		required = record.Ledger()
+		found = true
+	}
+	if !found {
+		// The restore left no evidence, so the ledger of the bundle and of the
+		// newer rotation copies is the only description of what it owed. The
+		// recovery refuses them when the fence of the restore names another
+		// ledger.
+		//
+		// The bundle is only read here, so the passphrase is only needed here:
+		// a recovery that is given the evidence of a restore needs neither
+		// the bundle nor the passphrase.
+		secret, err := passphrase(options.passphraseEnv)
+		if err != nil {
+			return err
+		}
+		defer clear(secret)
+		verified, err := backup.Verify(options.file, secret)
+		if err != nil {
+			return err
+		}
+		merged, err := backup.MergeRemovalLedgers(verified.Payload.Removals, nil)
+		if err != nil {
+			return err
+		}
+		newerRemovals, newerSubjects, err := backup.CollectRemovalLedgers(options.newerLedgers, secret)
+		if err != nil {
+			return err
+		}
+		if merged, err = backup.MergeRemovalLedgers(merged, newerRemovals); err != nil {
+			return err
+		}
+		mergedSubjects, err := backup.MergeSubjectRemovalLedgers(verified.Payload.SubjectRemovals, newerSubjects)
+		if err != nil {
+			return err
+		}
+		required = backup.AppliedRemovalLedger{Matches: merged, Subjects: mergedSubjects}
+	}
+	if err = removals.RecoverRestore(ctx, options.restoreID, required); err != nil {
+		if errors.Is(err, privacy.ErrLedgerNotApplied) {
+			// The removals of the restore are not applied in the database: the
+			// gate of the crashed restore stays closed, so the service does not
+			// serve, and the restore has to be run again.
+			return fmt.Errorf("the removal ledger of the restore is not applied in the database; the service stays closed and the restore has to be run again: %w", err)
+		}
+		if errors.Is(err, privacy.ErrFenceLive) {
+			return fmt.Errorf("a restore holds the restore fence; the recovery never touches the fence of a running restore: %w", err)
+		}
+		if errors.Is(err, privacy.ErrFenceConflict) {
+			return fmt.Errorf("the restore fence belongs to another restore; the recovery never touches it: %w", err)
+		}
+		return err
+	}
+	// The truth of the recovery: whether the service may serve and how many
+	// gates still wait for their removal ledger. A gate that waits keeps the
+	// service closed, so the recovery never claims that the service serves
+	// while one of them waits.
+	allowed, err := removals.ServingAllowed(ctx)
+	if err != nil {
+		return err
+	}
+	pending, err := removals.PendingRestoreGates(ctx)
+	if err != nil {
+		return err
+	}
+	report := map[string]any{
+		"command":        "recover",
+		"recovered":      true,
+		"restoreId":      options.restoreID,
+		"servingAllowed": allowed,
+		"pendingGates":   pending,
+	}
+	return emit(options.asJSON, report, func() {
+		if allowed {
+			fmt.Printf("recovered the restore %s; the service may serve traffic again\n", options.restoreID)
+			return
+		}
+		fmt.Printf("recovered the restore %s; the service stays closed: %d restore gate(s) still wait for their removal ledger\n", options.restoreID, pending)
+	})
+}
+
 func createCommand(ctx context.Context, arguments []string) error {
 	options, err := parseFlags("create", arguments, nil)
 	if err != nil {
@@ -207,6 +409,10 @@ func createCommand(ctx context.Context, arguments []string) error {
 		return fmt.Errorf("--class must be daily or weekly, not %q", options.class)
 	}
 	tools := pgTools{dumpBinary: options.pgDump, loaderBinary: options.psql, environment: childEnvironment(connections)}
+	removals, err := openRemovalLedger(ctx, pool, options.fence)
+	if err != nil {
+		return err
+	}
 	manifest, err := backup.Create(ctx, backup.CreateRequest{
 		Path:       options.out,
 		Label:      label,
@@ -214,15 +420,28 @@ func createCommand(ctx context.Context, arguments []string) error {
 		CreatedAt:  now,
 		Dumper:     tools,
 		Tombstones: postgresLedger{pool: pool},
+		Removals:   removals,
 	})
 	if err != nil {
 		return err
 	}
 	return emit(options.asJSON, manifestReport(manifest), func() {
-		fmt.Printf("sealed %s\n  label %s (%s)\n  created %s\n  tool %s\n  tombstones %d\n  plaintext sha256 %s\n  bytes %d\n",
+		fmt.Printf("sealed %s\n  label %s (%s)\n  created %s\n  tool %s\n  tombstones %d\n  removals %d\n  plaintext sha256 %s\n  bytes %d\n",
 			options.out, manifest.Label, options.class, manifest.CreatedAt.Format(time.RFC3339), manifest.DumpTool,
-			manifest.TombstoneCount, manifest.PlaintextSHA256, manifest.PlaintextBytes)
+			manifest.TombstoneCount, manifest.RemovalCount, manifest.PlaintextSHA256, manifest.PlaintextBytes)
 	})
+}
+
+// openRemovalLedger opens the online removal ledger of a database.
+//
+// The ledger is optional: a database without the online tables has no
+// removals, and the private single-owner backup tooling keeps working.
+func openRemovalLedger(ctx context.Context, pool *pgxpool.Pool, fencePath string) (postgresRemovalLedger, error) {
+	removals, err := privacy.Open(ctx, pool, nil, privacy.Options{FencePath: fencePath})
+	if err != nil {
+		return postgresRemovalLedger{}, err
+	}
+	return postgresRemovalLedger{pool: pool, removals: removals}, nil
 }
 
 func verifyCommand(arguments []string) error {
@@ -340,15 +559,28 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 	if err != nil {
 		return err
 	}
+	// The newer rotation copies carry the online removal ledgers as well. The
+	// deletion tombstones and the online removals are two different ledgers,
+	// and a restore has to replay both of them.
+	newerRemovals, newerSubjectRemovals, err := backup.CollectRemovalLedgers(options.newerLedgers, secret)
+	if err != nil {
+		return err
+	}
 	pool, err := openPool(ctx, url)
 	if err != nil {
 		return err
 	}
 	defer pool.Close()
 	tools := pgTools{dumpBinary: options.pgDump, loaderBinary: options.psql, environment: childEnvironment(connections)}
-	request := backup.RestoreRequest{Path: options.file, Passphrase: secret, Restorer: tools, Tombstones: postgresLedger{pool: pool}}
+	removals, err := openRemovalLedger(ctx, pool, options.fence)
+	if err != nil {
+		return err
+	}
+	request := backup.RestoreRequest{Path: options.file, Passphrase: secret, Restorer: tools, Tombstones: postgresLedger{pool: pool}, Removals: removals, AdmissionFence: removals, Takeover: options.takeover}
 	if len(options.newerLedgers) > 0 {
 		request.NewerLedgers = append(request.NewerLedgers, newer)
+		request.NewerRemovalLedgers = append(request.NewerRemovalLedgers, newerRemovals)
+		request.NewerSubjectRemovalLedgers = append(request.NewerSubjectRemovalLedgers, newerSubjectRemovals)
 	}
 	if !options.apply {
 		plan, planErr := backup.PlanRestore(ctx, options.file, secret, postgresLedger{pool: pool}, request.NewerLedgers)
@@ -358,26 +590,114 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 		printPlan(plan)
 		return errors.New("restore refused without --apply; no database change was made")
 	}
-	result, err := backup.Restore(ctx, request)
+	// The durable fence is written before the import touches the database.
+	//
+	// The fence lives outside the restored database, so it survives the schema
+	// replacement and a crash of this process. A restore that dies between the
+	// import and the replay of the removal ledger therefore leaves the service
+	// closed, instead of a restored database that lost the newest removals.
+	//
+	// A restore without a configured fence is refused: the fence is the only
+	// control that survives the schema replacement, and a restore without it
+	// could leave a served database with a lost removal.
+	if options.fence == "" {
+		return errors.New("a restore needs a durable restore fence; set --fence or ONLINE_RESTORE_FENCE_PATH")
+	}
+	verified, err := backup.Verify(options.file, secret)
 	if err != nil {
 		return err
 	}
+	merged, err := backup.MergeRemovalLedgers(verified.Payload.Removals, nil)
+	if err != nil {
+		return err
+	}
+	for _, set := range request.NewerRemovalLedgers {
+		if merged, err = backup.MergeRemovalLedgers(merged, set); err != nil {
+			return err
+		}
+	}
+	mergedSubjects, err := backup.MergeSubjectRemovalLedgers(verified.Payload.SubjectRemovals, nil)
+	if err != nil {
+		return err
+	}
+	for _, set := range request.NewerSubjectRemovalLedgers {
+		if mergedSubjects, err = backup.MergeSubjectRemovalLedgers(mergedSubjects, set); err != nil {
+			return err
+		}
+	}
+	restoreID := "restore-" + time.Now().UTC().Format("20060102T150405Z") + "-" + randomSuffix()
+	// The restore owns the fence: it opens it before the import and closes it
+	// after the removal ledger was replayed and verified.
+	request.RestoreID = restoreID
+	result, err := backup.Restore(ctx, request)
+	if err != nil {
+		// The fence stays open: the restored data must not serve traffic
+		// before the removal ledger was replayed.
+		return err
+	}
+	if len(result.RemovalsPending) > 0 {
+		// The removals were not applied, so the restored database must not
+		// serve traffic. The fence stays open and the service refuses to
+		// start while the removal ledger is not applied.
+		return fmt.Errorf("the online removal ledger has %d records that were not applied; the restored database must not serve traffic", len(result.RemovalsPending))
+	}
+	// The restore is recorded and the gate is released only after the removal
+	// ledger was replayed and the replay was verified.
+	//
+	// The verification is the required union of the bundle and the newer
+	// rotation copies: the applied ledger has to hold every one of them. The
+	// restore itself performs the check before it closes the fence, so a
+	// ledger that was not applied keeps the fence open and the service
+	// closed.
+	applied, err := removals.AppliedRemovalLedger(ctx)
+	if err != nil {
+		return err
+	}
+	required := backup.AppliedRemovalLedger{Matches: merged, Subjects: mergedSubjects}
+	if !backup.RemovalLedgerContains(applied, required) {
+		return fmt.Errorf("the applied removal ledger is not the ledger of the restore")
+	}
 	report := map[string]any{
-		"command":           "restore",
-		"applied":           true,
-		"manifest":          manifestReport(result.Manifest),
-		"sqlBytes":          result.SQLBytes,
-		"recovery":          result.Recovery,
-		"recoveryCounts":    result.RecoveryCounts,
-		"tombstonesApplied": result.TombstonesApplied,
-		"tombstonesKept":    result.TombstonesKept,
+		"command":                "restore",
+		"applied":                true,
+		"manifest":               manifestReport(result.Manifest),
+		"sqlBytes":               result.SQLBytes,
+		"recovery":               result.Recovery,
+		"recoveryCounts":         result.RecoveryCounts,
+		"tombstonesApplied":      result.TombstonesApplied,
+		"tombstonesKept":         result.TombstonesKept,
+		"removalsApplied":        result.RemovalsApplied,
+		"subjectRemovalsApplied": result.SubjectRemovalsApplied,
+		"restoreId":              restoreID,
 	}
 	return emit(options.asJSON, report, func() {
 		printPlan(result.RestorePlan)
 		fmt.Printf("restored; deletion ledger reapplied for %d games (%d already honoured)\n", result.TombstonesApplied, result.TombstonesKept)
+		fmt.Printf("restored; online removal ledger replayed for %d shared games\n", result.RemovalsApplied)
+		fmt.Printf("restored; subject removal ledger replayed for %d removed subjects\n", result.SubjectRemovalsApplied)
 	})
 }
 
+// nowUTC is the clock of the tool.
+//
+// The rotation decides the age of a bundle against this clock, so the tests
+// pin it: the age of a bundle is then decided by a fixed reference time and
+// not by the moment the test happens to run.
+var nowUTC = func() time.Time { return time.Now().UTC() }
+
+// rotateCommand plans and applies the rotation of the managed directory.
+//
+// The rotation keeps the seven newest daily and the four newest weekly
+// bundles and retires every ordinary bundle that passed the maximum age of
+// thirty days. A bundle that the rotation may not delete - a protected one, a
+// one without a creation time, a one dated after the reference time, or a one
+// whose manifest cannot be read - leaves an open retention obligation, and
+// the rotation refuses to report success while such a bundle remains.
+//
+// The directory of the durable restore evidence is not part of the rotation:
+// the evidence is a directory of the managed directory and the rotation never
+// descends into a subdirectory, so the evidence of a restore is never a
+// candidate and is never retired by the age rule.
 func rotateCommand(arguments []string) error {
 	options, err := parseFlags("rotate", arguments, nil)
 	if err != nil {
@@ -420,10 +740,23 @@ func rotateCommand(arguments []string) error {
 		})
 	}
 	policy := backup.RetentionPolicy{Daily: options.daily, Weekly: options.weekly}
-	plan, err := backup.PlanRotation(candidates, time.Now().UTC(), policy)
+	plan, err := backup.PlanRotation(candidates, nowUTC(), policy)
 	if err != nil {
 		return err
 	}
+	// A file whose manifest cannot be read cannot be dated, so its age
+	// cannot be proven. It is never deleted and never ignored: the rotation
+	// reports it as unresolved so the run that owns the directory cannot
+	// claim that the retention of the directory is settled.
+	for _, name := range unreadable {
+		plan.Unresolved = append(plan.Unresolved, backup.Disposition{
+			Path:   filepath.Join(options.directory, name),
+			Label:  name,
+			Action: "unresolved",
+			Reason: "the manifest of the bundle cannot be read, so the age of the bundle cannot be proven",
+		})
+	}
+	sortDispositionsByPath(plan.Unresolved)
 	deleted := []string{}
 	if options.apply {
 		for _, item := range plan.Prune {
@@ -438,19 +771,24 @@ func rotateCommand(arguments []string) error {
 		"command":       "rotate",
 		"applied":       options.apply,
 		"policy":        plan.Policy,
+		"maxAgeDays":    plan.MaxAgeDays,
 		"keep":          plan.Keep,
 		"prune":         plan.Prune,
 		"prunableBytes": plan.PrunableBytes,
 		"deleted":       deleted,
 		"unreadable":    unreadable,
+		"unresolved":    plan.Unresolved,
 	}
-	return emit(options.asJSON, report, func() {
-		fmt.Printf("retention: %d daily, %d weekly\n", plan.Policy.Daily, plan.Policy.Weekly)
+	if err := emit(options.asJSON, report, func() {
+		fmt.Printf("retention: %d daily, %d weekly, maximum age %d days\n", plan.Policy.Daily, plan.Policy.Weekly, plan.MaxAgeDays)
 		for _, item := range plan.Keep {
 			fmt.Printf("  keep  %-18s %s\n", item.Label, item.Reason)
 		}
 		for _, item := range plan.Prune {
 			fmt.Printf("  prune %-18s %s\n", item.Label, item.Reason)
+		}
+		for _, item := range plan.Unresolved {
+			fmt.Printf("  unresolved %-18s %s\n", item.Label, item.Reason)
 		}
 		for _, name := range unreadable {
 			fmt.Printf("  unreadable %s (not planned, not deleted)\n", name)
@@ -460,6 +798,34 @@ func rotateCommand(arguments []string) error {
 		} else {
 			fmt.Println("plan only: nothing was deleted. Re-run with --apply to prune.")
 		}
+		if len(plan.Unresolved) > 0 {
+			fmt.Printf("retention is unresolved: %d bundle(s) could not be retired within the maximum age of %d days\n", len(plan.Unresolved), plan.MaxAgeDays)
+		}
+	}); err != nil {
+		return err
+	}
+	if len(plan.Unresolved) > 0 {
+		return fmt.Errorf("%w: %d bundle(s) in %s could not be retired within the maximum age of %d days: %s",
+			backup.ErrRetentionUnresolved, len(plan.Unresolved), options.directory, plan.MaxAgeDays,
+			strings.Join(unresolvedLabels(plan.Unresolved), ", "))
+	}
+	return nil
+}
+
+// unresolvedLabels names the bundles whose retention is unresolved.
+func unresolvedLabels(items []backup.Disposition) []string {
+	labels := make([]string, 0, len(items))
+	for _, item := range items {
+		labels = append(labels, item.Label)
+	}
+	return labels
+}
+
+// sortDispositionsByPath orders the unresolved entries by their path, so the
+// report of a run does not depend on the order of the directory.
+func sortDispositionsByPath(items []backup.Disposition) {
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Path < items[j].Path
 	})
 }
 
@@ -524,6 +890,19 @@ func emit(asJSON bool, report map[string]any, text func()) error {
 	}
 	text()
 	return nil
+}
+
+// randomSuffix returns a short random suffix for a restore identifier.
+//
+// The suffix keeps two restores of the same second apart, so the restore
+// identifiers are unique and the fence of one restore is never the fence of
+// another.
+func randomSuffix() string {
+	raw := make([]byte, 6)
+	if _, err := rand.Read(raw); err != nil {
+		return "unknown"
+	}
+	return hex.EncodeToString(raw)
 }
 
 func defaultBinary(name string) string {

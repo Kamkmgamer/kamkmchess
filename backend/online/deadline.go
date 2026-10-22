@@ -52,6 +52,11 @@ const (
 	DeadlineNotDue DeadlineOutcome = "not_due"
 	// DeadlineAlreadySettled means the match already carried a terminal result.
 	DeadlineAlreadySettled DeadlineOutcome = "already_settled"
+	// DeadlineGated means the service is suspended, restoring or still
+	// recovering, so the deadline is not settled. The clock of that match
+	// is about to be adjusted by the canonical recovery, and the match
+	// stays pending until the service serves again.
+	DeadlineGated DeadlineOutcome = "gated"
 )
 
 // DeadlineSweep summarises one bounded reconciliation pass.
@@ -142,9 +147,20 @@ func (s *Service) ReconcileDeadline(ctx context.Context, matchID string) (Deadli
 	if !idPattern.MatchString(matchID) {
 		return "", ErrInvalidArgument
 	}
+	// The shared gate keeps the sweep away from a suspended or recovering
+	// service. The clock of a due match is about to be adjusted by the
+	// canonical recovery, so settling it now would charge the player for
+	// the interruption.
+	gate, err := ServiceGate(ctx, s.db)
+	if err != nil {
+		return "", err
+	}
+	if !gate.Open {
+		return DeadlineGated, nil
+	}
 	// One consistent snapshot decides which deadline applies. No lock and no
 	// transaction is held while the rules process runs.
-	snapshot, now, err := loadDeadlineSnapshot(ctx, s.db, matchID)
+	snapshot, now, err := s.loadDeadlineSnapshot(ctx, s.db, matchID)
 	if err != nil {
 		return "", err
 	}
@@ -198,12 +214,16 @@ func (s *Service) ReconcileDeadlines(ctx context.Context, limit int) (DeadlineSw
 // The abort needs no chess rules, so the decision is taken under a fresh lock
 // and a freshly sampled decision time.
 func (s *Service) settleOpeningExpiry(ctx context.Context, snapshot Match) (DeadlineOutcome, error) {
-	tx, err := s.db.Begin(ctx)
+	// The gate is taken before the match row, so a suspension is ordered
+	// after the settlement and the clock of a match that is about to be
+	// refunded is never settled. The shared gate lock holds until the
+	// transaction ends, so the gate state is stable for the whole write.
+	tx, err := s.beginTrustedMutation(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	match, clock, _, err := lockMatch(ctx, tx, snapshot.MatchID)
+	match, clock, _, err := s.lockMatch(ctx, tx, snapshot.MatchID)
 	if err != nil {
 		return "", err
 	}
@@ -216,7 +236,7 @@ func (s *Service) settleOpeningExpiry(ctx context.Context, snapshot Match) (Dead
 	if match.Moves, err = loadMoves(ctx, tx, snapshot.MatchID); err != nil {
 		return "", err
 	}
-	decision, err := sampleDecision(ctx, tx, match.UpdatedAt)
+	decision, err := s.sampleDecision(ctx, tx, match.UpdatedAt)
 	if err != nil {
 		return "", err
 	}
@@ -252,10 +272,20 @@ func (s *Service) settleClockExpiry(ctx context.Context, snapshot Match) (Deadli
 	input := BuildRulesInput(snapshot, snapshot.Moves, "")
 	// External rules evaluation happens with no database lock or transaction
 	// held.
+	//
+	// The epoch of the outage is read before the evaluation, and the
+	// failure is reported to the health boundary: a broken rules process is
+	// an outage of the dependency, not a missing timeout policy.
+	seq := s.observationSeq.Add(1)
+	causal, _ := s.causalEpoch(ctx)
 	facts, err := evaluator.EvaluateTimeout(ctx, input, expired)
 	if err != nil {
+		if !s.busy(err) && !s.cancelled(err) {
+			s.observeFailure(ctx, causal, seq, err, false)
+		}
 		return "", fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
+	s.observeSuccess(ctx, seq, false)
 	if err = facts.Validate(); err != nil {
 		return "", err
 	}
@@ -270,12 +300,16 @@ func (s *Service) settleClockExpiry(ctx context.Context, snapshot Match) (Deadli
 		return "", err
 	}
 
-	tx, err := s.db.Begin(ctx)
+	// The gate is taken before the match row, so a suspension is ordered
+	// after the settlement and the clock of a match that is about to be
+	// refunded is never settled. The shared gate lock holds until the
+	// transaction ends, so the gate state is stable for the whole write.
+	tx, err := s.beginTrustedMutation(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer tx.Rollback(ctx)
-	match, clock, _, err := lockMatch(ctx, tx, snapshot.MatchID)
+	match, clock, _, err := s.lockMatch(ctx, tx, snapshot.MatchID)
 	if err != nil {
 		return "", err
 	}
@@ -289,7 +323,7 @@ func (s *Service) settleClockExpiry(ctx context.Context, snapshot Match) (Deadli
 	// The decision time is re-sampled after every lock is held, so a sweep
 	// that waited for a busy match is judged against the time it acquired the
 	// lock.
-	decision, err := sampleDecision(ctx, tx, match.UpdatedAt)
+	decision, err := s.sampleDecision(ctx, tx, match.UpdatedAt)
 	if err != nil {
 		return "", err
 	}
@@ -316,7 +350,7 @@ func (s *Service) settleClockExpiry(ctx context.Context, snapshot Match) (Deadli
 //
 // The snapshot is read-only and repeatable-read, so the match state and the
 // clock reading describe the same committed version.
-func loadDeadlineSnapshot(ctx context.Context, db *pgxpool.Pool, matchID string) (Match, time.Time, error) {
+func (s *Service) loadDeadlineSnapshot(ctx context.Context, db *pgxpool.Pool, matchID string) (Match, time.Time, error) {
 	tx, err := db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return Match{}, time.Time{}, err
@@ -326,8 +360,10 @@ func loadDeadlineSnapshot(ctx context.Context, db *pgxpool.Pool, matchID string)
 	if err != nil {
 		return Match{}, time.Time{}, err
 	}
-	var now time.Time
-	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+	// The snapshot reads the authoritative clock of the writer, so the sweep
+	// and the settlement judge the same deadline on the same timeline.
+	now, err := s.now(ctx, tx)
+	if err != nil {
 		return Match{}, time.Time{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {

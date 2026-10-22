@@ -5,6 +5,12 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     env_file: postgres.env
+    environment:
+      # The restore command runs inside this container, so the durable fence
+      # path has to be set here as well as for the API. Without it the restore
+      # refuses to run, which is the correct fail-closed behaviour but an
+      # unusable procedure.
+      ONLINE_RESTORE_FENCE_PATH: /var/lib/kamkmchess/restore-fence
     networks:
       default:
         aliases:
@@ -16,6 +22,39 @@ services:
       - ./bin:/opt/kamkmchess:ro
       - ./backups:/backups
       - ./backup.env:/run/secrets/backup.env:ro
+      # The operator programs of the deployment. The first one reads the
+      # identifier of a restore out of the marker of the lifecycle and
+      # refuses everything the production rule refuses; the second one copies
+      # the durable evidence of the owed removal ledgers into the protected
+      # backup, under the lock of the lifecycle and as the user that owns it.
+      # They are mounted read-only, so the container cannot change them.
+      - ./check-restore-id.sh:/opt/kamkmchess-operator/check-restore-id.sh:ro
+      - ./copy-restore-evidence.sh:/opt/kamkmchess-operator/copy-restore-evidence.sh:ro
+      # The durable restore fence. The restore command writes the marker
+      # directory of the fence here and clears it when the restore is done,
+      # and the API observes the same marker directory from the same volume.
+      # A fence inside the database schema would be replaced by the restore it
+      # has to guard, and a container-local file would not survive a restart.
+      - restorefence:/var/lib/kamkmchess/restore-fence
+    # The shared fence directory belongs to the user the API reads it as, so
+    # the restore can write a private file there and the API can traverse the
+    # directory. Without that ownership the API cannot read the fence at all
+    # and refuses every request for the wrong reason.
+    user: root
+    # The entrypoint prepares the shared fence directory and then hands the
+    # configured command to the database image. The arguments are forwarded,
+    # so the ssl, hba and memory settings below still reach PostgreSQL.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mkdir -p /var/lib/kamkmchess/restore-fence
+        chown 65532:65532 /var/lib/kamkmchess/restore-fence
+        chmod 700 /var/lib/kamkmchess/restore-fence
+        exec /usr/local/bin/docker-entrypoint.sh "$$@"
+      - --
+
     command:
       - postgres
       - -c
@@ -47,3 +86,6 @@ services:
 
 volumes:
   pgdata:
+  # The durable restore fence is shared with the API container. Both must see
+  # the same file, and it must outlive a container restart.
+  restorefence:

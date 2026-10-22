@@ -33,6 +33,47 @@ func NewOnlineEvaluator(client *Client) (*OnlineEvaluator, error) {
 	return &OnlineEvaluator{client: client}, nil
 }
 
+// Probe reports whether the rules process is ready to answer, and it never
+// waits.
+//
+// It is the optional seam for a health monitor. A probe of a worker that is
+// busy with a participant request reports `online.ErrRulesBusy` and returns
+// at once: the monitor must not spend the budget of a participant request,
+// and a busy worker is not an outage.
+//
+// A probe never starts the worker. The recovery of a worker that is gone is
+// `Repair`.
+func (e *OnlineEvaluator) Probe(ctx context.Context) error {
+	return e.probe(ctx, false)
+}
+
+// Repair starts the rules process when it is not running and proves that it
+// answers.
+//
+// It is the recovery path of a closed health gate. The caller serves no
+// traffic then, so the cold start of the worker cannot delay a participant
+// request, and the dependency comes back without one.
+func (e *OnlineEvaluator) Repair(ctx context.Context) error {
+	return e.probe(ctx, true)
+}
+
+// probe is the shared body of the check and of the repair.
+func (e *OnlineEvaluator) probe(ctx context.Context, repair bool) error {
+	var err error
+	if repair {
+		err = e.client.Repair(ctx)
+	} else {
+		err = e.client.Probe(ctx)
+	}
+	if err != nil {
+		if errors.Is(err, ErrBusy) {
+			return fmt.Errorf("%w: %v", online.ErrRulesBusy, err)
+		}
+		return err
+	}
+	return nil
+}
+
 // ValidateSetup uses an evaluate-only request so Go does not duplicate FEN,
 // counter or terminal-position rules. Finished positions cannot start matches.
 func (e *OnlineEvaluator) ValidateSetup(ctx context.Context, input online.RulesInput) error {

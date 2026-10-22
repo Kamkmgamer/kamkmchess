@@ -3,6 +3,7 @@
 The migration binary must already be in ./bin. Credentials are generated in
 owner-only files and never printed. Run from the server deployment directory.
 """
+import json
 import os
 from pathlib import Path
 import secrets
@@ -21,6 +22,11 @@ def sql(statement, database='kamkmchess'):
     if result.returncode:
         raise RuntimeError('Database provisioning SQL failed; inspect privately')
     return result.stdout.decode().strip()
+
+
+def role_exists(name):
+    """Reports whether a database role exists."""
+    return sql("SELECT 1 FROM pg_roles WHERE rolname='" + name + "'") == '1'
 
 
 def main():
@@ -62,10 +68,68 @@ def main():
 REVOKE ALL ON DATABASE kamkmchess FROM PUBLIC;
 GRANT CONNECT ON DATABASE kamkmchess TO kamkmchess_runtime;
 REVOKE CREATE ON SCHEMA public FROM PUBLIC;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO kamkmchess_runtime;
-GRANT SELECT, INSERT, UPDATE, DELETE ON games, archive_chunks, archive_events,
- operations, deletion_tombstones TO kamkmchess_runtime;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON FUNCTIONS FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC;
 ''')
+    # The runtime grants come from the reviewed policy. Every table is listed
+    # explicitly, so a later migration cannot widen the role by accident and a
+    # removed table cannot keep a stale grant.
+    policy = json.loads(Path('runtime-grants.policy.json').read_text())
+    if policy.get('role') != 'kamkmchess_runtime':
+        raise RuntimeError('Runtime grant policy names an unexpected role')
+    statements = []
+    for table, privileges in sorted(policy['privileges'].items()):
+        if not table.replace('_', '').isalnum():
+            raise RuntimeError('Runtime grant policy names an unexpected table')
+        statements.append('REVOKE ALL ON TABLE public.' + table + ' FROM kamkmchess_runtime;')
+        statements.append('GRANT ' + ', '.join(sorted(privileges)) +
+                          ' ON TABLE public.' + table + ' TO kamkmchess_runtime;')
+    for sequence, privileges in sorted(policy.get('sequences', {}).items()):
+        if not sequence.replace('_', '').isalnum():
+            raise RuntimeError('Runtime grant policy names an unexpected sequence')
+        if not privileges or any(verb not in {'USAGE', 'SELECT', 'UPDATE'} for verb in privileges):
+            raise RuntimeError('Runtime grant policy names an unexpected sequence privilege')
+        statements.append('REVOKE ALL ON SEQUENCE public.' + sequence + ' FROM PUBLIC;')
+        statements.append('REVOKE ALL ON SEQUENCE public.' + sequence + ' FROM kamkmchess_runtime;')
+        statements.append('GRANT ' + ', '.join(sorted(privileges)) +
+                          ' ON SEQUENCE public.' + sequence + ' TO kamkmchess_runtime;')
+    sql('\n'.join(statements))
+    # The online migrations create two more application roles and grant them
+    # broad table privileges. The deployment connects as kamkmchess_runtime,
+    # so those roles are unused and must not keep a grant. Provisioning strips
+    # them, so no unused role can hold a privilege the policy does not grant.
+    unused = [name for name in policy.get('unusedRoles', [])
+              if role_exists(name)]
+    if unused:
+        revokes = []
+        for role in unused:
+            revokes.append('REVOKE ALL ON ALL TABLES IN SCHEMA public FROM ' + role + ';')
+            revokes.append('REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM ' + role + ';')
+            revokes.append('REVOKE ALL ON ALL FUNCTIONS IN SCHEMA public FROM ' + role + ';')
+            revokes.append('REVOKE ALL ON SCHEMA public FROM ' + role + ';')
+        sql('\n'.join(revokes))
+    # A function that is not a trigger function can be called directly, and
+    # PostgreSQL grants EXECUTE on it to PUBLIC. The deployment revokes that
+    # and grants EXECUTE to the runtime role only.
+    functions = sorted(policy.get('functions', {}))
+    if functions:
+        names = ', '.join("'" + name + "'" for name in functions)
+        sql("""
+DO $kamkmchess$
+DECLARE entry record;
+BEGIN
+  FOR entry IN SELECT p.oid::regprocedure::text AS signature
+               FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+               WHERE n.nspname = 'public' AND p.proname IN (""" + names + """) LOOP
+    EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC', entry.signature);
+    EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO kamkmchess_runtime', entry.signature);
+  END LOOP;
+END
+$kamkmchess$;""")
     backup_env = Path('backup.env')
     if 'DATABASE_URL=' not in backup_env.read_text():
         settings = dict(line.split('=', 1) for line in Path('postgres.env').read_text().splitlines())

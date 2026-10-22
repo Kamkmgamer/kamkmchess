@@ -9,8 +9,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/locks"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/Kamkmgamer/kamkmchess/backend/subject"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -117,6 +119,16 @@ func (s *Service) UpdateProfile(ctx context.Context, account onlineauth.Principa
 	}
 	var updated Profile
 	err = s.withAccount(ctx, account, origin, func(ctx context.Context, tx pgx.Tx) error {
+		// A deleted account keeps no public identity. The check runs under
+		// the account lock, which is the lock the removal takes, so a deleted
+		// account can never publish a name again.
+		closed, err := s.accountDeleted(ctx, tx, account.Subject)
+		if err != nil {
+			return err
+		}
+		if closed {
+			return ErrProfileClosed
+		}
 		// The profile row is locked for the update, so two concurrent edits
 		// of the same profile are ordered by the database.
 		if err := s.ensureProfileRow(ctx, tx, account.Subject); err != nil {
@@ -154,6 +166,91 @@ func (s *Service) UpdateProfile(ctx context.Context, account onlineauth.Principa
 		return Profile{}, err
 	}
 	return updated, nil
+}
+
+// EnsureProfileForAccount returns the public profile identifier of an account.
+//
+// It is the internal seam the history publisher uses: the publisher needs the
+// stable public identifier of every account that played an online game, and
+// the profile service is the only writer of the profile table.
+//
+// The call is not an account authorization. It names an account that the
+// caller already resolved from the shared match state, and it never accepts an
+// account from a request body. A concurrent first use still creates one
+// profile, because the insert is a no-op when the account already has one.
+//
+// A deleted account never gets a profile. The check runs under the account
+// lock, which is the lock the removal takes, so a profile is never created
+// for an account that is being deleted, and a profile that exists when the
+// removal starts is anonymized by the removal.
+func (s *Service) EnsureProfileForAccount(ctx context.Context, accountID string) (string, error) {
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return "", ErrNotFound
+	}
+	// A deleted account has no public profile at all, so the fast path checks
+	// the deletion record before it answers.
+	deleted, err := s.accountDeleted(ctx, s.db, accountID)
+	if err != nil {
+		return "", err
+	}
+	if deleted {
+		return "", nil
+	}
+	// The fast path needs no lock: an existing profile is not created and
+	// not changed.
+	row, err := s.readStoredProfile(ctx, s.db, profileByAccount, accountID)
+	if err == nil {
+		return row.ProfileID, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return "", err
+	}
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+	// The account scope lock orders the creation against the removal of the
+	// account and against the trusted allocation of a seat for it. It is the
+	// shared lock of the online service.
+	if err = locks.LockAccountScope(ctx, tx, locks.AccountScope(string(online.ParticipantAccount), accountID)); err != nil {
+		return "", err
+	}
+	closed, err := s.accountDeleted(ctx, tx, accountID)
+	if err != nil {
+		return "", err
+	}
+	if closed {
+		// A deleted account has no public profile. The seam answers with an
+		// empty identifier, so the publisher never counts a result for the
+		// account again.
+		return "", nil
+	}
+	if err = s.ensureProfileRow(ctx, tx, accountID); err != nil {
+		return "", err
+	}
+	stored, err := s.readStoredProfile(ctx, tx, profileByAccount, accountID)
+	if err != nil {
+		return "", err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return stored.ProfileID, nil
+}
+
+// accountDeleted reports whether the account was deleted.
+//
+// The deletion record names the account by its one-way reference, so the
+// check never handles the raw identifier of a removed subject.
+func (s *Service) accountDeleted(ctx context.Context, q online.Querier, accountID string) (bool, error) {
+	var deleted bool
+	err := q.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM online_account_deletions WHERE account_id = $1)`, subject.Reference(accountID)).Scan(&deleted)
+	if err != nil {
+		return false, err
+	}
+	return deleted, nil
 }
 
 // PublicProfile reads one profile by its public identifier.
@@ -309,9 +406,9 @@ func (s *Service) GuestLinks(ctx context.Context, accountID string) ([]GuestLink
 	links := make([]GuestLink, 0)
 	for rows.Next() {
 		var (
-			link    GuestLink
-			seat    string
-			linked  time.Time
+			link   GuestLink
+			seat   string
+			linked time.Time
 		)
 		if err = rows.Scan(&link.LinkID, &link.ProfileID, &link.MatchID, &seat, &linked); err != nil {
 			return nil, err

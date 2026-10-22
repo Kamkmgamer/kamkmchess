@@ -1,10 +1,11 @@
 import { IconButton } from './ui/Icon.js';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { accountGameDatabaseName, createAccountSession, createIndexedDbAccountData, readClerkRuntimeConfig } from './accounts/index.js';
-import type { AccountIdentity, AccountSession, GuestGameSummary } from './accounts/index.js';
+import type { AccountIdentity, AccountSession, GuestGameSummary, IdentityFence } from './accounts/index.js';
 import { createCloudCoordination, createCloudSyncManager, createIndexedDbCloudLocal, GoCloudClient, readCloudRuntimeConfig } from './cloud/index.js';
 import { openGameStore } from './storage/index.js';
 import type { ControllerSnapshotV1 } from './controller/index.js';
+import type { ModelSelection } from './controller/index.js';
 import { App } from './ui/App.js';
 import { AccountPanel } from './ui/AccountPanel.js';
 import { ProfilePanel } from './ui/ProfilePanel.js';
@@ -16,11 +17,30 @@ import { createProfileIdentityTracker } from './profile/identity.js';
 import type { ProfileIdentityBinding, ProfileIdentityTracker } from './profile/identity.js';
 import { createParticipantSession } from './online/session.js';
 import type { ParticipantSession } from './online/session.js';
+import { createOnlineComposition } from './online/composition.js';
+import type { OnlineComposition } from './online/composition.js';
+import type { ConnectionNamespace } from './providers/connections/index.js';
+import { createAgentReadinessCheck } from './online/agent-readiness.js';
+import type { OnlineAgentCheck } from './online/readiness.js';
+import { createBrowserEnginePreparation } from './online/engine-preparation.js';
+import { OpponentService } from './opponents/index.js';
+import { fetchProvider } from './providers/transport.js';
+import { agentServiceForNamespace } from './accounts/agent-services.js';
 import type { GuestOnlineCredential } from './online/auth.js';
 import { publicConfig } from './public-config.js';
 import './account-workspace.css';
 
+/**
+ * The compile-time flag of the synthetic account session.
+ *
+ * The build defines the constant, so the branch that loads the bridge is
+ * removed from an ordinary bundle instead of only being switched off.
+ */
+declare const __KAMKM_TEST_SESSION__: boolean;
+
 interface WorkspaceView {
+  /** The online composition of the guest workspace. */
+  readonly online?: OnlineComposition | null;
   readonly composition: MatchComposition;
   readonly initialSession: LocalGameSession;
   readonly initialSnapshot: ControllerSnapshotV1;
@@ -64,8 +84,45 @@ export function AccountWorkspace(initialView: WorkspaceView) {
   const activeView = useRef(view);
   const profileIdentities = useRef<ProfileIdentityTracker | null>(null);
   const identityRef = useRef<AccountIdentity | null>(null);
+  /**
+   * The namespace of the connections of the active identity.
+   *
+   * The namespace is resolved when a request needs it, so the connections of
+   * the signed-in account are used and the guest connections of another
+   * identity never are.
+   */
+  const resolveNamespace = useCallback((): ConnectionNamespace => {
+    const active = identityRef.current;
+    return active ? { kind: 'account', accountId: active.accountId } : { kind: 'guest' };
+  }, []);
+  /**
+   * The provider service of the active identity.
+   *
+   * The service resolves the connection, the credential and the disclosure of
+   * its namespace, so the diagnostic of an account reads the connections of
+   * that account and never the guest ones.
+   */
+  const accountServices = useRef(new Map<string, Promise<OpponentService>>());
+  const resolveOpponentService = useCallback((namespace: ConnectionNamespace): OpponentService | Promise<OpponentService> | null => {
+    if (namespace.kind === 'guest') return guestView.composition.opponentService;
+    const known = accountServices.current.get(namespace.accountId);
+    if (known) return known;
+    const created = guestView.composition.connectionStore.then((connections) => new OpponentService({
+      connections,
+      namespace,
+      fetch: fetchProvider,
+    }));
+    accountServices.current.set(namespace.accountId, created);
+    return created;
+  }, [guestView]);
   const guestCredentialRef = useRef<GuestOnlineCredential | null>(null);
   const [profileIdentity, setProfileIdentity] = useState<ProfileIdentityBinding | null>(null);
+  // The account composition owns the online surface while an account is
+  // signed in. The guest composition keeps the surface reachable while the
+  // browser is signed out.
+  const guestOnline = initialView.online ?? null;
+  const [accountOnline, setAccountOnline] = useState<OnlineComposition | null>(null);
+  const onlineRef = useRef<OnlineComposition | null>(null);
   useEffect(() => { activeView.current = view; }, [view]);
 
   useEffect(() => {
@@ -82,25 +139,91 @@ export function AccountWorkspace(initialView: WorkspaceView) {
     };
     void (async () => {
       const credentials = await guestView.composition.connectionStore;
-      const created = await createAccountSession({
-        config: readClerkRuntimeConfig({ publishableKey: publicConfig.clerkPublishableKey }),
-        credentials,
-        fence: {
-          async fencePendingRequests() {
-            clearProfileIdentity();
-            identityGeneration.current += 1;
-            for (const request of activeRequests.current) request.abort();
-            activeRequests.current.clear();
-            await releaseAccountCompositions();
-          },
-          clearInMemoryIdentity() { if (!cancelled) { setIdentity(null); clearProfileIdentity(); } },
-          hidePrivateViews() { if (!cancelled) { setGames([]); setView(guestResumeView.current); } },
+      const fence: IdentityFence = {
+        async fencePendingRequests() {
+          clearProfileIdentity();
+          identityGeneration.current += 1;
+          for (const request of activeRequests.current) request.abort();
+          activeRequests.current.clear();
+          await releaseAccountCompositions();
         },
-      });
+        clearInMemoryIdentity() { if (!cancelled) { setIdentity(null); clearProfileIdentity(); } },
+        hidePrivateViews() { if (!cancelled) { setGames([]); setView(guestResumeView.current); } },
+      };
+      let created: AccountSession;
+      if (__KAMKM_TEST_SESSION__) {
+        // A fixture build signs in with the synthetic session of the local
+        // fixture. The bridge is only reachable in a build that was flagged
+        // for it, it reads the identity from the page and it never acts for a
+        // service that is not the local fixture.
+        const { createTestAccountSession } = await import('./accounts/test-session.js');
+        created = createTestAccountSession({ credentials, fence, apiBaseUrl: publicConfig.apiBaseUrl });
+      } else {
+        created = await createAccountSession({
+          config: readClerkRuntimeConfig({ publishableKey: publicConfig.clerkPublishableKey }),
+          credentials,
+          fence,
+        });
+      }
       if (cancelled) { created.dispose(); return; }
       initialized = created;
       accountSession.current = created;
       setSession(created);
+      // The online workspace follows the *active* identity. A signed-out
+      // browser keeps the guest composition, a signed-in browser uses the
+      // account composition, and the superseded one is suspended so it never
+      // keeps a heartbeat or a provider request alive.
+      const applyIdentity = (next: AccountIdentity | null) => {
+        if (cancelled) return;
+        if (!next || !publicConfig.apiBaseUrl) {
+          onlineRef.current?.dispose();
+          onlineRef.current = null;
+          setAccountOnline(null);
+          guestOnline?.resume();
+          return;
+        }
+        if (onlineRef.current) {
+          // The identity changed under the same composition. The composition
+          // fences the previous identity and restores the durable games of the
+          // new one, so the browser follows the account that is signed in now.
+          onlineRef.current.resume();
+          onlineRef.current.resumeMatches();
+          guestOnline?.suspend();
+          return;
+        }
+        // The browser engine and the own-agent check are browser-owned. The
+        // service never sees a provider credential and never runs an engine.
+        const enginePreparation = createBrowserEnginePreparation();
+        const checkModel = async (selection: ModelSelection): Promise<OnlineAgentCheck> => {
+          // The check runs in the namespace of the identity that is signed in
+          // now, with the service of that namespace.
+          const namespace = resolveNamespace();
+          const service = agentServiceForNamespace({
+            guest: guestView.composition.opponentService,
+            account: resolveOpponentService(namespace),
+          }, namespace);
+          if (!service) return { ready: false, detail: 'The account has no model connections yet.' };
+          const check = createAgentReadinessCheck({
+            opponentService: service,
+            connectionStore: guestView.composition.connectionStore,
+            resolveNamespace: () => namespace,
+          });
+          return check(selection);
+        };
+        const composition = createOnlineComposition({
+          baseUrl: publicConfig.apiBaseUrl,
+          accountSession: created,
+          prepareEngine: () => enginePreparation.prepare(),
+          checkModel,
+          connectionStore: guestView.composition.connectionStore,
+          resolveNamespace,
+        });
+        onlineRef.current = composition;
+        setAccountOnline(composition);
+        void composition.loadFeatures();
+        composition.resumeMatches();
+        guestOnline?.suspend();
+      };
       // The profile surface is bound to the signed-in account and to the
       // guest seat this browser holds. A new account makes a new binding and
       // fences the old one, so a call started under the previous account is
@@ -124,7 +247,9 @@ export function AccountWorkspace(initialView: WorkspaceView) {
         setView(guestResumeView.current);
         setRevision((value) => value + 1);
         publishIdentity();
+        applyIdentity(next);
       });
+      applyIdentity(created.identity);
       // The participant session holds the guest seat credential, if this
       // browser controls one. It never merges into the signed-in account.
       const participants = createParticipantSession({ accountSession: created });
@@ -143,6 +268,8 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       unsubscribeParticipant?.();
       participantSession.current?.dispose();
       participantSession.current = null;
+      onlineRef.current?.dispose();
+      onlineRef.current = null;
       initialized?.dispose();
       identityGeneration.current += 1;
       for (const request of requests) request.abort();
@@ -154,7 +281,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
       guestCredentialRef.current = null;
       void releaseAccountCompositions().catch(() => undefined);
     };
-  }, [guestView]);
+  }, [guestOnline, guestView, resolveNamespace, resolveOpponentService]);
 
   // The public profile client. It needs the service origin and the identity
   // binding it acts for; without them there is no profile surface to show.
@@ -338,7 +465,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
         {message && <p role="status">{busy ? 'Syncing…' : message.startsWith('Complete game') ? 'Synced.' : message.startsWith('Cloud history') ? 'Sync conflict. Choose continuation.' : message.startsWith('Account game opened') || message.startsWith('Guest workspace opened') || message.startsWith('The accepted cloud game') ? 'Opened.' : 'Sync failed. Retry.'}</p>}
       </>}
     </section>}
-    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} onOpenAccount={() => setAccountPage('account')} /></div>
+    <div hidden={accountPage !== null}><App key={JSON.stringify([view.composition.registryScope, view.initialSession.gameId])} {...view} onOpenAccount={() => setAccountPage('account')} online={accountOnline ?? guestOnline} onOpenProfile={() => setAccountPage('profile')} onlineResolveNamespace={resolveNamespace} onlineConnectionStore={guestView.composition.connectionStore} accountIdentity={identity?.accountId ?? null} /></div>
   </>;
 }
 

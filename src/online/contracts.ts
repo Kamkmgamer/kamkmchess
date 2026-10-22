@@ -42,7 +42,9 @@ export type EventKind =
   | 'takeback_accepted'
   | 'offer_created'
   | 'recovery_attempt'
-  | 'illegal_move_loss';
+  | 'illegal_move_loss'
+  | 'abandonment_claim'
+  | 'recovery_adjustment';
 export type ReceiptOutcome = 'accepted' | 'deadline_expired' | 'replay_removed' | 'opening_expired';
 export type QueueStatus = 'waiting' | 'cancelled' | 'assigned';
 export type LeaseStatus = 'active' | 'revoked' | 'expired';
@@ -116,6 +118,8 @@ export interface Event {
   takebackTargetVersion?: number;
   /** The spent recovery attempt an event records. */
   recoveryAttempt?: RecoveryAttemptKind;
+  /** The time a recovery adjustment moved the armed deadline. */
+  recoveryShiftMs?: number;
 }
 
 export interface CreateSeat {
@@ -156,7 +160,33 @@ export interface Command {
   expectedVersion: number;
   seat: Seat;
   controlEpoch: number;
+  /**
+   * The browser runner lease that produced the command.
+   *
+   * The server requires it when the seat is controlled by an agent or an
+   * engine, and it ignores it for a human seat. A lease that was revoked,
+   * that expired, that belongs to an older control epoch, that belongs to an
+   * older service epoch, or that is bound to another turn is fenced in the
+   * acceptance transaction, so a reply from a superseded runner can never
+   * become an accepted move.
+   */
+  leaseId?: string;
   action: OnlineAction;
+}
+
+/**
+ * The command envelope of the optional abandonment claim.
+ *
+ * A claim is not a match action: it never changes the position, the turn or
+ * the clocks of a running game, so it keeps its own closed envelope.
+ */
+export interface ClaimCommand {
+  schemaVersion: number;
+  matchId: string;
+  operationId: string;
+  expectedVersion: number;
+  seat: Seat;
+  controlEpoch: number;
 }
 
 export interface Receipt {
@@ -305,6 +335,112 @@ export interface QueueEntry {
   updatedAt: string;
 }
 
+/**
+ * The one-way reference of a removed subject.
+ *
+ * The removal tables carry the reference instead of the identifier, and the
+ * allocation of a redacted participant is refused.
+ */
+export const ANONYMIZED_PARTICIPANT_ID = 'anonymized';
+
+/**
+ * The wire envelope of the provider request record.
+ *
+ * The envelope is the shared contract of the browser runner and the service.
+ * The service decodes it strictly, so an unknown field is refused there and
+ * here. The rules are the rules of the service: the same schema version, the
+ * same identity shape, the same bounds.
+ */
+export interface RunnerRequestEnvelope {
+  readonly schemaVersion: number;
+  readonly action: 'begin' | 'clear';
+  readonly seat: Seat;
+  readonly runnerId: string;
+  readonly leaseId: string;
+  readonly requestId: string;
+  readonly controlEpoch: number;
+  readonly turnVersion: number;
+}
+
+/** The input of the provider request envelope. */
+export interface RunnerRequestInput {
+  readonly action: 'begin' | 'clear';
+  readonly seat: Seat;
+  readonly runnerId: string;
+  readonly leaseId: string;
+  readonly requestId: string;
+  readonly controlEpoch: number;
+  readonly turnVersion: number;
+}
+
+/**
+ * Builds the provider request envelope.
+ *
+ * The browser sends exactly these fields, so the service reads the body it
+ * expects and the shared fixture describes the same shape.
+ */
+export function buildRunnerRequestEnvelope(input: RunnerRequestInput): RunnerRequestEnvelope {
+  const envelope: RunnerRequestEnvelope = {
+    schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
+    action: input.action,
+    seat: input.seat,
+    runnerId: input.runnerId,
+    leaseId: input.leaseId,
+    requestId: input.requestId,
+    controlEpoch: input.controlEpoch,
+    turnVersion: input.turnVersion,
+  };
+  // The builder refuses the same bodies the service refuses.
+  parseRunnerRequestEnvelope(envelope);
+  return envelope;
+}
+
+export function parseRunnerRequestEnvelope(value: unknown): RunnerRequestEnvelope {
+  const path = 'runnerRequestEnvelope';
+  const objectValue = object(value, path);
+  onlyKeys(objectValue, ['schemaVersion', 'action', 'seat', 'runnerId', 'leaseId', 'requestId', 'controlEpoch', 'turnVersion'], path);
+  requiredKeys(objectValue, ['schemaVersion', 'action', 'seat', 'runnerId', 'leaseId', 'requestId', 'controlEpoch', 'turnVersion'], path);
+  if (integerValue(objectValue.schemaVersion, `${path}.schemaVersion`) !== ONLINE_CONTRACTS_SCHEMA_VERSION) {
+    throw new OnlineContractError('unsupported schema version', `${path}.schemaVersion`);
+  }
+  const action = stringValue(objectValue.action, `${path}.action`);
+  if (action !== 'begin' && action !== 'clear') {
+    throw new OnlineContractError('invalid runner request action', `${path}.action`);
+  }
+  return {
+    schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
+    action,
+    seat: seatValue(objectValue.seat, `${path}.seat`),
+    runnerId: runnerIdentity(objectValue.runnerId, `${path}.runnerId`),
+    leaseId: idValue(objectValue.leaseId, `${path}.leaseId`),
+    requestId: runnerIdentity(objectValue.requestId, `${path}.requestId`),
+    controlEpoch: positiveInteger(objectValue.controlEpoch, `${path}.controlEpoch`),
+    turnVersion: nonNegativeInteger(objectValue.turnVersion, `${path}.turnVersion`),
+  };
+}
+
+/**
+ * The identity of a runner or of a provider request.
+ *
+ * The service accepts an opaque identity: it is not empty, it is at most 128
+ * bytes long, and it carries no control character. The length is counted in
+ * bytes, like the service counts it, and the identity is never trimmed.
+ */
+function runnerIdentity(value: unknown, path: string): string {
+  const text = stringValue(value, path);
+  const bytes = new TextEncoder().encode(text).length;
+  if (bytes < 1 || bytes > 128) {
+    throw new OnlineContractError('invalid runner identity', path);
+  }
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      throw new OnlineContractError('invalid runner identity', path);
+    }
+  }
+  return text;
+}
+
 export interface RunnerLease {
   schemaVersion: number;
   leaseId: string;
@@ -317,6 +453,97 @@ export interface RunnerLease {
   acquiredAt: string;
   expiresAt: string;
   revokedAt: string | null;
+  /** The match version the lease acts for. */
+  turnVersion: number | null;
+  /** The service epoch that owns the lease. */
+  runnerEpoch: number;
+  /**
+   * The provider request that may still be running.
+   *
+   * It survives a lease change, so the next runner knows that the previous
+   * runner may have started billable work and offers an explicit Retry,
+   * switch or takeover instead of another provider request.
+   */
+  pendingRequestId: string | null;
+  pendingRequestStartedAt: string | null;
+  /** Why the lease ended, for example `control_change` or `recovery`. */
+  revokedReason: string | null;
+  lastRenewedAt: string | null;
+}
+
+/**
+ * The liveness of one seat.
+ *
+ * A participant is connected while its liveness lease holds, and offline
+ * from the moment the lease expires. The offline minute therefore starts
+ * when the lease expires, not when the last heartbeat was sent.
+ */
+export type PresenceState = 'connected' | 'offline' | 'unknown';
+
+/**
+ * Why the abandonment claim is or is not available.
+ *
+ * The reasons are stable, allowlisted strings, so a client renders a state
+ * without parsing prose.
+ */
+export type ClaimReason =
+  | 'eligible'
+  | 'opponent-connected'
+  | 'opponent-unknown'
+  | 'awaiting-first-moves'
+  | 'opening-reply-outstanding'
+  | 'service-unavailable'
+  | 'match-ended'
+  | 'offline-grace-period';
+
+/** The durable health of the online service. */
+export type ServiceHealthState = 'healthy' | 'degraded' | 'unavailable';
+
+/** The allowlisted presence of one seat. */
+export interface SeatPresence {
+  readonly seat: Seat;
+  readonly state: PresenceState;
+  readonly lastHeartbeatAt: string | null;
+  readonly leaseExpiresAt: string | null;
+  readonly offlineSince: string | null;
+  /**
+   * When the other participant chose to keep waiting for this seat.
+   *
+   * It belongs to the offline interval of this seat, so the heartbeat of the
+   * waiting participant never clears it and the reconnect of this seat does.
+   */
+  readonly keepWaitingAt: string | null;
+}
+
+/** Whether the optional abandonment claim is available. */
+export interface ClaimAvailability {
+  readonly eligible: boolean;
+  readonly reason: ClaimReason;
+  readonly opponentSeat: Seat | null;
+  readonly offlineSince: string | null;
+  readonly graceSecondsLeft: number;
+  /** When the participant chose to keep waiting for the opponent. */
+  readonly waitingSince: string | null;
+}
+
+/**
+ * The allowlisted presence view of one match.
+ *
+ * It carries no participant reference, no owner identifier, no session
+ * identifier, no credential, no token and no hash.
+ */
+export interface PresenceView {
+  readonly schemaVersion: number;
+  readonly matchId: string;
+  readonly version: number;
+  readonly controlEpoch: number;
+  readonly status: MatchStatus;
+  readonly seats: readonly SeatPresence[];
+  readonly serviceState: ServiceHealthState;
+  /** False while the canonical recovery of an interrupted service runs. */
+  readonly recovered: boolean;
+  readonly claim: ClaimAvailability;
+  readonly yourSeat: Seat | null;
 }
 
 export interface DeletionMarker {
@@ -380,6 +607,13 @@ function stringValue(value: unknown, path: string): string {
 function optionalString(value: unknown, path: string): string | undefined {
   if (value === undefined) {
     return undefined;
+  }
+  return stringValue(value, path);
+}
+
+function nullableString(value: unknown, path: string): string | null {
+  if (value === null || value === undefined) {
+    return null;
   }
   return stringValue(value, path);
 }
@@ -517,6 +751,8 @@ function parseEventKind(value: unknown, path: string): EventKind {
     'offer_created',
     'recovery_attempt',
     'illegal_move_loss',
+    'abandonment_claim',
+    'recovery_adjustment',
   ];
   if (!allowed.includes(kind as EventKind)) {
     throw new OnlineContractError('invalid event kind', path);
@@ -626,7 +862,7 @@ function parseOffer(value: unknown, path: string): Offer {
 
 function parseEvent(value: unknown, path: string): Event {
   const objectValue = object(value, path);
-  onlyKeys(objectValue, ['schemaVersion', 'matchId', 'version', 'kind', 'seat', 'controlEpoch', 'decisionAt', 'acceptedAt', 'move', 'result', 'control', 'offer', 'takebackTargetVersion', 'recoveryAttempt'], path);
+  onlyKeys(objectValue, ['schemaVersion', 'matchId', 'version', 'kind', 'seat', 'controlEpoch', 'decisionAt', 'acceptedAt', 'move', 'result', 'control', 'offer', 'takebackTargetVersion', 'recoveryAttempt', 'recoveryShiftMs'], path);
   requiredKeys(objectValue, ['schemaVersion', 'matchId', 'version', 'kind', 'controlEpoch', 'decisionAt', 'acceptedAt'], path);
   const event: Event = {
     schemaVersion: positiveInteger(objectValue.schemaVersion, `${path}.schemaVersion`),
@@ -662,6 +898,9 @@ function parseEvent(value: unknown, path: string): Event {
       throw new OnlineContractError('invalid recovery attempt', `${path}.recoveryAttempt`);
     }
     event.recoveryAttempt = attempt;
+  }
+  if (objectValue.recoveryShiftMs !== undefined) {
+    event.recoveryShiftMs = nonNegativeInteger(objectValue.recoveryShiftMs, `${path}.recoveryShiftMs`);
   }
   return event;
 }
@@ -767,7 +1006,7 @@ function parseAction(value: unknown, path: string): OnlineAction {
 export function parseCommand(value: unknown): Command {
   const path = 'command';
   const objectValue = object(value, path);
-  onlyKeys(objectValue, ['schemaVersion', 'matchId', 'operationId', 'expectedVersion', 'seat', 'controlEpoch', 'action'], path);
+  onlyKeys(objectValue, ['schemaVersion', 'matchId', 'operationId', 'expectedVersion', 'seat', 'controlEpoch', 'leaseId', 'action'], path);
   requiredKeys(objectValue, ['schemaVersion', 'matchId', 'operationId', 'expectedVersion', 'seat', 'controlEpoch', 'action'], path);
   if (integerValue(objectValue.schemaVersion, `${path}.schemaVersion`) !== ONLINE_CONTRACTS_SCHEMA_VERSION) {
     throw new OnlineContractError('unsupported schema version', `${path}.schemaVersion`);
@@ -780,6 +1019,7 @@ export function parseCommand(value: unknown): Command {
   if (action.kind !== 'create_match' && expectedVersion < 1) {
     throw new OnlineContractError('expected version must be positive', `${path}.expectedVersion`);
   }
+  const leaseId = objectValue.leaseId === undefined ? undefined : idValue(objectValue.leaseId, `${path}.leaseId`);
   return {
     schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
     matchId: idValue(objectValue.matchId, `${path}.matchId`),
@@ -787,6 +1027,7 @@ export function parseCommand(value: unknown): Command {
     expectedVersion,
     seat: seatValue(objectValue.seat, `${path}.seat`),
     controlEpoch: positiveInteger(objectValue.controlEpoch, `${path}.controlEpoch`),
+    ...(leaseId === undefined ? {} : { leaseId }),
     action,
   };
 }
@@ -914,7 +1155,7 @@ export function parseQueueEntry(value: unknown): QueueEntry {
 export function parseRunnerLease(value: unknown): RunnerLease {
   const path = 'runnerLease';
   const objectValue = object(value, path);
-  onlyKeys(objectValue, ['schemaVersion', 'leaseId', 'matchId', 'seat', 'controlEpoch', 'generation', 'runnerId', 'status', 'acquiredAt', 'expiresAt', 'revokedAt'], path);
+  onlyKeys(objectValue, ['schemaVersion', 'leaseId', 'matchId', 'seat', 'controlEpoch', 'generation', 'runnerId', 'status', 'acquiredAt', 'expiresAt', 'revokedAt', 'turnVersion', 'runnerEpoch', 'pendingRequestId', 'pendingRequestStartedAt', 'revokedReason', 'lastRenewedAt'], path);
   requiredKeys(objectValue, ['schemaVersion', 'leaseId', 'matchId', 'seat', 'controlEpoch', 'generation', 'runnerId', 'status', 'acquiredAt', 'expiresAt', 'revokedAt'], path);
   const status = stringValue(objectValue.status, `${path}.status`);
   if (status !== 'active' && status !== 'revoked' && status !== 'expired') {
@@ -932,6 +1173,136 @@ export function parseRunnerLease(value: unknown): RunnerLease {
     acquiredAt: timestampValue(objectValue.acquiredAt, `${path}.acquiredAt`),
     expiresAt: timestampValue(objectValue.expiresAt, `${path}.expiresAt`),
     revokedAt: nullableTimestamp(objectValue.revokedAt, `${path}.revokedAt`),
+    turnVersion: objectValue.turnVersion === null || objectValue.turnVersion === undefined
+      ? null
+      : positiveInteger(objectValue.turnVersion, `${path}.turnVersion`),
+    runnerEpoch: objectValue.runnerEpoch === undefined
+      ? 1
+      : positiveInteger(objectValue.runnerEpoch, `${path}.runnerEpoch`),
+    pendingRequestId: nullableString(objectValue.pendingRequestId, `${path}.pendingRequestId`),
+    pendingRequestStartedAt: nullableTimestamp(objectValue.pendingRequestStartedAt, `${path}.pendingRequestStartedAt`),
+    revokedReason: nullableString(objectValue.revokedReason, `${path}.revokedReason`),
+    lastRenewedAt: nullableTimestamp(objectValue.lastRenewedAt, `${path}.lastRenewedAt`),
+  };
+}
+
+const PRESENCE_STATES: readonly PresenceState[] = ['connected', 'offline', 'unknown'];
+
+const CLAIM_REASONS: readonly ClaimReason[] = [
+  'eligible',
+  'opponent-connected',
+  'opponent-unknown',
+  'awaiting-first-moves',
+  'opening-reply-outstanding',
+  'service-unavailable',
+  'match-ended',
+  'offline-grace-period',
+];
+
+const SERVICE_HEALTH_STATES: readonly ServiceHealthState[] = ['healthy', 'degraded', 'unavailable'];
+
+function parsePresenceState(value: unknown, path: string): PresenceState {
+  const state = stringValue(value, path);
+  if (!PRESENCE_STATES.includes(state as PresenceState)) {
+    throw new OnlineContractError('invalid presence state', path);
+  }
+  return state as PresenceState;
+}
+
+function parseClaimReason(value: unknown, path: string): ClaimReason {
+  const reason = stringValue(value, path);
+  if (!CLAIM_REASONS.includes(reason as ClaimReason)) {
+    throw new OnlineContractError('invalid claim reason', path);
+  }
+  return reason as ClaimReason;
+}
+
+function parseServiceHealthState(value: unknown, path: string): ServiceHealthState {
+  const state = stringValue(value, path);
+  if (!SERVICE_HEALTH_STATES.includes(state as ServiceHealthState)) {
+    throw new OnlineContractError('invalid service health state', path);
+  }
+  return state as ServiceHealthState;
+}
+
+export function parseSeatPresence(value: unknown): SeatPresence {
+  const path = 'seatPresence';
+  const objectValue = object(value, path);
+  onlyKeys(objectValue, ['seat', 'state', 'lastHeartbeatAt', 'leaseExpiresAt', 'offlineSince', 'keepWaitingAt'], path);
+  requiredKeys(objectValue, ['seat', 'state'], path);
+  return {
+    seat: seatValue(objectValue.seat, `${path}.seat`),
+    state: parsePresenceState(objectValue.state, `${path}.state`),
+    lastHeartbeatAt: nullableTimestamp(objectValue.lastHeartbeatAt, `${path}.lastHeartbeatAt`),
+    leaseExpiresAt: nullableTimestamp(objectValue.leaseExpiresAt, `${path}.leaseExpiresAt`),
+    offlineSince: nullableTimestamp(objectValue.offlineSince, `${path}.offlineSince`),
+    keepWaitingAt: nullableTimestamp(objectValue.keepWaitingAt, `${path}.keepWaitingAt`),
+  };
+}
+
+export function parseClaimAvailability(value: unknown): ClaimAvailability {
+  const path = 'claimAvailability';
+  const objectValue = object(value, path);
+  onlyKeys(objectValue, ['eligible', 'reason', 'opponentSeat', 'offlineSince', 'graceSecondsLeft', 'waitingSince'], path);
+  requiredKeys(objectValue, ['eligible', 'reason'], path);
+  const opponentSeat = objectValue.opponentSeat === null || objectValue.opponentSeat === undefined
+    ? null
+    : seatValue(objectValue.opponentSeat, `${path}.opponentSeat`);
+  return {
+    eligible: objectValue.eligible === true,
+    reason: parseClaimReason(objectValue.reason, `${path}.reason`),
+    opponentSeat,
+    offlineSince: nullableTimestamp(objectValue.offlineSince, `${path}.offlineSince`),
+    graceSecondsLeft: objectValue.graceSecondsLeft === undefined
+      ? 0
+      : nonNegativeInteger(objectValue.graceSecondsLeft, `${path}.graceSecondsLeft`),
+    waitingSince: nullableTimestamp(objectValue.waitingSince, `${path}.waitingSince`),
+  };
+}
+
+export function parsePresenceView(value: unknown): PresenceView {
+  const path = 'presenceView';
+  const objectValue = object(value, path);
+  onlyKeys(objectValue, ['schemaVersion', 'matchId', 'version', 'controlEpoch', 'status', 'seats', 'serviceState', 'recovered', 'claim', 'yourSeat'], path);
+  requiredKeys(objectValue, ['schemaVersion', 'matchId', 'version', 'controlEpoch', 'status', 'seats', 'serviceState', 'claim'], path);
+  if (!Array.isArray(objectValue.seats)) {
+    throw new OnlineContractError('expected seats array', `${path}.seats`);
+  }
+  const status = stringValue(objectValue.status, `${path}.status`);
+  if (status !== 'active' && status !== 'completed' && status !== 'aborted') {
+    throw new OnlineContractError('invalid match status', `${path}.status`);
+  }
+  return {
+    schemaVersion: positiveInteger(objectValue.schemaVersion, `${path}.schemaVersion`),
+    matchId: idValue(objectValue.matchId, `${path}.matchId`),
+    version: positiveInteger(objectValue.version, `${path}.version`),
+    controlEpoch: positiveInteger(objectValue.controlEpoch, `${path}.controlEpoch`),
+    status,
+    seats: objectValue.seats.map((seat) => parseSeatPresence(seat)),
+    serviceState: parseServiceHealthState(objectValue.serviceState, `${path}.serviceState`),
+    recovered: objectValue.recovered === undefined ? true : objectValue.recovered === true,
+    claim: parseClaimAvailability(objectValue.claim),
+    yourSeat: objectValue.yourSeat === null || objectValue.yourSeat === undefined
+      ? null
+      : seatValue(objectValue.yourSeat, `${path}.yourSeat`),
+  };
+}
+
+export function parseClaimCommand(value: unknown): ClaimCommand {
+  const path = 'claimCommand';
+  const objectValue = object(value, path);
+  onlyKeys(objectValue, ['schemaVersion', 'matchId', 'operationId', 'expectedVersion', 'seat', 'controlEpoch'], path);
+  requiredKeys(objectValue, ['schemaVersion', 'matchId', 'operationId', 'expectedVersion', 'seat', 'controlEpoch'], path);
+  if (integerValue(objectValue.schemaVersion, `${path}.schemaVersion`) !== ONLINE_CONTRACTS_SCHEMA_VERSION) {
+    throw new OnlineContractError('unsupported schema version', `${path}.schemaVersion`);
+  }
+  return {
+    schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
+    matchId: idValue(objectValue.matchId, `${path}.matchId`),
+    operationId: idValue(objectValue.operationId, `${path}.operationId`),
+    expectedVersion: positiveInteger(objectValue.expectedVersion, `${path}.expectedVersion`),
+    seat: seatValue(objectValue.seat, `${path}.seat`),
+    controlEpoch: positiveInteger(objectValue.controlEpoch, `${path}.controlEpoch`),
   };
 }
 

@@ -1,0 +1,59 @@
+{
+  "mapVersion": 1,
+  "note": "Maps an acceptance scenario to the Go integration tests that exercise it. A scenario is only marked covered when every listed test ran and passed in the same run. The API worker extends this file when it adds a test for a scenario.",
+  "scenarios": {
+    "MAT-03": [
+      "TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt",
+      "TestPostgresOnlineNonMemberCannotReadOrCommand"
+    ],
+    "MAT-04": [
+      "TestPostgresOnlineCommandThatWaitsPastTheMainDeadlineTimesOut",
+      "TestPostgresOnlineCommandThatWaitsPastTheReplyDeadlineAborts"
+    ],
+    "MAT-11": [
+      "TestPostgresOnlineDrawConsentIsBoundToTheExactOffer",
+      "TestPostgresOnlineTakebackConsentIsBoundToTheExactOffer"
+    ],
+    "ARC-02": [
+      "TestPostgresOnlineAcceptedSetupRetrySurvivesUnavailableWorker",
+      "TestPostgresOnlineHTTPCannotInvokeTheTrustedDeadlineReconciliation"
+    ],
+    "ARC-03": [
+      "TestPostgresOnlineExpiredCredentialIsRejectedAfterTheLockWait",
+      "TestPostgresOnlineRevocationDuringRulesEvaluationRejectsTheCommand"
+    ],
+    "ARC-04": [
+      "TestPostgresOnlineInFlightMoveRetryReturnsOriginalReceipt",
+      "TestPostgresOnlineAcceptanceRetryReturnsTheStoredReceipt",
+      "TestPostgresOnlineExpiredCredentialCannotReplayAnAcceptedOperation"
+    ],
+    "ARC-05": [
+      "TestPostgresOnlineNonMemberCannotReadOrCommand",
+      "TestPostgresOnlineAccountSessionRevocationRejectsBeforeTokenExpiry",
+      "TestPostgresOnlineRevokedGuestCredentialStopsEveryAccess"
+    ],
+    "ARC-06": [
+      "TestPostgresOnlineGuestCredentialAuthorizesItsSeatAndReconnects",
+      "TestPostgresGuestSeatKeepsOneLiveCredentialAndOneOwner"
+    ],
+    "ARC-08": [
+      "TestPostgresGuestSeatKeepsOneLiveCredentialAndOneOwner",
+      "TestPostgresOnlinePendingRevocationRejectsTheWaitingDuplicatePreflight"
+    ],
+    "ARC-09": [
+      "TestPostgresOnlineAcceptedSetupRetrySurvivesUnavailableWorker"
+    ],
+    "ARC-10": [
+      "TestPostgresOnlineDueDeadlineScanIsBoundedAndReturnsIdentifiers",
+      "TestPostgresOnlineTrustedReconciliationIsIdempotentUnderConcurrentSweeps"
+    ],
+    "ARC-11": [
+      "TestPostgresOnlineTrustedReconciliationKeepsAnExpiredClockPendingWhileTheRulesServiceIsUnavailable",
+      "TestPostgresOnlineServerLifecycleSettlesADueMatchAndStopsOnRelease"
+    ],
+    "HIS-10": [
+      "TestPostgresOnlineStoredStateNeverContainsTheCredentialSecret",
+      "TestPostgresOnlinePublicReplayIsPublicAndLiveStateIsNot"
+    ]
+  }
+}

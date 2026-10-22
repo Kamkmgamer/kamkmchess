@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/history"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
 )
@@ -44,6 +45,19 @@ func (s *stubOnlineService) GetReceiptForParticipant(context.Context, string, st
 
 func (s *stubOnlineService) GetPublicProjection(context.Context, string) (online.PublicProjection, error) {
 	return s.projection, s.projectionErr
+}
+
+// stubPublicReplay is the history service of the public replay route.
+//
+// The route serves the allowlisted replay of the history service. The older
+// projection of the match writer is never served on it.
+type stubPublicReplay struct {
+	replay history.Replay
+	err    error
+}
+
+func (s *stubPublicReplay) PublicReplay(context.Context, string) (history.Replay, error) {
+	return s.replay, s.err
 }
 
 type stubAuthenticator struct {
@@ -87,15 +101,6 @@ func guestParticipant(guestID, matchID string, seat online.Seat) onlineauth.Prin
 func newOnlineHandler(t *testing.T) (http.Handler, *stubOnlineService, *stubAuthenticator) {
 	t.Helper()
 	service := &stubOnlineService{
-		projection: online.PublicProjection{
-			SchemaVersion: online.PublicProjectionSchemaVersion,
-			MatchID:       "match-public",
-			Variant:       "orthodox",
-			Participants: []online.PublicParticipant{
-				{Seat: online.SeatWhite, PublicLabel: "Alice", Control: online.SeatControl{Kind: online.ControlHuman}},
-			},
-			Result: online.Result{Kind: online.ResultWin, Winner: seatOf(online.SeatWhite), Reason: online.ReasonCheckmate},
-		},
 		match: online.Match{
 			SchemaVersion: online.ContractsSchemaVersion,
 			MatchID:       "match-live",
@@ -118,7 +123,23 @@ func newOnlineHandler(t *testing.T) (http.Handler, *stubOnlineService, *stubAuth
 		account: map[string]onlineauth.Principal{"account-token": accountParticipant("user_secret_1")},
 		guest:   map[string]onlineauth.Principal{"guest-token": guestParticipant("guest_secret_2", "match-live", online.SeatBlack)},
 	}
-	return NewOnline(service, authenticator, OnlineOptions{AllowedOrigins: []string{testOrigin}}), service, authenticator
+	replay := &stubPublicReplay{replay: history.Replay{
+		SchemaVersion: history.ReplaySchemaVersion,
+		MatchID:       "match-public",
+		Variant:       "orthodox",
+		StartingFEN:   "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+		TimeControl:   online.TimeControl{StartingTimeMs: 300_000, IncrementMs: 2_000},
+		GameKind:      history.GameFriend,
+		Scored:        true,
+		Attribution:   history.Attribution{Source: history.DeclarationDeclared, ProviderVerified: false},
+		Participants: []history.ReplayParticipant{
+			{Seat: online.SeatWhite, PublicLabel: "Alice", Control: history.DeclaredControl{Kind: online.ControlHuman, Declaration: history.DeclarationDeclared}},
+		},
+		Result:             online.Result{Kind: online.ResultWin, Winner: seatOf(online.SeatWhite), Reason: online.ReasonCheckmate},
+		RulesPolicyVersion: "online-rules/1",
+		CompletedAt:        time.Unix(1_900_000_000, 0).UTC(),
+	}}
+	return NewOnlineWithPublicReplay(service, authenticator, OnlineOptions{AllowedOrigins: []string{testOrigin}}, replay), service, authenticator
 }
 
 func seatOf(seat online.Seat) *online.Seat { return &seat }
@@ -151,17 +172,36 @@ func TestOnlinePublicReplayIsReadableWithoutASession(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
-	var projection online.PublicProjection
-	if err := json.Unmarshal(response.Body.Bytes(), &projection); err != nil {
+	var replay history.Replay
+	if err := json.Unmarshal(response.Body.Bytes(), &replay); err != nil {
 		t.Fatal(err)
 	}
-	if projection.MatchID != "match-public" || len(projection.Participants) != 1 {
-		t.Fatalf("unexpected projection: %+v", projection)
+	if replay.MatchID != "match-public" || len(replay.Participants) != 1 {
+		t.Fatalf("unexpected replay: %+v", replay)
+	}
+	if replay.SchemaVersion != history.ReplaySchemaVersion {
+		t.Fatalf("unexpected replay schema version: %d", replay.SchemaVersion)
 	}
 	for _, forbidden := range []string{"user_secret_1", "guest_secret_2", "participantId", "ownerId", "credential", "secretHash", "sessionId", "operationId"} {
 		if strings.Contains(response.Body.String(), forbidden) {
 			t.Fatalf("public replay leaked %q: %s", forbidden, response.Body.String())
 		}
+	}
+}
+
+// TestOnlinePublicReplayRefusesWithoutTheHistoryService keeps the public
+// replay route from serving a payload that was never checked against the
+// public allowlist.
+func TestOnlinePublicReplayRefusesWithoutTheHistoryService(t *testing.T) {
+	service := &stubOnlineService{}
+	authenticator := &stubAuthenticator{}
+	handler := NewOnline(service, authenticator, OnlineOptions{AllowedOrigins: []string{testOrigin}})
+	response := onlineRequest(t, handler, http.MethodGet, "/v1/online/matches/match-public/replay", "", nil, "")
+	if response.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "match-public") {
+		t.Fatalf("the replay route served a match without the history service: %s", response.Body.String())
 	}
 }
 

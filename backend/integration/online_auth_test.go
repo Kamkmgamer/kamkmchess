@@ -624,7 +624,7 @@ func TestPostgresOnlinePublicReplayIsPublicAndLiveStateIsNot(t *testing.T) {
 	if _, err := fixture.service.Execute(aliceCtx, online.ParticipantRef{Kind: online.ParticipantAccount, ID: "user_a"}, resign); err != nil {
 		t.Fatalf("resign: %v", err)
 	}
-	handler := httpapi.NewOnline(fixture.service, fixture.authorizer, httpapi.OnlineOptions{AllowedOrigins: []string{authTestOrigin}})
+	handler := httpapi.NewOnlineWithPublicReplay(fixture.service, fixture.authorizer, httpapi.OnlineOptions{AllowedOrigins: []string{authTestOrigin}}, historyServiceFor(t, fixture))
 	projection := httptest.NewRecorder()
 	handler.ServeHTTP(projection, httptest.NewRequest(http.MethodGet, "/v1/online/matches/match-replay-public/replay", nil))
 	if projection.Code != http.StatusOK {

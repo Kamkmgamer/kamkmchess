@@ -6,5 +6,12 @@
     "allowJs": true,
     "checkJs": true
   },
-  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts", "eslint.config.js", "api/**/*.ts", "server/**/*.ts", "scripts/**/*.mjs", "tests/**/*.ts", "src/online-rules-worker/**/*.ts"]
+  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts", "eslint.config.js", "api/**/*.ts", "server/**/*.ts", "scripts/**/*.mjs", "tests/**/*.ts", "src/online-rules-worker/**/*.ts"],
+  // The online operations tooling is standalone Node ESM that runs on the
+  // server and in CI, not in the browser build. It is verified by its own
+  // node:test suite (node --test deploy/runtime-grants.test.mjs
+  // scripts/online/online-ops.test.mjs) and is deliberately kept out of the
+  // application typecheck, whose strict settings describe the browser and the
+  // runtime code paths.
+  "exclude": ["scripts/online/**/*.mjs", "deploy/**/*.mjs"]
 }

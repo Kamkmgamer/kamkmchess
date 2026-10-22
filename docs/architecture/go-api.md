@@ -4,7 +4,7 @@ The Go service is an owner-scoped persistence API for optional account sync. The
 
 ## Local run
 
-The service reads `DATABASE_URL`, `CLERK_ISSUER`, `CLERK_JWKS_URL`, `CLERK_AUTHORIZED_PARTIES`, and `APP_ALLOWED_ORIGINS`. `DATABASE_URL` is a PostgreSQL URL. The party and origin settings are comma-separated lists. Configure secrets in the local process environment; do not put credentials in checkpoints, archives, or source control. Run the service from the repository root with:
+The service reads `DATABASE_URL`, `CLERK_ISSUER`, `CLERK_JWKS_URL`, `CLERK_AUTHORIZED_PARTIES`, `APP_ALLOWED_ORIGINS`, and `ONLINE_RESTORE_FENCE_PATH`. `DATABASE_URL` is a PostgreSQL URL. The party and origin settings are comma-separated lists. The restore fence setting is required: the server refuses to start when it is missing or blank, because a service that never observes the durable restore fence would serve a restored database whose removal ledger was never replayed. It names the parent directory of the fence marker; the deployment mounts the shared restore volume at `/var/lib/kamkmchess/restore-fence` and gives the API and the database service the same value. Configure secrets in the local process environment; do not put credentials in checkpoints, archives, or source control. Run the service from the repository root with:
 
 ```powershell
 $env:DATABASE_URL = 'postgres://app_user:password@127.0.0.1:5432/kamkmchess?sslmode=disable'
@@ -12,6 +12,7 @@ $env:CLERK_ISSUER = 'https://your-clerk-issuer'
 $env:CLERK_JWKS_URL = 'https://your-clerk-issuer/.well-known/jwks.json'
 $env:CLERK_AUTHORIZED_PARTIES = 'http://localhost:5173'
 $env:APP_ALLOWED_ORIGINS = 'http://localhost:5173'
+$env:ONLINE_RESTORE_FENCE_PATH = "$env:TEMP\kamkmchess-restore-fence"
 go run ./cmd/server
 ```
 

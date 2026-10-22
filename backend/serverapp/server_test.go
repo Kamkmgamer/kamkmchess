@@ -38,11 +38,12 @@ func TestLoadFailsClosedAndDoesNotEchoValues(t *testing.T) {
 
 func TestLoadNormalizesOriginLists(t *testing.T) {
 	values := map[string]string{
-		"DATABASE_URL":             "postgres://local/fixture",
-		"CLERK_ISSUER":             "https://fixture.clerk.accounts.dev",
-		"CLERK_JWKS_URL":           "https://fixture.clerk.accounts.dev/.well-known/jwks.json",
-		"CLERK_AUTHORIZED_PARTIES": " https://chess.example,https://chess.example ",
-		"APP_ALLOWED_ORIGINS":      "https://chess.example,,https://staging.example",
+		"DATABASE_URL":              "postgres://local/fixture",
+		"CLERK_ISSUER":              "https://fixture.clerk.accounts.dev",
+		"CLERK_JWKS_URL":            "https://fixture.clerk.accounts.dev/.well-known/jwks.json",
+		"CLERK_AUTHORIZED_PARTIES":  " https://chess.example,https://chess.example ",
+		"APP_ALLOWED_ORIGINS":       "https://chess.example,,https://staging.example",
+		"ONLINE_RESTORE_FENCE_PATH": "/var/lib/kamkmchess/restore-fence",
 	}
 	cfg, err := Load(func(key string) string { return values[key] })
 	if err != nil || len(cfg.Clerk.AuthorizedParties) != 1 || len(cfg.Clerk.AllowedOrigins) != 2 {
@@ -57,6 +58,7 @@ func TestLoadReadsTheDeadlineSweepSettings(t *testing.T) {
 		"CLERK_JWKS_URL":                 "https://fixture.clerk.accounts.dev/.well-known/jwks.json",
 		"CLERK_AUTHORIZED_PARTIES":       "https://chess.example",
 		"APP_ALLOWED_ORIGINS":            "https://chess.example",
+		"ONLINE_RESTORE_FENCE_PATH":      "/var/lib/kamkmchess/restore-fence",
 		"ONLINE_DEADLINE_SWEEP_INTERVAL": "250ms",
 		"ONLINE_DEADLINE_SWEEP_BATCH":    "7",
 	}
@@ -76,6 +78,52 @@ func TestLoadReadsTheDeadlineSweepSettings(t *testing.T) {
 	}
 	if cfg.Online.DeadlineSweepInterval != DefaultDeadlineSweepInterval || cfg.Online.DeadlineSweepBatch != DefaultDeadlineSweepBatch {
 		t.Fatalf("the fallback deadline sweep settings = %s/%d", cfg.Online.DeadlineSweepInterval, cfg.Online.DeadlineSweepBatch)
+	}
+}
+
+// The two online surfaces are closed by default. A configured service origin
+// is not an enablement signal.
+func TestLoadKeepsTheOnlineSurfacesClosedByDefault(t *testing.T) {
+	values := map[string]string{
+		"DATABASE_URL":              "postgres://local/fixture",
+		"CLERK_ISSUER":              "https://fixture.clerk.accounts.dev",
+		"CLERK_JWKS_URL":            "https://fixture.clerk.accounts.dev/.well-known/jwks.json",
+		"CLERK_AUTHORIZED_PARTIES":  "https://chess.example",
+		"APP_ALLOWED_ORIGINS":       "https://chess.example",
+		"ONLINE_RESTORE_FENCE_PATH": "/var/lib/kamkmchess/restore-fence",
+	}
+	cfg, err := Load(func(key string) string { return values[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Online.FriendEnabled || cfg.Online.QueueEnabled {
+		t.Fatalf("an online surface was enabled without a switch: %+v", cfg.Online)
+	}
+	// The switches are independent.
+	values["ONLINE_FRIEND_ENABLED"] = "1"
+	cfg, err = Load(func(key string) string { return values[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Online.FriendEnabled || cfg.Online.QueueEnabled {
+		t.Fatalf("the friend switch opened the queue surface: %+v", cfg.Online)
+	}
+	values["ONLINE_QUEUE_ENABLED"] = "true"
+	cfg, err = Load(func(key string) string { return values[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Online.FriendEnabled || !cfg.Online.QueueEnabled {
+		t.Fatalf("the queue switch did not open the queue surface: %+v", cfg.Online)
+	}
+	// A malformed value keeps the surface closed.
+	values["ONLINE_QUEUE_ENABLED"] = "yes-please"
+	cfg, err = Load(func(key string) string { return values[key] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Online.QueueEnabled {
+		t.Fatal("a malformed switch opened the queue surface")
 	}
 }
 

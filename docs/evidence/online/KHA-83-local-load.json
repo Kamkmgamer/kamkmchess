@@ -1,0 +1,54 @@
+{
+  "tool": "scripts/online/load-suite.mjs",
+  "generatedAt": "2026-10-20T22:26:20.312Z",
+  "environment": "local fixture (loopback), synthetic accounts, real PostgreSQL, pinned rules worker",
+  "clients": 8,
+  "durationSeconds": 5.72,
+  "requests": 196,
+  "requestsPerSecond": 34.26,
+  "statuses": {
+    "401": 196
+  },
+  "readLatencyMs": {
+    "p50": 17,
+    "p95": 5093,
+    "p99": 5119,
+    "max": 5260,
+    "min": 2,
+    "count": 158
+  },
+  "unauthorizedLatencyMs": {
+    "p50": 13,
+    "p95": 37,
+    "p99": 58,
+    "max": 58,
+    "min": 4,
+    "count": 38
+  },
+  "readErrors": 0,
+  "unauthorizedErrors": 0,
+  "databaseConnections": {
+    "before": {
+      "total": 7,
+      "byState": {
+        "active": 2,
+        "idle": 5
+      },
+      "available": true
+    },
+    "after": {
+      "total": 9,
+      "byState": {
+        "active": 3,
+        "idle": 6
+      },
+      "available": true
+    }
+  },
+  "slowReader": null,
+  "limits": [
+    "The traffic is synthetic and local. It says nothing about the hosting capacity.",
+    "A local connection count is not a pool sizing for the host.",
+    "The measured latency includes the loopback hop and the fixture schema, not the Apache path."
+  ]
+}

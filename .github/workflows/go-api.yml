@@ -44,4 +44,8 @@ jobs:
           cache: true
       - run: go mod download
       - run: go vet ./backend/... ./cmd/...
-      - run: go test -race -count=1 ./backend/... ./cmd/...
+      # The integration package runs the real tests against a real database, so
+      # it needs more than the default budget of the test runner of Go. The
+      # budget is explicit and generous, so a slow machine does not cut the
+      # suite short.
+      - run: go test -race -count=1 -timeout 60m ./backend/... ./cmd/...
