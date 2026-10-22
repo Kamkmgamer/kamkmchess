@@ -26,7 +26,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -179,9 +179,10 @@ async function measureSecret(root, directory, project) {
  * @param {string} root
  * @param {string} directory
  * @param {string} project
+ * @param {string} helperImage
  * @returns {Promise<{staged: string, copied: string, directory: string, record: string, lock: string, host: string, refused: string, held: string}>}
  */
-async function measureDurableEvidence(root, directory, project) {
+async function measureDurableEvidence(root, directory, project, helperImage) {
   const compose = ['compose', '--project-name', project, '-f', join(directory, 'postgres.compose.yml')];
   const fence = '/var/lib/kamkmchess/restore-fence';
   const destination = '/backups/restore-evidence';
@@ -199,14 +200,17 @@ async function measureDurableEvidence(root, directory, project) {
   const copied = await exec(`sh /opt/kamkmchess-operator/copy-restore-evidence.sh ${destination}`);
   const modes = await exec(`stat -c '%a %u' ${destination} ${destination}/${record}.json ${fence}/restore-fence.lock`);
   // The outcome on the host: the file is on the mounted path of the backup
-  // directory, so it survives the recreation of the container.
-  let host;
-  try {
-    const listed = await readdir(join(directory, 'backups', 'restore-evidence'));
-    host = listed.join(' ');
-  } catch (error) {
-    host = `unreadable: ${error instanceof Error ? error.message : String(error)}`;
-  }
+  // directory, so it survives the recreation of the container. The directory
+  // is intentionally private to uid 65532, so the CI runner cannot inspect it
+  // directly. Read it through a root helper container with the same bind mount.
+  const hostCheck = await run('docker', [
+    'run', '--rm', '--user', '0:0', '--entrypoint', '/bin/sh',
+    '--mount', `type=bind,source=${join(directory, 'backups', 'restore-evidence')},target=/evidence,readonly`,
+    helperImage, '-c', 'ls -1A /evidence',
+  ], { cwd: root });
+  const host = hostCheck.code === 0
+    ? hostCheck.stdout.trim()
+    : `unreadable: ${(hostCheck.stdout + hostCheck.stderr).trim()}`;
   // The negative control: while a restore holds the lock of the lifecycle,
   // the copy is refused.
   const holder = await run('docker', [...compose, 'exec', '-d', '-T', '--user', '65532:65532', 'postgres', 'sh', '-c', `exec 9>"${fence}/restore-fence.lock"; flock 9; sleep 60`], { cwd: root });
@@ -288,9 +292,10 @@ async function measureRestoreIdentifier(root, directory, project) {
  * @param {string} root
  * @param {string} directory
  * @param {string} project
+ * @param {string} helperImage
  * @returns {Promise<{code: number, settings: Record<string, string>, output: string, ready: boolean, cleanup: string}>}
  */
-async function readServerSettings(root, directory, project) {
+async function readServerSettings(root, directory, project, helperImage) {
   /** @type {{code: number, settings: Record<string, string>, output: string, ready: boolean, cleanup: string}} */
   const result = { code: 0, settings: {}, output: '', ready: false, cleanup: '', secret: null, durable: null, identifier: null };
   const compose = ['compose', '--project-name', project, '-f', join(directory, 'postgres.compose.yml')];
@@ -344,7 +349,7 @@ async function readServerSettings(root, directory, project) {
     result.secret = await measureSecret(root, directory, project);
     // The durable path of the protected copy of the evidence, and the
     // procedure that reads the identifier of the restore.
-    result.durable = await measureDurableEvidence(root, directory, project);
+    result.durable = await measureDurableEvidence(root, directory, project, helperImage);
     result.identifier = await measureRestoreIdentifier(root, directory, project);
     return result;
   } finally {
@@ -480,7 +485,7 @@ export async function verifyComposeConfig(root) {
     });
     if (prepared.code !== 0) return { steps, settings: {} };
 
-    const current = await readServerSettings(root, directory, project);
+    const current = await readServerSettings(root, directory, project, helper.image);
     const mismatched = Object.entries(EXPECTED).filter(([name, value]) => current.settings[name] !== value);
     steps.push({
       id: 'the-database-keeps-its-settings',
@@ -620,7 +625,7 @@ export async function verifyComposeConfig(root) {
       if (brokenPrepared.code !== 0) {
         steps.push({ id: 'the-proof-detects-a-dropped-argument', passed: false, detail: brokenPrepared.output });
       } else {
-        const broken = await readServerSettings(root, brokenDirectory, brokenProject);
+        const broken = await readServerSettings(root, brokenDirectory, brokenProject, helper.image);
         const brokenMismatch = Object.entries(EXPECTED).filter(([name, value]) => broken.settings[name] !== value);
         steps.push({
           id: 'the-proof-detects-a-dropped-argument',
