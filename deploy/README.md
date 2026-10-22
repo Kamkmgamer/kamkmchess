@@ -49,6 +49,7 @@ The following commands use a POSIX shell; in PowerShell set the equivalent
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/kamkmchess-api ./cmd/server
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/kamkmchess-migrate ./cmd/migrate
 GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/khabackup ./backend/backup/cmd/khabackup
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/khasuspend ./backend/online/cmd/khasuspend
 ```
 
 Upload the deployment files and `bin/` into the private server directory. Upload
@@ -165,6 +166,12 @@ The server must load `ONLINE_RESTORE_FENCE_PATH` into its online configuration.
 setting is not read, so a configuration that silently disables the fence
 cannot pass the release gates.
 
+The setting is required. The server refuses to start when it is missing or
+blank, and the composed service refuses to serve without it: a service that
+never observes the fence would answer traffic from a restored database whose
+removal ledger was never replayed. The refusal names the setting and never
+its value. The path is the same one the compose files and the runbook use.
+
 ## Runtime grants and the private rules runtime
 
 `runtime-grants.policy.json` lists the privileges of the runtime role table by
@@ -220,15 +227,87 @@ local image only. It never pushes and never deploys.
 The `tools/onlinefixture` helper is behind the `onlinefixture` build tag and
 never ships in a production binary.
 
+## A planned restart of the API
+
+A restart of the API is an interruption, and an interruption is never charged
+to a player. The service has to know the interval of the interruption, so the
+restart is announced **before** the service stops: the announcement is a
+durable boundary, and the boundary closes the durable gate of the service.
+
+Without the announcement the service can only infer the interruption from the
+stale liveness record when it comes back. The inferred interval runs from the
+last moment the service was seen alive, so a restart that takes longer than
+the liveness TTL (30 seconds) is read as an unknown outage: every unfinished
+clock is refunded for the whole interval and the runner work of the old epoch
+is fenced.
+
+The announcement is a private operator command, `khasuspend`. It is not a
+public route: a route that closes the gate would be an unauthenticated way to
+stop the service. The command reads the database url only from the named
+environment variable of the private `backup.env`, which carries the
+administrative role of the deployment.
+
+```sh
+# 1. The planned interruption is persisted. The boundary closes the durable
+#    gate, so no mutation is admitted from this moment on. The plan is
+#    idempotent: a second run finds the pending boundary and writes nothing.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend plan --database-url-env DATABASE_URL'
+
+# 2. The API is stopped and drained.
+docker compose -f postgres.compose.yml -f api.compose.yml stop api
+
+# 3. The API is started again. Its own recovery applies the planned boundary:
+#    the announced interval is refunded to the unfinished matches, the
+#    canonical state is published before the resumed actions are accepted, and
+#    the durable gate opens again.
+docker compose -f postgres.compose.yml -f api.compose.yml start api
+
+# 4. The operator verifies the state of the gate.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend status --database-url-env DATABASE_URL'
+```
+
+Two more commands cover the rest of the procedure:
+
+- `khasuspend abort` cancels a plan that will not happen, for example when
+  the restart is called off. The durable gate opens again and no clock is
+  refunded, because no interruption took place. The row of the plan stays the
+  evidence that the plan existed.
+- `khasuspend recover` applies the planned boundary by hand, for the case in
+  which the API cannot finish its own recovery. It publishes the canonical
+  state, refunds the announced interval and opens the durable gate. It refuses
+  when no planned interruption is pending: the recovery of an *unexpected*
+  interruption belongs to the service itself and is never an operator
+  decision.
+
+The command exits with `0` when it did what it was asked and with `1` when it
+refused or failed. It never prints the database url, and it never accepts one
+as an argument.
+
 ## Backups and certificates
 
 `backup.sh` creates and authenticates encrypted daily and weekly logical
-exports, retaining seven daily and four weekly bundles. It uses the matching
+exports, retaining seven daily and four weekly bundles. The rotation it runs
+over `/backups` also retires every **ordinary** bundle of that directory that
+is **older than thirty days**, even when a slot of the count would keep it: the
+count alone cannot promise the thirty day target of the owner contract. A
+bundle the rotation may not delete - a protected one, a one without a creation
+time, a one dated after the reference time, or a one whose manifest cannot be
+read - is never deleted. Each of them leaves the retention **unresolved**, the
+rotation names it and exits with a **nonzero status**, and the run of the
+backup fails instead of claiming a clean backup. It uses the matching
 PostgreSQL 16 tools in the database container. The daily cron entry runs the
 certificate sync first, then the backup, and appends results to `operations.log`.
 `sync-postgres-tls.py` follows certificate cross-signatures, verifies the full
 chain and hostname, and reloads PostgreSQL after an AutoSSL renewal. The API's
 public certificate is managed directly by cPanel.
+
+The rotation only reaches `/backups` on this host. The offsite copies, the
+operator's own recovery copy and the schedule of the daily run are outside it
+and still need owner and host verification.
 
 The backup also copies the **durable evidence** of the removals a restore
 owed into `/backups/restore-evidence`, next to the bundles. The evidence
@@ -240,7 +319,9 @@ of the lifecycle and as the user that owns it, by
 bundles, so the backup that the operator copies off the server carries it.
 `check-restore-id.sh` reads the identifier of a restore out of the marker of
 the lifecycle and refuses everything the production rule refuses; both
-programs are mounted into the database container read-only.
+programs are mounted into the database container read-only. The rotation never
+descends into a subdirectory, so the evidence is not a candidate of the
+rotation and is never retired by the thirty day rule.
 
 The backup passphrase is in the server's private `backup.env`. An operator
 recovery copy and encrypted bundles are kept outside the server under

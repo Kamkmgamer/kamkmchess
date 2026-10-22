@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -288,7 +287,7 @@ func TestPostgresFriendRemovedParticipantCannotProposeOrAcceptARematch(t *testin
 	}); err != nil {
 		t.Fatalf("accept: %v", err)
 	}
-	accepted, err := fixture.friends.Get(ctx, created.Invitation.InvitationID, "")
+	accepted, err := fixture.friends.Get(ctx, invite.ViewRequest{InvitationID: created.Invitation.InvitationID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -620,9 +619,9 @@ func TestPostgresFriendSurvivingGuestKeepsItsOwnSeatCredential(t *testing.T) {
 	if status != "active" {
 		t.Fatalf("the status of the match of the survivor = %q, want active", status)
 	}
-	// The same answer over the wire.
-	body := fmt.Sprintf(`{"schemaVersion":2,"ownerToken":%q}`, created.OwnerToken)
-	recorder := friendGuestRequest(t, handler, http.MethodPost, "/v1/online/invitations/"+created.Invitation.InvitationID+"/seat-credential", "", body)
+	// The same answer over the wire. The owner token travels in the private
+	// header of the surface.
+	recorder := friendOwnerRequest(t, handler, http.MethodPost, "/v1/online/invitations/"+created.Invitation.InvitationID+"/seat-credential", created.OwnerToken, `{"schemaVersion":2}`)
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("the wire claim of the survivor status=%d body=%s", recorder.Code, recorder.Body.String())
 	}

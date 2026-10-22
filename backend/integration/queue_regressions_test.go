@@ -133,6 +133,9 @@ func TestQueueEngineCredentialLifecycle(t *testing.T) {
 	h := newQueueHarness(t)
 	ctx := context.Background()
 	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
+	// The browser engine takes the seat at the cutoff of the entry, never
+	// before it.
+	h.clock.Advance(10 * time.Second)
 	first, err := h.service.Fallback(ctx, account("user_a"), entry.EntryID, queue.FallbackRequest{Origin: "https://app.example"})
 	if err != nil {
 		t.Fatal(err)
@@ -173,6 +176,8 @@ func TestQueueEngineCredentialLifecycle(t *testing.T) {
 	}
 	// The durable receipt of an operation never stores the plaintext.
 	operated := h.createEntry("user_b", agentControl("Claude"), standardClock(), "")
+	// The engine takes the seat at the cutoff of the entry.
+	h.clock.Advance(10 * time.Second)
 	assignment, err := h.service.Fallback(ctx, account("user_b"), operated.EntryID, queue.FallbackRequest{
 		Operation: queue.Operation{ID: "operation-0001"},
 		Origin:    "https://app.example",
@@ -251,6 +256,8 @@ func TestQueueCanonicalLabels(t *testing.T) {
 	}
 	// The engine label of the fallback is the canonical one.
 	fallbackEntry := h.createEntry("user_c", agentControl("GPT-4o"), standardClock(), "")
+	// The engine takes the seat at the cutoff of the entry.
+	h.clock.Advance(10 * time.Second)
 	fallback, err := h.service.Fallback(ctx, account("user_c"), fallbackEntry.EntryID, queue.FallbackRequest{Origin: "https://app.example"})
 	if err != nil {
 		t.Fatal(err)
@@ -398,6 +405,8 @@ func TestQueueRealEngineCredentialIsScopedAndRefusedByTheQueue(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The engine takes the seat at the cutoff of the entry.
+	clock.Advance(10 * time.Second)
 	assignment, err := service.Fallback(ctx, account("user_a"), entry.EntryID, queue.FallbackRequest{Origin: "https://app.example"})
 	if err != nil {
 		t.Fatal(err)

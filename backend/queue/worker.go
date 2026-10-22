@@ -3,7 +3,6 @@ package queue
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 )
@@ -68,18 +67,21 @@ func (s *Service) ResolveDueCutoffs(ctx context.Context, limit int) (SweepResult
 			continue
 		}
 		actor := online.ParticipantRef{Kind: online.ParticipantAccount, ID: record.OwnerID}
-		_, err = s.decide(ctx, actor, entryID, allocationRequest{}, now)
-		if errors.Is(err, ErrNoCandidate) {
+		// The decision records the pending engine fallback in its own
+		// transaction, under the bucket lock. A kept search that won the
+		// interval is never overwritten by a stale pass of the loop.
+		_, err = s.decide(ctx, actor, entryID, allocationRequest{RecordFallbackPending: true})
+		switch {
+		case errors.Is(err, errFallbackPending):
 			// The cutoff was reached and no candidate was eligible. The
 			// entry waits for the browser engine fallback.
-			if err = s.markFallbackPending(ctx, entryID, now); err != nil {
-				result.Failed++
-				continue
-			}
 			result.Pending++
 			continue
-		}
-		if err != nil {
+		case errors.Is(err, ErrNoCandidate):
+			// The entry keeps searching. Nothing is pending and nothing
+			// failed.
+			continue
+		case err != nil:
 			if errors.Is(err, ErrAccountRemoved) {
 				// The owner of the entry was removed. The removal flow
 				// cleans its queue rows, so the sweep has nothing to do.
@@ -93,34 +95,6 @@ func (s *Service) ResolveDueCutoffs(ctx context.Context, limit int) (SweepResult
 	return result, nil
 }
 
-// markFallbackPending records that the cutoff was reached without a
-// candidate.
-//
-// The entry stays eligible for the engine fallback and for a candidate that
-// was eligible at the original cutoff. It is not assigned yet, so no route
-// publishes a game that does not exist.
-func (s *Service) markFallbackPending(ctx context.Context, entryID string, now time.Time) error {
-	tx, err := s.db.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-	record, err := s.loadEntry(ctx, s.db, entryID)
-	if err != nil {
-		return err
-	}
-	if err = lockBucket(ctx, tx, record.StartingTimeMs, record.IncrementMs); err != nil {
-		return err
-	}
-	if _, err = tx.Exec(ctx, `UPDATE online_queue_entries SET internal_state='fallback',version=version+1,updated_at=$2 WHERE entry_id=$1 AND internal_state='waiting'`, entryID, now); err != nil {
-		return err
-	}
-	if err = tx.Commit(ctx); err != nil {
-		return err
-	}
-	return nil
-}
-
 // ExpireWaiting expires the entries whose owner stopped responding.
 //
 // A responsive background tab keeps its entry eligible because it heartbeats.
@@ -131,6 +105,10 @@ func (s *Service) markFallbackPending(ctx context.Context, entryID string, now t
 // An entry whose cutoff passed and whose browser never reported a ready
 // engine expires as well. It is a waiting entry on the wire, so a silent
 // owner must not keep it in the queue forever.
+//
+// The sweep counts only the entries it really expired. An entry whose lease
+// was renewed while the sweep waited for the bucket lock of its time control
+// stays eligible, and the sweep never reports an expiry it did not perform.
 func (s *Service) ExpireWaiting(ctx context.Context, limit int) (SweepResult, error) {
 	result := SweepResult{}
 	if limit <= 0 {
@@ -158,36 +136,78 @@ func (s *Service) ExpireWaiting(ctx context.Context, limit int) (SweepResult, er
 		return result, err
 	}
 	for _, entryID := range entryIDs {
-		if err = s.expireEntry(ctx, entryID, now); err != nil {
+		expired, err := s.expireEntry(ctx, entryID)
+		if err != nil {
 			result.Failed++
 			continue
 		}
-		result.Expired++
+		if expired {
+			result.Expired++
+		}
 	}
 	return result, nil
 }
 
 // expireEntry expires one waiting entry.
-func (s *Service) expireEntry(ctx context.Context, entryID string, now time.Time) error {
+//
+// It reports whether the entry was expired. The row of the entry is read
+// again under the bucket lock and the decision time is sampled after that
+// lock, so a lease that a heartbeat renewed while the sweep waited is a
+// live lease: the sweep never expires an entry that is still eligible.
+//
+// The lock order of the queue is the bucket lock and then the row lock, and
+// every other queue write takes the same order, so the sweep never waits for
+// a row in the opposite order of another writer.
+func (s *Service) expireEntry(ctx context.Context, entryID string) (bool, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer tx.Rollback(ctx)
 	record, err := s.loadEntry(ctx, s.db, entryID)
 	if err != nil {
-		return err
+		if errors.Is(err, ErrNotFound) {
+			// The entry is gone: the removal of its owner deleted it. There
+			// is nothing to expire.
+			return false, nil
+		}
+		return false, err
 	}
 	if err = lockBucket(ctx, tx, record.StartingTimeMs, record.IncrementMs); err != nil {
-		return err
+		return false, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE online_queue_entries SET internal_state='expired',version=version+1,updated_at=$2 WHERE entry_id=$1 AND internal_state IN ('waiting', 'fallback')`, entryID, now); err != nil {
-		return err
+	// The entry is locked and read again under the bucket lock. Every queue
+	// write takes the bucket lock before it writes the row, so the row that
+	// is read here is the authoritative one.
+	current, err := s.lockEntry(ctx, tx, entryID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return false, nil
+		}
+		return false, err
 	}
+	if current.InternalState != internalWaiting && current.InternalState != internalFallback {
+		// The entry left the eligibility: it was assigned, cancelled or
+		// expired already. The sweep has nothing to do.
+		return false, nil
+	}
+	// The decision time is sampled after the lock the sweep waited for, so a
+	// lease that died during the wait is a dead lease and a lease that was
+	// renewed during the wait is a live one.
+	now := s.now().UTC()
+	if current.ExpiresAt == nil || current.ExpiresAt.After(now) {
+		// The lease is alive. The entry stays eligible.
+		return false, nil
+	}
+	tag, err := tx.Exec(ctx, `UPDATE online_queue_entries SET internal_state='expired',version=version+1,updated_at=$2 WHERE entry_id=$1 AND internal_state IN ('waiting', 'fallback')`, entryID, now)
+	if err != nil {
+		return false, err
+	}
+	expired := tag.RowsAffected() > 0
 	if err = tx.Commit(ctx); err != nil {
-		return err
+		return false, err
 	}
-	return nil
+	return expired, nil
 }
 
 // Sweep runs one full pass of the queue background work.

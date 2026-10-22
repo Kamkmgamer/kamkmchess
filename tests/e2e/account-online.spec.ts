@@ -16,21 +16,24 @@
 // fails the run instead of silently testing a different service.
 //
 // Strictness:
-//   - no descriptor at all: the run had no fixture, so it skips;
+//   - no descriptor at all: the run had no fixture, so it skips. The skip
+//     says in the report that the run proved no online fixture coverage;
 //   - a descriptor and a mismatch between the build and the fixture, a
-//     closed surface, a missing route or a missing field: the run fails.
+//     closed surface, a missing route or a missing field: the run fails;
+//   - a descriptor the caller supplied that cannot be read or that has
+//     another shape: the run fails. An unusable descriptor is a broken run,
+//     not an absent fixture.
 // Set ONLINE_FIXTURE_STRICT=1 to make a missing descriptor fail as well.
 
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { readdir } from 'node:fs/promises';
-import { fixtureAccountId, readOnlineFixtureDescriptor, signInWithFixtureAccount, signInWithFixtureAccounts, switchFixtureAccount } from '../support/online-account-fixture';
-import type { OnlineFixtureDescriptor } from '../support/online-account-fixture';
+import { fixtureAccountId, signInWithFixtureAccount, signInWithFixtureAccounts, switchFixtureAccount } from '../support/online-account-fixture';
+import { openOnlineFixtureGate } from '../support/online-fixture-descriptor';
+import type { OnlineFixtureDescriptor } from '../support/online-fixture-descriptor';
 import { startSyntheticProvider } from '../support/synthetic-provider';
 import type { SyntheticProvider } from '../support/synthetic-provider';
 
-const descriptorPath = process.env.ONLINE_FIXTURE_DESCRIPTOR ?? '';
-const strict = process.env.ONLINE_FIXTURE_STRICT === '1';
 /**
  * The tolerance of the clock of the browser and the clock of the service.
  *
@@ -50,13 +53,6 @@ const ACCOUNT_CREDENTIAL = 'synthetic-account-credential';
 let descriptor: OnlineFixtureDescriptor | null = null;
 /** The entry script of the build of this repository. */
 let localEntryScript = '';
-
-async function loadDescriptor(): Promise<OnlineFixtureDescriptor | null> {
-  if (descriptor) return descriptor;
-  if (!descriptorPath) return null;
-  descriptor = await readOnlineFixtureDescriptor(descriptorPath);
-  return descriptor;
-}
 
 /**
  * The entry script of the local build.
@@ -90,12 +86,22 @@ test.afterEach(async ({}, testInfo) => {
 });
 
 test.beforeAll(async () => {
-  const loaded = await loadDescriptor();
-  if (!loaded) {
-    const message = 'no online fixture descriptor: the rendered account cases did not run';
-    if (strict) throw new Error(message);
-    test.skip(true, message);
+  const gate = await openOnlineFixtureGate({
+    reason: 'the rendered account cases need the real service',
+  });
+  if (gate.action === 'fail') {
+    // A missing descriptor fails a strict run, and a descriptor the caller
+    // supplied that cannot be used fails every run.
+    throw new Error(gate.message);
   }
+  if (gate.action === 'skip') {
+    // The run had no fixture. The cases skip and the reason of the skip is
+    // printed, so the report never reads as online fixture coverage.
+    console.log(`[online-fixture] tests/e2e/account-online.spec.ts: ${gate.message}`);
+    test.skip(true, gate.message);
+    return;
+  }
+  descriptor = gate.descriptor;
 });
 
 /** The first fixture account. */
@@ -354,9 +360,8 @@ async function connectionRows(page: Page): Promise<{
 }
 
 test('the built account app reaches the fixture of the run', async ({ page }) => {
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
-  await signInWithFixtureAccount(page, loaded!, await firstAccount());
+  expect(descriptor).not.toBeNull();
+  await signInWithFixtureAccount(page, descriptor!, await firstAccount());
   await page.goto('/play?online=1');
   // The build under test is the build of this repository. A preview server of
   // another worktree would otherwise answer with another product.
@@ -371,7 +376,7 @@ test('the built account app reaches the fixture of the run', async ({ page }) =>
     } catch (error) {
       return { status: 0, body: String(error) };
     }
-  }, loaded!.baseUrl);
+  }, descriptor!.baseUrl);
   expect(answer.status).toBe(200);
   const flags = JSON.parse(answer.body) as { friends?: boolean; queue?: boolean };
   expect(typeof flags.friends).toBe('boolean');
@@ -380,9 +385,8 @@ test('the built account app reaches the fixture of the run', async ({ page }) =>
 
 test('a signed-in browser enters the queue and the cutoff commits the browser engine', async ({ page }) => {
   test.setTimeout(120_000);
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
-  await signInWithFixtureAccount(page, loaded!, await firstAccount());
+  expect(descriptor).not.toBeNull();
+  await signInWithFixtureAccount(page, descriptor!, await firstAccount());
   await page.goto('/play?online=1');
   await openOnline(page);
   // The queue is an account surface, so the signed-in browser may enter it.
@@ -412,9 +416,8 @@ test('a signed-in browser enters the queue and the cutoff commits the browser en
 
 test('two explicit entries of one signed-in browser are visible at the same time', async ({ page }) => {
   test.setTimeout(120_000);
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
-  await signInWithFixtureAccount(page, loaded!, await firstAccount());
+  expect(descriptor).not.toBeNull();
+  await signInWithFixtureAccount(page, descriptor!, await firstAccount());
   await page.goto('/play?online=1');
   await openOnline(page);
   await page.getByRole('button', { name: 'Play yourself' }).click();
@@ -425,14 +428,13 @@ test('two explicit entries of one signed-in browser are visible at the same time
 
 test('the account change hides the games of the first account and restores the registry of the next', async ({ page }) => {
   test.setTimeout(300_000);
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   const first = fixtureAccountId(0);
   const second = fixtureAccountId(1);
   if (!first || !second) throw new Error('the fixture has fewer than two accounts');
   // The page chooses its account with the query parameter, so a second page
   // load of the same browser can sign in as the other account.
-  await signInWithFixtureAccounts(page, loaded!, [first, second]);
+  await signInWithFixtureAccounts(page, descriptor!, [first, second]);
 
   // The second account plays a game on a three minute clock. Its durable
   // registry exists when it signs in again.
@@ -456,7 +458,7 @@ test('the account change hides the games of the first account and restores the r
 
   // The second account signs in. The game of the first account is hidden and
   // the durable registry of the second account is restored.
-  await switchFixtureAccount(page, loaded!, second);
+  await switchFixtureAccount(page, descriptor!, second);
   await expect(page.getByRole('region', { name: 'Concurrent games' }).getByRole('listitem')).toHaveCount(1, { timeout: 30_000 });
   await expect.poll(async () => onlineClock(page), { timeout: 30_000 }).toMatch(/^[23]:/);
 });
@@ -468,12 +470,11 @@ test('the first account gets its game back when it signs in again', async ({ pag
   // (The workspace owns the durable list and the deferred claims; the case
   // is the proof of the behaviour from the browser.)
   test.setTimeout(300_000);
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   const first = fixtureAccountId(0);
   const second = fixtureAccountId(1);
   if (!first || !second) throw new Error('the fixture has fewer than two accounts');
-  await signInWithFixtureAccounts(page, loaded!, [first, second]);
+  await signInWithFixtureAccounts(page, descriptor!, [first, second]);
 
   // The first account plays a game and opens it.
   await page.goto(`/play?online=1&fixture-account=${encodeURIComponent(first)}`);
@@ -507,13 +508,13 @@ test('the first account gets its game back when it signs in again', async ({ pag
   }
 
   // The second account signs in and the game of the first account is hidden.
-  await switchFixtureAccount(page, loaded!, second);
+  await switchFixtureAccount(page, descriptor!, second);
   await expect(page.getByRole('region', { name: 'Concurrent games' }).getByRole('listitem')).toHaveCount(0, { timeout: 30_000 });
 
   // The first account signs in again. Its game comes back with its moves,
   // and the browser engine seat of the game plays again, so the credential
   // of the engine seat was issued again.
-  await switchFixtureAccount(page, loaded!, first);
+  await switchFixtureAccount(page, descriptor!, first);
   await expect(page.getByRole('region', { name: 'Concurrent games' }).getByRole('listitem')).toHaveCount(1, { timeout: 30_000 });
   await showGames(page);
   await expect.poll(async () => (await committedMovesByColour(page))[engine].length, { timeout: 60_000 })
@@ -541,9 +542,8 @@ test('a waiting entry survives a reload without committing the browser engine', 
   // would commit the engine before the deadline of the search, without the
   // readiness flow and without an owner action.
   test.setTimeout(180_000);
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
-  await signInWithFixtureAccount(page, loaded!, await firstAccount());
+  expect(descriptor).not.toBeNull();
+  await signInWithFixtureAccount(page, descriptor!, await firstAccount());
   await page.goto('/play?online=1');
   await openOnline(page);
 
@@ -611,13 +611,12 @@ test('a waiting entry survives a reload without committing the browser engine', 
 
 test('a late seat change never writes into the next account', async ({ page }) => {
   test.setTimeout(300_000);
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   const second = fixtureAccountId(1);
   if (!second) throw new Error('the fixture has fewer than two accounts');
   const provider = await startSyntheticProvider({ models: ['synthetic-a', 'synthetic-b'], credential: ACCOUNT_CREDENTIAL });
   try {
-    await signInWithFixtureAccount(page, loaded!, await firstAccount());
+    await signInWithFixtureAccount(page, descriptor!, await firstAccount());
     await page.goto('/play?online=1');
     await connectLocalModel(page, provider.baseUrl, 'synthetic-a', provider);
     await openOnline(page);
@@ -639,7 +638,7 @@ test('a late seat change never writes into the next account', async ({ page }) =
     ]);
 
     // The next account signs in while the answer is on its way.
-    await switchFixtureAccount(page, loaded!, second);
+    await switchFixtureAccount(page, descriptor!, second);
     await barrier.release();
 
     // The late answer belongs to the identity that left: the pending state of
@@ -652,8 +651,7 @@ test('a late seat change never writes into the next account', async ({ page }) =
 
 test('the owner switches the own agent while the provider request is running', async ({ page }) => {
   test.setTimeout(300_000);
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   // The provider is slower than the owner, so the switch of the seat happens
   // while the request of the provider is running.
   const provider = await startSyntheticProvider({
@@ -662,7 +660,7 @@ test('the owner switches the own agent while the provider request is running', a
     delayMs: 6_000,
   });
   try {
-    await signInWithFixtureAccount(page, loaded!, await firstAccount());
+    await signInWithFixtureAccount(page, descriptor!, await firstAccount());
     await page.goto('/play?online=1');
     await connectLocalModel(page, provider.baseUrl, 'synthetic-a', provider);
     await openOnline(page);
@@ -703,15 +701,14 @@ test('the owner switches the own agent while the provider request is running', a
 
 test('the owner switches the own agent between two private models and the provider answers', async ({ page }) => {
   test.setTimeout(300_000);
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   // Two models of one connection without an advertised name. They carry the
   // same public label, so only their private identity keeps them apart.
   const provider = await startSyntheticProvider({ models: ['synthetic-a', 'synthetic-b'], credential: ACCOUNT_CREDENTIAL });
   const modelsOf = () => provider.generationRequests
     .map(request => /"model"\s*:\s*"([^"]+)"/.exec(request.body)?.[1] ?? 'unknown');
   try {
-    await signInWithFixtureAccount(page, loaded!, await firstAccount());
+    await signInWithFixtureAccount(page, descriptor!, await firstAccount());
     await page.goto('/play?online=1');
     await connectLocalModel(page, provider.baseUrl, 'synthetic-a', provider);
     // Both models of the connection are in the private catalog of the owner.

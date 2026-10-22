@@ -17,6 +17,11 @@
 // A local run can never satisfy a native scenario, and a plan can never
 // satisfy an implementation scenario.
 //
+// A record is a claim, and a claim is only evidence when a run source
+// recorded the behaviour of the scenario. The provenance of a record is
+// checked against the run sources of the tree, so a record that no run backs
+// never closes a scenario. The rules live in scripts/online/evidence-provenance.mjs.
+//
 // Usage:
 //   node scripts/online/evidence-ledger.mjs [--root DIR] [--json] [--write]
 
@@ -25,10 +30,15 @@ import { readFile, readdir, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
 
+import { deriveOutcome, provenanceProblems, readRunSources } from './evidence-provenance.mjs';
+
 /**
  * @typedef {'local'|'native'|'host'|'live'|'owner'} EvidenceKind
  * @typedef {'passed'|'failed'|'blocked'|'partial'} EvidenceStatus
  */
+
+/** The run sources that are known when no tree was read. */
+const NO_SOURCES = { channels: [], problems: [] };
 
 /** Which evidence kind may close a scenario of each family. */
 export const FAMILY_KINDS = {
@@ -52,11 +62,19 @@ export function familyOf(scenarioId) {
 
 /**
  * Validates one evidence record.
+ *
+ * The record has to name the scenario, the status, the kind, the tested
+ * commit, the exact command and the observed result, and the kind has to
+ * match the family of the scenario. On top of that the record has to be
+ * backed by a run source: a claim of a pass or of a partial observation is
+ * only evidence when a run recorded the scenario at the very commit the
+ * record names.
  * @param {any} record
  * @param {Set<string>} known
+ * @param {import('./evidence-provenance.mjs').RunSources} [sources]
  * @returns {{valid: boolean, problems: string[], status: EvidenceStatus, scenarioId: string}}
  */
-export function validateRecord(record, known) {
+export function validateRecord(record, known, sources = NO_SOURCES) {
   /** @type {string[]} */
   const problems = [];
   const scenarioId = String(record?.scenarioId ?? '');
@@ -74,13 +92,14 @@ export function validateRecord(record, known) {
       problems.push(`the record needs a ${field}`);
     }
   }
-  if (typeof record?.expected === 'string' && record.expected.trim() === '') {
+  if (typeof record?.expected !== 'string' || record.expected.trim() === '') {
     problems.push('the record needs an expected outcome');
   }
   const allowed = FAMILY_KINDS[familyOf(scenarioId)] ?? [];
   if (allowed.length > 0 && !allowed.includes(kind)) {
     problems.push(`a ${kind} run cannot close a ${familyOf(scenarioId)} scenario; it needs ${allowed.join(' or ')}`);
   }
+  problems.push(...provenanceProblems(record, sources));
   return { valid: problems.length === 0, problems, status: status ?? 'partial', scenarioId };
 }
 
@@ -114,19 +133,22 @@ export async function readRecords(root) {
 
 /**
  * Builds the ledger.
- * @param {{cases: {id: string, scenario: string, status: string}[], records: any[], problems: {file: string, problems: string[]}[]}} input
+ * @param {{cases: {id: string, scenario: string, status: string}[], records: any[], problems: {file: string, problems: string[]}[], staleCommits?: Set<string>, failedScenarios?: Set<string>, sources?: import('./evidence-provenance.mjs').RunSources}} input
  * @returns {{cases: any[], counts: Record<string, number>, invalidRecords: {file: string, problems: string[]}[]}}
  */
-export function buildLedger({ cases, records, problems, staleCommits = new Set(), failedScenarios = new Set() }) {
+export function buildLedger({ cases, records, problems, staleCommits = new Set(), failedScenarios = new Set(), sources = NO_SOURCES }) {
   const known = new Set(cases.map((entry) => entry.id));
   /** @type {Map<string, any>} */
   const byScenario = new Map();
   /** @type {{file: string, problems: string[]}[]} */
-  const invalidRecords = [...problems];
+  const invalidRecords = [
+    ...problems,
+    ...(sources.problems ?? []).map((entry) => ({ file: entry.path, problems: entry.problems })),
+  ];
 
   for (const record of records) {
     const body = record.body;
-    const validation = validateRecord(body, known);
+    const validation = validateRecord(body, known, sources);
     if (!validation.valid) {
       invalidRecords.push({ file: record.file, problems: validation.problems });
       continue;
@@ -142,6 +164,11 @@ export function buildLedger({ cases, records, problems, staleCommits = new Set()
     const stale = staleCommits.has(String(body.commit ?? ''));
     const failed = failedScenarios.has(validation.scenarioId);
     const status = stale || failed ? 'failed' : validation.status;
+    const derived = deriveOutcome(sources, {
+      kind: body.kind,
+      scenarioId: validation.scenarioId,
+      commit: String(body.commit ?? ''),
+    });
     byScenario.set(validation.scenarioId, {
       scenarioId: validation.scenarioId,
       status,
@@ -150,8 +177,12 @@ export function buildLedger({ cases, records, problems, staleCommits = new Set()
       command: body.command,
       expected: body.expected ?? '',
       actual: body.actual,
+      source: derived ? derived.path : null,
+      channel: derived ? derived.channel.id : null,
+      outcome: derived ? derived.outcome : null,
       notes: [
         body.notes ?? '',
+        derived ? `the run source ${derived.path} recorded ${derived.outcome} for this scenario at commit ${body.commit}` : '',
         stale ? 'the recorded commit is not an ancestor of the tested tree, so the record is not a pass' : '',
         failed ? 'the newest run failed this scenario, so the record is not a pass' : '',
       ].filter(Boolean).join(' '),
@@ -171,6 +202,9 @@ export function buildLedger({ cases, records, problems, staleCommits = new Set()
       command: evidence ? evidence.command : null,
       expected: evidence ? evidence.expected : null,
       actual: evidence ? evidence.actual : null,
+      source: evidence ? evidence.source : null,
+      channel: evidence ? evidence.channel : null,
+      outcome: evidence ? evidence.outcome : null,
       notes: evidence ? evidence.notes : '',
       record: evidence ? evidence.record : null,
     };
@@ -242,10 +276,11 @@ export async function failedScenarios(root) {
 export async function buildEvidenceLedger(root) {
   const contract = JSON.parse(await readFile(join(root, 'docs', 'spec', 'online-play-acceptance.json'), 'utf8'));
   const { records, problems } = await readRecords(root);
+  const sources = await readRunSources(root);
   const commits = records.map((record) => String(record.body?.commit ?? '')).filter(Boolean);
   const stale = await staleCommits(root, [...new Set(commits)]);
   const failed = await failedScenarios(root);
-  const ledger = buildLedger({ cases: contract.cases, records, problems, staleCommits: stale, failedScenarios: failed });
+  const ledger = buildLedger({ cases: contract.cases, records, problems, staleCommits: stale, failedScenarios: failed, sources });
   return { ...ledger, contract: contract.title };
 }
 
@@ -275,7 +310,8 @@ async function main() {
     process.stdout.write(`evidence ledger: ${ledger.counts.passed} passed, ${ledger.counts.failed} failed, ${ledger.counts.blocked} blocked, ${ledger.counts.partial} partial, ${ledger.counts.not_run} not run\n`);
     for (const entry of ledger.cases) {
       if (entry.status === 'not_run') continue;
-      process.stdout.write(`  ${entry.status.toUpperCase().padEnd(8)} ${entry.id} (${entry.kind}) ${entry.commit}\n`);
+      const source = entry.source ? ` <- ${entry.source} (${entry.outcome})` : '';
+      process.stdout.write(`  ${entry.status.toUpperCase().padEnd(8)} ${entry.id} (${entry.kind}) ${entry.commit}${source}\n`);
     }
     for (const invalid of ledger.invalidRecords) {
       process.stdout.write(`  INVALID  ${invalid.file}: ${invalid.problems.join('; ')}\n`);

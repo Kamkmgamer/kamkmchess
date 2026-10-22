@@ -699,6 +699,11 @@ func (s *Service) ListRemovalRecords(ctx context.Context) ([]backup.RemovalRecor
 // The querier is the pool or a transaction, so the ledger can be read inside
 // the transaction of a release: the facts of the release and the rows it read
 // are then the same ones.
+//
+// The ledger holds the removals of the participants and the per match
+// removals of a public replay. The per match removals name no subject, so
+// their key in the ledger is the match alone and they never collide with the
+// removal of a participant.
 func (s *Service) listRemovalRecords(ctx context.Context, q removalQuerier) ([]backup.RemovalRecord, error) {
 	rows, err := q.Query(ctx, `
 		SELECT removal_id,subject_kind,subject_id,match_id,scope,removed_at
@@ -714,6 +719,39 @@ func (s *Service) listRemovalRecords(ctx context.Context, q removalQuerier) ([]b
 		if err = rows.Scan(&record.RemovalID, &record.SubjectKind, &record.SubjectID, &record.MatchID, &record.Scope, &record.RemovedAt); err != nil {
 			return nil, err
 		}
+		record.RemovedAt = record.RemovedAt.UTC()
+		records = append(records, record)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	replays, err := s.listReplayRemovalRecords(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	return append(records, replays...), nil
+}
+
+// listReplayRemovalRecords reads the durable ledger of the per match removals
+// of a public replay.
+func (s *Service) listReplayRemovalRecords(ctx context.Context, q removalQuerier) ([]backup.RemovalRecord, error) {
+	rows, err := q.Query(ctx, `
+		SELECT ledger_id,match_id,removed_at
+		FROM online_replay_removal_ledger
+		ORDER BY match_id, ledger_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]backup.RemovalRecord, 0)
+	for rows.Next() {
+		var record backup.RemovalRecord
+		if err = rows.Scan(&record.RemovalID, &record.MatchID, &record.RemovedAt); err != nil {
+			return nil, err
+		}
+		record.SubjectKind = backup.SubjectKindMatch
+		record.SubjectID = ""
+		record.Scope = backup.ScopeReplayRemoval
 		record.RemovedAt = record.RemovedAt.UTC()
 		records = append(records, record)
 	}
@@ -747,6 +785,11 @@ func (s *Service) ApplyRemovalRecords(ctx context.Context, records []backup.Remo
 
 // applyRemovalRecord replays one removal.
 func (s *Service) applyRemovalRecord(ctx context.Context, record backup.RemovalRecord) error {
+	if record.Scope == backup.ScopeReplayRemoval {
+		// The per match removal of a public replay names no subject, so it
+		// has no seat to find and no private data to remove.
+		return s.applyReplayRemoval(ctx, record)
+	}
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return err
@@ -792,6 +835,11 @@ func (s *Service) applyRemovalRecord(ctx context.Context, record backup.RemovalR
 		if _, err = tx.Exec(ctx, `DELETE FROM online_profile_results WHERE match_id=$1`, record.MatchID); err != nil {
 			return err
 		}
+		// The removed subject keeps no aggregate of its own: only the
+		// anonymous aggregate of the opponent survives the removal.
+		if err = s.removeSubjectTotals(ctx, tx, record.SubjectKind, record.SubjectID); err != nil {
+			return err
+		}
 	} else {
 		// The opponent's history entry loses the deleted name again.
 		if _, err = tx.Exec(ctx, `
@@ -810,6 +858,65 @@ func (s *Service) applyRemovalRecord(ctx context.Context, record backup.RemovalR
 		if err = s.fenceAccount(ctx, tx, ownerID, revocationReason(record.Scope)); err != nil {
 			return err
 		}
+	}
+	return tx.Commit(ctx)
+}
+
+// applyReplayRemoval replays the per match removal of a public replay.
+//
+// The replay is what a restore of an older bundle runs before the restored
+// database serves traffic. The public replay of the match is revoked again,
+// the projection of the match is revoked again and the deletion marker is
+// written again, so the publisher refuses to publish the removed replay
+// either.
+//
+// The replay is idempotent: a removal that was already applied finds the rows
+// of the match revoked and keeps them, and the durable record of the removal
+// stays the one it wrote.
+func (s *Service) applyReplayRemoval(ctx context.Context, record backup.RemovalRecord) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	// The match row lock orders the replay against the projection of that
+	// match. The projection takes the same lock, so a restored database is
+	// never projected with the rows the replay is about to remove.
+	if _, err = tx.Exec(ctx, `SELECT match_id FROM online_matches WHERE match_id=$1 FOR UPDATE`, record.MatchID); err != nil {
+		return err
+	}
+	removedAt := record.RemovedAt.UTC()
+	// The marker is written first: it is the record that the public replay of
+	// the match must not be served again. The record does not carry the
+	// reason the participant gave, so the marker names the reason of a
+	// participant request.
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO online_deletion_markers(marker_id,marker_kind,subject_kind,subject_id,match_id,reason,requested_at,applied_at)
+		VALUES($1,'replay_removal','match',$2,$2,$3,$4,$4)
+		ON CONFLICT (marker_id) DO NOTHING`,
+		record.RemovalID, record.MatchID, replayRemovalReason, removedAt); err != nil {
+		return err
+	}
+	// The public replay of the match leaves the public URL again.
+	if _, err = tx.Exec(ctx, `UPDATE online_public_replays SET replay_json='{}'::jsonb,revoked_at=$1,revocation_marker_id=$2 WHERE match_id=$3 AND revoked_at IS NULL`,
+		removedAt, record.RemovalID, record.MatchID); err != nil {
+		return err
+	}
+	// The projection of the match leaves the public URL again.
+	if _, err = tx.Exec(ctx, `UPDATE online_public_projections SET projection_json='{}'::jsonb,revoked_at=$1,revocation_marker_id=$2 WHERE match_id=$3 AND revoked_at IS NULL`,
+		removedAt, record.RemovalID, record.MatchID); err != nil {
+		return err
+	}
+	// The durable record of the removal is written again, so the applied
+	// ledger holds the removal the restore had to apply. The record of a
+	// match is written once, so a restored database that already holds it
+	// keeps it.
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO online_replay_removal_ledger(ledger_id,match_id,marker_id,reason,removed_at)
+		VALUES($1,$2,$3,$4,$5)
+		ON CONFLICT DO NOTHING`,
+		record.RemovalID, record.MatchID, record.RemovalID, replayRemovalReason, removedAt); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

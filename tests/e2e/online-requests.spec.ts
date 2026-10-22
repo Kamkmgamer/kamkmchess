@@ -10,38 +10,45 @@
 //     releases the pending state of the screen,
 //   - and two clicks in the same tick start one request.
 //
-// The run needs the real service. A missing descriptor fails the run, it does
-// not skip it.
+// The run needs the real service.
+//
+// Strictness:
+//   - no descriptor at all: the run had no fixture, so it skips. The skip
+//     says in the report that the run proved no online fixture coverage;
+//   - a descriptor and a mismatch between the build and the fixture, a
+//     closed surface, a missing route or a missing field: the run fails;
+//   - a descriptor the caller supplied that cannot be read or that has
+//     another shape: the run fails. An unusable descriptor is a broken run,
+//     not an absent fixture.
+// Set ONLINE_FIXTURE_STRICT=1 to make a missing descriptor fail as well.
 
 import { expect, test } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { openOnlineFixtureGate } from '../support/online-fixture-descriptor';
+import type { OnlineFixtureDescriptor } from '../support/online-fixture-descriptor';
 
-type Descriptor = {
-  baseUrl: string;
-  accounts: { id: string; token: string }[];
-};
-
-const descriptorPath = process.env.ONLINE_FIXTURE_DESCRIPTOR ?? '';
-
-let descriptor: Descriptor | null = null;
-
-async function loadDescriptor(): Promise<Descriptor | null> {
-  if (descriptor) return descriptor;
-  if (!descriptorPath) return null;
-  descriptor = JSON.parse(await readFile(descriptorPath, 'utf8')) as Descriptor;
-  return descriptor;
-}
+let descriptor: OnlineFixtureDescriptor | null = null;
 
 test.beforeAll(async () => {
-  const loaded = await loadDescriptor();
-  if (!loaded) {
-    throw new Error('no online fixture descriptor: the rendered request cases need the real service');
+  const gate = await openOnlineFixtureGate({
+    reason: 'the rendered request cases need the real service',
+  });
+  if (gate.action === 'fail') {
+    // A missing descriptor fails a strict run, and a descriptor the caller
+    // supplied that cannot be used fails every run.
+    throw new Error(gate.message);
   }
+  if (gate.action === 'skip') {
+    // The run had no fixture. The cases skip and the reason of the skip is
+    // printed, so the report never reads as online fixture coverage.
+    console.log(`[online-fixture] tests/e2e/online-requests.spec.ts: ${gate.message}`);
+    test.skip(true, gate.message);
+    return;
+  }
+  descriptor = gate.descriptor;
 });
 
 test('the invitation of a published link is previewed and the screen stays usable', async ({ page }) => {
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   // The inviter creates a link.
   const inviter = await page.context().newPage();
   await inviter.goto('/play?online=1');
@@ -67,8 +74,7 @@ test('the invitation of a published link is previewed and the screen stays usabl
 });
 
 test('two clicks in the same tick start one request', async ({ page, browser }) => {
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   const inviter = await page.context().newPage();
   await inviter.goto('/play?online=1');
   await inviter.getByRole('button', { name: 'Online play' }).click();

@@ -58,6 +58,15 @@ export interface FriendSecretStore {
   forgetAcceptanceKey(invitationId: string): void;
   /** Stores the owner token of an invitation this browser created. */
   rememberOwnerToken(invitationId: string, ownerToken: string, selection?: ModelSelection | null): void;
+  /**
+   * Stores the owner token of an invitation in the namespace of one identity.
+   *
+   * A deferred answer belongs to the identity that started the request, so
+   * its owner token is stored in that namespace. The token never reaches the
+   * records of the identity that is current now, and the invitation stays
+   * recoverable for the identity that owns it.
+   */
+  rememberOwnerTokenFor(identity: string, invitationId: string, ownerToken: string, selection?: ModelSelection | null): void;
   /** The owner token of an invitation, or null. */
   readOwnerToken(invitationId: string): string | null;
   /** Forgets an invitation that was settled. */
@@ -158,8 +167,16 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
   const random = options.random;
   const memory = new Map<string, string>();
 
-  const keyOf = (kind: string, id: string): string =>
-    `${prefix}:${encodeURIComponent(identity)}:${kind}:${encodeURIComponent(id)}`;
+  /**
+   * The key of a record of one identity.
+   *
+   * The owner of the record is named by the key, so a record of an identity
+   * can be written and read without changing the identity that is current.
+   */
+  const keyOfFor = (owner: string, kind: string, id: string): string =>
+    `${prefix}:${encodeURIComponent(owner)}:${kind}:${encodeURIComponent(id)}`;
+
+  const keyOf = (kind: string, id: string): string => keyOfFor(identity, kind, id);
 
   /** The key of the list of the invitations of one identity. */
   const listKey = (owner: string): string =>
@@ -245,6 +262,28 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
     }
   }
 
+  /**
+   * The durable list of the invitations of one identity.
+   *
+   * The owner of the list is named by the key, so the list of an identity
+   * can be read without changing the identity that is current.
+   */
+  function listOwnedInvitationsOf(owner: string): string[] {
+    try {
+      const raw = storage?.getItem(listKey(owner));
+      if (!raw) return [];
+      const parsed: unknown = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const owned: string[] = [];
+      for (const item of parsed) {
+        if (typeof item === 'string' && item.length > 0) owned.push(item);
+      }
+      return owned;
+    } catch {
+      return [];
+    }
+  }
+
   return {
     get identity() {
       return identity;
@@ -288,6 +327,23 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
         // The private selection of the agent of the invitation is kept with
         // it, so the claimed seat keeps the model the owner chose.
         write('selection', invitationId, JSON.stringify(selection));
+      }
+    },
+    rememberOwnerTokenFor(owner, invitationId, ownerToken, selection?: ModelSelection | null) {
+      // The record belongs to the named identity, so it is written in its
+      // namespace and never in the namespace of the identity that is current
+      // now. The token of a deferred answer therefore never leaks into the
+      // records of another identity.
+      writeKey(keyOfFor(owner, 'owner', invitationId), ownerToken);
+      const owned = listOwnedInvitationsOf(owner).filter(id => id !== invitationId);
+      owned.push(invitationId);
+      try {
+        storage?.setItem(listKey(owner), JSON.stringify(owned));
+      } catch {
+        // The list is kept in memory only.
+      }
+      if (selection) {
+        writeKey(keyOfFor(owner, 'selection', invitationId), JSON.stringify(selection));
       }
     },
     readOwnerToken(invitationId) {
@@ -395,19 +451,7 @@ export function createFriendSecretStore(options: FriendSecretStoreOptions = {}):
       writeKey(acceptedListKey(identity), JSON.stringify(accepted));
     },
     listOwnedInvitations() {
-      const owned: string[] = [];
-      try {
-        const raw = storage?.getItem(listKey(identity));
-        if (!raw) return owned;
-        const parsed: unknown = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return owned;
-        for (const item of parsed) {
-          if (typeof item === 'string' && item.length > 0) owned.push(item);
-        }
-      } catch {
-        return owned;
-      }
-      return owned;
+      return listOwnedInvitationsOf(identity);
     },
     rememberRematch(rematchId, matchId, selection) {
       const rematches = this.listRematches().filter(record => record.rematchId !== rematchId);

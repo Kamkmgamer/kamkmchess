@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -184,6 +185,96 @@ func TestRestoreReplaysTheNewerRemovalLedgers(t *testing.T) {
 	}
 	if len(sink.subjectApplied) != 1 || sink.subjectApplied[0].SubjectRef != "ref-new" {
 		t.Fatalf("the replayed subject ledger = %+v", sink.subjectApplied)
+	}
+}
+
+// TestMergeRemovalLedgersKeepsTheReplayRemovalApartFromTheParticipantRemoval
+// covers the per match removal of a public replay in the ledger.
+//
+// The per match removal names no subject, so its key is the match alone and it
+// never collides with the removal of a participant of the same match. Both
+// removals travel in the same ledger, so a restore replays both of them.
+func TestMergeRemovalLedgersKeepsTheReplayRemovalApartFromTheParticipantRemoval(t *testing.T) {
+	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	participant := RemovalRecord{RemovalID: "rm_one", SubjectKind: "account", SubjectID: "ref-one", MatchID: "match-one", Scope: "explicit_removal", RemovedAt: at}
+	replay := RemovalRecord{RemovalID: "rr_one", SubjectKind: SubjectKindMatch, MatchID: "match-one", Scope: ScopeReplayRemoval, RemovedAt: at}
+	merged, err := MergeRemovalLedgers([]RemovalRecord{participant}, []RemovalRecord{replay})
+	if err != nil {
+		t.Fatalf("merge the removal ledgers: %v", err)
+	}
+	if len(merged) != 2 {
+		t.Fatalf("the merged ledger holds %d records: %+v", len(merged), merged)
+	}
+	// The merge of the same two ledgers is stable.
+	again, err := MergeRemovalLedgers(merged, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 2 {
+		t.Fatalf("the merged ledger holds %d records: %+v", len(again), again)
+	}
+}
+
+// TestTheReplayRemovalNamesNoSubject covers the shape of a per match removal.
+//
+// A per match removal of a public replay keeps its participants, so the record
+// names no subject. A record that names one is refused instead of being
+// replayed.
+func TestTheReplayRemovalNamesNoSubject(t *testing.T) {
+	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	if _, err := MergeRemovalLedgers([]RemovalRecord{{
+		RemovalID: "rr_one", SubjectKind: SubjectKindMatch, SubjectID: "ref-one", MatchID: "match-one", Scope: ScopeReplayRemoval, RemovedAt: at,
+	}}, nil); !errors.Is(err, ErrLedgerConflict) {
+		t.Fatalf("a replay removal that names a subject was accepted: %v", err)
+	}
+	if _, err := MergeRemovalLedgers([]RemovalRecord{{
+		RemovalID: "rr_one", SubjectKind: SubjectKindMatch, MatchID: "match-one", Scope: "explicit_removal", RemovedAt: at,
+	}}, nil); !errors.Is(err, ErrLedgerConflict) {
+		t.Fatalf("a replay removal with the scope of a participant removal was accepted: %v", err)
+	}
+}
+
+// TestTheAppliedLedgerHoldsTheReplayRemoval covers the verification of a
+// restore that replayed a per match removal.
+//
+// The applied ledger of the restored database has to hold the removal of the
+// public replay, otherwise the restore is not allowed to serve traffic.
+func TestTheAppliedLedgerHoldsTheReplayRemoval(t *testing.T) {
+	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	replay := RemovalRecord{RemovalID: "rr_one", SubjectKind: SubjectKindMatch, MatchID: "match-one", Scope: ScopeReplayRemoval, RemovedAt: at}
+	required := AppliedRemovalLedger{Matches: []RemovalRecord{replay}}
+	if !RemovalLedgerContains(required, required) {
+		t.Fatal("the applied ledger does not hold the removal it has to apply")
+	}
+	// A ledger without the removal of the public replay does not satisfy it.
+	if RemovalLedgerContains(AppliedRemovalLedger{}, required) {
+		t.Fatal("a ledger without the removal of the public replay satisfies it")
+	}
+	// The removal of a participant of the same match does not satisfy it
+	// either: it is a different removal.
+	participant := RemovalRecord{RemovalID: "rm_one", SubjectKind: "account", SubjectID: "ref-one", MatchID: "match-one", Scope: "explicit_removal", RemovedAt: at}
+	if RemovalLedgerContains(AppliedRemovalLedger{Matches: []RemovalRecord{participant}}, required) {
+		t.Fatal("the removal of a participant satisfies the removal of the public replay")
+	}
+}
+
+// TestTheDigestCoversTheReplayRemoval covers the digest of the ledger.
+//
+// The digest names the removal of the public replay, so a ledger that lost it
+// is a different ledger.
+func TestTheDigestCoversTheReplayRemoval(t *testing.T) {
+	at := time.Date(2026, 10, 20, 9, 0, 0, 0, time.UTC)
+	replay := RemovalRecord{RemovalID: "rr_one", SubjectKind: SubjectKindMatch, MatchID: "match-one", Scope: ScopeReplayRemoval, RemovedAt: at}
+	participant := RemovalRecord{RemovalID: "rm_one", SubjectKind: "account", SubjectID: "ref-one", MatchID: "match-one", Scope: "explicit_removal", RemovedAt: at}
+	withReplay := RemovalLedgerDigest([]RemovalRecord{participant, replay}, nil)
+	without := RemovalLedgerDigest([]RemovalRecord{participant}, nil)
+	if bytes.Equal(withReplay, without) {
+		t.Fatal("the digest of the ledger does not cover the removal of the public replay")
+	}
+	// The digest does not depend on the order of the records.
+	reordered := RemovalLedgerDigest([]RemovalRecord{replay, participant}, nil)
+	if !bytes.Equal(withReplay, reordered) {
+		t.Fatal("the digest of the ledger depends on the order of its records")
 	}
 }
 

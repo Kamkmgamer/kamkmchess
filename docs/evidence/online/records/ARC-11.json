@@ -3,7 +3,7 @@
   "status": "partial",
   "kind": "local",
   "commit": "ab0dba56eaa837d1db3aaea0df2ed3d2773d65d1",
-  "command": "go test -race -timeout=60m -json -count=1 ./backend/... ./cmd/...; required PostgreSQL and pinned rules worker in Linux, DAC_OVERRIDE and DAC_READ_SEARCH dropped",
+  "command": "go test -race -timeout=60m -json -count=1 ./backend/... ./cmd/...",
   "expected": "Service failure never becomes peer-abandonment win; recovery adjusts unfinished active deadlines once, fences old epochs and preserves prior terminal results.",
   "actual": "Mapped database tests: TestPostgresOnlineTrustedReconciliationKeepsAnExpiredClockPendingWhileTheRulesServiceIsUnavailable=pass; TestPostgresOnlineServerLifecycleSettlesADueMatchAndStopsOnRelease=pass.",
   "notes": "Database source ab0dba56eaa837d1db3aaea0df2ed3d2773d65d1. These named tests cover parts of the approved scenario; their passing does not close the whole scenario. See docs/evidence/online/assembled-verification.md for package results, earlier failed attempts and limits. The earlier record set cited author-worktree commits e283d271 and 9c6bc799, which were not ancestors of the assembled branch. Native accessibility, deployed-host capacity, cohorts and release approval remain unverified."

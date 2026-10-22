@@ -51,5 +51,26 @@ docker compose -f postgres.compose.yml exec -T postgres sh -eu -c '
     chown 65532:65532 "$file"
     chmod 600 "$file"
   done
+  # The rotation keeps the seven newest daily and the four newest weekly
+  # bundles and retires every ordinary bundle of this directory that passed
+  # the maximum age of thirty days. The count of the rotation alone cannot
+  # promise the thirty day target of the owner contract, so the age is a
+  # rule of its own.
+  #
+  # A bundle the rotation may not delete - a protected one, a one without a
+  # creation time, a one dated after the reference time, or a one whose
+  # manifest cannot be read - is never deleted. The rotation reports it as
+  # unresolved and exits with a failure, so this script fails and the run of
+  # the backup cannot claim success while an old recovery copy remains. The
+  # operator resolves it by retiring the bundle or by removing the
+  # protection, never by ignoring the failure.
+  #
+  # The rotation never descends into a subdirectory, so the durable evidence
+  # of the restores in /backups/restore-evidence is not a candidate and is
+  # never retired by the age rule.
+  #
+  # The rotation only sees this directory. A copy of the bundles on an
+  # offsite store is not covered by it, and the schedule that runs this
+  # script is a property of the host, not of this tree.
   /opt/kamkmchess/khabackup rotate --dir /backups --apply
 '

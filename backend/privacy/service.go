@@ -221,12 +221,20 @@ func (s *Service) applyRemoval(ctx context.Context, tx pgx.Tx, principal onlinea
 		if _, err = tx.Exec(ctx, `DELETE FROM online_profile_results WHERE match_id = ANY($1)`, matchIDs(matches)); err != nil {
 			return Report{}, err
 		}
+		// The removed subject keeps no aggregate of its own. Its own totals
+		// would still say how many games it played, so they leave with the
+		// per game rows. The totals of the opponent stay: they are the
+		// anonymous aggregate the contract keeps.
+		if err = s.removeSubjectTotals(ctx, tx, subjectKind, reference); err != nil {
+			return Report{}, err
+		}
 	} else {
 		// The deleted account keeps no public history of its own.
 		if _, err = tx.Exec(ctx, `DELETE FROM online_profile_results WHERE profile_id = (SELECT profile_id FROM online_public_profiles WHERE `+subject.SQLReference("account_id")+` = $1)`, reference); err != nil {
 			return Report{}, err
 		}
-		if _, err = tx.Exec(ctx, `DELETE FROM online_profile_result_totals WHERE profile_id = (SELECT profile_id FROM online_public_profiles WHERE `+subject.SQLReference("account_id")+` = $1)`, reference); err != nil {
+		// The deleted account keeps no aggregate of its own either.
+		if err = s.removeSubjectTotals(ctx, tx, subjectKind, reference); err != nil {
 			return Report{}, err
 		}
 	}
@@ -414,6 +422,13 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, s
 		match.MatchID, string(match.Seat), subjectKind, reference); err != nil {
 		return err
 	}
+	// The personal model alias of the deleted owner does not stay in the
+	// published payloads of the match or in the declared control timeline of
+	// its seat. The seat is anonymized first, so the redaction of the timeline
+	// is only accepted for a seat whose owner is really gone.
+	if err = redactSeatModelAliases(ctx, tx, match.MatchID, match.Seat); err != nil {
+		return err
+	}
 	// The removal ledger records the match, so a restore of an older backup
 	// replays this removal before the restored database serves traffic.
 	ledgerID, err := newIdentifier("rl_")
@@ -428,6 +443,26 @@ func (s *Service) applyMatchRemoval(ctx context.Context, tx pgx.Tx, removalID, s
 		return err
 	}
 	return nil
+}
+
+// removeSubjectTotals removes the aggregate result totals of a removed
+// subject.
+//
+// The totals of the subject are its own history: they say how many games it
+// played and how it did. A removal erases the shared games of the subject, so
+// its own aggregate leaves with them.
+//
+// The totals of the opponent are untouched: they are the anonymous aggregate
+// the contract keeps.
+//
+// A guest has no profile and therefore no totals, so the removal of a guest
+// removes nothing here.
+func (s *Service) removeSubjectTotals(ctx context.Context, tx pgx.Tx, subjectKind, reference string) error {
+	if subjectKind != string(online.ParticipantAccount) {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `DELETE FROM online_profile_result_totals WHERE profile_id = (SELECT profile_id FROM online_public_profiles WHERE `+subject.SQLReference("account_id")+` = $1)`, reference)
+	return err
 }
 
 // removePrivateOwnerData removes the service-held private owner data of the

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
+	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
 	"github.com/Kamkmgamer/kamkmchess/backend/queue"
 )
 
@@ -37,6 +38,19 @@ type QueueService interface {
 type queueAPI struct {
 	service QueueService
 	auth    participantAuthenticator
+	options QueueOptions
+}
+
+// QueueOptions configures the public queue API.
+type QueueOptions struct {
+	// AllowedOrigins are the browser origins allowed to use the public queue.
+	AllowedOrigins []string
+	// Cohort narrows the accounts that may use the public queue. A nil
+	// authorizer admits every account.
+	//
+	// The queue is account-only, so the cohort narrows exactly the accounts
+	// that may enter it.
+	Cohort AccountAuthorizer
 }
 
 // NewQueue returns the public queue API.
@@ -57,8 +71,14 @@ type queueAPI struct {
 //
 // The routes never answer with an owner identifier of another participant,
 // a session identifier, a credential of somebody else, or a private route.
-func NewQueue(service QueueService, authenticator OnlineAuthenticator, options OnlineOptions) http.Handler {
-	api := &queueAPI{service: service, auth: newParticipantAuthenticator(authenticator, options)}
+//
+// The constructor takes the options of the surface, so the cohort of the
+// surface cannot be dropped on the way in. There is exactly one constructor
+// of the public queue, and it carries the cohort of the request path: a
+// wrapper that took the options of another surface would silently admit
+// every account, so the wrapper does not exist.
+func NewQueue(service QueueService, authenticator OnlineAuthenticator, options QueueOptions) http.Handler {
+	api := &queueAPI{service: service, auth: newParticipantAuthenticator(authenticator, OnlineOptions{AllowedOrigins: options.AllowedOrigins}), options: options}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/online/queue/entries", api.create)
 	mux.HandleFunc("GET /v1/online/queue/entries/{entryID}", api.entry)
@@ -99,12 +119,28 @@ type queueFallbackRequest struct {
 	CredentialRecovery bool   `json:"credentialRecovery"`
 }
 
+// caller authenticates the request as an account and checks the account
+// cohort.
+//
+// The cohort is checked before the request reaches the service, so an account
+// that is not allowed never learns whether a queue entry exists.
+func (a *queueAPI) caller(w http.ResponseWriter, r *http.Request, mutation bool) (onlineauth.Principal, bool) {
+	principal, ok := a.auth.account(w, r, mutation)
+	if !ok {
+		return onlineauth.Principal{}, false
+	}
+	if !allowParticipant(w, r, a.options.Cohort, principal) {
+		return onlineauth.Principal{}, false
+	}
+	return principal, true
+}
+
 // create creates one explicit queue entry.
 //
 // The creation is the authoritative ready acceptance: the service records
 // the ready time and starts the search window there.
 func (a *queueAPI) create(w http.ResponseWriter, r *http.Request) {
-	principal, ok := a.auth.account(w, r, true)
+	principal, ok := a.caller(w, r, true)
 	if !ok {
 		return
 	}
@@ -143,7 +179,7 @@ func (a *queueAPI) create(w http.ResponseWriter, r *http.Request) {
 
 // entry returns the entry of the caller.
 func (a *queueAPI) entry(w http.ResponseWriter, r *http.Request) {
-	principal, ok := a.auth.account(w, r, false)
+	principal, ok := a.caller(w, r, false)
 	if !ok {
 		return
 	}
@@ -186,7 +222,7 @@ func (a *queueAPI) heartbeat(w http.ResponseWriter, r *http.Request) {
 
 // entryOperation runs one authenticated entry mutation.
 func (a *queueAPI) entryOperation(w http.ResponseWriter, r *http.Request, run func(context.Context, online.ParticipantRef, string, queue.Operation) (online.QueueEntry, error)) {
-	principal, ok := a.auth.account(w, r, true)
+	principal, ok := a.caller(w, r, true)
 	if !ok {
 		return
 	}
@@ -204,7 +240,7 @@ func (a *queueAPI) entryOperation(w http.ResponseWriter, r *http.Request, run fu
 
 // match pairs the entry with a compatible ready entry.
 func (a *queueAPI) match(w http.ResponseWriter, r *http.Request) {
-	principal, ok := a.auth.account(w, r, true)
+	principal, ok := a.caller(w, r, true)
 	if !ok {
 		return
 	}
@@ -231,7 +267,7 @@ func (a *queueAPI) match(w http.ResponseWriter, r *http.Request) {
 // already holds the credential. An owner that lost the answer asks for the
 // explicit recovery, and that rotation is the only one.
 func (a *queueAPI) fallback(w http.ResponseWriter, r *http.Request) {
-	principal, ok := a.auth.account(w, r, true)
+	principal, ok := a.caller(w, r, true)
 	if !ok {
 		return
 	}

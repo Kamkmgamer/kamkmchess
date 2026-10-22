@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createOnlineComposition } from './composition';
+import { createOnlineComposition, OnlineQueueIdentityChangedError, OnlineQueueLockUnavailableError } from './composition';
 import { createFriendSecretStore } from './friend-secrets';
 import type { QueueEntry } from './contracts';
 import type { ModelSelection } from '../controller/index.js';
@@ -184,6 +184,20 @@ function settle(): Promise<void> {
 }
 
 /**
+ * Waits for a condition of the test.
+ *
+ * The service publishes the canonical state of the match on its poll, so a
+ * test waits a little longer than one poll interval for a runner to learn it.
+ */
+async function until(condition: () => boolean, label: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`The condition (${label}) was not reached.`);
+    await new Promise<void>(resolve => { setTimeout(resolve, 5); });
+  }
+}
+
+/**
  * Stores one intent of an identity, with the entry id of a queue entry.
  *
  * The record is the one the browser writes before it asks the service for
@@ -200,6 +214,105 @@ function storeIntent(storage: Storage, entryId: string, engineMatchId: string | 
     selection: null,
     engineMatchId,
   }]));
+}
+
+/**
+ * A queue service that behaves like the service.
+ *
+ * The client request identifier makes the creation idempotent, so the same
+ * key always answers with the same entry. A cancelled entry stays
+ * cancelled, so a replay of the key of a cancelled entry answers with the
+ * cancelled entry and never with a live one.
+ */
+function createQueueService(): {
+  readonly fetcher: typeof fetch;
+  /** The idempotency keys of the created entries, in order. */
+  readonly creations: string[];
+  /** The entries the service cancelled, in order. */
+  readonly cancels: string[];
+  /** Every request the service received, in order. */
+  readonly requests: string[];
+  /** The entries of the service, by their identifier. */
+  readonly entries: Map<string, QueueEntry>;
+} {
+  const entries = new Map<string, QueueEntry>();
+  const byRequest = new Map<string, string>();
+  const creations: string[] = [];
+  const cancels: string[] = [];
+  const requests: string[] = [];
+  let counter = 0;
+
+  function answer(status: number, data: unknown): Response {
+    return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  function liveEntry(entryId: string, control: unknown): QueueEntry {
+    return {
+      schemaVersion: 2,
+      entryId,
+      owner: { kind: 'account', id: 'account-1' },
+      control: (control ?? { kind: 'human' }) as QueueEntry['control'],
+      timeControl,
+      status: 'waiting',
+      version: 1,
+      // The window of the entry is far away, so the entry keeps searching
+      // while the test runs.
+      readyAt: '2099-01-01T00:00:00.000Z',
+      cutoffAt: '2099-01-01T00:00:10.000Z',
+      assignedMatchId: null,
+      createdAt: '2099-01-01T00:00:00.000Z',
+      updatedAt: '2099-01-01T00:00:00.000Z',
+    };
+  }
+
+  const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    const method = init?.method ?? 'GET';
+    if (path.includes('/v1/online/features')) return answer(200, { friends: true, queue: true });
+    if (!path.includes('/queue/entries')) return answer(404, { error: 'not_found' });
+    requests.push(`${method} ${path}`);
+    const body = init?.body === undefined ? null : JSON.parse(String(init.body)) as Record<string, unknown>;
+    if (method === 'POST' && path.endsWith('/entries')) {
+      const key = String(body?.clientRequestId ?? '');
+      const known = byRequest.get(key);
+      // The creation is idempotent per client request identifier.
+      if (known !== undefined) return answer(200, entries.get(known));
+      counter += 1;
+      const entryId = `entry-000000${counter}`;
+      byRequest.set(key, entryId);
+      creations.push(key);
+      const created = liveEntry(entryId, body?.control);
+      entries.set(entryId, created);
+      return answer(201, created);
+    }
+    const segments = path.split('/').filter(Boolean);
+    const entryId = decodeURIComponent(segments[segments.length - 2] ?? '');
+    const entry = entries.get(entryId);
+    if (!entry) return answer(404, { error: 'not_found' });
+    if (path.endsWith('/cancel')) {
+      const cancelled: QueueEntry = { ...entry, status: 'cancelled' };
+      entries.set(entryId, cancelled);
+      cancels.push(entryId);
+      return answer(200, cancelled);
+    }
+    return answer(200, entry);
+  });
+
+  return { fetcher: fetcher as unknown as typeof fetch, creations, cancels, requests, entries };
+}
+
+/** The claims of the shared storage of an identity. */
+function claims(storage: Storage): string[] {
+  return [...storage.data.keys()].filter(key => key.includes(':claim:'));
+}
+
+/** The claim of the shared entry of an identity. */
+function claimOf(storage: Storage): { key: string; settings: string } | null {
+  for (const [key, value] of storage.data) {
+    if (!key.includes(':claim:')) continue;
+    return JSON.parse(value) as { key: string; settings: string };
+  }
+  return null;
 }
 
 /** The requests of the fallback route. */
@@ -288,6 +401,67 @@ describe('the online composition wires the product (B-2, B-5, B-7, B-12)', () =>
     expect(reads.length).toBeGreaterThan(0);
     const heartbeats = wires.filter(wire => wire.path.endsWith('/heartbeat'));
     expect(heartbeats.length).toBeGreaterThan(0);
+    composition.dispose();
+  });
+
+  it('keeps the lease of a waiting entry alive while the owner decides (F1)', async () => {
+    const clock = manualTimers();
+    const { fetcher, wires } = createFetchDouble({
+      // The service refuses the engine fallback: its window has not ended.
+      fallback: { status: 409, data: { error: 'conflict' } },
+    });
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage: createStorage(),
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      timers: clock.timers,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    // The cutoff arrives and the service refuses the fallback.
+    clock.fire();
+    await settle();
+    expect(composition.queueState.phase).toBe('searching');
+    // The owner may recover the search while the service decides.
+    expect(composition.queueState.options).toContain('retry');
+    expect(composition.queueState.options).toContain('keep-searching');
+    // The entry keeps its lease: the poll of the service continues.
+    const before = wires.filter(wire => wire.path.endsWith('/heartbeat')).length;
+    clock.fire();
+    await settle();
+    const after = wires.filter(wire => wire.path.endsWith('/heartbeat')).length;
+    expect(after).toBeGreaterThan(before);
+    composition.dispose();
+  });
+
+  it('keeps the lease of a waiting entry alive while the engine is unavailable (F1)', async () => {
+    const clock = manualTimers();
+    const { fetcher, wires } = createFetchDouble({});
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage: createStorage(),
+      accountSession: accountSession(),
+      // The engine does not start. The search continues without it.
+      prepareEngine: async () => { throw new Error('The engine download failed.'); },
+      timers: clock.timers,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    // The cutoff arrives without a usable engine.
+    clock.fire();
+    await settle();
+    expect(composition.queueState.phase).toBe('engine-unavailable');
+    // The owner may recover the search.
+    expect(composition.queueState.options).toContain('retry');
+    expect(composition.queueState.options).toContain('keep-searching');
+    // The entry keeps its lease: the poll of the service continues, so the
+    // readiness lease of the service does not die while the owner decides.
+    const before = wires.filter(wire => wire.path.endsWith('/heartbeat')).length;
+    clock.fire();
+    await settle();
+    const after = wires.filter(wire => wire.path.endsWith('/heartbeat')).length;
+    expect(after).toBeGreaterThan(before);
     composition.dispose();
   });
 
@@ -460,6 +634,680 @@ describe('the online composition wires the product (B-2, B-5, B-7, B-12)', () =>
     expect(after.length).toBe(1);
     expect(after[0]?.entryId).toBe(before[0]?.entryId);
     composition.dispose();
+  });
+});
+
+describe('the owner shares one entry (QUE-03, QUE-04, QUE-08)', () => {
+  /** The entries the service created. */
+  function creations(wires: readonly Wire[]): Wire[] {
+    return wires.filter(wire => wire.path.endsWith('/entries') && wire.method === 'POST');
+  }
+
+  /** The idempotency keys of the created entries. */
+  function keys(wires: readonly Wire[]): string[] {
+    return creations(wires).map(wire => String(wire.body?.clientRequestId));
+  }
+
+  /**
+   * The lock of the browser, shared by two tabs of one browser.
+   *
+   * The lock of the origin belongs to every tab of the browser. The double
+   * holds one claim at a time, exactly like it.
+   */
+  function createBrowserLock(): { lock: <T>(name: string, run: () => Promise<T>) => Promise<T> } {
+    const chains = new Map<string, Promise<unknown>>();
+    return {
+      lock<T>(name: string, run: () => Promise<T>): Promise<T> {
+        const chain = chains.get(name) ?? Promise.resolve();
+        const result = chain.then(() => run());
+        chains.set(name, result.then(() => undefined, () => undefined));
+        return result;
+      },
+    };
+  }
+
+  it('joins the entry it already waits with', async () => {
+    // The default enter reaches the entry of the owner. A second click never
+    // creates a second entry, a second record or a second key.
+    const { composition, wires } = createComposition();
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    expect(creations(wires)).toHaveLength(1);
+    expect(keys(wires)).toHaveLength(1);
+    expect(composition.queueEntries).toHaveLength(1);
+    expect(composition.queueEntries[0]?.state.phase).toBe('searching');
+    composition.dispose();
+  });
+
+  it('never creates a second entry for two simultaneous calls', async () => {
+    const { composition, wires } = createComposition();
+    await Promise.all([
+      composition.enterQueue({ control: { kind: 'human' }, timeControl }),
+      composition.enterQueue({ control: { kind: 'human' }, timeControl }),
+    ]);
+    expect(creations(wires)).toHaveLength(1);
+    expect(composition.queueEntries).toHaveLength(1);
+    composition.dispose();
+  });
+
+  it('creates a parallel entry for an explicit new intent', async () => {
+    // The explicit second game owns its own entry, its own key and its own
+    // timer. The entry of the owner keeps waiting.
+    const clock = manualTimers();
+    const { composition, wires } = createComposition({ timers: clock.timers });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl }, { intent: 'new' });
+    expect(creations(wires)).toHaveLength(2);
+    expect(new Set(keys(wires)).size).toBe(2);
+    expect(composition.queueEntries).toHaveLength(2);
+    // Both entries keep a poll timer of their own.
+    expect(clock.pending).toBeGreaterThanOrEqual(2);
+    composition.dispose();
+  });
+
+  it('reaches the entry of the owner in another tab of the same browser', async () => {
+    // A second tab of the same browser reaches the entry of the owner. It
+    // creates no second entry and no second key.
+    const storage = createStorage();
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: { ...entryAnswer(null), entryId: 'entry-0000001' } }),
+    });
+    const first = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    await first.enterQueue({ control: { kind: 'human' }, timeControl });
+    const second = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    await second.enterQueue({ control: { kind: 'human' }, timeControl });
+    // The second tab shows the entry of the first one.
+    expect(creations(wires)).toHaveLength(1);
+    expect(second.queueEntries).toHaveLength(1);
+    expect(second.queueEntries[0]?.entryId).toBe('entry-0000001');
+    expect(second.queueEntries[0]?.state.phase).toBe('searching');
+    first.dispose();
+    second.dispose();
+  });
+
+  it('claims one key when two tabs enter at the same moment', async () => {
+    // Two fresh tabs of the same browser enter the queue at the same moment.
+    // The claim of the shared entry is taken under the lock of the browser,
+    // so both tabs reach one entry with one key.
+    const storage = createStorage();
+    const browser = createBrowserLock();
+    const { fetcher, wires } = createFetchDouble({
+      entry: (body) => ({ status: 201, data: { ...entryAnswer(body), entryId: 'entry-0000001' } }),
+      entryRead: () => ({ status: 200, data: { ...entryAnswer(null), entryId: 'entry-0000001' } }),
+    });
+    const options = {
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      queueLock: browser.lock,
+    };
+    const first = createOnlineComposition(options);
+    const second = createOnlineComposition(options);
+    await Promise.all([
+      first.enterQueue({ control: { kind: 'human' }, timeControl }),
+      second.enterQueue({ control: { kind: 'human' }, timeControl }),
+    ]);
+    // The two tabs share one key, so the service answers with one entry.
+    expect(new Set(keys(wires)).size).toBe(1);
+    expect(first.queueEntries[0]?.entryId).toBe('entry-0000001');
+    expect(second.queueEntries[0]?.entryId).toBe('entry-0000001');
+    first.dispose();
+    second.dispose();
+  });
+
+  it('keeps the entry of the owner when the service does not answer', async () => {
+    // The read of the entry fails without an answer. The entry may exist, so
+    // the intent of the owner is preserved and its key is reused: the tab
+    // never creates a second entry.
+    const storage = createStorage();
+    const { fetcher, wires } = createFetchDouble({
+      entry: (body) => ({ status: 201, data: { ...entryAnswer(body), entryId: 'entry-0000001' } }),
+    });
+    const holding: typeof fetch = async (input, init) => {
+      const path = String(input);
+      if (path.includes('/queue/entries/entry-0000001') && (init?.method ?? 'GET') === 'GET') {
+        throw new Error('The connection was lost.');
+      }
+      return fetcher(input, init);
+    };
+    const first = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: holding as typeof fetch,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    await first.enterQueue({ control: { kind: 'human' }, timeControl });
+    const second = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: holding as typeof fetch,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    await second.enterQueue({ control: { kind: 'human' }, timeControl });
+    // The second tab reaches the same key, so the service answers with the
+    // entry of the owner.
+    expect(new Set(keys(wires)).size).toBe(1);
+    expect(second.queueEntries[0]?.entryId).toBe('entry-0000001');
+    first.dispose();
+    second.dispose();
+  });
+
+  it('replaces the current entry when the selection changes, and keeps the other one', async () => {
+    // A deliberate selection change cancels the shared entry of the owner and
+    // rejoins with a fresh window. The explicit second game of the owner keeps
+    // waiting: the default enter never takes it away.
+    let created = 0;
+    const { fetcher, wires } = createFetchDouble({
+      entry: (body) => ({ status: 201, data: { ...entryAnswer(body), entryId: `entry-000000${++created}` } }),
+      entryRead: (path) => ({ status: 200, data: { ...entryAnswer(null), entryId: path.split('/').pop() ?? 'entry-0000000' } }),
+    });
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage: createStorage(),
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl }, { intent: 'new' });
+    // The owner changes the clock of the shared entry.
+    await composition.enterQueue({
+      control: { kind: 'human' },
+      timeControl: { startingTimeMs: 180_000, incrementMs: 2_000 },
+    });
+    const creates = creations(wires);
+    expect(creates).toHaveLength(3);
+    expect(new Set(keys(wires)).size).toBe(3);
+    // The shared entry is cancelled, and the explicit one is untouched.
+    const cancels = wires.filter(wire => wire.path.endsWith('/cancel'));
+    expect(cancels).toHaveLength(1);
+    expect(cancels[0]?.path).toContain('entry-0000001');
+    // The explicit second game of the owner keeps waiting.
+    const searching = composition.queueEntries.filter(entry => entry.state.phase === 'searching');
+    expect(searching.length).toBeGreaterThanOrEqual(2);
+    expect(searching.some(entry => entry.entryId === 'entry-0000002')).toBe(true);
+    composition.dispose();
+  });
+
+  it('never abandons the entry of the owner when the readiness fails', async () => {
+    // A failed readiness blocks the entry. The entry of the owner keeps
+    // waiting, and the owner may play the seat themselves.
+    const { fetcher, wires } = createFetchDouble({
+      entry: (body) => ({ status: 201, data: { ...entryAnswer(body), entryId: 'entry-0000001' } }),
+      entryRead: () => ({ status: 200, data: { ...entryAnswer(null), entryId: 'entry-0000001' } }),
+    });
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher,
+      storage: createStorage(),
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      checkModel: async () => ({ ready: false, detail: 'The model is not connected.' }),
+    });
+    composition.setAgent({
+      label: 'GPT-4o',
+      selection: { connectionId: 'c1', modelRoutingId: 'm1', protocol: 'chat-completions', configurationRevision: 'r1', diagnostic: 'passed-current-session' } as unknown as ModelSelection,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    // The owner changes the selection to the agent, and the readiness fails.
+    await composition.enterQueue({ control: { kind: 'agent', modelLabel: 'GPT-4o' }, timeControl });
+    // The entry of the owner is not cancelled, and no new entry is created.
+    expect(wires.filter(wire => wire.path.endsWith('/cancel'))).toHaveLength(0);
+    expect(creations(wires)).toHaveLength(1);
+    expect(composition.queueEntries[0]?.state.phase).toBe('searching');
+    composition.dispose();
+  });
+
+  it('discards the enter of an identity that signed in again', async () => {
+    // The identity leaves and comes back while the entry is read. The enter
+    // of the older generation never reaches the current identity, so it
+    // creates no entry.
+    const listeners = new Set<(identity: { accountId: string; token: () => Promise<string> } | null) => void>();
+    let identity: { accountId: string; token: () => Promise<string> } | null = { accountId: 'account-1', token: async () => 'token' };
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { fetcher, wires } = createFetchDouble({
+      entryRead: () => ({ status: 200, data: { ...entryAnswer(null), status: 'assigned', assignedMatchId: 'match-00000031' } }),
+    });
+    const holding: typeof fetch = async (input, init) => {
+      const path = String(input);
+      if (path.includes('/queue/entries/entry-0000001')) await gate;
+      return fetcher(input, init);
+    };
+    const storage = createStorage();
+    storeIntent(storage, 'entry-0000001', null);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: holding as typeof fetch,
+      storage,
+      accountSession: {
+        get identity() { return identity; },
+        subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      },
+      prepareEngine: async () => undefined,
+    });
+    const entering = composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    await settle();
+    // The identity leaves and comes back while the entry is read.
+    identity = { accountId: 'account-2', token: async () => 'token' };
+    for (const listener of listeners) listener(identity);
+    identity = { accountId: 'account-1', token: async () => 'token' };
+    for (const listener of listeners) listener(identity);
+    release?.();
+    await entering;
+    await settle();
+    // The enter of the older generation created no entry.
+    expect(creations(wires)).toHaveLength(0);
+    composition.dispose();
+  });
+});
+
+/**
+ * The shared entry never outlives its claim (QUE-03, QUE-04, QUE-08).
+ *
+ * The claim of the shared entry names the key of the entry the owner waits
+ * with. A terminal entry - a cancelled, an expired or a completed one - must
+ * never leave that claim behind: the claim would pin the next enter of the
+ * owner to the terminal key, and the service would answer with the entry that
+ * is over.
+ */
+describe('the claim of the shared entry never outlives its entry', () => {
+  it('reaches a fresh entry when the owner enters the queue again after a cancel', async () => {
+    // The owner cancels the entry and plays again. The cancelled key never
+    // reaches the service again, and the claim of the cancelled entry does
+    // not pin the next entry of the owner.
+    const service = createQueueService();
+    const storage = createStorage();
+    const clock = manualTimers();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      timers: clock.timers,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    expect(service.creations).toHaveLength(1);
+    const cancelledKey = service.creations[0]!;
+    await composition.queue.cancel();
+    await settle();
+    // The claim of the cancelled entry is gone.
+    expect(claims(storage)).toHaveLength(0);
+    // The owner plays again.
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    await settle();
+    // A fresh key reaches the service, and the entry of the owner waits.
+    expect(service.creations).toHaveLength(2);
+    expect(service.creations[1]).not.toBe(cancelledKey);
+    expect(service.entries.get('entry-0000002')?.status).toBe('waiting');
+    const searching = composition.queueEntries.filter(entry => entry.state.phase === 'searching');
+    expect(searching).toHaveLength(1);
+    expect(searching[0]?.entryId).toBe('entry-0000002');
+    composition.dispose();
+  });
+
+  it('never reuses the cancelled key when the owner returns to the first settings', async () => {
+    // The owner watches the agent, plays the seat themselves and watches the
+    // agent again. Every entry of the owner has its own key, and the key of
+    // the cancelled agent entry never reaches the service again.
+    const service = createQueueService();
+    const storage = createStorage();
+    const clock = manualTimers();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      timers: clock.timers,
+      checkModel: async () => ({ ready: true, detail: '' }),
+    });
+    composition.setAgent({
+      label: 'GPT-4o',
+      selection: { connectionId: 'c1', modelRoutingId: 'm1', protocol: 'chat-completions', configurationRevision: 'r1', diagnostic: 'passed-current-session' } as unknown as ModelSelection,
+    });
+    await composition.enterQueue({ control: { kind: 'agent', modelLabel: 'GPT-4o' }, timeControl });
+    expect(service.creations).toHaveLength(1);
+    const agentKey = service.creations[0]!;
+    // The owner plays the seat themselves. The agent entry is replaced.
+    await composition.queue.playYourself();
+    await settle();
+    expect(service.creations).toHaveLength(2);
+    expect(service.creations[1]).not.toBe(agentKey);
+    // The claim of the shared entry follows the record: it names the key of
+    // the entry the owner waits with now, and never the key of the cancelled
+    // agent entry.
+    expect(claimOf(storage)?.key).toBe(service.creations[1]);
+    // The owner watches the agent again.
+    await composition.enterQueue({ control: { kind: 'agent', modelLabel: 'GPT-4o' }, timeControl });
+    await settle();
+    // Every entry of the owner has its own key, and the last one waits.
+    expect(service.creations).toHaveLength(3);
+    expect(new Set(service.creations).size).toBe(3);
+    expect(service.creations[2]).not.toBe(agentKey);
+    const searching = composition.queueEntries.filter(entry => entry.state.phase === 'searching');
+    expect(searching.length).toBeGreaterThanOrEqual(1);
+    expect(searching[searching.length - 1]?.entryId).toBe('entry-0000003');
+    composition.dispose();
+  });
+
+  it('never lets an explicit second game take the claim of the shared entry', async () => {
+    // The explicit second game owns its own entry and its own key. The claim
+    // of the shared entry stays with the entry the owner waits with, so the
+    // default enter of another tab reaches that entry and not the explicit
+    // one.
+    const service = createQueueService();
+    const storage = createStorage();
+    const clock = manualTimers();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      timers: clock.timers,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    const sharedKey = service.creations[0]!;
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl }, { intent: 'new' });
+    expect(service.creations).toHaveLength(2);
+    // The claim still names the shared entry.
+    expect(claimOf(storage)?.key).toBe(sharedKey);
+    composition.dispose();
+  });
+
+  it('reaches the same entry when the service does not answer the read', async () => {
+    // The read of the entry fails without an answer. The entry may exist, so
+    // the key of the owner is reused: the service answers with the same entry
+    // and the second tab never creates a second one.
+    const service = createQueueService();
+    const storage = createStorage();
+    const holding: typeof fetch = async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      if (method === 'GET' && path.includes('/queue/entries/')) {
+        throw new Error('The connection was lost.');
+      }
+      return service.fetcher(input, init);
+    };
+    const options = {
+      baseUrl: 'https://api.example.test',
+      fetch: holding as typeof fetch,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    };
+    const first = createOnlineComposition(options);
+    await first.enterQueue({ control: { kind: 'human' }, timeControl });
+    const second = createOnlineComposition(options);
+    await second.enterQueue({ control: { kind: 'human' }, timeControl });
+    // One key and one entry: the second tab reached the entry of the owner.
+    expect(service.creations).toHaveLength(1);
+    expect(second.queueEntries[0]?.entryId).toBe('entry-0000001');
+    first.dispose();
+    second.dispose();
+  });
+
+  it('fails closed when the browser cannot lock the tabs of the origin', async () => {
+    // A browser without the lock of the origin cannot serialize its tabs. The
+    // claim of the shared entry is a read-modify-write of the storage, so two
+    // tabs would interleave it and mint two keys. The queue refuses the enter
+    // with an actionable error instead of racing the other tab.
+    vi.stubGlobal('window', { location: { search: '', pathname: '/' } });
+    vi.stubGlobal('navigator', { userAgent: 'test' });
+    try {
+      const service = createQueueService();
+      const storage = createStorage();
+      const options = {
+        baseUrl: 'https://api.example.test',
+        fetch: service.fetcher,
+        storage,
+        accountSession: accountSession(),
+        prepareEngine: async () => undefined,
+      };
+      const first = createOnlineComposition(options);
+      const second = createOnlineComposition(options);
+      await expect(first.enterQueue({ control: { kind: 'human' }, timeControl }))
+        .rejects.toThrow(OnlineQueueLockUnavailableError);
+      await expect(second.enterQueue({ control: { kind: 'human' }, timeControl }))
+        .rejects.toThrow(OnlineQueueLockUnavailableError);
+      // No entry was created, and no claim was taken.
+      expect(service.creations).toHaveLength(0);
+      expect(claims(storage)).toHaveLength(0);
+      first.dispose();
+      second.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('tells the owner what the browser cannot do', async () => {
+    // The refusal names the way out, so the owner can act on it.
+    vi.stubGlobal('window', { location: { search: '', pathname: '/' } });
+    vi.stubGlobal('navigator', { userAgent: 'test' });
+    try {
+      const service = createQueueService();
+      const composition = createOnlineComposition({
+        baseUrl: 'https://api.example.test',
+        fetch: service.fetcher,
+        storage: createStorage(),
+        accountSession: accountSession(),
+        prepareEngine: async () => undefined,
+      });
+      const failure = await composition.enterQueue({ control: { kind: 'human' }, timeControl })
+        .then(() => null, (error: unknown) => error);
+      expect(failure).toBeInstanceOf(OnlineQueueLockUnavailableError);
+      expect((failure as Error).message).toMatch(/browser/i);
+      composition.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+/**
+ * The queue entry of the owner is created once (QUE-01, QUE-03, QUE-04,
+ * QUE-06, QUE-08, QUE-13).
+ *
+ * The entry of the owner is one request for one game. A tab that closes
+ * before the service reports the end of its entry, a readiness that fails, a
+ * settings change next to an explicit second game, an identity that leaves
+ * while the entry is prepared and a browser that cannot lock its tabs all
+ * leave the owner with exactly the entries they asked for - never with a
+ * second game and never with an entry the service never heard of.
+ */
+describe('the queue entry of the owner is created once', () => {
+  it('creates a fresh entry when the entry of the owner is already over', async () => {
+    // The tab of the owner closes before the service reports the end of its
+    // entry. The intent and the claim of the closed tab are still on the
+    // device, and they name an entry that is over. The read of the service
+    // wins over them: the next tab reaches a fresh entry and never the
+    // terminal one.
+    const service = createQueueService();
+    const storage = createStorage();
+    const options = {
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    };
+    const first = createOnlineComposition(options);
+    await first.enterQueue({ control: { kind: 'human' }, timeControl });
+    expect(service.creations).toHaveLength(1);
+    const firstKey = service.creations[0]!;
+    // The tab closes before it sees the terminal state of its entry.
+    first.dispose();
+    const entry = service.entries.get('entry-0000001')!;
+    service.entries.set('entry-0000001', { ...entry, status: 'cancelled' });
+    // A new tab of the same browser enters the queue again.
+    const second = createOnlineComposition(options);
+    await second.enterQueue({ control: { kind: 'human' }, timeControl });
+    await settle();
+    // The terminal key never reaches the service again.
+    expect(service.creations).toHaveLength(2);
+    expect(service.creations[1]).not.toBe(firstKey);
+    // The new entry of the owner waits, and it has its own actions.
+    const searching = second.queueEntries.filter(entry => entry.state.phase === 'searching');
+    expect(searching).toHaveLength(1);
+    expect(searching[0]?.entryId).toBe('entry-0000002');
+    second.dispose();
+  });
+
+  it('never creates an entry for an agent whose readiness failed', async () => {
+    // The readiness of the agent fails, so the request never leaves the
+    // browser. The owner plays the seat themselves, and the rejected agent
+    // entry is never created: a failed readiness leaves no queue entry
+    // behind, and no entry that could be matched behind the owner's back.
+    const service = createQueueService();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage: createStorage(),
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      checkModel: async () => ({ ready: false, detail: 'The model is not connected.' }),
+    });
+    composition.setAgent({
+      label: 'GPT-4o',
+      selection: { connectionId: 'c1', modelRoutingId: 'm1', protocol: 'chat-completions', configurationRevision: 'r1', diagnostic: 'passed-current-session' } as unknown as ModelSelection,
+    });
+    await composition.enterQueue({ control: { kind: 'agent', modelLabel: 'GPT-4o' }, timeControl });
+    // The readiness failed: the service never heard of an entry.
+    expect(composition.queueEntries[0]?.state.phase).toBe('agent-failed');
+    expect(service.creations).toHaveLength(0);
+    // The owner plays the seat themselves.
+    await composition.queue.playYourself();
+    await settle();
+    // Only the human seat of the owner exists.
+    expect(service.creations).toHaveLength(1);
+    expect([...service.entries.values()].map(entry => entry.control)).toEqual([{ kind: 'human' }]);
+    // The rejected agent entry was never created, so it was never cancelled.
+    expect(service.cancels).toHaveLength(0);
+    composition.dispose();
+  });
+
+  it('replaces the shared entry and keeps the explicit one when the settings change', async () => {
+    // The owner waits with a shared entry and asked for an explicit second
+    // game. The settings of the shared entry change: the shared entry is
+    // replaced and the explicit game of the owner keeps waiting. The default
+    // enter never takes the explicit entry away.
+    const service = createQueueService();
+    const storage = createStorage();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    const sharedKey = service.creations[0]!;
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl }, { intent: 'new' });
+    const explicitKey = service.creations[1]!;
+    expect(explicitKey).not.toBe(sharedKey);
+    // The claim of the shared entry still names the shared entry.
+    expect(claimOf(storage)?.key).toBe(sharedKey);
+    // The owner changes the clock of the shared entry.
+    await composition.enterQueue({
+      control: { kind: 'human' },
+      timeControl: { startingTimeMs: 180_000, incrementMs: 2_000 },
+    });
+    await settle();
+    // A fresh key reached the service, and the shared entry was cancelled.
+    expect(service.creations).toHaveLength(3);
+    expect(service.cancels).toEqual(['entry-0000001']);
+    // The explicit game of the owner keeps waiting.
+    expect(service.entries.get('entry-0000002')?.status).toBe('waiting');
+    const searching = composition.queueEntries.filter(entry => entry.state.phase === 'searching');
+    expect(searching.some(entry => entry.entryId === 'entry-0000002')).toBe(true);
+    composition.dispose();
+  });
+
+  it('never creates an entry under an identity that is no longer current', async () => {
+    // The identity leaves while the entry of the owner is prepared. The work
+    // of the older generation never reaches the service, so no entry is
+    // created under the credential of the identity that came back.
+    const listeners = new Set<(identity: { accountId: string; token: () => Promise<string> } | null) => void>();
+    let identity: { accountId: string; token: () => Promise<string> } | null = { accountId: 'account-1', token: async () => 'token-1' };
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let claims = 0;
+    // The lock of the browser holds the write of the intent, so the identity
+    // can change while the entry is prepared.
+    const queueLock = async <T>(_name: string, run: () => Promise<T>): Promise<T> => {
+      claims += 1;
+      if (claims === 2) await gate;
+      return run();
+    };
+    const service = createQueueService();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage: createStorage(),
+      accountSession: {
+        get identity() { return identity; },
+        subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+      },
+      prepareEngine: async () => undefined,
+      queueLock,
+    });
+    const entering = composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    await settle();
+    // The identity leaves while the entry is prepared.
+    identity = { accountId: 'account-2', token: async () => 'token-2' };
+    for (const listener of listeners) listener(identity);
+    release?.();
+    await entering;
+    await settle();
+    // The stale generation created no entry.
+    expect(service.creations).toHaveLength(0);
+    expect(service.requests.filter(request => request.startsWith('POST'))).toHaveLength(0);
+    composition.dispose();
+  });
+
+  it('leaves no record and sends no request when the browser cannot lock its tabs', async () => {
+    // A browser without the lock of the origin cannot share one entry between
+    // its tabs. The enter fails closed, and it leaves no idle record behind:
+    // the owner never sees an entry that the service does not know.
+    vi.stubGlobal('window', { location: { search: '', pathname: '/' } });
+    vi.stubGlobal('navigator', { userAgent: 'test' });
+    try {
+      const service = createQueueService();
+      const composition = createOnlineComposition({
+        baseUrl: 'https://api.example.test',
+        fetch: service.fetcher,
+        storage: createStorage(),
+        accountSession: accountSession(),
+        prepareEngine: async () => undefined,
+      });
+      await expect(composition.enterQueue({ control: { kind: 'human' }, timeControl }))
+        .rejects.toThrow(OnlineQueueLockUnavailableError);
+      // No record of an entry that does not exist, and no request at all.
+      expect(composition.queueEntries).toHaveLength(0);
+      expect(service.creations).toHaveLength(0);
+      expect(service.requests).toHaveLength(0);
+      composition.dispose();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 
@@ -1520,6 +2368,13 @@ interface AgentServiceState {
   /** True while the seat of the owner has to move. */
   seatToMove: boolean;
   commands: Array<Record<string, unknown>>;
+  /**
+   * The commands the service accepted.
+   *
+   * A command the service refused is not in this list, so a test counts the
+   * moves the service really accepted and not the moves the browser tried.
+   */
+  accepted: Array<Record<string, unknown>>;
   leases: number;
   /** The lease of the seat. */
   leaseId: string | null;
@@ -1529,6 +2384,14 @@ interface AgentServiceState {
   leaseStatus: 'active' | 'revoked';
   /** The runner that holds the lease of the seat. */
   leaseRunnerId: string | null;
+  /**
+   * The requests the lease route saw.
+   *
+   * Every request names the runner that sent it, so a test can see that two
+   * tabs of one owner run two runners and that the runner of a seat keeps its
+   * identity while it works.
+   */
+  leaseRequests: Array<{ readonly action: string; readonly runnerId: string }>;
   /** The billable request the service recorded on the lease of the seat. */
   pendingRequestId: string | null;
   /** The command route waits for the test. */
@@ -1580,6 +2443,8 @@ function agentServiceDouble(state: AgentServiceState): typeof fetch {
         await state.leaseGate;
       }
       const leaseAction = String(body?.action ?? '');
+      // Every request of the lease route names the runner that sent it.
+      state.leaseRequests.push({ action: leaseAction, runnerId: String(body?.runnerId ?? '') });
       // The answer of the service about the lease of the seat.
       const leaseAnswer = (): Record<string, unknown> => ({
         schemaVersion: 2,
@@ -1696,6 +2561,9 @@ function agentServiceDouble(state: AgentServiceState): typeof fetch {
         return json({ error: 'conflict' }, 409);
       }
       state.version += 1;
+      // The service accepted the command, so a test counts the moves the
+      // service really played on and not the moves the browser tried.
+      state.accepted.push(body ?? {});
       if (action.kind === 'set_control') {
         state.controlEpoch += 1;
         state.control = (action.control ?? { kind: 'agent' }) as { kind: 'human' | 'agent'; modelLabel?: string };
@@ -1837,6 +2705,88 @@ function providerFixture(): {
   return { requests, restore: () => vi.unstubAllGlobals() };
 }
 
+/**
+ * The provider of a held request.
+ *
+ * The request never answers until the test releases it, so a test can hold the
+ * provider request of a runner while the identity changes or the composition
+ * is disposed. The request keeps its abort signal, so a test can see that the
+ * browser stopped the request instead of letting it run on.
+ */
+function heldProviderFixture(): {
+  readonly requests: Array<{ readonly signal: AbortSignal | null }>;
+  release(): void;
+  restore(): void;
+} {
+  const requests: Array<{ readonly signal: AbortSignal | null }> = [];
+  const gate = createGate();
+  vi.stubGlobal('fetch', (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const signal = init?.signal ?? null;
+    requests.push({ signal });
+    // The request waits for the test. A request the browser stopped never
+    // answers, exactly like a request whose transport was aborted.
+    const outcome = await Promise.race([
+      gate.promise.then(() => 'released' as const),
+      new Promise<'stopped'>((resolve) => {
+        if (signal === null) return;
+        if (signal.aborted) {
+          resolve('stopped');
+          return;
+        }
+        signal.addEventListener('abort', () => { resolve('stopped'); });
+      }),
+    ]);
+    if (outcome === 'stopped') throw new DOMException('The request was stopped.', 'AbortError');
+    const chunk = {
+      choices: [{ index: 0, delta: { content: '{"move":"e2e4"}' }, finish_reason: 'stop' }],
+    };
+    return new Response(`data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    });
+  }) as unknown as typeof fetch);
+  return { requests, release: gate.release, restore: () => vi.unstubAllGlobals() };
+}
+
+/** The state of the service of the fixture. */
+function serviceState(seatToMove = true): AgentServiceState {
+  const commandGate = createGate();
+  const leaseGate = createGate();
+  const state: AgentServiceState = {
+    view: matchView(),
+    mode: 'lost',
+    version: 1,
+    controlEpoch: 1,
+    control: { kind: 'agent', modelLabel: 'Custom model' },
+    seatToMove,
+    commands: [],
+    accepted: [],
+    leases: 0,
+    leaseId: null,
+    leaseGeneration: 0,
+    leaseStatus: 'active',
+    leaseRunnerId: null,
+    leaseRequests: [],
+    pendingRequestId: null,
+    holdCommand: false,
+    heldCommand: false,
+    holdLease: false,
+    heldLease: false,
+    releases: 0,
+    commandGate: commandGate.promise,
+    leaseGate: leaseGate.promise,
+    opponentReplies() {
+      // The opponent answers the move of the seat: the seat is to move again
+      // and the version of the match moves on.
+      state.version += 1;
+      state.seatToMove = true;
+      state.view = agentView(state);
+    },
+  };
+  state.view = agentView(state);
+  return state;
+}
+
 /** The canonical view of the agent seat of the fixture. */
 function agentView(state: AgentServiceState): OnlineMatchView {
   const control = state.control;
@@ -1866,57 +2816,6 @@ function agentView(state: AgentServiceState): OnlineMatchView {
 }
 
 describe('the recovery of an applied handoff (R10-A)', () => {
-  /** The state of the service of the fixture. */
-  function serviceState(seatToMove = true): AgentServiceState {
-    const commandGate = createGate();
-    const leaseGate = createGate();
-    const state: AgentServiceState = {
-      view: matchView(),
-      mode: 'lost',
-      version: 1,
-      controlEpoch: 1,
-      control: { kind: 'agent', modelLabel: 'Custom model' },
-      seatToMove,
-      commands: [],
-      leases: 0,
-      leaseId: null,
-      leaseGeneration: 0,
-      leaseStatus: 'active',
-      leaseRunnerId: null,
-      pendingRequestId: null,
-      holdCommand: false,
-      heldCommand: false,
-      holdLease: false,
-      heldLease: false,
-      releases: 0,
-      commandGate: commandGate.promise,
-      leaseGate: leaseGate.promise,
-      opponentReplies() {
-        // The opponent answers the move of the seat: the seat is to move again
-        // and the version of the match moves on.
-        state.version += 1;
-        state.seatToMove = true;
-        state.view = agentView(state);
-      },
-    };
-    state.view = agentView(state);
-    return state;
-  }
-
-  /**
-   * Waits for a condition of the test.
-   *
-   * The service publishes the canonical state of the match on its poll, so a
-   * test waits a little longer than one poll interval for a runner to learn it.
-   */
-  async function until(condition: () => boolean, label: string): Promise<void> {
-    const deadline = Date.now() + 5_000;
-    while (!condition()) {
-      if (Date.now() > deadline) throw new Error(`The condition (${label}) was not reached.`);
-      await new Promise<void>(resolve => { setTimeout(resolve, 5); });
-    }
-  }
-
   it('binds the captured private selection of a recovered switch and plays the seat with it', async () => {
     const provider = providerFixture();
     const storage = createStorage();
@@ -2255,6 +3154,167 @@ describe('the recovery of an applied handoff (R10-A)', () => {
   }, 20_000);
 });
 
+/**
+ * The moves the service accepted for the seat of the owner.
+ *
+ * A command the service refused is not counted, so the number is the number of
+ * moves the game really played on.
+ */
+function acceptedMoves(state: AgentServiceState): number {
+  return state.accepted.filter(command => (command.action as { kind?: string } | undefined)?.kind === 'submit_move').length;
+}
+
+/**
+ * The control changes the service accepted for the seat of the owner.
+ *
+ * A control change the service refused is not counted, so the number is the
+ * number of control changes the game really applied.
+ */
+function acceptedControlChanges(state: AgentServiceState): number {
+  return state.accepted.filter(command => (command.action as { kind?: string } | undefined)?.kind === 'set_control').length;
+}
+
+describe('the hand-back of a seat to the agent of the owner (R10-B)', () => {
+  it('hands the seat back to the agent after the owner took it over, without a reload', async () => {
+    const provider = providerFixture();
+    const storage = createStorage();
+    const first = selectionOf('c1', 'm1');
+    const state = serviceState();
+    // The service answers every command of this test, so every decision of
+    // the owner is proven.
+    state.mode = 'online';
+    const connections = connectionStoreOf([{ id: 'c1' }]);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: agentServiceDouble(state),
+      storage,
+      accountSession: accountSession(),
+      connectionStore: connections.store,
+    });
+    composition.setAgentCatalog([{ id: 'private-a', label: 'Custom model', selection: first }]);
+    composition.setAgent({ label: 'Custom model', selection: first });
+    composition.attachAndFocus('match-00000001', 'white', {
+      kind: 'guest',
+      guestId: 'guest-r10b-1',
+      matchId: 'match-00000001',
+      seat: 'white',
+      issue: async () => 'guest-token',
+    }, first);
+    await until(() => composition.agentRunnerState('match-00000001', 'white') !== null, 'the runner of the seat');
+
+    // The seat is to move, so the runner of the seat asks the provider and
+    // submits the move of the seat.
+    await until(() => provider.requests.length > 0, 'the provider is asked');
+    await until(() => acceptedMoves(state) === 1, 'the move of the seat is accepted');
+
+    // The owner takes the seat over. The seat belongs to the human now, the
+    // runner of the seat is gone and the private binding of the seat leaves
+    // the browser.
+    await until(
+      () => (composition.agentRunnerState('match-00000001', 'white')?.version ?? 0) >= state.version,
+      'the runner learned the version of the service',
+    );
+    const takeover = await composition.agentDecision('match-00000001', 'white', 'takeover');
+    expect(takeover.kind).toBe('accepted');
+    expect(state.control.kind).toBe('human');
+    expect(composition.agentRunnerState('match-00000001', 'white')).toBeNull();
+    expect(composition.agentBindingLabelFor('match-00000001', 'white')).toBeNull();
+
+    // The opponent answers the move of the seat, so the seat is to move again
+    // and it waits for the owner.
+    state.opponentReplies();
+    await until(
+      () => (composition.workspace.state('match-00000001')?.snapshot?.version ?? 0) >= state.version,
+      'the browser knows the version of the service',
+    );
+    const askedBefore = provider.requests.length;
+    const movesBefore = acceptedMoves(state);
+    const controlsBefore = acceptedControlChanges(state);
+
+    // The owner hands the seat back to the agent. The composition asks the
+    // service for the control change and binds the seat to the private
+    // selection of the owner, so the seat plays with the model the owner
+    // chose and not with a guess of the browser.
+    const handoff = await composition.handSeatToAgent('match-00000001', 'white');
+    expect(handoff.kind).toBe('accepted');
+    expect(state.control.kind).toBe('agent');
+    // The service applied exactly one control change for the hand-back.
+    expect(acceptedControlChanges(state) - controlsBefore).toBe(1);
+    expect(persistedSelection(storage, 'match-00000001', 'white')).toBe('c1');
+
+    // The seat plays again without a reload: the runner of the seat is back,
+    // and it asks the provider exactly once for the turn and submits exactly
+    // one move.
+    await until(() => composition.agentRunnerState('match-00000001', 'white') !== null, 'the runner of the seat is back');
+    await until(() => provider.requests.length > askedBefore, 'the provider is asked again');
+    expect(provider.requests.length - askedBefore).toBe(1);
+    expect(provider.requests.slice(askedBefore).every(request => request.authorization === 'Bearer key-c1')).toBe(true);
+    await until(() => acceptedMoves(state) === movesBefore + 1, 'the move of the hand-back is accepted');
+    expect(acceptedMoves(state) - movesBefore).toBe(1);
+    composition.dispose();
+    provider.restore();
+  }, 30_000);
+
+  it('replaces a runner that the service superseded and never asks the provider twice', async () => {
+    const provider = heldProviderFixture();
+    const storage = createStorage();
+    const first = selectionOf('c1', 'm1');
+    const state = serviceState();
+    const connections = connectionStoreOf([{ id: 'c1' }]);
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: agentServiceDouble(state),
+      storage,
+      accountSession: accountSession(),
+      connectionStore: connections.store,
+    });
+    composition.setAgentCatalog([{ id: 'private-a', label: 'Custom model', selection: first }]);
+    composition.setAgent({ label: 'Custom model', selection: first });
+    composition.attachAndFocus('match-00000001', 'white', {
+      kind: 'guest',
+      guestId: 'guest-r10b-2',
+      matchId: 'match-00000001',
+      seat: 'white',
+      issue: async () => 'guest-token',
+    }, first);
+    await until(() => composition.agentRunnerState('match-00000001', 'white') !== null, 'the runner of the seat');
+
+    // The seat is to move, so the runner of the seat asks the provider. The
+    // request waits for the test, so it may still be running.
+    await until(() => provider.requests.length === 1, 'the provider is asked');
+
+    // Another controller took the seat: the service advances the control epoch
+    // of the seat while the runner plays it. The runner of the seat stands
+    // down and gives the lease of the seat back.
+    state.version += 1;
+    state.controlEpoch += 1;
+    state.view = agentView(state);
+
+    // The composition replaces the runner that gave up, so the seat is never
+    // left without a runner.
+    await until(
+      () => composition.agentRunnerState('match-00000001', 'white') !== null,
+      'the seat keeps a runner',
+    );
+    // The request of the old runner may still be running, so the replacement
+    // never asks the provider for a second answer by itself. It waits for the
+    // decision of the owner instead.
+    await until(
+      () => composition.agentRunnerState('match-00000001', 'white')?.phase === 'uncertain',
+      'the replacement waits for the decision of the owner',
+    );
+    const runner = composition.agentRunnerState('match-00000001', 'white');
+    // The runner of the seat is not the one that gave up: it plays the epoch
+    // the service publishes now.
+    expect(runner?.superseded).toBe(false);
+    expect(runner?.uncertainty?.kind).toBe('provider-request');
+    expect(provider.requests.length).toBe(1);
+    expect(acceptedMoves(state)).toBe(0);
+    composition.dispose();
+    provider.restore();
+  }, 30_000);
+});
+
 /** The private selection the device holds for one seat. */
 function persistedSelection(storage: Storage, matchId: string, seat: string): string | null {
   for (const [key, value] of storage.data) {
@@ -2286,3 +3346,1016 @@ function controllableAccountSession(): {
     },
   };
 }
+
+/**
+ * The composition keeps the entries of the identity that owns them.
+ *
+ * The cases below are the findings of the review of the queue composition:
+ *
+ * - An identity change takes the rows of the previous identity away, and the
+ *   cleanup of an entry stays in the namespace of the identity that owns it.
+ * - A creation that was on the wire when the identity changed leaves a
+ *   durable obligation in the namespace of the identity that asked, so the
+ *   entry of the previous identity never waits behind the owner's back.
+ * - The default action targets the shared entry of the owner, never an
+ *   explicit second game.
+ * - A read of the service that does not answer is never treated as an absent
+ *   entry: the old shared entry is resolved before a new one is created.
+ */
+describe('the queue composition keeps the entries of the identity that owns them', () => {
+  /** The identity of a signed-in account, with a token of its own. */
+  interface Identity {
+    readonly accountId: string;
+    readonly token: () => Promise<string>;
+  }
+
+  /**
+   * An account session the test hands over.
+   *
+   * Every account has a token of its own, so a wire of one account is never
+   * confused with a wire of another one.
+   */
+  function switchingSession(): {
+    readonly session: NonNullable<Parameters<typeof createOnlineComposition>[0]['accountSession']>;
+    switchTo(accountId: string): void;
+  } {
+    const listeners = new Set<(identity: Identity | null) => void>();
+    let current: Identity | null = { accountId: 'account-1', token: async () => 'token-account-1' };
+    return {
+      session: {
+        get identity() { return current; },
+        subscribe(listener) {
+          listeners.add(listener);
+          return () => { listeners.delete(listener); };
+        },
+      },
+      switchTo(accountId) {
+        current = { accountId, token: async () => `token-${accountId}` };
+        for (const listener of [...listeners]) listener(current);
+      },
+    };
+  }
+
+  /** The durable intents of one identity. */
+  function intentsOf(storage: Storage, identity: string): Array<Record<string, unknown>> {
+    const raw = storage.getItem(`kamkmchess.online.queue.intent.v1:${encodeURIComponent(identity)}`);
+    if (!raw) return [];
+    return JSON.parse(raw) as Array<Record<string, unknown>>;
+  }
+
+  /** The claim of the shared entry of one identity. */
+  function claimOfIdentity(storage: Storage, identity: string): { key: string; settings: string } | null {
+    const raw = storage.getItem(`kamkmchess.online.queue.intent.v1:claim:${encodeURIComponent(identity)}`);
+    if (!raw) return null;
+    return JSON.parse(raw) as { key: string; settings: string };
+  }
+
+  /** A queue entry of the service that waits. */
+  function waitingServiceEntry(entryId: string): QueueEntry {
+    return {
+      schemaVersion: 2,
+      entryId,
+      owner: { kind: 'account', id: 'account-1' },
+      control: { kind: 'human' },
+      timeControl,
+      status: 'waiting',
+      version: 1,
+      readyAt: '2099-01-01T00:00:00.000Z',
+      cutoffAt: '2099-01-01T00:00:10.000Z',
+      assignedMatchId: null,
+      createdAt: '2099-01-01T00:00:00.000Z',
+      updatedAt: '2099-01-01T00:00:00.000Z',
+    };
+  }
+
+  it('takes the row of the previous identity away when another account signs in', async () => {
+    // A live entry belongs to the account that created it. When another
+    // account signs in, the row of the previous account leaves the screen, so
+    // the new account never shows it and never controls it. The claim and the
+    // intent of the previous account stay in its own namespace, so the
+    // cleanup of that entry never touches the namespace of the new one.
+    const service = createQueueService();
+    const storage = createStorage();
+    const account = switchingSession();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage,
+      accountSession: account.session,
+      prepareEngine: async () => undefined,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    expect(composition.queueEntries).toHaveLength(1);
+    const sharedKey = service.creations[0]!;
+    expect(claimOfIdentity(storage, 'account:account-1')?.key).toBe(sharedKey);
+
+    // Another account signs in.
+    account.switchTo('account-2');
+    await settle();
+
+    // The row of the previous account is gone, and the new account sees an
+    // idle queue.
+    expect(composition.queueEntries).toHaveLength(0);
+    expect(composition.queueState.phase).toBe('idle');
+    // The new account owns nothing: its namespace is empty.
+    expect(intentsOf(storage, 'account:account-2')).toHaveLength(0);
+    expect(claimOfIdentity(storage, 'account:account-2')).toBeNull();
+    // The claim of the previous account is untouched: it belongs to that
+    // account, and the new account never releases it.
+    expect(claimOfIdentity(storage, 'account:account-1')?.key).toBe(sharedKey);
+    // The durable intent of the previous account stays in its own namespace,
+    // so the account finds its entry again when it returns.
+    expect(intentsOf(storage, 'account:account-1').map(intent => intent.key)).toEqual([sharedKey]);
+    // The entry of the previous account keeps waiting on the service: the
+    // account that signed in never cancels the entry of another account.
+    expect(service.cancels).toHaveLength(0);
+    composition.dispose();
+  });
+
+  it('keeps a durable obligation when the account changes during the creation', async () => {
+    // The creation of the entry is on the wire when another account signs in.
+    // The service may have accepted the entry under the account that asked,
+    // and the answer never arrives. The browser keeps the obligation to
+    // cancel that entry in the namespace of the account that asked, and the
+    // new account never issues a request for the entry of the old one.
+    const service = createQueueService();
+    const storage = createStorage();
+    const account = switchingSession();
+    const wires: Wire[] = [];
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let held = false;
+    const recording: typeof fetch = async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries((init?.headers ?? {}) as Record<string, string>)) {
+        headers[name.toLowerCase()] = value;
+      }
+      wires.push({ path, method, body: null, headers });
+      // The first creation waits on the wire.
+      if (!held && method === 'POST' && path.endsWith('/entries')) {
+        held = true;
+        await gate;
+      }
+      return service.fetcher(input, init);
+    };
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: recording as typeof fetch,
+      storage,
+      accountSession: account.session,
+      prepareEngine: async () => undefined,
+    });
+    const entering = composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    await settle();
+    expect(held).toBe(true);
+
+    // Another account signs in while the creation is on the wire.
+    account.switchTo('account-2');
+    release?.();
+
+    // The enter reports the failure instead of pretending that the entry was
+    // created.
+    await expect(entering).rejects.toThrow(OnlineQueueIdentityChangedError);
+    await settle();
+
+    // The creation travelled with the token of the account that asked, and the
+    // new account never issued a request for the entry of the old one.
+    const creations = wires.filter(wire => wire.path.endsWith('/entries') && wire.method === 'POST');
+    expect(creations).toHaveLength(1);
+    expect(creations[0]?.headers.authorization).toBe('Bearer token-account-1');
+    expect(wires.filter(wire => wire.path.endsWith('/cancel'))).toHaveLength(0);
+    expect(wires.every(wire => wire.headers.authorization !== 'Bearer token-account-2')).toBe(true);
+    // The new account sees no row of the previous account.
+    expect(composition.queueEntries).toHaveLength(0);
+
+    // The obligation lives in the namespace of the account that asked, and it
+    // keeps the key of the entry, so the entry is recovered with the same key.
+    const obligations = intentsOf(storage, 'account:account-1');
+    expect(obligations).toHaveLength(1);
+    expect(obligations[0]?.cleanup).toBe(true);
+    expect(obligations[0]?.sent).toBe(true);
+    expect(obligations[0]?.entryId).toBeNull();
+    expect(obligations[0]?.key).toBe(service.creations[0]);
+    // The new account owns no obligation at all.
+    expect(intentsOf(storage, 'account:account-2')).toHaveLength(0);
+
+    // The account that asked comes back. Its obligation is resolved: the
+    // entry is recovered with the same key and cancelled, with the token of
+    // that account.
+    account.switchTo('account-1');
+    await settle();
+    await settle();
+    await settle();
+    const cancels = wires.filter(wire => wire.path.endsWith('/cancel'));
+    expect(cancels).toHaveLength(1);
+    expect(cancels[0]?.headers.authorization).toBe('Bearer token-account-1');
+    expect(service.cancels).toEqual(['entry-0000001']);
+    // The recovery used the same key, so the service never saw a second entry.
+    expect(new Set(service.creations).size).toBe(1);
+    // The obligation is gone, and the entry of the old account is cancelled.
+    expect(intentsOf(storage, 'account:account-1')).toHaveLength(0);
+    expect(service.entries.get('entry-0000001')?.status).toBe('cancelled');
+    composition.dispose();
+  });
+
+  it('targets the shared entry of the owner and never an explicit second game', async () => {
+    // The owner waits with a shared entry and asked for an explicit second
+    // game with the same settings. The default action joins the shared entry:
+    // the explicit entry keeps waiting, stays visible and is never the target
+    // of the default action.
+    const service = createQueueService();
+    const storage = createStorage();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl }, { intent: 'new' });
+    await settle();
+    expect(service.creations).toHaveLength(2);
+    const sharedKey = service.creations[0]!;
+    const explicitKey = service.creations[1]!;
+    expect(explicitKey).not.toBe(sharedKey);
+
+    // The default action again, with the same settings.
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    await settle();
+
+    // No third entry: the default action reached the shared entry.
+    expect(service.creations).toHaveLength(2);
+    // The shared entry is the one that is shown.
+    expect(composition.queueState.entry?.entryId).toBe('entry-0000001');
+    // The explicit entry keeps waiting and stays visible.
+    const searching = composition.queueEntries.filter(entry => entry.state.phase === 'searching');
+    expect(searching).toHaveLength(2);
+    expect(searching.some(entry => entry.entryId === 'entry-0000002')).toBe(true);
+    // The claim of the shared entry still names the shared entry: the explicit
+    // game never took it.
+    expect(claimOfIdentity(storage, 'account:account-1')?.key).toBe(sharedKey);
+    composition.dispose();
+  });
+
+  it('replaces the shared entry and keeps the explicit one when the default action changes the model', async () => {
+    // The default action asks for another model. The shared entry of the
+    // owner is replaced by a fresh one, and the explicit second game of the
+    // owner keeps waiting: the default action never takes it away.
+    const service = createQueueService();
+    const storage = createStorage();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+      checkModel: async () => ({ ready: true, detail: '' }),
+    });
+    composition.setAgent({
+      label: 'GPT-4o',
+      selection: { connectionId: 'c1', modelRoutingId: 'm1', protocol: 'chat-completions', configurationRevision: 'r1', diagnostic: 'passed-current-session' } as unknown as ModelSelection,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl }, { intent: 'new' });
+    await settle();
+    expect(service.creations).toHaveLength(2);
+
+    // The default action watches the agent instead.
+    await composition.enterQueue({ control: { kind: 'agent', modelLabel: 'GPT-4o' }, timeControl });
+    await settle();
+
+    // The shared entry of the owner was resolved and a fresh one waits.
+    expect(service.cancels).toEqual(['entry-0000001']);
+    expect(service.creations).toHaveLength(3);
+    // The explicit second game of the owner keeps waiting.
+    expect(service.entries.get('entry-0000002')?.status).toBe('waiting');
+    const searching = composition.queueEntries.filter(entry => entry.state.phase === 'searching');
+    expect(searching.some(entry => entry.entryId === 'entry-0000002')).toBe(true);
+    composition.dispose();
+  });
+
+  it('resolves the old shared entry when the service does not answer the read', async () => {
+    // The settings of the owner changed in another tab, and the read of the
+    // old entry fails by transport. The old entry is never treated as
+    // absent: it is resolved before the new entry is created, so the owner
+    // never ends up with two eligible shared entries.
+    const service = createQueueService();
+    const storage = createStorage();
+    storage.setItem('kamkmchess.online.queue.intent.v1:account%3Aaccount-1', JSON.stringify([{
+      key: 'intent-shared-0001',
+      settings: 'human||300000|2000',
+      control: { kind: 'human' },
+      timeControl,
+      entryId: 'entry-0000009',
+      recordId: 'queue-1',
+      state: 'live',
+      sent: true,
+      shared: true,
+      selection: null,
+      engineMatchId: null,
+    }]));
+    service.entries.set('entry-0000009', waitingServiceEntry('entry-0000009'));
+    const failing: typeof fetch = async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      // The read of the entry fails by transport.
+      if (method === 'GET' && path.includes('/queue/entries/')) {
+        throw new Error('The connection was lost.');
+      }
+      return service.fetcher(input, init);
+    };
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: failing as typeof fetch,
+      storage,
+      accountSession: accountSession(),
+      prepareEngine: async () => undefined,
+    });
+    await composition.enterQueue({
+      control: { kind: 'human' },
+      timeControl: { startingTimeMs: 180_000, incrementMs: 2_000 },
+    });
+    await settle();
+
+    // The old shared entry was resolved before the new entry was created.
+    expect(service.cancels).toEqual(['entry-0000009']);
+    // A fresh entry waits, with a key of its own. The key of the old entry
+    // never reaches the service as a creation.
+    expect(service.creations).toHaveLength(1);
+    expect(service.creations[0]).not.toBe('intent-shared-0001');
+    expect(service.entries.get('entry-0000001')?.status).toBe('waiting');
+    // The old intent is gone, and the claim names the new entry.
+    expect(intentsOf(storage, 'account:account-1').map(intent => intent.key)).toEqual([service.creations[0]]);
+    expect(claimOfIdentity(storage, 'account:account-1')?.key).toBe(service.creations[0]);
+    composition.dispose();
+  });
+});
+
+/**
+ * A cancellation that lost the race against an assignment (QUE-08, QUE-10).
+ *
+ * The queue refuses the cancellation of an assigned entry with a conflict:
+ * the entry produced exactly one game, and the game is cancelled through the
+ * participant command route, not through the queue. The browser reconciles
+ * that conflict with the authoritative state of the entry and of its game, and
+ * it never drops the obligation of an entry it could not resolve.
+ */
+describe('a cancellation that lost the race against an assignment', () => {
+  /**
+   * A queue service whose entry wins the race against a cancellation.
+   *
+   * The creation is idempotent per client request identifier, exactly like the
+   * service, so the recovery of a lost answer reaches the same entry and never
+   * a second one.
+   */
+  function createRacingQueueService(options: {
+    /** The creation route loses its first answer. */
+    readonly loseCreation?: boolean;
+    /** The created entry is assigned already. */
+    readonly assigned?: boolean;
+    /** The command route refuses the cancellation of the game. */
+    readonly refuseCommand?: boolean;
+    /** The game is over already. */
+    readonly gameEnded?: boolean;
+  } = {}): {
+    readonly fetcher: typeof fetch;
+    readonly wires: Wire[];
+    readonly creations: string[];
+    readonly cancels: string[];
+    readonly commands: Record<string, unknown>[];
+  } {
+    const entries = new Map<string, QueueEntry>();
+    const byRequest = new Map<string, string>();
+    const wires: Wire[] = [];
+    const creations: string[] = [];
+    const cancels: string[] = [];
+    const commands: Record<string, unknown>[] = [];
+    let counter = 0;
+    let lost = false;
+
+    function entryOf(entryId: string, control: unknown, assigned: boolean): QueueEntry {
+      return {
+        schemaVersion: 2,
+        entryId,
+        owner: { kind: 'account', id: 'account-1' },
+        control: (control ?? { kind: 'human' }) as QueueEntry['control'],
+        timeControl,
+        status: assigned ? 'assigned' : 'waiting',
+        version: 1,
+        readyAt: '2099-01-01T00:00:00.000Z',
+        cutoffAt: '2099-01-01T00:00:10.000Z',
+        assignedMatchId: assigned ? 'match-00000031' : null,
+        createdAt: '2099-01-01T00:00:00.000Z',
+        updatedAt: '2099-01-01T00:00:00.000Z',
+      };
+    }
+
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      const body = init?.body === undefined ? null : JSON.parse(String(init.body)) as Record<string, unknown>;
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries((init?.headers ?? {}) as Record<string, string>)) headers[name.toLowerCase()] = value;
+      wires.push({ path, method, body, headers });
+      const answer = (status: number, data: unknown): Response => new Response(JSON.stringify(data), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (path.includes('/v1/online/features')) return answer(200, { friends: true, queue: true });
+      if (path.includes('/v1/online/matches/') && path.endsWith('/commands')) {
+        commands.push(body ?? {});
+        if (options.refuseCommand) return answer(409, { error: 'conflict' });
+        return answer(200, {
+          schemaVersion: 2,
+          matchId: body?.matchId ?? 'match-00000031',
+          operationId: body?.operationId ?? 'operation-00000001',
+          outcome: 'accepted',
+          version: 2,
+          controlEpoch: 1,
+          decidedAt: '2026-10-21T10:05:00.000Z',
+        });
+      }
+      if (path.includes('/v1/online/matches/')) {
+        const matchId = path.split('/').filter(Boolean).pop() ?? 'match-00000031';
+        return answer(200, matchView({
+          matchId,
+          status: options.gameEnded === true ? 'completed' : 'active',
+          result: options.gameEnded === true ? { kind: 'abort', winner: null, reason: 'abort' } : null,
+        }));
+      }
+      if (!path.includes('/queue/entries')) return answer(404, { error: 'not_found' });
+      if (method === 'POST' && path.endsWith('/entries')) {
+        const key = String(body?.clientRequestId ?? '');
+        const known = byRequest.get(key);
+        // The creation is idempotent per client request identifier.
+        if (known !== undefined) return answer(200, entries.get(known));
+        counter += 1;
+        const entryId = `entry-000000${counter}`;
+        byRequest.set(key, entryId);
+        creations.push(key);
+        const created = entryOf(entryId, body?.control, options.assigned === true);
+        entries.set(entryId, created);
+        if (options.loseCreation === true && !lost) {
+          lost = true;
+          // The service accepted the entry, and the answer never arrives.
+          throw new Error('The connection was lost.');
+        }
+        return answer(201, created);
+      }
+      const segments = path.split('/').filter(Boolean);
+      // The read of an entry names it in the last segment, and a mutation of
+      // an entry names it in the segment before its own route.
+      const entryId = decodeURIComponent(
+        (method === 'GET' ? segments[segments.length - 1] : segments[segments.length - 2]) ?? '',
+      );
+      const entry = entries.get(entryId);
+      if (!entry) return answer(404, { error: 'not_found' });
+      if (path.endsWith('/cancel')) {
+        cancels.push(entryId);
+        // The entry won the race: it is assigned, and the queue refuses the
+        // cancellation of an assigned entry with a conflict.
+        const assigned = entryOf(entryId, entry.control, true);
+        entries.set(entryId, assigned);
+        return answer(409, { error: 'conflict' });
+      }
+      // The read of the entry: the entry is assigned.
+      const assigned = entryOf(entryId, entry.control, true);
+      entries.set(entryId, assigned);
+      return answer(200, assigned);
+    });
+
+    return { fetcher: fetcher as unknown as typeof fetch, wires, creations, cancels, commands };
+  }
+
+  /** The durable intents of one identity. */
+  function intentsOf(storage: Storage, identity: string): Array<Record<string, unknown>> {
+    const raw = storage.getItem(`kamkmchess.online.queue.intent.v1:${encodeURIComponent(identity)}`);
+    if (!raw) return [];
+    return JSON.parse(raw) as Array<Record<string, unknown>>;
+  }
+
+  /**
+   * An account session the test hands over.
+   *
+   * Every account has a token of its own, so a wire of one account is never
+   * confused with a wire of another one.
+   */
+  function switchingSession(): {
+    readonly session: NonNullable<Parameters<typeof createOnlineComposition>[0]['accountSession']>;
+    switchTo(accountId: string): void;
+  } {
+    type Identity = { readonly accountId: string; readonly token: () => Promise<string> };
+    const listeners = new Set<(identity: Identity | null) => void>();
+    let current: Identity | null = { accountId: 'account-1', token: async () => 'token-account-1' };
+    return {
+      session: {
+        get identity() { return current; },
+        subscribe(listener) {
+          listeners.add(listener);
+          return () => { listeners.delete(listener); };
+        },
+      },
+      switchTo(accountId) {
+        current = { accountId, token: async () => `token-${accountId}` };
+        for (const listener of [...listeners]) listener(current);
+      },
+    };
+  }
+
+  it('cancels the game of an entry that won the race against its cancellation', async () => {
+    // The owner changes the settings of the shared entry. The entry wins the
+    // race against its cancellation: it is assigned and it produced exactly
+    // one game. The queue refuses the cancellation with a conflict, so the
+    // game is cancelled through the participant command route instead.
+    const service = createRacingQueueService();
+    const storage = createStorage();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage,
+      accountSession: switchingSession().session,
+      prepareEngine: async () => undefined,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    expect(service.creations).toHaveLength(1);
+    const replacedKey = service.creations[0]!;
+
+    // The owner changes the clock of the shared entry.
+    await composition.enterQueue({
+      control: { kind: 'human' },
+      timeControl: { startingTimeMs: 180_000, incrementMs: 2_000 },
+    });
+    await settle();
+
+    // The queue refused the cancellation of the assigned entry.
+    expect(service.cancels).toEqual(['entry-0000001']);
+    // The game of the owner was cancelled through the participant command
+    // route, with a stable operation key, so a retry answers with the same
+    // receipt instead of acting twice.
+    expect(service.commands).toHaveLength(1);
+    const command = service.commands[0]!;
+    expect(command.action).toEqual({ kind: 'cancel' });
+    expect(command.matchId).toBe('match-00000031');
+    expect(command.seat).toBe('white');
+    expect(command.expectedVersion).toBe(1);
+    expect(command.operationId).toBe(`cancel-${replacedKey}`);
+    // The fresh entry of the new settings waits, and the owner never ends up
+    // with two eligible shared entries.
+    expect(service.creations).toHaveLength(2);
+    expect(intentsOf(storage, 'account:account-1').map(intent => intent.key)).toEqual([service.creations[1]]);
+    composition.dispose();
+  });
+
+  it('never starts a second search while the cancellation of the game is unconfirmed', async () => {
+    // The command route refuses the cancellation of the game, so the outcome
+    // of the cancellation is unknown. The owner never ends up with two
+    // eligible shared entries, and the assignment is never abandoned: the
+    // intent of the replaced entry survives for a later try.
+    const service = createRacingQueueService({ refuseCommand: true });
+    const storage = createStorage();
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: service.fetcher,
+      storage,
+      accountSession: switchingSession().session,
+      prepareEngine: async () => undefined,
+    });
+    await composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    expect(service.creations).toHaveLength(1);
+
+    await composition.enterQueue({
+      control: { kind: 'human' },
+      timeControl: { startingTimeMs: 180_000, incrementMs: 2_000 },
+    });
+    await settle();
+
+    // The game was not abandoned: the cancellation was attempted.
+    expect(service.cancels).toEqual(['entry-0000001']);
+    expect(service.commands).toHaveLength(1);
+    // No second entry reached the service while the cancellation of the game
+    // was unresolved: the owner never ends up with two eligible shared
+    // entries.
+    expect(service.creations).toHaveLength(1);
+    // The obligation of the replaced entry survives, and the intent of the new
+    // settings is durable and unsent: the retry of the owner reuses its key,
+    // so the service never sees a second entry for it.
+    const intents = intentsOf(storage, 'account:account-1');
+    expect(intents).toHaveLength(2);
+    const obligation = intents.find(intent => intent.entryId === 'entry-0000001');
+    expect(obligation?.key).toBe(service.creations[0]);
+    expect(obligation?.cleanup).toBe(true);
+    const planned = intents.find(intent => intent.entryId === null);
+    expect(planned?.sent).toBe(false);
+    expect(planned?.cleanup).toBe(false);
+    expect(planned?.key).not.toBe(service.creations[0]);
+    // The owner learns that the entry of the old settings is not over yet.
+    expect(composition.queueState.detail).toContain('could not be cancelled');
+    composition.dispose();
+  });
+
+  it('cancels the game of a stale entry when the account that asked comes back', async () => {
+    // The creation of the entry is on the wire when another account signs in.
+    // The service accepted the entry and assigned it before the answer was
+    // lost, so the stale entry produced a game. The account that asked comes
+    // back: its obligation is resolved with the token of that account, and
+    // the game is cancelled through the participant command route. The game
+    // never plays with an absent seat.
+    const service = createRacingQueueService({ loseCreation: true, assigned: true });
+    const storage = createStorage();
+    const account = switchingSession();
+    const wires: Wire[] = [];
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let held = false;
+    const recording: typeof fetch = async (input, init) => {
+      const path = String(input);
+      const method = init?.method ?? 'GET';
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries((init?.headers ?? {}) as Record<string, string>)) headers[name.toLowerCase()] = value;
+      wires.push({ path, method, body: null, headers });
+      // The first creation waits on the wire.
+      if (!held && method === 'POST' && path.endsWith('/entries')) {
+        held = true;
+        await gate;
+      }
+      return service.fetcher(input, init);
+    };
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: recording as typeof fetch,
+      storage,
+      accountSession: account.session,
+      prepareEngine: async () => undefined,
+    });
+    const entering = composition.enterQueue({ control: { kind: 'human' }, timeControl });
+    await settle();
+    expect(held).toBe(true);
+
+    // Another account signs in while the creation is on the wire.
+    account.switchTo('account-2');
+    release?.();
+    await expect(entering).rejects.toThrow(OnlineQueueIdentityChangedError);
+    await settle();
+
+    // The obligation of the account that asked survives, and the new account
+    // owns nothing.
+    expect(intentsOf(storage, 'account:account-1')).toHaveLength(1);
+    expect(intentsOf(storage, 'account:account-1')[0]?.cleanup).toBe(true);
+    expect(intentsOf(storage, 'account:account-2')).toHaveLength(0);
+
+    // The account that asked comes back.
+    account.switchTo('account-1');
+    await settle();
+    await settle();
+    await settle();
+
+    // The stale entry was recovered with the same key, so the service never
+    // saw a second entry, and the queue refused the cancellation of the
+    // assigned entry.
+    expect(new Set(service.creations).size).toBe(1);
+    expect(service.cancels).toEqual(['entry-0000001']);
+    // The game of the stale entry was cancelled through the participant
+    // command route, with the token of the account that owns the seat.
+    expect(service.commands).toHaveLength(1);
+    expect(service.commands[0]?.action).toEqual({ kind: 'cancel' });
+    const commandWire = wires.find(wire => wire.path.endsWith('/commands'));
+    expect(commandWire?.headers.authorization).toBe('Bearer token-account-1');
+    // The obligation is discharged: nothing is left behind the owner's back.
+    expect(intentsOf(storage, 'account:account-1')).toHaveLength(0);
+    composition.dispose();
+  });
+});
+
+/**
+ * An account session the test hands over.
+ *
+ * Every account has a token of its own, so a wire of one account is never
+ * confused with a wire of another one. The session keeps every listener, so
+ * the participant session of the composition and the composition itself both
+ * see the handover.
+ */
+function handoverAccountSession(): {
+  readonly session: NonNullable<Parameters<typeof createOnlineComposition>[0]['accountSession']>;
+  switchTo(accountId: string | null): void;
+} {
+  type Identity = { readonly accountId: string; readonly token: () => Promise<string> };
+  const listeners = new Set<(identity: Identity | null) => void>();
+  let current: Identity | null = { accountId: 'account-1', token: async () => 'token-account-1' };
+  return {
+    session: {
+      get identity() { return current; },
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+      },
+    },
+    switchTo(accountId) {
+      current = accountId === null
+        ? null
+        : { accountId, token: async () => `token-${accountId}` };
+      for (const listener of [...listeners]) listener(current);
+    },
+  };
+}
+
+/**
+ * The runner of a fenced identity never runs again (ARC-05, ARC-08).
+ *
+ * The browser owns the provider request of an agent seat, so a request of the
+ * previous identity may not keep running after the identity left, and its
+ * answer may never become a move. The cases below hold the provider request
+ * of a running runner, fence the identity or the composition, and watch the
+ * request and the lease of the seat.
+ */
+describe('the runner of a fenced identity never runs again (ARC-05, ARC-08)', () => {
+  /** The moves the service received. */
+  function submittedMoves(state: AgentServiceState): Array<Record<string, unknown>> {
+    return state.commands.filter(command => {
+      const action = command.action as { kind?: string } | undefined;
+      return action?.kind === 'submit_move';
+    });
+  }
+
+  /** A composition with one owned agent seat and a held provider request. */
+  function agentComposition(state: AgentServiceState, session: ReturnType<typeof handoverAccountSession>): {
+    readonly composition: OnlineComposition;
+    readonly provider: ReturnType<typeof heldProviderFixture>;
+  } {
+    const provider = heldProviderFixture();
+    const selection = selectionOf('c1', 'm1');
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: agentServiceDouble(state),
+      storage: createStorage(),
+      accountSession: session.session,
+      connectionStore: connectionStoreOf([{ id: 'c1' }]).store,
+    });
+    composition.setAgentCatalog([{ id: 'private-a', label: 'Custom model', selection }]);
+    composition.setAgent({ label: 'Custom model', selection });
+    composition.attachAndFocus('match-00000001', 'white', {
+      kind: 'guest',
+      guestId: 'guest-fence-1',
+      matchId: 'match-00000001',
+      seat: 'white',
+      issue: async () => 'guest-token',
+    }, selection);
+    return { composition, provider };
+  }
+
+  it('stops the provider request of the previous identity when another account signs in', async () => {
+    const state = serviceState();
+    state.mode = 'online';
+    const identity = handoverAccountSession();
+    const { composition, provider } = agentComposition(state, identity);
+    await until(
+      () => composition.agentRunnerState('match-00000001', 'white') !== null,
+      'the runner of the seat',
+    );
+    await until(() => provider.requests.length > 0, 'the provider is asked');
+
+    // The provider request is held: it never answers until the test releases
+    // it, so the identity change happens while it is on the wire.
+    expect(provider.requests[0]?.signal?.aborted).toBe(false);
+    expect(submittedMoves(state)).toHaveLength(0);
+
+    // Another account signs in. The work of the previous identity is fenced.
+    identity.switchTo('account-2');
+    await settle();
+
+    // The provider request of the previous identity is stopped.
+    expect(provider.requests[0]?.signal?.aborted).toBe(true);
+    // The runner of the previous identity is gone.
+    expect(composition.agentRunnerState('match-00000001', 'white')).toBeNull();
+    // The lease of the seat is given back.
+    await until(() => state.releases > 0, 'the lease of the seat is released');
+
+    // The answer of the stopped request never becomes a move.
+    provider.release();
+    await settle();
+    await settle();
+    expect(submittedMoves(state)).toHaveLength(0);
+    // The new identity never asks the provider with the private model of the
+    // previous one.
+    expect(provider.requests).toHaveLength(1);
+    composition.dispose();
+    provider.restore();
+  }, 20_000);
+
+  it('stops the provider request of a runner when the composition is disposed', async () => {
+    const state = serviceState();
+    state.mode = 'online';
+    const identity = handoverAccountSession();
+    const { composition, provider } = agentComposition(state, identity);
+    await until(
+      () => composition.agentRunnerState('match-00000001', 'white') !== null,
+      'the runner of the seat',
+    );
+    await until(() => provider.requests.length > 0, 'the provider is asked');
+    expect(provider.requests[0]?.signal?.aborted).toBe(false);
+
+    // The composition is disposed while the provider request is on the wire.
+    await composition.disposeAsync();
+
+    // The provider request is stopped, and the runner is gone.
+    expect(provider.requests[0]?.signal?.aborted).toBe(true);
+    expect(composition.agentRunnerState('match-00000001', 'white')).toBeNull();
+    // The lease of the seat is given back with the transport of the
+    // composition, before that transport goes away.
+    expect(state.releases).toBeGreaterThan(0);
+
+    // The answer of the stopped request never becomes a move.
+    provider.release();
+    await settle();
+    await settle();
+    expect(submittedMoves(state)).toHaveLength(0);
+    provider.restore();
+  }, 20_000);
+
+  it('stops the runner of a suspended composition and plays the seat again after the resume', async () => {
+    const state = serviceState();
+    state.mode = 'online';
+    const identity = handoverAccountSession();
+    const { composition, provider } = agentComposition(state, identity);
+    await until(
+      () => composition.agentRunnerState('match-00000001', 'white') !== null,
+      'the runner of the seat',
+    );
+    await until(() => provider.requests.length > 0, 'the provider is asked');
+
+    // The composition is suspended while the provider request is on the wire.
+    composition.suspend();
+    await settle();
+
+    // The provider request is stopped, and the runner is gone.
+    expect(provider.requests[0]?.signal?.aborted).toBe(true);
+    expect(composition.agentRunnerState('match-00000001', 'white')).toBeNull();
+    // The lease of the seat is given back, so the seat is free for the
+    // runner of the resumed composition.
+    await until(() => state.releases > 0, 'the lease of the seat is released');
+
+    // The resumed composition plays the seat again, with a runner of its own.
+    composition.resume();
+    await until(
+      () => composition.agentRunnerState('match-00000001', 'white') !== null,
+      'the runner of the resumed composition',
+    );
+    await settle();
+    // The uncertain work of the stopped request is never repeated by itself,
+    // so the runner of the resumed composition waits for the decision of the
+    // owner instead of asking the provider again.
+    expect(provider.requests).toHaveLength(1);
+    expect(provider.requests[0]?.signal?.aborted).toBe(true);
+    composition.dispose();
+    provider.restore();
+  }, 20_000);
+});
+
+/**
+ * The runner of a tab is its own (ARC-08).
+ *
+ * The lease of a seat is held by one runner, and the service refuses a second
+ * runner of a seat that a live lease holds. The browser therefore mints the
+ * identity of the runner per tab: two tabs of one owner run two runners, and
+ * the duplicate tab is refused by the service instead of being taken for the
+ * holder of the lease. An identity that two tabs share would let both tabs
+ * drive the same agent seat and ask the provider twice.
+ */
+describe('the runner of a tab is its own (ARC-08)', () => {
+  /** The moves the service received. */
+  function submittedMoves(state: AgentServiceState): Array<Record<string, unknown>> {
+    return state.commands.filter(command => {
+      const action = command.action as { kind?: string } | undefined;
+      return action?.kind === 'submit_move';
+    });
+  }
+
+  /**
+   * One tab of the owner.
+   *
+   * The tab owns the agent seat of the match and drives it with the private
+   * selection of the owner. Two tabs of one owner share the storage of the
+   * browser and the account of the owner.
+   */
+  function tab(
+    state: AgentServiceState,
+    storage: Storage,
+    session: ReturnType<typeof accountSession>,
+    connections: ReturnType<typeof connectionStoreOf>,
+  ): OnlineComposition {
+    const selection = selectionOf('c1', 'm1');
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: agentServiceDouble(state),
+      storage,
+      accountSession: session,
+      connectionStore: connections.store,
+    });
+    composition.setAgentCatalog([{ id: 'private-a', label: 'Custom model', selection }]);
+    composition.setAgent({ label: 'Custom model', selection });
+    composition.attachAndFocus('match-00000001', 'white', {
+      kind: 'guest',
+      guestId: 'guest-tab-1',
+      matchId: 'match-00000001',
+      seat: 'white',
+      issue: async () => 'guest-token',
+    }, selection);
+    return composition;
+  }
+
+  it('gives two tabs of one owner two runner identities and leaves the seat with one of them', async () => {
+    const state = serviceState();
+    state.mode = 'online';
+    const provider = heldProviderFixture();
+    const storage = createStorage();
+    const session = accountSession();
+    const connections = connectionStoreOf([{ id: 'c1' }]);
+    const first = tab(state, storage, session, connections);
+    const second = tab(state, storage, session, connections);
+    await until(
+      () => first.agentRunnerState('match-00000001', 'white') !== null,
+      'the runner of the first tab',
+    );
+    await until(
+      () => second.agentRunnerState('match-00000001', 'white') !== null,
+      'the runner of the second tab',
+    );
+    await until(() => provider.requests.length > 0, 'the provider is asked');
+    await until(
+      () => [first, second].some(composition => composition.agentRunnerState('match-00000001', 'white')?.phase === 'waiting-lease'),
+      'the duplicate tab stands down',
+    );
+
+    // The two tabs of the owner run two runners: the identity of a runner is
+    // the identity of its tab, so the service can tell them apart.
+    const identities = new Set(state.leaseRequests.map(request => request.runnerId));
+    expect(identities.size).toBe(2);
+
+    // The service gave the lease of the seat to one of the two runners, and it
+    // refused the other one: a live lease of another runner is refused.
+    const holder = state.leaseRunnerId;
+    expect(holder).not.toBeNull();
+    const refused = state.leaseRequests.filter(request => request.runnerId !== holder);
+    expect(refused.length).toBeGreaterThan(0);
+    expect(refused.every(request => request.action === 'acquire')).toBe(true);
+
+    // The runner that holds the lease asks the provider, and the runner of the
+    // duplicate tab stands down instead of driving the seat a second time.
+    const phases = [first, second].map(composition => composition.agentRunnerState('match-00000001', 'white')?.phase);
+    expect(phases.filter(phase => phase === 'generating')).toHaveLength(1);
+    expect(phases.filter(phase => phase === 'waiting-lease')).toHaveLength(1);
+    // The duplicate tab never asked the provider and never submitted a move.
+    expect(provider.requests).toHaveLength(1);
+    expect(submittedMoves(state)).toHaveLength(0);
+
+    provider.release();
+    first.dispose();
+    second.dispose();
+    provider.restore();
+  }, 20_000);
+
+  it('keeps the identity of the runner of a seat while it works', async () => {
+    const state = serviceState();
+    state.mode = 'online';
+    const provider = heldProviderFixture();
+    const storage = createStorage();
+    const connections = connectionStoreOf([{ id: 'c1' }]);
+    const composition = tab(state, storage, accountSession(), connections);
+    await until(
+      () => composition.agentRunnerState('match-00000001', 'white') !== null,
+      'the runner of the seat',
+    );
+    await until(() => provider.requests.length > 0, 'the provider is asked');
+    await until(
+      () => state.leaseRequests.some(request => request.action === 'renew'),
+      'the lease of the seat is renewed',
+    );
+
+    // Every request of the runner names the same runner: the runner keeps the
+    // lease it took while it renews it and while it records its request.
+    const identities = new Set(state.leaseRequests.map(request => request.runnerId));
+    expect(identities.size).toBe(1);
+    const identity = [...identities][0] ?? '';
+    expect(identity).toContain('match-00000001');
+    expect(identity).toContain('white');
+
+    // The tab gives the lease back and takes a new one when it plays the seat
+    // again, and the identity of the runner of the seat does not change.
+    composition.suspend();
+    await until(
+      () => state.leaseRequests.some(request => request.action === 'release'),
+      'the lease of the seat is given back',
+    );
+    composition.resume();
+    await until(
+      () => state.leaseRequests.filter(request => request.action === 'acquire').length >= 2,
+      'the runner takes a new lease',
+    );
+    expect(new Set(state.leaseRequests.map(request => request.runnerId)).size).toBe(1);
+    composition.dispose();
+    provider.restore();
+  }, 20_000);
+});

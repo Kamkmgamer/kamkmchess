@@ -710,7 +710,10 @@ export async function readLiveGrants(databaseUrl, psqlPath, role, schema) {
     `AND table_schema = '${schema.replace(/'/g, "''")}'`,
     'ORDER BY table_name, privilege_type;',
   ].join(' ');
-  const { stdout } = await run(psqlPath, ['--no-psqlrc', '--tuples-only', '--no-align', '--field-separator', '|', '--command', query], {
+  // The client never asks for a password on the terminal of the runner: a
+  // client without a password fails at once, so a missing credential is a
+  // clear error and not a run that blocks until the budget is gone.
+  const { stdout } = await run(psqlPath, ['--no-psqlrc', '--no-password', '--tuples-only', '--no-align', '--field-separator', '|', '--command', query], {
     env: { ...process.env, ...psqlEnvironment(databaseUrl) },
     windowsHide: true,
   });
@@ -754,7 +757,10 @@ export async function readLiveSequenceGrants(databaseUrl, psqlPath, role, schema
     `AND has_sequence_privilege('${role.replace(/'/g, "''")}', c.oid, p.privilege_type)`,
     'ORDER BY c.relname, p.privilege_type;',
   ].join(' ');
-  const { stdout } = await run(psqlPath, ['--no-psqlrc', '--tuples-only', '--no-align', '--field-separator', '|', '--command', query], {
+  // The client never asks for a password on the terminal of the runner: a
+  // client without a password fails at once, so a missing credential is a
+  // clear error and not a run that blocks until the budget is gone.
+  const { stdout } = await run(psqlPath, ['--no-psqlrc', '--no-password', '--tuples-only', '--no-align', '--field-separator', '|', '--command', query], {
     env: { ...process.env, ...psqlEnvironment(databaseUrl) },
     windowsHide: true,
   });

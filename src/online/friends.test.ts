@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FRIENDS_OWNER_TOKEN_HEADER,
   FriendError,
   createAcceptanceKey,
   createFetchFriendTransport,
@@ -204,7 +205,6 @@ describe('the fetch transport', () => {
     const client = createFriendClient(transport);
     await expect(client.readInvitation('inv_1')).rejects.toMatchObject({ code: 'conflict', status: 409 });
   });
-
   it('tells an expired link apart from a spent one', async () => {
     const transport = createFetchFriendTransport({
       baseUrl: 'https://api.example',
@@ -212,5 +212,79 @@ describe('the fetch transport', () => {
     });
     const client = createFriendClient(transport);
     await expect(client.readInvitation('inv_1')).rejects.toMatchObject({ code: 'expired', status: 410 });
+  });
+
+  it('carries the owner token in the private header and never in the body or the URL', async () => {
+    // The owner token is the recoverable ownership of an invitation. It
+    // travels in the dedicated header of the surface.
+    const seen: { url: string; init: RequestInit | undefined }[] = [];
+    const transport = createFetchFriendTransport({
+      baseUrl: 'https://api.example',
+      fetch: async (input, init) => {
+        seen.push({ url: String(input), init });
+        if (String(input).endsWith('/cancel')) {
+          return new Response(JSON.stringify(invitation), { status: 200 });
+        }
+        return new Response(JSON.stringify({
+          schemaVersion: 2,
+          matchId: 'match-1',
+          seat: 'white',
+          guestCredential: null,
+        }), { status: 200 });
+      },
+    });
+    const client = createFriendClient(transport);
+    await client.cancelInvitation('inv_0123456789', 'kmoi1_owner_token');
+    const cancelHeaders = (seen[0]?.init?.headers ?? {}) as Record<string, string>;
+    expect(cancelHeaders[FRIENDS_OWNER_TOKEN_HEADER]).toBe('kmoi1_owner_token');
+    expect(String(seen[0]?.init?.body)).not.toContain('kmoi1_owner_token');
+    expect(seen[0]?.url).not.toContain('kmoi1_owner_token');
+    expect((JSON.parse(String(seen[0]?.init?.body)) as Record<string, unknown>).ownerToken).toBeUndefined();
+
+    await client.claimSeatCredential('inv_0123456789', 'kmoi1_owner_token');
+    const claimHeaders = (seen[1]?.init?.headers ?? {}) as Record<string, string>;
+    expect(claimHeaders[FRIENDS_OWNER_TOKEN_HEADER]).toBe('kmoi1_owner_token');
+    expect(String(seen[1]?.init?.body)).not.toContain('kmoi1_owner_token');
+    expect(seen[1]?.url).not.toContain('kmoi1_owner_token');
+  });
+
+  it('carries the owner token of a preview in the private header', async () => {
+    const seen: { url: string; init: RequestInit | undefined }[] = [];
+    const transport = createFetchFriendTransport({
+      baseUrl: 'https://api.example',
+      fetch: async (input, init) => {
+        seen.push({ url: String(input), init });
+        return new Response(JSON.stringify(invitation), { status: 200 });
+      },
+    });
+    const client = createFriendClient(transport);
+    await client.readInvitation('inv_0123456789', 'kmoi1_owner_token');
+    const headers = (seen[0]?.init?.headers ?? {}) as Record<string, string>;
+    expect(headers[FRIENDS_OWNER_TOKEN_HEADER]).toBe('kmoi1_owner_token');
+    expect(seen[0]?.url).not.toContain('kmoi1_owner_token');
+  });
+
+  it('sends the public name of the recipient and never an account subject', async () => {
+    // A public name is a public identity. The service resolves it to the
+    // account, so the request never carries an authentication identifier.
+    const bodies: unknown[] = [];
+    const transport: FriendTransport = {
+      async send(request) {
+        bodies.push(request.body);
+        return { schemaVersion: 2, invitation, ownerToken: 'kmoi1_token' };
+      },
+    };
+    const client = createFriendClient(transport);
+    await client.createInvitation({
+      kind: 'challenge',
+      recipientUsername: 'recipient_name',
+      seat: 'white',
+      timeControl: { startingTimeMs: 300000, incrementMs: 2000 },
+      control: { kind: 'human' },
+    });
+    const body = bodies[0] as Record<string, unknown>;
+    expect(body.recipientUsername).toBe('recipient_name');
+    expect('recipientAccountId' in body).toBe(false);
+    expect(JSON.stringify(body)).not.toContain('user_');
   });
 });

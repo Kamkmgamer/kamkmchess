@@ -2,8 +2,8 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './ui/App.js';
 import { OnlineWorkspace } from './ui/online-workspace.js';
+import { createGuestOnlineComposition, publishGuestAgentCatalog } from './ui/online-guest-entry.js';
 import { MatchComposition } from './ui/match-composition.js';
-import { createOnlineComposition } from './online/composition.js';
 import { createAgentReadinessCheck } from './online/agent-readiness.js';
 import { createBrowserEnginePreparation } from './online/engine-preparation.js';
 import './ui/styles.css';
@@ -29,9 +29,14 @@ const checkModel = createAgentReadinessCheck({
   namespace: composition.namespace,
 });
 const online = onlineOrigin
-  ? createOnlineComposition({
+  ? createGuestOnlineComposition({
     baseUrl: onlineOrigin,
     search: window.location.search,
+    // The agent of the owner runs through the browser owned connection store
+    // of this browser, in the namespace of the guest. Without them the seat
+    // of an accepted invitation would wait for a model that can never answer.
+    connectionStore: composition.connectionStore,
+    namespace: composition.namespace,
     prepareEngine: () => enginePreparation.prepare(),
     checkModel,
   })
@@ -67,10 +72,24 @@ void composition.openActiveGame().then(async (session) => {
     return;
   }
   // A guest opens the published invitation link in the one online workspace.
+  // The guest path has no account shell, so the entry publishes the private
+  // model catalog of this browser itself: the guest may play its own agent on
+  // the seat it accepts.
   if (online && linkedInvitation) {
+    void publishGuestAgentCatalog(online, {
+      connectionStore: composition.connectionStore,
+      namespace: composition.namespace,
+    }).catch(() => {
+      // A guest without a readable catalog plays the human seat. The screen
+      // never claims an agent it cannot run.
+    });
     rootView.render(
       <StrictMode>
-        <OnlineWorkspace composition={online} onClose={() => { window.location.href = '/play'; }} initialTab="new" />
+        <OnlineWorkspace
+          composition={online}
+          onClose={() => { window.location.href = '/play'; }}
+          checkAgent={checkModel}
+          initialTab="new" />
       </StrictMode>,
     );
     return;

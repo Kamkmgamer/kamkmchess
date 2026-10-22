@@ -53,6 +53,13 @@ func friendRequest(t *testing.T, handler http.Handler, method, path, token, body
 // against the real service.
 func TestPostgresFriendHTTPRoutesAndAnswers(t *testing.T) {
 	fixture := newFriendFixture(t, moveEvaluator{})
+	// The public profile publishes the public name of the recipient. The
+	// account subject of the recipient stays private.
+	if _, err := fixture.pool.Exec(context.Background(),
+		`INSERT INTO online_public_profiles(profile_id,account_id,username,username_key) VALUES($1,$2,$3,$4)`,
+		"kp_recipient_profile_0001", "user_recipient", "recipient_name", "recipient_name"); err != nil {
+		t.Fatalf("publish the public profile of the recipient: %v", err)
+	}
 	authenticator := &friendStubAuthenticator{accounts: map[string]onlineauth.Principal{
 		"user_inviter":   accountPrincipal("user_inviter", "session_inviter"),
 		"user_recipient": accountPrincipal("user_recipient", "session_recipient"),
@@ -71,9 +78,10 @@ func TestPostgresFriendHTTPRoutesAndAnswers(t *testing.T) {
 		t.Fatalf("mutation without an origin status=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 
-	// An account inviter creates a named challenge for another account.
+	// An account inviter creates a named challenge for the public name of
+	// another account.
 	created := friendRequest(t, handler, http.MethodPost, "/v1/online/invitations", "user_inviter",
-		`{"schemaVersion":2,"kind":"challenge","recipientAccountId":"user_recipient","seat":"white","timeControl":{"startingTimeMs":300000,"incrementMs":2000},"control":{"kind":"human"}}`)
+		`{"schemaVersion":2,"kind":"challenge","recipientUsername":"recipient_name","seat":"white","timeControl":{"startingTimeMs":300000,"incrementMs":2000},"control":{"kind":"human"}}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create status=%d body=%s", created.Code, created.Body.String())
 	}
@@ -104,6 +112,19 @@ func TestPostgresFriendHTTPRoutesAndAnswers(t *testing.T) {
 			t.Fatalf("the created invitation leaked %q: %s", forbidden, created.Body.String())
 		}
 	}
+	// The answer never names the account of the recipient. The public
+	// request carried its public name and the service resolved it.
+	if strings.Contains(created.Body.String(), "user_recipient") {
+		t.Fatalf("the created invitation leaked the account of the recipient: %s", created.Body.String())
+	}
+
+	// A request that names an account subject is refused: the public
+	// request of a challenge carries a public name only.
+	bySubject := friendRequest(t, handler, http.MethodPost, "/v1/online/invitations", "user_inviter",
+		`{"schemaVersion":2,"kind":"challenge","recipientAccountId":"user_recipient","seat":"white","timeControl":{"startingTimeMs":300000,"incrementMs":2000},"control":{"kind":"human"}}`)
+	if bySubject.Code != http.StatusBadRequest {
+		t.Fatalf("the challenge of an account subject status=%d body=%s", bySubject.Code, bySubject.Body.String())
+	}
 
 	// A stranger may not preview a named challenge.
 	stranger := friendRequest(t, handler, http.MethodGet, "/v1/online/invitations/"+createdBody.Invitation.InvitationID, "user_stranger", "")
@@ -114,6 +135,18 @@ func TestPostgresFriendHTTPRoutesAndAnswers(t *testing.T) {
 	preview := friendRequest(t, handler, http.MethodGet, "/v1/online/invitations/"+createdBody.Invitation.InvitationID, "user_recipient", "")
 	if preview.Code != http.StatusOK {
 		t.Fatalf("recipient preview status=%d body=%s", preview.Code, preview.Body.String())
+	}
+	// The inviter may preview it with the owner token of the invitation.
+	// The token travels in the private header of the surface, so the
+	// challenge never has to be published.
+	ownerPreview := friendOwnerRequest(t, handler, http.MethodGet, "/v1/online/invitations/"+createdBody.Invitation.InvitationID, createdBody.OwnerToken, "")
+	if ownerPreview.Code != http.StatusOK {
+		t.Fatalf("owner preview status=%d body=%s", ownerPreview.Code, ownerPreview.Body.String())
+	}
+	// A wrong owner token learns nothing about the challenge.
+	wrongToken := friendOwnerRequest(t, handler, http.MethodGet, "/v1/online/invitations/"+createdBody.Invitation.InvitationID, "kmoi1_not_the_owner_token", "")
+	if wrongToken.Code != http.StatusNotFound {
+		t.Fatalf("wrong owner token preview status=%d body=%s", wrongToken.Code, wrongToken.Body.String())
 	}
 
 	// The recipient accepts the challenge and receives the live match view.
@@ -196,6 +229,120 @@ func TestPostgresFriendHTTPRoutesAndAnswers(t *testing.T) {
 	}
 }
 
+// TestPostgresFriendNamedChallengeNeedsAnAccount covers the authority of a
+// named challenge at the HTTP surface.
+//
+// A shareable link is a bearer secret, and a guest may create one. A named
+// challenge names an account, so only an account may create it. The service
+// decides that, so the rule holds for a caller that did not come from the
+// browser of the product.
+func TestPostgresFriendNamedChallengeNeedsAnAccount(t *testing.T) {
+	fixture := newFriendFixture(t, moveEvaluator{})
+	friendProfileRow(t, fixture, "kp_recipient_profile_0002", "user_recipient", "recipient_name")
+	handler, _ := friendGuestHandler(t, fixture)
+	challenge := `{"schemaVersion":2,"kind":"challenge","recipientUsername":"recipient_name","seat":"white","timeControl":{"startingTimeMs":300000,"incrementMs":0},"control":{"kind":"human"}}`
+	link := `{"schemaVersion":2,"kind":"link","seat":"white","timeControl":{"startingTimeMs":300000,"incrementMs":0},"control":{"kind":"human"}}`
+
+	// An anonymous caller may not create a named challenge.
+	anonymous := friendRequest(t, handler, http.MethodPost, "/v1/online/invitations", "", challenge)
+	if anonymous.Code != http.StatusForbidden {
+		t.Fatalf("the challenge of an anonymous caller status=%d body=%s", anonymous.Code, anonymous.Body.String())
+	}
+	// The refusal is the same refusal for a named recipient that no account
+	// owns, so it never reveals whether the recipient exists.
+	unknown := friendRequest(t, handler, http.MethodPost, "/v1/online/invitations", "",
+		`{"schemaVersion":2,"kind":"challenge","recipientUsername":"nobody_owns_this_name","seat":"white","timeControl":{"startingTimeMs":300000,"incrementMs":0},"control":{"kind":"human"}}`)
+	if unknown.Code != anonymous.Code {
+		t.Fatalf("the challenge of an unknown name status=%d, want %d", unknown.Code, anonymous.Code)
+	}
+
+	// A guest that holds a seat credential may not create a named challenge
+	// either. The credential is a real one: the guest accepts a shareable
+	// link first and keeps the credential of the seat.
+	guestToken := friendGuestSeatToken(t, handler)
+	refused := friendGuestRequest(t, handler, http.MethodPost, "/v1/online/invitations", guestToken, challenge)
+	if refused.Code != http.StatusForbidden {
+		t.Fatalf("the challenge of a guest status=%d body=%s", refused.Code, refused.Body.String())
+	}
+	// The refused challenges wrote no invitation.
+	var challenges int
+	if err := fixture.pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM online_friend_invitations WHERE kind='challenge'`).Scan(&challenges); err != nil {
+		t.Fatal(err)
+	}
+	if challenges != 0 {
+		t.Fatalf("the refused challenges wrote %d invitations", challenges)
+	}
+	// A guest may still create a shareable link.
+	guestLink := friendGuestRequest(t, handler, http.MethodPost, "/v1/online/invitations", guestToken, link)
+	if guestLink.Code != http.StatusCreated {
+		t.Fatalf("the link of a guest status=%d body=%s", guestLink.Code, guestLink.Body.String())
+	}
+	// An account may still create a named challenge.
+	accountChallenge := friendRequest(t, handler, http.MethodPost, "/v1/online/invitations", "user_inviter", challenge)
+	if accountChallenge.Code != http.StatusCreated {
+		t.Fatalf("the challenge of an account status=%d body=%s", accountChallenge.Code, accountChallenge.Body.String())
+	}
+	var stored string
+	if err := fixture.pool.QueryRow(context.Background(),
+		`SELECT kind FROM online_friend_invitations WHERE invitation_id=$1`,
+		invitationIDOf(t, accountChallenge.Body.Bytes())).Scan(&stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored != string(invite.KindChallenge) {
+		t.Fatalf("the stored kind = %q, want a challenge", stored)
+	}
+}
+
+// friendGuestSeatToken returns the guest seat credential of a real guest.
+//
+// The guest accepts a shareable link and keeps the credential of its seat, so
+// the guest paths of the surface run with a credential the credential service
+// issued.
+func friendGuestSeatToken(t *testing.T, handler http.Handler) string {
+	t.Helper()
+	created := friendRequest(t, handler, http.MethodPost, "/v1/online/invitations", "",
+		`{"schemaVersion":2,"kind":"link","seat":"white","timeControl":{"startingTimeMs":300000,"incrementMs":0},"control":{"kind":"human"}}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("the link of a guest status=%d body=%s", created.Code, created.Body.String())
+	}
+	accepted := friendRequest(t, handler, http.MethodPost,
+		"/v1/online/invitations/"+invitationIDOf(t, created.Body.Bytes())+"/accept", "",
+		`{"schemaVersion":2,"acceptanceKey":"challenge-authority-acceptance-0123456789","control":{"kind":"human"}}`)
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("the acceptance of a guest status=%d body=%s", accepted.Code, accepted.Body.String())
+	}
+	var answer struct {
+		GuestCredential *struct {
+			Token string `json:"token"`
+		} `json:"guestCredential"`
+	}
+	if err := json.Unmarshal(accepted.Body.Bytes(), &answer); err != nil {
+		t.Fatal(err)
+	}
+	if answer.GuestCredential == nil || answer.GuestCredential.Token == "" {
+		t.Fatalf("the guest acceptance delivered no credential: %s", accepted.Body.String())
+	}
+	return answer.GuestCredential.Token
+}
+
+// invitationIDOf reads the identifier of a created invitation from an answer.
+func invitationIDOf(t *testing.T, body []byte) string {
+	t.Helper()
+	var answer struct {
+		Invitation struct {
+			InvitationID string `json:"invitationId"`
+		} `json:"invitation"`
+	}
+	if err := json.Unmarshal(body, &answer); err != nil {
+		t.Fatal(err)
+	}
+	if answer.Invitation.InvitationID == "" {
+		t.Fatalf("the answer carries no invitation: %s", body)
+	}
+	return answer.Invitation.InvitationID
+}
+
 // TestPostgresFriendFeatureStateRoute answers the rollout state of the two
 // online surfaces.
 func TestPostgresFriendFeatureStateRoute(t *testing.T) {
@@ -217,6 +364,59 @@ func TestPostgresFriendFeatureStateRoute(t *testing.T) {
 	}
 	if strings.Contains(recorder.Body.String(), "apiBaseUrl") {
 		t.Fatalf("the feature answer leaked a configuration value: %s", recorder.Body.String())
+	}
+}
+
+// TestPostgresFriendOwnerTokenTravelsInThePrivateHeader covers the wire of
+// the owner token.
+//
+// The token travels in the dedicated private header of the surface. A request
+// that carries it in the body is refused, so the token never becomes part of
+// a body that a proxy may record.
+func TestPostgresFriendOwnerTokenTravelsInThePrivateHeader(t *testing.T) {
+	fixture := newFriendFixture(t, moveEvaluator{})
+	authenticator := &friendStubAuthenticator{accounts: map[string]onlineauth.Principal{
+		"user_inviter": accountPrincipal("user_inviter", "session_inviter"),
+	}}
+	handler := httpapi.NewFriends(fixture.friends, fixture.service, authenticator, httpapi.FriendsOptions{
+		AllowedOrigins: []string{friendOrigin},
+	})
+	created, err := fixture.friends.Create(context.Background(), invite.CreateRequest{
+		Inviter:     friendIdentity("user_inviter", "Alice"),
+		Seat:        online.SeatWhite,
+		TimeControl: online.TimeControl{StartingTimeMs: 300_000, IncrementMs: 0},
+		Control:     online.SeatControl{Kind: online.ControlHuman},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A body that carries the owner token is refused.
+	inBody := friendRequest(t, handler, http.MethodPost, "/v1/online/invitations/"+created.Invitation.InvitationID+"/cancel", "user_inviter",
+		`{"schemaVersion":2,"ownerToken":"`+created.OwnerToken+`"}`)
+	if inBody.Code != http.StatusBadRequest {
+		t.Fatalf("the cancellation with an owner token in the body status=%d body=%s", inBody.Code, inBody.Body.String())
+	}
+	if strings.Contains(inBody.Body.String(), created.OwnerToken) {
+		t.Fatalf("the refused request echoed the owner token: %s", inBody.Body.String())
+	}
+
+	// The header authorizes the cancellation of the inviter.
+	cancelled := friendOwnerRequest(t, handler, http.MethodPost, "/v1/online/invitations/"+created.Invitation.InvitationID+"/cancel", created.OwnerToken, `{"schemaVersion":2}`)
+	if cancelled.Code != http.StatusOK {
+		t.Fatalf("the cancellation with the owner token header status=%d body=%s", cancelled.Code, cancelled.Body.String())
+	}
+	if strings.Contains(cancelled.Body.String(), created.OwnerToken) {
+		t.Fatalf("the answer echoed the owner token: %s", cancelled.Body.String())
+	}
+	var answer struct {
+		Status string `json:"status"`
+	}
+	if err = json.Unmarshal(cancelled.Body.Bytes(), &answer); err != nil {
+		t.Fatal(err)
+	}
+	if answer.Status != string(invite.StatusCancelled) {
+		t.Fatalf("the cancelled status = %q, want cancelled", answer.Status)
 	}
 }
 

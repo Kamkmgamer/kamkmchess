@@ -14,6 +14,8 @@ import { createPrivateKey, createSign } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
+import { describeFixtureBaseUrlProblem } from '../shared/fixture-base-url.mjs';
+
 const run = promisify(execFile);
 
 export const FIXTURE_DATABASE_ENV = 'ONLINE_FIXTURE_DATABASE_URL';
@@ -43,19 +45,49 @@ export const FIXTURE_DESCRIPTOR_ENV = 'ONLINE_FIXTURE_DESCRIPTOR';
 
 /**
  * Reads and validates the fixture descriptor.
+ *
+ * The base URL of the descriptor is the address the credential of the fixture
+ * travels to, so it is parsed and compared with the loopback origin of the
+ * fixture. A prefix of the text of the URL is not a check:
+ * `http://127.0.0.1:18099@attacker.example` starts with the loopback address
+ * and sends the minted token to another host. The reader therefore refuses
+ * every base URL that is not the address of the fixture itself, and it
+ * refuses it before a token can be minted or a request sent.
  * @param {string} path
  * @returns {Promise<FixtureDescriptor>}
  */
 export async function readDescriptor(path) {
   const raw = await readFile(path, 'utf8');
   const parsed = JSON.parse(raw);
-  if (!parsed || typeof parsed.baseUrl !== 'string' || !parsed.baseUrl.startsWith('http://127.0.0.1')) {
-    throw new Error('fixture descriptor does not name a loopback base URL');
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('fixture descriptor is not an object');
+  }
+  const problem = describeFixtureBaseUrlProblem(parsed.baseUrl);
+  if (problem) {
+    throw new Error(`fixture descriptor does not name the loopback base URL of the fixture: ${problem}`);
   }
   if (!Array.isArray(parsed.accounts) || parsed.accounts.length === 0) {
     throw new Error('fixture descriptor has no synthetic accounts');
   }
   return parsed;
+}
+
+/**
+ * The base URL of the fixture, checked again before a credential leaves.
+ *
+ * The reader of the descriptor is the usual way in, but a caller can hold a
+ * descriptor of its own. The check runs again before a token is minted and
+ * before a request is sent, so a descriptor that does not name the fixture is
+ * refused in every path and not only in the one that read it from a file.
+ * @param {FixtureDescriptor} descriptor
+ * @returns {string} the base URL of the fixture
+ */
+export function requireFixtureBaseUrl(descriptor) {
+  const problem = describeFixtureBaseUrlProblem(descriptor?.baseUrl);
+  if (problem) {
+    throw new Error(`the fixture descriptor does not name the loopback base URL of the fixture: ${problem}`);
+  }
+  return descriptor.baseUrl;
 }
 
 /**
@@ -81,6 +113,7 @@ export function descriptorPathFromEnvironment(env = process.env) {
  * @returns {Promise<string>}
  */
 export async function mintToken(descriptor, accountId, lifetimeSeconds = 900) {
+  requireFixtureBaseUrl(descriptor);
   const pem = await readFile(descriptor.keyPath, 'utf8');
   const key = createPrivateKey(pem);
   const now = Math.floor(Date.now() / 1000);
@@ -139,11 +172,12 @@ function decodeSegment(segment) {
  * @returns {Promise<{status: number, body: string, json: any}>}
  */
 export async function apiRequest(descriptor, path, options = {}) {
+  const baseUrl = requireFixtureBaseUrl(descriptor);
   const headers = { Accept: 'application/json', ...(options.headers ?? {}) };
   if (options.token) headers.Authorization = `Bearer ${options.token}`;
   if (options.origin) headers.Origin = options.origin;
   if (options.body !== undefined) headers['Content-Type'] = 'application/json';
-  const response = await fetch(new URL(path, descriptor.baseUrl), {
+  const response = await fetch(new URL(path, baseUrl), {
     method: options.method ?? 'GET',
     headers,
     body: options.body === undefined ? undefined : JSON.stringify(options.body),

@@ -18,9 +18,14 @@ jobs:
         with:
           node-version-file: .node-version
           cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
       - run: pnpm install --frozen-lockfile
+      - run: go mod download
       - name: Verify the operations tooling
-        run: node --test deploy/runtime-grants.test.mjs deploy/runtime-grants-sequence.test.mjs deploy/runtime-grants-provision.test.mjs scripts/online/online-ops.test.mjs
+        run: node --test deploy/runtime-grants.test.mjs deploy/runtime-grants-sequence.test.mjs deploy/runtime-grants-provision.test.mjs deploy/runtime-grants-probe.test.mjs deploy/verify-compose-config.test.mjs scripts/online/cohort-enforcement.test.mjs scripts/online/cohort-commitment.test.mjs scripts/online/evidence-provenance.test.mjs scripts/online/friend-cohort-run.test.mjs scripts/online/fixture-client.test.mjs scripts/online/release-gate-guard.test.mjs scripts/online/online-ops.test.mjs
       - name: Verify the local fixture
         run: go test -tags onlinefixture -count=1 ./tools/onlinefixture
       - name: Audit the least-privilege runtime grants
@@ -29,12 +34,17 @@ jobs:
         run: node deploy/runtime-grants-provision.mjs
       - name: Audit the production wiring of the feature switches
         run: node scripts/online/service-wiring.mjs
+      - name: Audit the enforcement of the account cohorts
+        run: node scripts/online/cohort-enforcement.mjs --gate friend
       - name: Audit the backup coverage and the removal ledger
         run: node scripts/online/backup-coverage.mjs
       - name: Audit the recorded evidence
         run: node scripts/online/evidence-ledger.mjs
-      - name: Evaluate the friend release gate
-        run: node scripts/online/feature-gates.mjs evaluate --gate friend || true
+      - name: Assert that both release gates stay blocked
+        # Both gates are evaluated and the status of the assertion is the
+        # status of the job. An unevaluated gate and an opened gate both fail
+        # the run, so no gate can open itself in this environment.
+        run: node scripts/online/release-gate-guard.mjs
       - name: Print the friend rollout packet
         run: node scripts/online/feature-gates.mjs packet --gate friend
 

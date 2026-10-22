@@ -156,22 +156,30 @@ for await (const line of rl) {
     if (existsSync(join(dirname(process.argv[1]), 'hang-probe'))) {
       await new Promise(() => {});
     }
-    // A fixture can ask the worker to answer the first readiness probe and
-    // to stop answering the later ones, so the start of a replacement worker
-    // fails while the first request still reaches the worker.
-    const replacement = join(dirname(process.argv[1]), 'hang-replacement-probe');
-    if (existsSync(replacement)) {
-      const counter = join(dirname(process.argv[1]), 'probe-counter');
+    // The readiness probe of the replacement of a crashed worker hangs, so
+    // the start of that replacement fails. The hang is bound to the crash
+    // of the worker and not to the number of probes, so the fixture does
+    // not depend on how many probes the worker answered before it crashed.
+    // The counter is written before the hang, so a fixture can prove that
+    // the probe of the replacement reached the worker.
+    if (existsSync(join(dirname(process.argv[1]), 'crashed'))) {
+      const counter = join(dirname(process.argv[1]), 'probes-after-crash');
       let seen = 0;
       try { seen = Number.parseInt(readFileSync(counter, 'utf8').trim(), 10) || 0; } catch { seen = 0; }
       writeFileSync(counter, String(seen + 1));
-      if (seen > 0) {
-        await new Promise(() => {});
-      }
+      await new Promise(() => {});
     }
   }
   switch (req.requestId) {
     case 'crash':
+      // A fixture that wants the replacement of the crashed worker to hang
+      // asks for it with the marker. The marker of the crash is written
+      // before the exit, so the replacement of the crashed worker always
+      // finds it. A fixture without the marker keeps recovering from the
+      // crash with a fresh worker.
+      if (existsSync(join(dirname(process.argv[1]), 'hang-replacement-probe'))) {
+        writeFileSync(join(dirname(process.argv[1]), 'crashed'), '1');
+      }
       process.exit(9);
     case 'malformed':
       process.stdout.write('this is not json\n');
@@ -316,6 +324,30 @@ func testEntryWithHangingProbe(t *testing.T, marker string) string {
 		t.Fatalf("write the probe marker: %v", err)
 	}
 	return path
+}
+
+// testEntryWithAHangingReplacementProbe writes a fake worker that answers
+// the readiness probes until it crashes, and that hangs on every readiness
+// probe that arrives after the crash.
+//
+// The hang is bound to the crash of the worker and not to the number of
+// probes, so the fixture does not depend on how many probes the worker
+// answered before it crashed.
+//
+// It also returns the path of the counter of the readiness probes that
+// arrived after the crash, so a fixture can prove that the probe of the
+// replacement was started and hung, instead of guessing a delay.
+func testEntryWithAHangingReplacementProbe(t *testing.T) (string, string) {
+	t.Helper()
+	directory := t.TempDir()
+	path := filepath.Join(directory, "worker.mjs")
+	if err := os.WriteFile(path, []byte(fakeWorkerSource()), 0o600); err != nil {
+		t.Fatalf("write fake worker: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "hang-replacement-probe"), []byte("1"), 0o600); err != nil {
+		t.Fatalf("write the probe marker: %v", err)
+	}
+	return path, filepath.Join(directory, "probes-after-crash")
 }
 
 // testEntryThatBreaksAfterReadiness writes a fake worker that answers a
@@ -693,21 +725,77 @@ func TestTheCancellationCarriesTheCauseOfTheCaller(t *testing.T) {
 	}
 }
 
+// The exchange budget of the crash.
+//
+// The exchange of the crash is the exit of the worker. That is quick, but the
+// host is slow when the whole suite runs, and the budget of the exchange must
+// not turn a crash into a timeout of the exchange.
+const crashExchangeFixture = 10 * time.Second
+
+// The start budget of the crash fixture.
+//
+// The start of a worker is a cost of the host, and the boot of a process on a
+// loaded host can take longer than the production budget of the client. The
+// budget here is a margin and not an assertion: the fixture asserts the class
+// of the failure, and the replacement of the crashed worker never becomes
+// ready whatever the margin is. The margin only keeps the boot of the host
+// out of the classification under test.
+const crashStartFixture = 30 * time.Second
+
 // TestTheCrashSurvivesAFailedStartOfTheReplacement proves that a failure of
 // the start does not replace the specific failure of an earlier attempt.
 //
 // The worker dies on the first exchange and the replacement never answers
 // the readiness probe. The call reports the crash: an operator must be able
 // to tell "the worker died" from "the replacement never became ready".
+//
+// The first worker is warmed before the exchange under test. The cold start
+// of the worker is a cost of the host, and it must not share the budget of
+// the exchange under test: the exchange has to fail with the crash of the
+// worker and with nothing else. The warm-up is also the confirmation of the
+// first readiness probe, so the worker that crashes below is a worker that
+// was ready.
+//
+// The replacement is started by the client itself, and the readiness probe
+// of that replacement hangs. The start budget of the client ends the start
+// of the replacement, and the crash of the first exchange is still the
+// answer of the call.
 func TestTheCrashSurvivesAFailedStartOfTheReplacement(t *testing.T) {
-	client, err := New(Config{Entry: testEntryWithHangingProbe(t, "hang-replacement-probe"), RequestTimeout: 2 * time.Second, StartTimeout: time.Second})
+	entry, probes := testEntryWithAHangingReplacementProbe(t)
+	client, err := New(Config{Entry: entry, RequestTimeout: crashExchangeFixture, StartTimeout: crashStartFixture})
 	if err != nil {
 		t.Fatalf("new client: %v", err)
 	}
 	t.Cleanup(func() { _ = client.Close() })
+	// The warm-up pays the cold start of the worker and confirms that the
+	// first readiness probe was answered. The client holds a ready worker
+	// when the exchange under test starts.
+	warm, cancel := context.WithTimeout(context.Background(), warmBudget)
+	defer cancel()
+	if err := client.Warm(warm); err != nil {
+		t.Fatalf("warm the worker: %v", err)
+	}
+	started := time.Now()
 	_, err = client.Evaluate(context.Background(), request("crash"))
 	if !errors.Is(err, ErrCrashed) {
 		t.Fatalf("the crash was replaced by the failed start of the replacement: %v", err)
+	}
+	if errors.Is(err, ErrTimeout) {
+		t.Fatalf("the crash of the worker was reported as a timeout: %v", err)
+	}
+	// The replacement was really started and its readiness probe really hung.
+	// The barrier is the counter of the readiness probes that arrived after
+	// the crash, so the test does not depend on how many other exchanges the
+	// client performs. Without it the test would also pass when the client
+	// starts no replacement at all, and it would prove nothing.
+	waitForCounter(t, probes, 1)
+	// The probe of the replacement really hung: the client waited for its
+	// whole start budget for an answer that never came, and it failed the
+	// start of the replacement with that timeout. The bound is a lower bound
+	// on the call, so it assumes nothing about the speed of the host: the
+	// client only ends a hanging probe when its own budget is over.
+	if elapsed := time.Since(started); elapsed < crashStartFixture-2*time.Second {
+		t.Fatalf("the readiness probe of the replacement did not hang: the call returned after %s", elapsed)
 	}
 }
 

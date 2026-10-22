@@ -26,7 +26,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { cp, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -361,9 +361,10 @@ async function buildHelper(root) {
  * @param {string} directory
  * @param {boolean} broken use the entrypoint that drops the arguments
  * @param {string} helperImage
+ * @param {(command: string, args: string[], options?: {cwd?: string, stdin?: string}) => Promise<{code: number, stdout: string, stderr: string}>} [runCommand] the runner of the commands
  * @returns {Promise<{code: number, output: string}>}
  */
-async function prepare(root, directory, broken, helperImage) {
+export async function prepare(root, directory, broken, helperImage, runCommand = run) {
   await cp(join(root, 'deploy', 'postgres.compose.yml'), join(directory, 'postgres.compose.yml'));
   await cp(join(root, 'deploy', 'pg_hba.conf'), join(directory, 'pg_hba.conf'));
   // The operator programs of the deployment are measured inside the real
@@ -381,9 +382,15 @@ async function prepare(root, directory, broken, helperImage) {
 
   // The reviewed configuration mounts a certificate and its key. The image
   // has no openssl, so the helper writes one.
-  const certificate = await run('docker', [
+  //
+  // The directory of the mount has to exist before the helper is started: a
+  // bind mount of a path that does not exist is refused by the engine, so the
+  // certificate of the proof would never be written.
+  const tlsDirectory = join(directory, 'tls');
+  await mkdir(tlsDirectory, { recursive: true });
+  const certificate = await runCommand('docker', [
     'run', '--rm', '--user', 'root:0',
-    '--mount', `type=bind,source=${join(directory, 'tls')},target=/tls`,
+    '--mount', `type=bind,source=${tlsDirectory},target=/tls`,
     helperImage, 'cert', '/tls',
   ]);
   if (certificate.code !== 0) {

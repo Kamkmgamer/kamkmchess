@@ -95,7 +95,7 @@ func TestQueueHTTPRoutesRunAgainstTheRealQueue(t *testing.T) {
 		"token-a": {token: "token-a", subject: "user_a", origin: "https://app.example", kind: online.ParticipantAccount},
 		"token-b": {token: "token-b", subject: "user_b", origin: "https://app.example", kind: online.ParticipantAccount},
 	}}
-	handler := httpapi.NewQueue(h.service, authenticator, httpapi.OnlineOptions{AllowedOrigins: []string{"https://app.example"}})
+	handler := httpapi.NewQueue(h.service, authenticator, httpapi.QueueOptions{AllowedOrigins: []string{"https://app.example"}})
 
 	// The creation of an entry.
 	created := queueHTTPRequest(t, handler, http.MethodPost, "/v1/online/queue/entries", "token-a",
@@ -171,6 +171,85 @@ func TestQueueHTTPRoutesRunAgainstTheRealQueue(t *testing.T) {
 	}
 }
 
+// TestQueueHTTPFallbackAnswersAConflictWhenTheCandidateIsDropped drives the
+// dropped candidate race over the published routes.
+//
+// The browser engine never takes the seat while another candidate is still
+// eligible. The route answers a conflict and not a missing candidate, so the
+// browser repeats the fallback instead of believing that the queue is empty,
+// and the repeated fallback pairs the candidate that is still waiting.
+func TestQueueHTTPFallbackAnswersAConflictWhenTheCandidateIsDropped(t *testing.T) {
+	h := newQueueHarness(t)
+	ctx := context.Background()
+	authenticator := &queueHTTPAuthenticator{principals: map[string]queueHTTPPrincipal{
+		"token-a": {token: "token-a", subject: "user_a", origin: "https://app.example", kind: online.ParticipantAccount},
+		"token-b": {token: "token-b", subject: "user_b", origin: "https://app.example", kind: online.ParticipantAccount},
+		"token-c": {token: "token-c", subject: "user_c", origin: "https://app.example", kind: online.ParticipantAccount},
+	}}
+	handler := httpapi.NewQueue(h.service, authenticator, httpapi.QueueOptions{AllowedOrigins: []string{"https://app.example"}})
+	// The entry of the owner, the candidate the scan selects and the
+	// candidate that is still waiting behind it.
+	entry := h.createEntry("user_a", agentControl("GPT-4o"), standardClock(), "")
+	h.clock.Advance(time.Millisecond)
+	h.createEntry("user_b", agentControl("Claude"), standardClock(), "")
+	h.clock.Advance(time.Millisecond)
+	second := h.createEntry("user_c", agentControl("Gemini"), standardClock(), "")
+	// The cutoff of the entry passes. The owner of the entry and the owner
+	// of the second candidate keep reporting in, so their leases are live
+	// when the decision runs.
+	h.clock.Advance(10 * time.Second)
+	if _, err := h.service.Heartbeat(ctx, account("user_a"), entry.EntryID, queue.Operation{}); err != nil {
+		t.Fatalf("heartbeat of the owner: %v", err)
+	}
+	if _, err := h.service.Heartbeat(ctx, account("user_c"), second.EntryID, queue.Operation{}); err != nil {
+		t.Fatalf("heartbeat of the second candidate: %v", err)
+	}
+	// The account scope lock of the first candidate is held, so the
+	// decision waits for it after it selected the candidate.
+	lock, err := h.holdAccountScopeLock(ctx, "user_b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The lock is released when the test ends, so a failed observation
+	// never leaves the decision waiting forever.
+	defer lock.Rollback(ctx)
+	answers := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		answers <- queueHTTPRequest(t, handler, http.MethodPost, "/v1/online/queue/entries/"+entry.EntryID+"/fallback", "token-a", `{"schemaVersion":2}`)
+	}()
+	h.waitForAccountScopeWaiter(ctx, "user_b")
+	// The lease of the first candidate dies while the decision waits.
+	h.clock.Advance(6 * time.Second)
+	if err = lock.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var refused *httptest.ResponseRecorder
+	select {
+	case refused = <-answers:
+	case <-time.After(60 * time.Second):
+		t.Fatal("the fallback did not finish")
+	}
+	if refused.Code != http.StatusConflict {
+		t.Fatalf("the dropped candidate answered status=%d body=%s, want 409", refused.Code, refused.Body.String())
+	}
+	// The repeated fallback starts the decision with the scope set of the
+	// second candidate, and the second candidate wins over the engine.
+	retry := queueHTTPRequest(t, handler, http.MethodPost, "/v1/online/queue/entries/"+entry.EntryID+"/fallback", "token-a", `{"schemaVersion":2}`)
+	if retry.Code != http.StatusOK {
+		t.Fatalf("the repeated fallback status=%d body=%s", retry.Code, retry.Body.String())
+	}
+	var assignment map[string]any
+	if err := json.Unmarshal(retry.Body.Bytes(), &assignment); err != nil {
+		t.Fatal(err)
+	}
+	if assignment["opponentLabel"] != "Player user_c" {
+		t.Fatalf("the repeated fallback paired another owner: %s", retry.Body.String())
+	}
+	if assignment["control"].(map[string]any)["kind"] != "agent" {
+		t.Fatalf("the engine took the seat although a candidate was still eligible: %s", retry.Body.String())
+	}
+}
+
 // TestQueueHTTPFallbackCarriesTheEngineCredential drives the fallback route
 // against the real queue and the real credential path.
 func TestQueueHTTPFallbackCarriesTheEngineCredential(t *testing.T) {
@@ -198,7 +277,7 @@ func TestQueueHTTPFallbackCarriesTheEngineCredential(t *testing.T) {
 	authenticator := &queueHTTPAuthenticator{principals: map[string]queueHTTPPrincipal{
 		"token-a": {token: "token-a", subject: "user_a", origin: "https://app.example", kind: online.ParticipantAccount},
 	}}
-	handler := httpapi.NewQueue(service, authenticator, httpapi.OnlineOptions{AllowedOrigins: []string{"https://app.example"}})
+	handler := httpapi.NewQueue(service, authenticator, httpapi.QueueOptions{AllowedOrigins: []string{"https://app.example"}})
 	created := queueHTTPRequest(t, handler, http.MethodPost, "/v1/online/queue/entries", "token-a",
 		`{"schemaVersion":2,"control":{"kind":"agent","modelLabel":"GPT-4o"},"timeControl":{"startingTimeMs":300000,"incrementMs":2000}}`)
 	if created.Code != http.StatusCreated {
@@ -209,6 +288,9 @@ func TestQueueHTTPFallbackCarriesTheEngineCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	entryID, _ := entry["entryId"].(string)
+	// The browser engine takes the seat at the cutoff of the entry, never
+	// before it.
+	clock.Advance(10 * time.Second)
 	fallback := queueHTTPRequest(t, handler, http.MethodPost, "/v1/online/queue/entries/"+entryID+"/fallback", "token-a",
 		`{"schemaVersion":2,"operationId":"operation-0001"}`)
 	if fallback.Code != http.StatusOK {

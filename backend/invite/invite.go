@@ -89,7 +89,9 @@ var (
 	ErrNotFound = errors.New("invite: not found")
 	// ErrConflict reports a state change the invitation does not allow.
 	ErrConflict = errors.New("invite: conflict")
-	// ErrNotAuthorized reports a caller that does not own the invitation.
+	// ErrNotAuthorized reports a caller that does not own the invitation, and
+	// a caller that asks for a named challenge without the account authority
+	// that a named challenge requires.
 	ErrNotAuthorized = errors.New("invite: not authorized")
 	// ErrExpired reports an invitation whose lifetime has passed.
 	ErrExpired = errors.New("invite: expired")
@@ -106,6 +108,19 @@ var (
 	// removal itself, so a request that was authenticated before the
 	// removal never creates a row after it.
 	ErrRemoved = errors.New("invite: the participant was removed")
+	// ErrDisabled reports that the friend surface is closed.
+	//
+	// The switch is a rollback switch: it stops new creations immediately
+	// and it never invalidates an invitation that was issued while the
+	// switch was open. A request of a closed surface is therefore only
+	// refused when the invitation it names was not issued while the switch
+	// was open.
+	ErrDisabled = errors.New("invite: the friend surface is closed")
+	// ErrRecipientNotFound reports a public name that no account owns.
+	//
+	// The name of a recipient is a public identity, so an unknown name is
+	// refused without revealing whether the account exists.
+	ErrRecipientNotFound = errors.New("invite: the recipient was not found")
 )
 
 // Kind names the two invitation paths.
@@ -115,7 +130,7 @@ const (
 	// KindLink is a one-use shareable link. A guest may join it.
 	KindLink Kind = "link"
 	// KindChallenge is a named challenge for one account. Only the named
-	// account may accept it.
+	// account may accept it, and only an account may create it.
 	KindChallenge Kind = "challenge"
 )
 
@@ -209,8 +224,19 @@ type CreateRequest struct {
 	// Inviter is the authenticated inviter. A nil value creates an anonymous
 	// guest invitation whose owner token is the only recoverable ownership.
 	Inviter *Identity
-	// RecipientAccountID names the account of a challenge. It is required
-	// for a challenge and forbidden for a link.
+	// RecipientUsername names the account of a challenge by its public
+	// name. It is required for a challenge and forbidden for a link.
+	//
+	// The public name is the only recipient the public request may carry.
+	// The service resolves it to the account subject itself, and the
+	// subject never reaches an answer.
+	RecipientUsername string
+	// RecipientAccountID names the account of a challenge by its subject.
+	//
+	// It is the resolved form of the public name and it is used by the
+	// trusted callers of the service. The public request never carries it,
+	// because a subject is an authorization identity and it is never
+	// published.
 	RecipientAccountID string
 	// Seat is the color the inviter chose.
 	Seat online.Seat
@@ -280,6 +306,13 @@ type SeatCredentialRequest struct {
 	InvitationID string
 	OwnerToken   string
 	Origin       string
+	// Viewer is the authenticated caller of the request.
+	//
+	// The viewer never authorizes the mint of the credential: the owner
+	// token and the inviter alone do that. The viewer only proves that the
+	// caller may see the invitation, so the named recipient of a challenge
+	// is not answered like a stranger.
+	Viewer *Identity
 }
 
 // SeatCredentialResult is the answer of one seat credential request.
@@ -322,6 +355,22 @@ type Rematch struct {
 	// accepted offer. They are never published.
 	acceptedByKind string
 	acceptedByID   string
+}
+
+// ProposedBy reports whether the participant proposed the offer.
+//
+// The stored proposer identity decides, so the answer never depends on the
+// seat of a participant and never on the name of one. The identity itself is
+// never published: the answer is a fact about the caller, and it tells the
+// proposer apart from the opponent that may accept the offer.
+//
+// The kind of the participant is part of the comparison, because an account
+// and a guest that share an identifier are two different participants.
+func (r Rematch) ProposedBy(participant online.ParticipantRef) bool {
+	if r.proposerID == "" || participant.ID == "" {
+		return false
+	}
+	return r.proposerKind == string(participant.Kind) && r.proposerID == participant.ID
 }
 
 // AcceptRematchRequest describes one acceptance of a rematch offer.
@@ -406,6 +455,40 @@ type Options struct {
 	Identifier func(prefix string, length int) (string, error)
 	// Secret mints a bearer secret.
 	Secret func(prefix string, length int) (string, error)
+	// Gate reports whether the friend surface is currently open.
+	//
+	// A nil gate opens the surface. The gate is the rollback switch of the
+	// friend surface: it stops new creations immediately and it never
+	// invalidates an invitation that was issued while it was open.
+	Gate FeatureGate
+	// Recipients resolves the public name of an account to its subject.
+	//
+	// A nil resolver reads the public profiles of the pool, because the
+	// service is the only component that may resolve a public name into an
+	// authorization identity.
+	Recipients RecipientResolver
+}
+
+// FeatureGate reports whether the friend surface is currently open.
+type FeatureGate interface {
+	FriendsEnabled() bool
+}
+
+// StaticGate is the feature gate of a fixed configuration.
+//
+// The server reads the switch once, when it boots, so the gate of a process
+// never changes under a request.
+type StaticGate bool
+
+// FriendsEnabled reports the configured state of the surface.
+func (g StaticGate) FriendsEnabled() bool { return bool(g) }
+
+// RecipientResolver resolves the public name of an account to its subject.
+//
+// The resolution happens inside the service, so the public request of a named
+// challenge carries a public name and never an authentication identifier.
+type RecipientResolver interface {
+	AccountIDByUsername(ctx context.Context, username string) (string, error)
 }
 
 // Service owns friend invitations and rematches.
@@ -415,6 +498,8 @@ type Service struct {
 	reader      MatchReader
 	credentials CredentialIssuer
 	options     Options
+	gate        FeatureGate
+	recipients  RecipientResolver
 }
 
 // Open binds the invitation service to a pool. It does not mutate schema.
@@ -437,17 +522,66 @@ func Open(_ context.Context, db *pgxpool.Pool, matches MatchAllocator, reader Ma
 	if options.Secret == nil {
 		options.Secret = randomSecret
 	}
-	return &Service{db: db, matches: matches, reader: reader, credentials: credentials, options: options}, nil
+	if options.Recipients == nil {
+		// The service resolves a public name itself, so a subject never
+		// crosses the boundary of the public request.
+		options.Recipients = NewAccountLabelResolver(db)
+	}
+	return &Service{
+		db:          db,
+		matches:     matches,
+		reader:      reader,
+		credentials: credentials,
+		options:     options,
+		gate:        options.Gate,
+		recipients:  options.Recipients,
+	}, nil
 }
 
 func (s *Service) now() time.Time { return s.options.Now().UTC() }
+
+// friendsEnabled reports whether the friend surface is currently open.
+func (s *Service) friendsEnabled() bool {
+	if s.gate == nil {
+		return true
+	}
+	return s.gate.FriendsEnabled()
+}
+
+// servesIssued reports whether a request of an issued invitation may be
+// served.
+//
+// A closed surface still finishes the invitations it issued while it was
+// open: a guest may accept one, and the inviter may cancel it and claim its
+// seat credential. The invitation records that it was issued while the
+// surface was open, so the closed path never widens into an arbitrary
+// invitation.
+func (s *Service) servesIssued(issued bool) error {
+	if s.friendsEnabled() {
+		return nil
+	}
+	if issued {
+		return nil
+	}
+	return ErrDisabled
+}
 
 // Create creates one invitation.
 //
 // The custom position is validated against the pinned rules policy before the
 // invitation exists, so an invalid position can never be offered and later
 // consume an invitation.
+//
+// A named challenge needs an account inviter. A shareable link does not, so
+// a guest may still create one.
+//
+// A closed surface refuses the creation. The refusal is the rollback
+// behaviour of the switch: it stops new creations immediately, and it never
+// invalidates an invitation that was issued while the surface was open.
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Created, error) {
+	if !s.friendsEnabled() {
+		return Created{}, ErrDisabled
+	}
 	kind := request.Kind
 	if kind == "" {
 		kind = KindLink
@@ -455,13 +589,16 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Created, e
 	if kind != KindLink && kind != KindChallenge {
 		return Created{}, fmt.Errorf("%w: invitation kind", ErrInvalidContract)
 	}
-	recipient := strings.TrimSpace(request.RecipientAccountID)
-	if kind == KindChallenge {
-		if recipient == "" || len(recipient) > 128 {
-			return Created{}, fmt.Errorf("%w: a named challenge needs a recipient account", ErrInvalidContract)
-		}
-	} else if recipient != "" {
-		return Created{}, fmt.Errorf("%w: a shareable link has no named recipient", ErrInvalidContract)
+	// A named challenge names an account, so it needs an account inviter.
+	// The check runs before the recipient is resolved, so a caller without
+	// account authority learns nothing about the accounts of the surface: the
+	// refusal is the same refusal whatever the named recipient is.
+	if err := validateChallengeInviter(kind, request.Inviter); err != nil {
+		return Created{}, err
+	}
+	recipient, err := s.resolveRecipient(ctx, kind, request)
+	if err != nil {
+		return Created{}, err
 	}
 	if request.Seat != online.SeatWhite && request.Seat != online.SeatBlack {
 		return Created{}, fmt.Errorf("%w: inviter seat", ErrInvalidContract)
@@ -532,7 +669,11 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Created, e
 		_ = tx.Rollback(ctx)
 		return Created{}, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO online_friend_invitations(invitation_id,kind,status,version,inviter_kind,inviter_id,inviter_public_label,inviter_control_kind,inviter_model_label,inviter_seat,starting_time_ms,increment_ms,starting_fen,recipient_account_id,owner_token_hash,created_at,expires_at) VALUES($1,$2,$3,1,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+	// The row records that the invitation was issued while the surface was
+	// open. The closed surface reads that fact before it serves a request of
+	// the invitation, so a rollback never widens into an arbitrary
+	// invitation.
+	_, err = tx.Exec(ctx, `INSERT INTO online_friend_invitations(invitation_id,kind,status,version,inviter_kind,inviter_id,inviter_public_label,inviter_control_kind,inviter_model_label,inviter_seat,starting_time_ms,increment_ms,starting_fen,recipient_account_id,owner_token_hash,created_at,expires_at,issued_while_enabled) VALUES($1,$2,$3,1,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,true)`,
 		invitationID, string(kind), string(StatusOpen), string(inviterParticipant.Kind), inviterParticipant.ID, inviterLabel, string(inviterControl.Kind), modelLabel, string(request.Seat),
 		request.TimeControl.StartingTimeMs, request.TimeControl.IncrementMs, nullableString(startingFEN), nullableString(recipient), hashOwnerToken(ownerToken), now, expiresAt)
 	if err != nil {
@@ -793,6 +934,74 @@ func (s *Service) validatePosition(ctx context.Context, startingFEN string, time
 	return nil
 }
 
+// validateChallengeInviter refuses a named challenge of an inviter that is
+// not an account.
+//
+// A shareable link is a bearer secret, and a guest may create one. A named
+// challenge names an account of the surface, so only an account may create
+// one: an anonymous caller and a guest that holds a seat credential are both
+// refused. The service decides that, not the browser that asked for the
+// invitation, so the rule holds for every caller of the service.
+//
+// The refusal is an authorization refusal, and it is the same refusal for
+// every caller without account authority, so it never reveals whether the
+// named recipient exists.
+func validateChallengeInviter(kind Kind, inviter *Identity) error {
+	if kind != KindChallenge {
+		return nil
+	}
+	if inviter == nil || inviter.Participant.Kind != online.ParticipantAccount {
+		return fmt.Errorf("%w: a named challenge needs an account inviter", ErrNotAuthorized)
+	}
+	return nil
+}
+
+// resolveRecipient returns the account subject of the named recipient.
+//
+// A named challenge names an account by its public name. The public request
+// carries the name and the service resolves it, so the authentication
+// identifier of the recipient never crosses the boundary of the public
+// request and never reaches an answer.
+//
+// A link has no recipient at all: a guest may join it.
+func (s *Service) resolveRecipient(ctx context.Context, kind Kind, request CreateRequest) (string, error) {
+	accountID := strings.TrimSpace(request.RecipientAccountID)
+	username := strings.TrimSpace(request.RecipientUsername)
+	if kind != KindChallenge {
+		if accountID != "" || username != "" {
+			return "", fmt.Errorf("%w: a shareable link has no named recipient", ErrInvalidContract)
+		}
+		return "", nil
+	}
+	if accountID != "" && username != "" {
+		return "", fmt.Errorf("%w: a named challenge names its recipient once", ErrInvalidContract)
+	}
+	if accountID != "" {
+		if len(accountID) > 128 {
+			return "", fmt.Errorf("%w: a named challenge needs a recipient account", ErrInvalidContract)
+		}
+		return accountID, nil
+	}
+	if username == "" {
+		return "", fmt.Errorf("%w: a named challenge needs a recipient name", ErrInvalidContract)
+	}
+	if len(username) > 64 {
+		return "", fmt.Errorf("%w: the recipient name is too long", ErrInvalidContract)
+	}
+	if s.recipients == nil {
+		return "", fmt.Errorf("%w: the service cannot resolve a public name", ErrUnavailable)
+	}
+	resolved, err := s.recipients.AccountIDByUsername(ctx, username)
+	if err != nil {
+		return "", err
+	}
+	resolved = strings.TrimSpace(resolved)
+	if resolved == "" {
+		return "", ErrRecipientNotFound
+	}
+	return resolved, nil
+}
+
 // resolveInviter returns the inviter identity of a new invitation.
 //
 // An anonymous inviter is a guest with a fresh opaque identity and the public
@@ -818,20 +1027,50 @@ func (s *Service) resolveInviter(inviter *Identity) (online.ParticipantRef, stri
 	return inviter.Participant, label, nil
 }
 
+// ViewRequest describes one read of an invitation.
+type ViewRequest struct {
+	// InvitationID is the shareable link secret.
+	InvitationID string
+	// ViewerAccountID is the account that reads the invitation. It is empty
+	// for a guest and for an anonymous reader.
+	ViewerAccountID string
+	// OwnerToken authorizes the read for the inviter of the invitation.
+	//
+	// The owner token is a private secret. It authorizes the read of the
+	// inviter alone and it never widens the visibility of a challenge.
+	OwnerToken string
+}
+
 // Get returns the public view of one invitation.
 //
-// A challenge is only visible to its named recipient. The check is by
-// recipient account, so an unknown caller learns nothing about a named
-// challenge.
-func (s *Service) Get(ctx context.Context, invitationID string, viewerAccountID string) (Invitation, error) {
-	invitation, recipient, err := s.readInvitation(ctx, invitationID)
+// A shareable link is public: everybody who holds the link may read its
+// preview.
+//
+// A named challenge is private. Only its named recipient may read it, and
+// only the inviter may read it with the owner token of the invitation. Every
+// other caller learns nothing about the challenge, so the status of a
+// challenge is never public.
+func (s *Service) Get(ctx context.Context, request ViewRequest) (Invitation, error) {
+	invitation, access, err := s.readInvitation(ctx, request.InvitationID)
 	if err != nil {
 		return Invitation{}, err
 	}
-	if recipient != "" && recipient != viewerAccountID {
-		return Invitation{}, ErrNotFound
+	if err = s.servesIssued(access.issuedWhileEnabled); err != nil {
+		return Invitation{}, err
 	}
-	return invitation, nil
+	if access.recipient == "" {
+		return invitation, nil
+	}
+	if request.ViewerAccountID != "" && request.ViewerAccountID == access.recipient {
+		return invitation, nil
+	}
+	// The inviter reads its own challenge with the owner token. The token is
+	// the proof of the ownership, so the inviter never has to publish the
+	// challenge to learn that it was consumed.
+	if request.OwnerToken != "" && s.ownsInvitation(ctx, request.InvitationID, request.OwnerToken, nil) {
+		return invitation, nil
+	}
+	return Invitation{}, ErrNotFound
 }
 
 // Accept consumes an invitation and creates the canonical match.
@@ -853,8 +1092,13 @@ func (s *Service) Accept(ctx context.Context, request AcceptRequest) (Accepted, 
 	if err := validateSeatControl(request.Control); err != nil {
 		return Accepted{}, err
 	}
-	invitation, recipient, err := s.readInvitation(ctx, request.InvitationID)
+	invitation, access, err := s.readInvitation(ctx, request.InvitationID)
 	if err != nil {
+		return Accepted{}, err
+	}
+	// A closed surface still finishes the invitations it issued while it
+	// was open, so a guest may accept one after the switch was turned off.
+	if err = s.servesIssued(access.issuedWhileEnabled); err != nil {
 		return Accepted{}, err
 	}
 	if request.Acceptor != nil {
@@ -868,12 +1112,12 @@ func (s *Service) Accept(ctx context.Context, request AcceptRequest) (Accepted, 
 			return Accepted{}, fmt.Errorf("%w: the inviter cannot accept their own invitation", ErrInvalidContract)
 		}
 	}
-	if recipient != "" {
+	if access.recipient != "" {
 		// A named challenge is isolated: only the named account may accept
 		// it, and a guest never may. An invitation that is not visible to
 		// the caller is reported exactly like an unknown invitation, so a
 		// caller cannot learn that a named challenge exists.
-		if request.Acceptor == nil || request.Acceptor.Participant.Kind != online.ParticipantAccount || request.Acceptor.Participant.ID != recipient {
+		if request.Acceptor == nil || request.Acceptor.Participant.Kind != online.ParticipantAccount || request.Acceptor.Participant.ID != access.recipient {
 			return Accepted{}, ErrNotFound
 		}
 	}
@@ -1297,15 +1541,32 @@ func (s *Service) mintAcceptanceCredential(ctx context.Context, tx pgx.Tx, accep
 // authenticated account identity. A consumed invitation can never be
 // cancelled and a cancelled invitation can never be consumed.
 //
+// A named challenge is private. The visibility of the caller is checked
+// before the state of the invitation, so a challenge that the caller may not
+// see answers exactly like an invitation that was never issued: it never
+// answers with the public view of the invitation, with its status, with an
+// expiry or with a conflict.
+//
 // The cancellation is a write that names the inviter, so it is fenced like
 // every other write of the surface: the account scope lock of the inviter is
 // taken before the row lock of the invitation, and the durable removal of
 // the inviter is rechecked after the lock. A removed participant therefore
 // never writes its own personal row again.
 func (s *Service) Cancel(ctx context.Context, request CancelRequest) (Invitation, error) {
-	invitation, _, err := s.readInvitation(ctx, request.InvitationID)
+	invitation, access, err := s.readInvitation(ctx, request.InvitationID)
 	if err != nil {
 		return Invitation{}, err
+	}
+	// A closed surface still cancels the invitations it issued while it
+	// was open, so the inviter can always withdraw an outstanding link.
+	if err = s.servesIssued(access.issuedWhileEnabled); err != nil {
+		return Invitation{}, err
+	}
+	// The visibility of the caller is checked before the state of the
+	// invitation. A caller that may not see a named challenge learns
+	// nothing about it, so the status of a challenge is never public.
+	if !s.visibleTo(ctx, request.InvitationID, access, request.OwnerToken, request.Canceller) {
+		return Invitation{}, ErrNotFound
 	}
 	if invitation.Status == StatusCancelled {
 		return invitation, nil
@@ -1389,10 +1650,26 @@ func (s *Service) Cancel(ctx context.Context, request CancelRequest) (Invitation
 // A guest seat credential is bound to a match seat, so it cannot exist before
 // the match exists. The owner token authorizes the request and the mint
 // supersedes an earlier credential of the same seat.
+//
+// A named challenge is private. The visibility of the caller is checked
+// before the state of the invitation, so a challenge that the caller may not
+// see answers exactly like an invitation that was never issued: it never
+// answers with a match, with a seat, with an expiry or with a conflict.
 func (s *Service) SeatCredential(ctx context.Context, request SeatCredentialRequest) (SeatCredentialResult, error) {
-	invitation, _, err := s.readInvitation(ctx, request.InvitationID)
+	invitation, access, err := s.readInvitation(ctx, request.InvitationID)
 	if err != nil {
 		return SeatCredentialResult{}, err
+	}
+	// A closed surface still recovers the seat of a match it created, so a
+	// guest inviter never loses the seat of its own invitation.
+	if err = s.servesIssued(access.issuedWhileEnabled); err != nil {
+		return SeatCredentialResult{}, err
+	}
+	// The visibility of the caller is checked before the state of the
+	// invitation. A caller that may not see a named challenge learns
+	// nothing about it, so the status of a challenge is never public.
+	if !s.visibleTo(ctx, request.InvitationID, access, request.OwnerToken, request.Viewer) {
+		return SeatCredentialResult{}, ErrNotFound
 	}
 	if invitation.Status != StatusConsumed || invitation.MatchID == nil {
 		return SeatCredentialResult{}, ErrConflict
@@ -1491,6 +1768,11 @@ func (s *Service) mintSeatCredentialInTx(ctx context.Context, tx pgx.Tx, matchID
 // offer, and only then a new match exists. The colors are reversed and the
 // setup is retained unless the proposal changes it.
 func (s *Service) ProposeRematch(ctx context.Context, request RematchRequest) (Rematch, error) {
+	// A rematch creates a new game, so a closed surface refuses it. The
+	// refusal stops new creations and it never invalidates a finished match.
+	if !s.friendsEnabled() {
+		return Rematch{}, ErrDisabled
+	}
 	match, err := s.reader.GetMatch(ctx, request.MatchID)
 	if err != nil {
 		return Rematch{}, err
@@ -1500,6 +1782,13 @@ func (s *Service) ProposeRematch(ctx context.Context, request RematchRequest) (R
 	}
 	if !match.HasParticipant(request.Proposer) {
 		return Rematch{}, ErrNotAuthorized
+	}
+	// A rematch carries the setup of the finished match, and a friend game
+	// has no built-in engine seat. The guard runs before any offer is
+	// written, so an offer that names an engine participant is never
+	// persisted.
+	if err := validateRematchSetup(match); err != nil {
+		return Rematch{}, err
 	}
 	label := strings.TrimSpace(request.ProposerLabel)
 	if label == "" {
@@ -1613,6 +1902,11 @@ func (s *Service) ProposeRematch(ctx context.Context, request RematchRequest) (R
 // credential for it: the credential of the finished match cannot authorize
 // the new seat.
 func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchRequest) (RematchResult, error) {
+	// A rematch creates a new game, so a closed surface refuses it. The
+	// offer stays pending, so the rollback is reversible.
+	if !s.friendsEnabled() {
+		return RematchResult{}, ErrDisabled
+	}
 	offer, err := s.readRematch(ctx, request.RematchID)
 	if err != nil {
 		return RematchResult{}, err
@@ -1735,6 +2029,15 @@ func (s *Service) AcceptRematch(ctx context.Context, request AcceptRematchReques
 		_ = tx.Rollback(ctx)
 		return RematchResult{}, ErrConflict
 	}
+	// An offer of an earlier build may name a match that carries an engine
+	// seat, for example a queue fallback match against the browser
+	// Stockfish. The guard runs before the new match is created, so such an
+	// offer creates no match at all and it stays pending.
+	if err = validateRematchSetup(match); err != nil {
+		closed = true
+		_ = tx.Rollback(ctx)
+		return RematchResult{}, err
+	}
 	white, black, err := rematchSeats(match, locked)
 	if err != nil {
 		closed = true
@@ -1832,6 +2135,10 @@ func (s *Service) mintRematchCredential(ctx context.Context, tx pgx.Tx, matchID 
 //
 // The new match is a new game, so the credential of the finished match cannot
 // authorize it.
+//
+// The mint is a recovery of a seat of a match that already exists, so a
+// closed surface still serves it: the rollback never removes an issued guest
+// credential and never strands a guest on a seat it owns.
 func (s *Service) RematchSeatCredential(ctx context.Context, request RematchSeatCredentialRequest) (SeatCredentialResult, error) {
 	offer, err := s.readRematch(ctx, request.RematchID)
 	if err != nil {
@@ -1870,11 +2177,19 @@ func (s *Service) RematchSeatCredential(ctx context.Context, request RematchSeat
 // accepted any more is filtered out of the answer, so a dead offer is never
 // published as the live offer of the match.
 //
+// A dead offer is an offer whose deadline passed and an offer of a removed
+// participant. Neither of them can be accepted, so neither of them is
+// published. A published offer is therefore an offer the opponent can still
+// accept, and the proposer of it still reads it to observe its acceptance.
+//
 // A read that retired the offer instead would write the personal row of a
 // removed subject from a `GET` route, without the account scope lock that
 // orders every other write of the surface against the removal. The offer
 // keeps its row until the privacy sanitation of its proposer rewrites it, and
 // the acceptance of it is refused anyway.
+//
+// The read is served while the surface is closed. It creates nothing, and an
+// offer that exists was proposed while the surface was open.
 func (s *Service) PendingRematch(ctx context.Context, matchID string, participant online.ParticipantRef) (Rematch, bool, error) {
 	match, err := s.reader.GetMatch(ctx, matchID)
 	if err != nil {
@@ -1883,7 +2198,16 @@ func (s *Service) PendingRematch(ctx context.Context, matchID string, participan
 	if !match.HasParticipant(participant) {
 		return Rematch{}, false, ErrNotAuthorized
 	}
-	row := s.db.QueryRow(ctx, `SELECT `+rematchColumns+` FROM online_rematch_offers WHERE match_id=$1 AND status IN ('pending','accepting','accepted') ORDER BY created_at DESC LIMIT 1`, matchID)
+	// A pending offer whose deadline passed is dead: the acceptance of it is
+	// refused with the expiry of its deadline, and no sweep ever writes that
+	// state. The deadline is a property of the offer, exactly like the
+	// deadline of an invitation, so the read filters it the way it filters
+	// the offer of a removed participant. The row of the offer stays, and the
+	// read never writes it.
+	//
+	// An accepted offer stays published. Its acceptance already happened, and
+	// the proposer reads it to claim the seat of the new match.
+	row := s.db.QueryRow(ctx, `SELECT `+rematchColumns+` FROM online_rematch_offers WHERE match_id=$1 AND status IN ('pending','accepting','accepted') AND (status='accepted' OR expires_at > $2) ORDER BY created_at DESC LIMIT 1`, matchID, s.now())
 	offer, err := scanRematch(row)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -1957,23 +2281,36 @@ func (s *Service) acceptanceByKey(ctx context.Context, q online.Querier, invitat
 	return record, nil
 }
 
-// readInvitation loads one invitation and its named recipient.
+// invitationAccess is the private access data of one invitation.
+//
+// It is never published: it names the recipient of a challenge and it records
+// that the invitation was issued while the friend surface was open.
+type invitationAccess struct {
+	// recipient is the named recipient of a challenge. It is empty for a
+	// shareable link.
+	recipient string
+	// issuedWhileEnabled records that the invitation was issued while the
+	// friend surface was open, so a closed surface still finishes it.
+	issuedWhileEnabled bool
+}
+
+// readInvitation loads one invitation and its private access data.
 //
 // The status of the invitation is the effective status: an open invitation
 // whose deadline passed is expired, even though no sweep ever wrote that
 // state. The expiry is a property of the deadline, not of a stored row, so a
 // link nobody touched still reports that it expired.
-func (s *Service) readInvitation(ctx context.Context, invitationID string) (Invitation, string, error) {
+func (s *Service) readInvitation(ctx context.Context, invitationID string) (Invitation, invitationAccess, error) {
 	if strings.TrimSpace(invitationID) == "" {
-		return Invitation{}, "", ErrInvalidArgument
+		return Invitation{}, invitationAccess{}, ErrInvalidArgument
 	}
-	row := s.db.QueryRow(ctx, `SELECT invitation_id,kind,status,inviter_public_label,inviter_seat,inviter_control_kind,inviter_model_label,starting_time_ms,increment_ms,starting_fen,recipient_account_id,expires_at,created_at,consumed_at,cancelled_at,match_id,inviter_kind,inviter_id,acceptance_id FROM online_friend_invitations WHERE invitation_id=$1`, invitationID)
-	invitation, recipient, err := scanInvitation(row)
+	row := s.db.QueryRow(ctx, `SELECT invitation_id,kind,status,inviter_public_label,inviter_seat,inviter_control_kind,inviter_model_label,starting_time_ms,increment_ms,starting_fen,recipient_account_id,expires_at,created_at,consumed_at,cancelled_at,match_id,inviter_kind,inviter_id,acceptance_id,issued_while_enabled FROM online_friend_invitations WHERE invitation_id=$1`, invitationID)
+	invitation, recipient, issued, err := scanInvitation(row)
 	if err != nil {
-		return Invitation{}, "", err
+		return Invitation{}, invitationAccess{}, err
 	}
 	invitation.Status = s.effectiveStatus(invitation.Status, invitation.ExpiresAt)
-	return invitation, recipient, nil
+	return invitation, invitationAccess{recipient: recipient, issuedWhileEnabled: issued}, nil
 }
 
 // effectiveStatus returns the status an invitation has right now.
@@ -1991,7 +2328,11 @@ func (s *Service) effectiveStatus(status Status, expiresAt time.Time) Status {
 }
 
 // scanInvitation reads one invitation row.
-func scanInvitation(row pgx.Row) (Invitation, string, error) {
+//
+// The named recipient and the issued enablement of the invitation are
+// returned beside the public view: they are private access data and they
+// never reach an answer.
+func scanInvitation(row pgx.Row) (Invitation, string, bool, error) {
 	var (
 		invitation  Invitation
 		kind        string
@@ -2003,16 +2344,17 @@ func scanInvitation(row pgx.Row) (Invitation, string, error) {
 		recipient   *string
 		matchID     *string
 		acceptance  *string
+		issued      bool
 	)
 	err := row.Scan(&invitation.InvitationID, &kind, &status, &invitation.InviterLabel, &seat, &controlKind, &modelLabel,
 		&invitation.TimeControl.StartingTimeMs, &invitation.TimeControl.IncrementMs, &startingFEN, &recipient,
 		&invitation.ExpiresAt, &invitation.CreatedAt, &invitation.ConsumedAt, &invitation.CancelledAt, &matchID,
-		&invitation.inviterKind, &invitation.inviterID, &acceptance)
+		&invitation.inviterKind, &invitation.inviterID, &acceptance, &issued)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Invitation{}, "", ErrNotFound
+			return Invitation{}, "", false, ErrNotFound
 		}
-		return Invitation{}, "", err
+		return Invitation{}, "", false, err
 	}
 	invitation.Kind = Kind(kind)
 	invitation.Status = Status(status)
@@ -2029,7 +2371,7 @@ func scanInvitation(row pgx.Row) (Invitation, string, error) {
 	if recipient != nil {
 		name = *recipient
 	}
-	return invitation, name, nil
+	return invitation, name, issued, nil
 }
 
 // scanRematch reads one rematch offer row.
@@ -2086,6 +2428,23 @@ func (s *Service) lockRematch(ctx context.Context, tx pgx.Tx, rematchID string) 
 	return scanRematch(row)
 }
 
+// OwnsInvitation reports whether the caller owns the invitation.
+//
+// It is a read-only proof of the ownership. It changes nothing, it opens no
+// transaction and it answers no state of the invitation: the caller learns
+// whether it owns the invitation and nothing else.
+//
+// The owner token authorizes the owner alone, and the authenticated inviter
+// authorizes itself. The proof never fails open: a lookup that cannot answer
+// is answered false, so a caller that cannot prove the ownership is refused
+// like a caller that owns nothing.
+func (s *Service) OwnsInvitation(ctx context.Context, invitationID, ownerToken string, owner *Identity) bool {
+	if strings.TrimSpace(invitationID) == "" {
+		return false
+	}
+	return s.ownsInvitation(ctx, invitationID, ownerToken, owner)
+}
+
 // ownsInvitation reports whether the caller owns the invitation.
 func (s *Service) ownsInvitation(ctx context.Context, invitationID, ownerToken string, canceller *Identity) bool {
 	if ownerToken != "" {
@@ -2108,6 +2467,30 @@ func (s *Service) ownsInvitation(ctx context.Context, invitationID, ownerToken s
 		}
 	}
 	return false
+}
+
+// visibleTo reports whether the caller may learn that the invitation exists.
+//
+// A shareable link is public: everybody who holds the link may read it, so
+// the visibility of a link is always granted.
+//
+// A named challenge is private. Only its named recipient and its inviter may
+// learn that it exists. The named recipient is the account the challenge
+// names, and the inviter proves the ownership with the owner token of the
+// invitation or with its own authenticated identity.
+//
+// The proof never fails open. A caller that cannot prove the visibility of a
+// challenge is refused exactly like a caller that named an invitation that
+// was never issued, so the existence and the status of a challenge stay
+// private.
+func (s *Service) visibleTo(ctx context.Context, invitationID string, access invitationAccess, ownerToken string, viewer *Identity) bool {
+	if access.recipient == "" {
+		return true
+	}
+	if viewer != nil && viewer.Participant.Kind == online.ParticipantAccount && viewer.Participant.ID == access.recipient {
+		return true
+	}
+	return s.ownsInvitation(ctx, invitationID, ownerToken, viewer)
 }
 
 // seatOf returns the seat a participant holds in a match.
@@ -2144,6 +2527,27 @@ func rematchSeats(match online.Match, offer Rematch) (online.CreateSeat, online.
 	newWhite := online.CreateSeat{Participant: black.Participant, PublicLabel: black.PublicLabel, Control: black.Control}
 	newBlack := online.CreateSeat{Participant: white.Participant, PublicLabel: white.PublicLabel, Control: white.Control}
 	return newWhite, newBlack, nil
+}
+
+// validateRematchSetup checks that the setup of a finished match can be
+// carried into a friend rematch.
+//
+// A friend game seats a human or the owner of its own agent. There is no
+// built-in engine seat in friend play, so a match that holds one (a queue
+// fallback match plays its owner against the browser Stockfish) cannot be
+// rematched as a friend game: the engine participant has no friend consent
+// path and no engine seat client, so an offer that named it could never be
+// completed by a second consent.
+//
+// The refusal is the contract error of the friend surface, so the browser
+// reads it as a request it cannot make.
+func validateRematchSetup(match online.Match) error {
+	for _, seat := range match.Seats {
+		if err := validateSeatControl(seat.Control); err != nil {
+			return fmt.Errorf("%w: the finished match carries a seat that a friend game cannot seat", err)
+		}
+	}
+	return nil
 }
 
 // validateTimeControl checks the clock of a friend game.

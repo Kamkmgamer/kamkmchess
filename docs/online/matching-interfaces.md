@@ -17,11 +17,19 @@ The service owns the rollout. Two independent switches, both **default off**:
 
 | Server variable | Default | Opens |
 | --- | --- | --- |
-| `ONLINE_FRIEND_ENABLED` | `false` | the friend routes (invitations, link joins, rematches) |
+| `ONLINE_FRIEND_ENABLED` | `false` | the friend surface (new invitations, new rematches) |
 | `ONLINE_QUEUE_ENABLED` | `false` | the public queue routes |
 
-A closed surface is not mounted: its routes answer `404`. The existing
-participant routes (`/v1/online/matches/...`) are unchanged and stay mounted.
+A closed friend surface stops new creations: `POST /v1/online/invitations` and
+the two rematch routes answer `503`. The friend routes stay mounted, because an
+invitation that was issued while the surface was open must still be finishable:
+the preview, the acceptance, the cancellation and the seat credential of such
+an invitation are still served. The invitation records that it was issued while
+the surface was open, and the closed surface reads that record before it serves
+a request, so the allow-while-off path never widens into an arbitrary
+invitation. A closed queue surface is not mounted: its routes answer `404`. The
+existing participant routes (`/v1/online/matches/...`) are unchanged and stay
+mounted.
 
 `KAMKM_PUBLIC_ONLINE_FRIEND_ENABLED` and `KAMKM_PUBLIC_ONLINE_QUEUE_ENABLED`
 are **presentation only**. They never open a server route.
@@ -50,13 +58,18 @@ A mutation always needs an explicit `Origin` header. A credential never
 travels in a URL, a query string or a body. The guest seat credential uses
 `X-Guest-Seat-Token`; the account session uses `Authorization: Bearer`.
 
+The **owner token** of an invitation is a private secret of the inviter. It
+travels in the dedicated header `X-Online-Owner-Token` and never in a URL, a
+query string or a body. A request that carries the header twice is refused.
+
 The friend routes accept a **guest** inviter and a **guest** invitee. A guest
 inviter receives an owner token at creation; that token is the inviter's
 recoverable ownership of the invitation and of the created match.
 
 ## Friend routes
 
-Mounted under `/v1/online/invitations/` when friend play is enabled.
+Mounted under `/v1/online/invitations/`. The routes stay mounted while the
+friend surface is closed, so an issued invitation can be finished.
 
 ### Create an invitation
 
@@ -70,13 +83,19 @@ Request body (every field is required unless stated):
 {
   "schemaVersion": 2,
   "kind": "link" | "challenge",   // default "link"
-  "recipientAccountId": "user_x",  // required for "challenge", forbidden for "link"
+  "recipientUsername": "alice",   // required for "challenge", forbidden for "link"
   "seat": "white" | "black",       // the inviter's color
   "timeControl": { "startingTimeMs": 300000, "incrementMs": 2000 },
   "startingFen": "…",              // optional; omitted means the standard position
   "control": { "kind": "human" | "agent", "modelLabel": "…" }  // the inviter's seat
 }
 ```
+
+A named challenge names the **public name** of the recipient. The public
+profile of an account is the only place a public name lives, so the request
+carries a public identity and never an authentication identifier. The service
+resolves the name to the account itself, and the account subject never reaches
+an answer. A request that names an account subject is refused.
 
 Answer `201`:
 
@@ -107,8 +126,9 @@ Answer `201`:
 to a log line, and it is not a credential.
 
 `ownerToken` authorizes the inviter's later actions on this invitation
-(cancel, seat credential). It is returned once and is never stored by the
-service in readable form.
+(preview, cancel, seat credential). It is returned once, it travels in the
+`X-Online-Owner-Token` header, and it is never stored by the service in
+readable form.
 
 An **anonymous guest** inviter is a fresh opaque identity, and the service
 never tracks people. The service therefore cannot tell that the same human
@@ -156,8 +176,12 @@ inviter name or `Guest`, the inviter's seat, the clock and the custom board
 when there is one. It never shows a pairing, a seat of the invitee, a
 credential or an owner token.
 
-A `challenge` invitation is visible **only** to its recipient account. Any
-other caller receives `404`.
+A `challenge` invitation is visible **only** to its recipient account and to
+its inviter. The inviter proves the ownership with the owner token of the
+invitation, which travels in the `X-Online-Owner-Token` header, so the
+inviter learns that its challenge was consumed without publishing the
+challenge. Any other caller receives `404`, so the status of a challenge is
+never public.
 
 The status of the preview is the *effective* status. An invitation whose
 twelve hour deadline passed reads as `expired` even though no sweep ever
@@ -335,10 +359,16 @@ the acceptance key stays the whole capability of a guest acceptance.
 POST /v1/online/invitations/{invitationId}/cancel
 ```
 
-Authorized by the `ownerToken` (body `{"schemaVersion": 2, "ownerToken": "…"}`)
-or by the account session of the inviter. Answer `200` with the invitation.
-A cancelled invitation can never be consumed. An invitation whose deadline
-passed answers `410` with the code `expired`.
+Authorized by the `ownerToken` in the `X-Online-Owner-Token` header or by the
+account session of the inviter. The body carries no secret. Answer `200` with
+the invitation. A cancelled invitation can never be consumed. An invitation
+whose deadline passed answers `410` with the code `expired`.
+
+A `challenge` that is not visible to the caller answers exactly like an
+unknown invitation: `404` with the code `not_found`. The visibility of the
+caller is checked before the state of the invitation, so the status of a
+challenge, its public view and its conflicts never reach a caller that may not
+see it.
 
 ### Claim the inviter's seat credential
 
@@ -346,7 +376,8 @@ passed answers `410` with the code `expired`.
 POST /v1/online/invitations/{invitationId}/seat-credential
 ```
 
-Body `{"schemaVersion": 2, "ownerToken": "…"}`. Answer `200`:
+Body `{"schemaVersion": 2}`. The owner token travels in the
+`X-Online-Owner-Token` header. Answer `200`:
 
 ```jsonc
 {
@@ -363,6 +394,11 @@ the match exists. The call supersedes an earlier credential for the same
 seat, so it is safe to call again after a lost answer and must not be called
 while a working credential is held. An account inviter receives `null` for
 `guestCredential`.
+
+A `challenge` that is not visible to the caller answers exactly like an
+unknown invitation: `404` with the code `not_found`. The visibility of the
+caller is checked before the state of the invitation, so the status of a
+challenge never reaches a caller that may not see it.
 
 ### Rematches
 
@@ -596,7 +632,6 @@ explicitly". An expired entry is never revived: the owner creates a new entry.
 | --- | --- | --- |
 | `src/online/friends.ts` | matching | typed invitation and rematch client plus the domain rules |
 | `src/online/queue.ts` | queue worker | typed queue client plus the queue domain rules |
-| `src/online/queue-client.ts` | workspace | HTTP adapter for the queue routes |
 | `src/online/match-client.ts` | workspace | participant command client |
 
 `src/online/friends.ts` is written and committed. It exports the route

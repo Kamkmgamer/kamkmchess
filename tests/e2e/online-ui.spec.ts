@@ -14,49 +14,43 @@
 // else fails the run instead of silently testing a different service.
 //
 // Strictness:
-//   - no descriptor at all: the run had no fixture, so it skips;
+//   - no descriptor at all: the run had no fixture, so it skips. The skip
+//     says in the report that the run proved no online fixture coverage;
 //   - a descriptor and a mismatch between the build and the fixture, a
-//     closed surface, a missing route or a missing field: the run fails.
+//     closed surface, a missing route or a missing field: the run fails;
+//   - a descriptor the caller supplied that cannot be read or that has
+//     another shape: the run fails. An unusable descriptor is a broken run,
+//     not an absent fixture.
 // Set ONLINE_FIXTURE_STRICT=1 to make a missing descriptor fail as well.
 
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { openOnlineFixtureGate } from '../support/online-fixture-descriptor';
+import type { OnlineFixtureDescriptor } from '../support/online-fixture-descriptor';
 
-type Descriptor = {
-  baseUrl: string;
-  issuer: string;
-  allowedOrigins: string[];
-  accounts: { id: string; token: string }[];
-  keyPath: string;
-};
-
-const descriptorPath = process.env.ONLINE_FIXTURE_DESCRIPTOR ?? '';
-const strict = process.env.ONLINE_FIXTURE_STRICT === '1';
-
-let descriptor: Descriptor | null = null;
-
-async function loadDescriptor(): Promise<Descriptor | null> {
-  if (descriptor) return descriptor;
-  if (!descriptorPath) return null;
-  descriptor = JSON.parse(await readFile(descriptorPath, 'utf8')) as Descriptor;
-  return descriptor;
-}
+let descriptor: OnlineFixtureDescriptor | null = null;
 
 test.beforeAll(async () => {
-  const loaded = await loadDescriptor();
-  if (!loaded) {
-    // The run needs the real online service. A missing descriptor is a
-    // failure of the run, not a silent pass.
-    const message = 'no online fixture descriptor: the rendered online cases need the real service';
-    if (strict) throw new Error(message);
-    throw new Error(message);
+  const gate = await openOnlineFixtureGate({
+    reason: 'the rendered online cases need the real service',
+  });
+  if (gate.action === 'fail') {
+    // A missing descriptor fails a strict run, and a descriptor the caller
+    // supplied that cannot be used fails every run.
+    throw new Error(gate.message);
   }
+  if (gate.action === 'skip') {
+    // The run had no fixture. The cases skip and the reason of the skip is
+    // printed, so the report never reads as online fixture coverage.
+    console.log(`[online-fixture] tests/e2e/online-ui.spec.ts: ${gate.message}`);
+    test.skip(true, gate.message);
+    return;
+  }
+  descriptor = gate.descriptor;
 });
 
 test('a guest opens the published invitation link and previews the exact invitation', async ({ page }) => {
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   // The inviter creates a link.
   const inviter = await page.context().newPage();
   await inviter.goto('/play?online=1');
@@ -78,8 +72,7 @@ test('a guest opens the published invitation link and previews the exact invitat
 });
 
 test('a guest creates a friend link and the other guest joins the game', async ({ browser }) => {
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   const inviter = await browser.newContext();
   const invitee = await browser.newContext();
   const inviterPage = await inviter.newPage();
@@ -151,8 +144,7 @@ test('the review cursor holds an earlier position while the live game moves on',
   // The review cursor is the position the owner looks at. A live update must
   // never throw the owner back to the live end, and the live button restores
   // the latest position.
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   const inviter = await browser.newContext();
   const invitee = await browser.newContext();
   const inviterPage = await inviter.newPage();
@@ -202,8 +194,7 @@ test('the review cursor holds an earlier position while the live game moves on',
 });
 
 test('the first move and the opening reply are playable in the real service', async ({ browser }) => {
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   const inviter = await browser.newContext();
   const invitee = await browser.newContext();
   const inviterPage = await inviter.newPage();
@@ -251,8 +242,7 @@ test('the first move and the opening reply are playable in the real service', as
 });
 
 test('the queue asks a signed-out browser to sign in and keeps friend play', async ({ page }) => {
-  const loaded = await loadDescriptor();
-  expect(loaded).not.toBeNull();
+  expect(descriptor).not.toBeNull();
   await page.goto('/play?online=1');
   await page.getByRole('button', { name: 'Online play' }).click();
   await page.getByRole('button', { name: 'New play' }).click();

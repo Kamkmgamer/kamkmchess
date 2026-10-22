@@ -145,6 +145,42 @@ play.
 - The epoch of a recovery is completed when the canonical state was
   published, so the durable gate opens again for every instance.
 
+## The operator path of a planned interruption
+
+A planned restart is an interruption that an operator announced before the
+service stopped. The announcement is a durable boundary, so the interval of
+the interruption is known exactly and the service never has to infer it from
+a stale liveness record.
+
+The path has three steps, and each of them is a decision of the operator:
+
+- **plan** persists the planned boundary. The boundary is written under the
+  exclusive gate lock, so the mutations that were already running commit
+  first and every later mutation sees the closed gate. The plan is
+  idempotent: the pending boundary of the service is reused, so one planned
+  restart is one boundary and the clock of the unfinished matches is refunded
+  once. The identity of a plan of an administrator is derived from the epoch
+  of the current service, and a plan that follows an applied or an aborted
+  boundary of the same epoch takes an identity of its own, so the earlier
+  boundary never answers a new plan.
+- **recover** applies the planned boundary. The recovery is the canonical
+  one: it opens a new service epoch, refunds the announced interval to the
+  unfinished matches, publishes the adjusted state and completes the epoch,
+  so the durable gate opens again. The liveness of the service is refreshed
+  before the canonical state is published, so the boot that follows does not
+  infer a second interruption out of the downtime that was already refunded.
+- **abort** cancels a plan that will not happen. The boundary is marked as
+  aborted under the exclusive gate lock, so the durable gate opens again and
+  no clock is refunded, because no interruption took place. The row of the
+  plan stays the evidence that the plan existed. An aborted boundary is never
+  applied, and an applied boundary is never aborted: the refund of an applied
+  boundary is the published canonical state of the matches.
+
+The path is private. There is no public route that plans an interruption,
+because an unauthenticated caller could close the gate of the whole service.
+The operator reaches it through the `khasuspend` command, which reads the
+database url only from the environment variable that the operator names.
+
 ## The dependency interruption without a restart
 
 The rules dependency is probed by the service itself. A failed probe records

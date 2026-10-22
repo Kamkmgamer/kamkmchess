@@ -7,6 +7,12 @@
 // provider, never prints a connection string or a passphrase, and never applies
 // a restore or a rotation without an explicit --apply.
 //
+// The rotation of the managed directory keeps the seven newest daily and the
+// four newest weekly bundles and retires every ordinary bundle that passed
+// the maximum age of thirty days. It never deletes a protected bundle: a
+// bundle it may not delete leaves the retention unresolved, and the rotation
+// then fails instead of reporting a success it cannot prove.
+//
 // Usage:
 //
 //	khabackup create  --out FILE (--class daily|weekly) --database-url-env NAME --passphrase-env NAME [--pg-dump PATH]
@@ -95,6 +101,13 @@ directory. A recovery that is given the evidence of a restore does not need the
 bundle of the restore, and the bundle is only read when there is no evidence
 at all.
 When both are named, the evidence wins and the bundle is not read.
+
+The rotation keeps the seven newest daily and the four newest weekly bundles
+and retires every ordinary bundle that passed the maximum age of thirty days.
+A bundle the rotation may not delete - a protected one, one without a creation
+time, one dated after the reference time, or one whose manifest cannot be read
+- leaves the retention of the directory unresolved, and the rotation exits with
+a failure while such a bundle remains.
 
 Secrets are read only from the environment variable named by --passphrase-env
 and --database-url-env. Nothing is provisioned and no network service is used.`))
@@ -665,6 +678,26 @@ func restoreCommand(ctx context.Context, arguments []string) error {
 	})
 }
 
+// nowUTC is the clock of the tool.
+//
+// The rotation decides the age of a bundle against this clock, so the tests
+// pin it: the age of a bundle is then decided by a fixed reference time and
+// not by the moment the test happens to run.
+var nowUTC = func() time.Time { return time.Now().UTC() }
+
+// rotateCommand plans and applies the rotation of the managed directory.
+//
+// The rotation keeps the seven newest daily and the four newest weekly
+// bundles and retires every ordinary bundle that passed the maximum age of
+// thirty days. A bundle that the rotation may not delete - a protected one, a
+// one without a creation time, a one dated after the reference time, or a one
+// whose manifest cannot be read - leaves an open retention obligation, and
+// the rotation refuses to report success while such a bundle remains.
+//
+// The directory of the durable restore evidence is not part of the rotation:
+// the evidence is a directory of the managed directory and the rotation never
+// descends into a subdirectory, so the evidence of a restore is never a
+// candidate and is never retired by the age rule.
 func rotateCommand(arguments []string) error {
 	options, err := parseFlags("rotate", arguments, nil)
 	if err != nil {
@@ -707,10 +740,23 @@ func rotateCommand(arguments []string) error {
 		})
 	}
 	policy := backup.RetentionPolicy{Daily: options.daily, Weekly: options.weekly}
-	plan, err := backup.PlanRotation(candidates, time.Now().UTC(), policy)
+	plan, err := backup.PlanRotation(candidates, nowUTC(), policy)
 	if err != nil {
 		return err
 	}
+	// A file whose manifest cannot be read cannot be dated, so its age
+	// cannot be proven. It is never deleted and never ignored: the rotation
+	// reports it as unresolved so the run that owns the directory cannot
+	// claim that the retention of the directory is settled.
+	for _, name := range unreadable {
+		plan.Unresolved = append(plan.Unresolved, backup.Disposition{
+			Path:   filepath.Join(options.directory, name),
+			Label:  name,
+			Action: "unresolved",
+			Reason: "the manifest of the bundle cannot be read, so the age of the bundle cannot be proven",
+		})
+	}
+	sortDispositionsByPath(plan.Unresolved)
 	deleted := []string{}
 	if options.apply {
 		for _, item := range plan.Prune {
@@ -725,19 +771,24 @@ func rotateCommand(arguments []string) error {
 		"command":       "rotate",
 		"applied":       options.apply,
 		"policy":        plan.Policy,
+		"maxAgeDays":    plan.MaxAgeDays,
 		"keep":          plan.Keep,
 		"prune":         plan.Prune,
 		"prunableBytes": plan.PrunableBytes,
 		"deleted":       deleted,
 		"unreadable":    unreadable,
+		"unresolved":    plan.Unresolved,
 	}
-	return emit(options.asJSON, report, func() {
-		fmt.Printf("retention: %d daily, %d weekly\n", plan.Policy.Daily, plan.Policy.Weekly)
+	if err := emit(options.asJSON, report, func() {
+		fmt.Printf("retention: %d daily, %d weekly, maximum age %d days\n", plan.Policy.Daily, plan.Policy.Weekly, plan.MaxAgeDays)
 		for _, item := range plan.Keep {
 			fmt.Printf("  keep  %-18s %s\n", item.Label, item.Reason)
 		}
 		for _, item := range plan.Prune {
 			fmt.Printf("  prune %-18s %s\n", item.Label, item.Reason)
+		}
+		for _, item := range plan.Unresolved {
+			fmt.Printf("  unresolved %-18s %s\n", item.Label, item.Reason)
 		}
 		for _, name := range unreadable {
 			fmt.Printf("  unreadable %s (not planned, not deleted)\n", name)
@@ -747,6 +798,34 @@ func rotateCommand(arguments []string) error {
 		} else {
 			fmt.Println("plan only: nothing was deleted. Re-run with --apply to prune.")
 		}
+		if len(plan.Unresolved) > 0 {
+			fmt.Printf("retention is unresolved: %d bundle(s) could not be retired within the maximum age of %d days\n", len(plan.Unresolved), plan.MaxAgeDays)
+		}
+	}); err != nil {
+		return err
+	}
+	if len(plan.Unresolved) > 0 {
+		return fmt.Errorf("%w: %d bundle(s) in %s could not be retired within the maximum age of %d days: %s",
+			backup.ErrRetentionUnresolved, len(plan.Unresolved), options.directory, plan.MaxAgeDays,
+			strings.Join(unresolvedLabels(plan.Unresolved), ", "))
+	}
+	return nil
+}
+
+// unresolvedLabels names the bundles whose retention is unresolved.
+func unresolvedLabels(items []backup.Disposition) []string {
+	labels := make([]string, 0, len(items))
+	for _, item := range items {
+		labels = append(labels, item.Label)
+	}
+	return labels
+}
+
+// sortDispositionsByPath orders the unresolved entries by their path, so the
+// report of a run does not depend on the order of the directory.
+func sortDispositionsByPath(items []backup.Disposition) {
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].Path < items[j].Path
 	})
 }
 

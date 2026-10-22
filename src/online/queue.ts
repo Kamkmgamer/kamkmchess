@@ -5,9 +5,11 @@
  * for one game: the entry is consumed once, it produces exactly one game,
  * and completing a game never queues another one.
  *
- * This module owns the wire contract of the queue routes and the domain
- * rules of an entry. It owns no transport: `src/online/queue-client.ts` is
- * the HTTP adapter, and the workspace composes the two.
+ * This module owns the wire contract of the queue routes, the domain rules
+ * of an entry and the typed queue client. It owns no transport of its own:
+ * the requester of the client is injected, so the module owns no credential
+ * and no URL. The workspace composes the client with its own request
+ * boundary and never declares a second queue client.
  *
  * The rules the module keeps:
  *
@@ -285,17 +287,21 @@ export function isSearchingEntry(entry: QueueEntry): boolean {
  *
  * The wire status is still waiting: the fallback is not committed until the
  * browser reports a ready engine.
+ *
+ * The instant is a parameter, so a caller that reads the phase of an entry
+ * decides which instant it reads. A caller that does not pass one reads the
+ * wall clock of the browser.
  */
-export function isPendingFallbackEntry(entry: QueueEntry): boolean {
-  return isSearchingEntry(entry) && entry.cutoffAt !== null && Date.now() >= Date.parse(entry.cutoffAt);
+export function isPendingFallbackEntry(entry: QueueEntry, now: number = Date.now()): boolean {
+  return isSearchingEntry(entry) && entry.cutoffAt !== null && now >= Date.parse(entry.cutoffAt);
 }
 
 /** The phase of an entry, as the workspace reads it. */
-export function queuePhaseOf(entry: QueueEntry): QueuePhase {
+export function queuePhaseOf(entry: QueueEntry, now: number = Date.now()): QueuePhase {
   if (isAssignedEntry(entry)) return 'assigned';
   if (isCancelledEntry(entry)) return 'cancelled';
   if (isExpiredEntry(entry)) return 'expired';
-  if (isPendingFallbackEntry(entry)) return 'pending-fallback';
+  if (isPendingFallbackEntry(entry, now)) return 'pending-fallback';
   if (isSearchingEntry(entry)) return 'searching';
   return 'preparing';
 }

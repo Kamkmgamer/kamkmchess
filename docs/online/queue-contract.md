@@ -124,9 +124,25 @@ keeps its entry; a frozen or disconnected entry loses the lease, expires and
 needs an explicit rejoin. A heartbeat that arrives after the lease died is
 refused: only the explicit rejoin revives an entry.
 
+`cancel` removes a waiting entry without creating a game. An **expired**
+entry is refused with a `409`: it already left the eligibility, so there is
+no search left to cancel, and the expiry is cleared only by the explicit
+rejoin. The refusal is the same one the heartbeat and the kept search of an
+expired entry answer, so the browser reads one rule for an expired entry and
+never a failure of the service.
+
 `keep-searching` removes the automatic cutoff (`cutoffAt: null`). The entry
 then waits until it is matched, cancelled or expired, and it never falls back
 to the browser engine on its own again.
+
+A kept search is a **live** search. An entry whose cutoff was already reached
+and that waits for the engine fallback returns to the eligibility, so a
+candidate that arrives later matches it again. The cutoff stays removed and
+the original cutoff never moves.
+
+The kept search needs a **live readiness lease**. A kept search never revives
+a dead lease: an entry whose lease died is refused with a `409` and needs the
+explicit rejoin, exactly like a late heartbeat.
 
 `match` asks the service to pair the entry with a compatible ready entry. The
 service owns the compatibility rule. A `404` means "no candidate right now",
@@ -161,6 +177,37 @@ The engine seat has the public label `Stockfish 19 Lite` and the canonical
 model label `Stockfish 19 Lite (browser)`. The two are the canonical
 resolution of the shared schema, so the answer, the seat and the public
 replay name the engine the same way.
+
+**The deadline selects the opponent.** The browser engine may only take the
+seat of an entry whose search window has ended, that is, whose original
+cutoff the service has reached. A `fallback` that arrives before the cutoff
+is refused with a `409`, and it never produces a game and never issues a
+credential. A `fallback` that finds a compatible candidate is *not* refused:
+the pairing of two owners is never delayed by the deadline rule, and the
+candidate wins over the engine. The retry of a committed fallback answers the
+committed assignment, exactly like before.
+
+**A dropped candidate never hands the seat to the engine.** The service
+selects the oldest compatible ready entry and checks that candidate again
+after it waited for the account scope lock of its owner. A candidate whose
+readiness lease died during that wait is never consumed. The service then
+scans again at the decision time, so a later candidate that is ready by the
+original cutoff is still eligible and still wins over the engine.
+
+The service does not pair that later candidate inside the same decision: the
+account scope of its owner is not held, and a scope lock that is taken after
+a row lock would break the lock order of the queue. The refusal of the
+`fallback` route is a `409` conflict and not a `404`: a candidate exists, so
+the browser repeats the `fallback` instead of concluding that the queue is
+empty. The repeated `fallback` pairs the waiting candidate, and the engine
+never takes the seat. The `match` route answers the same condition with a
+`404`, because the pairing of two owners has no deadline and the browser
+simply asks again.
+
+The service is the authority of the deadline and its own clock decides it. A
+browser whose clock runs ahead of the service therefore receives the `409`
+and has to ask again; the answer of the service never depends on a client
+timestamp.
 
 ### The entry state on the wire
 
@@ -197,7 +244,42 @@ expired entry is never revived: the owner rejoins explicitly.
 - A candidate that becomes ready exactly at the cutoff wins over the engine.
   A candidate that becomes ready after the cutoff does not.
 - The engine fallback is committed only after the browser reports a ready
-  engine and after the final candidate recheck.
+  engine, after the final candidate recheck and after the search window of
+  the entry has ended. A fallback before the cutoff is refused.
+- A candidate that is dropped after it was selected is never consumed, and it
+  never hands the seat of the entry to the engine. The service scans again at
+  the decision time, so a candidate that is still eligible by the original
+  cutoff wins over the engine. The `fallback` route answers that refusal with
+  a `409` conflict, and the browser repeats the request; the `match` route
+  answers it with a `404`, because it has no engine to protect.
+- The service owns the deadline and the decision time. The decision samples
+  its time **after** the locks it waits for, so a readiness lease that died
+  while the decision waited is a dead lease, and a cutoff that passed while
+  the decision waited is a passed cutoff. The final candidate check uses that
+  decision time and the original cutoff of the entry.
+- The creation of an entry is one of those decisions. It samples its time
+  after the bucket lock and the account scope lock it waits for, so an entry
+  that waited for them receives the full search window and the full readiness
+  lease from the instant it commits, and it is never expired when it is
+  created.
+- The sweep of the unresponsive entries is one of those decisions too. It
+  re-reads the row of the entry under the bucket lock and expires it only when
+  its current lease is still due, so a lease that a heartbeat renewed while
+  the sweep waited keeps the entry eligible. The sweep counts only the
+  entries it really expired.
+- The decision reads the row of the entry again under the bucket lock, and
+  the first scan of the candidates uses the bound of that row. Every queue
+  write takes the bucket lock before it writes the row, so the row that the
+  decision reads under the lock is the authoritative one: a kept search or a
+  re-armed window that committed while the decision waited for the bucket
+  lock is part of the decision, and the pairing is not delayed to a later
+  poll of the browser.
+- The reconciliation loop records the pending engine fallback in the
+  transaction of its own decision, under the bucket lock. The pending record
+  and the browser engine share one deadline guard: the pending record is
+  only written when the original cutoff of the entry has been reached. A
+  kept search that won the interval is never overwritten by a stale pass of
+  the loop.
 - A late candidate, a late engine readiness or a reconnected tab can never
   replace a committed opponent.
 - A waiting entry whose owner stops responding expires. The owner rejoins
@@ -249,6 +331,24 @@ and the seat owner in `online_seats` is immutable.
 | A routine retry of the same fallback | keeps the live credential | no credential |
 | An explicit `credentialRecovery` | rotates the credential on purpose | the new credential |
 
+**The check and the write are one decision.** The issuer reads the live
+credential of the seat *inside* the seat lock it takes to write the
+credential, so the decision to mint and the write of the credential are
+ordered against each other and against a seat revocation. A caller never
+reads the credential of a seat before it asks for one, so the read and the
+write cannot be split by a concurrent issuance.
+
+Two tabs of one owner are allowed traffic: both observe the same entry and
+both may commit the browser engine fallback of it. The routine fallback of the
+second tab therefore finds the live credential of the first one, mints
+nothing, revokes nothing, and answers with the assignment and without a
+secret. The secret the first tab holds keeps working, and the seat never
+carries two live secrets.
+
+Only an explicit `credentialRecovery` supersedes a live credential. It is the
+recovery of an owner that lost the answer of the fallback, and it is the only
+path that revokes a secret a browser still holds.
+
 The plaintext of a credential exists only in the answer that delivered it.
 The durable receipt of an operation stores the assignment **without** the
 secret, so a repeated operation returns the same assignment and never a
@@ -263,6 +363,17 @@ move-only capability for the engine seat would be a change of the approved
 contract, so it is not invented here. The matching worker (KHA-75) and the
 runner worker (KHA-73) own that boundary; the queue keeps the engine seat a
 separate participant and never gives the account the opponent seat.
+
+**Known residual (browser coordination, not a queue defect).** The engine
+credential port of the browser reports whether the browser *holds* a secret of
+the match, not whether the service still accepts that secret. A credential
+that the service revoked out of band - the explicit recovery of another tab of
+the same owner, or the removal of the seat - therefore still counts as held,
+so the routine retry of that tab does not ask for the recovery and the browser
+keeps a secret the service refuses. The queue never rotates a live credential
+on its own, so a secret is only revoked by an explicit recovery or by the
+removal of the seat; both are the owner's own request, and the browser that
+observes the refusal has to ask for the explicit recovery again.
 
 ## Browser modules
 
@@ -297,8 +408,12 @@ const queueClient = createQueueClient(requester, {
 
 Without the port the client never rotates a credential, so a browser that
 lost the answer of a fallback stays without an engine credential until the
-owner asks for the recovery explicitly. The composition already sends an
-operation identifier for every mutation ✓.
+owner asks for the recovery explicitly. The composition sends an operation
+identifier with the cancellations, the keep-searching, the pairing and the
+fallback that commits the browser engine. The creation, the rejoin, the
+heartbeat and the fallback that only rotates a lost credential are sent
+without one: the creation is idempotent by its `clientRequestId`, and the
+other calls are idempotent by state already.
 
 ## Composition notes for the integrator
 

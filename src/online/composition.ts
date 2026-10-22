@@ -22,9 +22,14 @@
  *   local storage until the entry reaches a terminal state, so a lost
  *   acknowledgement cannot create a second entry. A second explicit game
  *   replaces the intent with a new identifier.
+ * - The default enter joins the entry the owner already waits with. A second
+ *   tab, a second click and a reload reach the same entry, and only an
+ *   explicit second game asks for another one.
  * - An identity change fences the state of the previous identity at once. A
  *   token refresh of the same account changes nothing: the games, the queue
- *   and the engine seats keep their authority.
+ *   and the engine seats keep their authority. The browser runners of the
+ *   previous identity stop with it, so a private provider request of an
+ *   identity that left never keeps running and never submits a move.
  * - A committed assignment is attached to the workspace and shown. The engine
  *   seat of a fallback game plays its own turns, in every attached game.
  * - A waiting entry is polled in the background, and every attached match
@@ -36,18 +41,19 @@ import { createOnlineQueueController } from './readiness';
 import type { OnlineQueueController, OnlineQueueState, OnlineQueueAssignment } from './readiness';
 import { createQueueClient, queueOperationBody, isAssignedEntry, isSearchingEntry } from './queue';
 import type { QueueAssignment, QueueClient } from './queue';
-import { createOnlineMatchCommandClient } from './match-client';
+import { createOnlineMatchCommandClient, OnlineCommandError } from './match-client';
 import type { OnlineMatchCommandClient } from './match-client';
 import { createOnlineEngineSeat } from './engine-seat';
 import type { OnlineEngineSeat, OnlineEngineSeatOptions } from './engine-seat';
 import { createOnlineAgentSeat, createAgentProviderPort, providerRunnerSnapshot } from './agent-seat';
 import type { OnlineProviderRunner, ProviderRunnerState } from './provider-runner';
+import { createLocalPendingStore } from './provider-runner';
 import { createOnlineRunnerLeaseClient } from './runner-lease';
 import { createOnlinePresenceClient } from './presence-client';
 import type { OnlinePresenceClient } from './presence-client';
 import { createFriendSurface } from './friend-routes';
 import { createFriendSecretStore } from './friend-secrets';
-import type { FriendSurface } from './friend-routes';
+import type { FriendInvitation, FriendSurface } from './friend-routes';
 import { fetchOnlineProfileHistory, fetchOnlinePublicReplay } from './history';
 import type { OnlineProfileHistory, OnlinePublicReplay } from './history';
 import {
@@ -64,26 +70,32 @@ import type { AuthorizedRequester } from './request';
 import { createGuestCredential, describeCredential } from './auth';
 import type { GuestOnlineCredential, OnlineCredential } from './auth';
 import { combineOnlineFeatureFlags, parseOnlineFeatureFlags, readLocalOptIn } from './features';
-import { ONLINE_FEATURES_DISABLED } from './features';
+import { ONLINE_FEATURES_DISABLED, ONLINE_FEATURES_PATH } from './features';
 import type { OnlineFeatureFlags } from './features';
 import { parseOnlineMatchView } from './updates';
 import { onlineSideToMove } from './turn';
 import { ONLINE_CONTRACTS_SCHEMA_VERSION } from './contracts';
 import type { OnlineMatchView } from './updates';
-import type { QueueEntry, Seat, SeatControl, TimeControl } from './contracts';
+import type { QueueEntry, Receipt, Seat, SeatControl, TimeControl } from './contracts';
 import type { OnlineAgentCheck } from './readiness';
 import type { ModelSelection } from '../controller/index.js';
 import { privateAgentId } from '../accounts/agent-catalog.js';
 import type { ConnectionNamespace, ConnectionStore } from '../providers/connections/index.js';
-
-/** The route that answers which online surfaces are open. */
-export const ONLINE_FEATURES_ROUTE = '/v1/online/features';
 
 /** The local key of the pending queue intent. */
 export const ONLINE_QUEUE_INTENT_KEY = 'kamkmchess.online.queue.intent.v1';
 
 /** The local key of the persisted seat bindings of the own agent. */
 export const ONLINE_AGENT_BINDING_KEY = 'kamkmchess.online.agent-bindings.v1';
+
+/**
+ * The state of the entry an intent names.
+ *
+ * A live intent names an entry that may still be reached. A terminal intent
+ * names an entry that produced its game or that left the queue, and it never
+ * authorizes another entry.
+ */
+type QueueIntentState = 'live' | 'terminal';
 
 /**
  * The intent of one queue entry.
@@ -100,6 +112,36 @@ interface QueueIntent {
   readonly entryId: string | null;
   readonly recordId: string;
   /**
+   * The state of the entry the intent names.
+   *
+   * A completed game keeps its intent, because the recovery of the engine
+   * seat needs it, and the intent is terminal: the key of a finished entry
+   * never reaches the service again.
+   */
+  readonly state: QueueIntentState;
+  /**
+   * True when the creation request was sent to the service.
+   *
+   * A false value means the request never left the browser: the readiness of
+   * an agent failed, so the service knows nothing about this entry. The
+   * recovery of such an intent never creates an entry, so a failed readiness
+   * never leaves a queue entry behind.
+   *
+   * A true value means the request was sent and its answer may be lost. The
+   * same key reaches the same entry, so the recovery asks again with that
+   * key instead of creating a second entry.
+   */
+  readonly sent: boolean;
+  /**
+   * True when the intent owns the shared entry of the identity.
+   *
+   * The shared entry is the entry the default enter joins: a second tab, a
+   * reload and a settings change reach it. An explicit second game owns its
+   * own entry, and the default enter never joins it, never replaces it and
+   * never cancels it.
+   */
+  readonly shared: boolean;
+  /**
    * The private selection of the agent at the moment the entry was created.
    *
    * The selection is captured before the service is asked, so a model the
@@ -115,7 +157,45 @@ interface QueueIntent {
    * game with a human opponent, never carries it.
    */
   readonly engineMatchId: string | null;
+  /**
+   * True when the entry of this intent has to be cancelled.
+   *
+   * The obligation is written when the identity changed while the creation
+   * of the entry was on the wire. The service may have accepted the entry
+   * under the identity that asked, and that entry must never wait behind the
+   * owner's back: it is recovered with the same key and cancelled when the
+   * identity returns.
+   *
+   * The obligation lives in the namespace of the identity that asked, so it is
+   * resolved by that identity and never by another one. An intent with the
+   * obligation never authorizes an entry: the default enter skips it and the
+   * claim of the shared entry never names it.
+   */
+  readonly cleanup: boolean;
 }
+
+/**
+ * The outcome of the resolution of the entry of one intent.
+ *
+ * `resolved` means the entry is over: it was cancelled, it is gone, or the
+ * game it produced ended. The intent of the entry can go.
+ *
+ * `pending` means the outcome is unknown: the entry may still wait, or the
+ * game it produced may still play. The intent keeps its obligation, so a
+ * later try resolves it instead of abandoning it.
+ */
+type IntentResolution = 'resolved' | 'pending';
+
+/**
+ * The state of one game, as the participant view of the service reports it.
+ *
+ * An absent game is over. An unknown answer leaves the outcome open, so the
+ * obligation of the intent survives it.
+ */
+type GameRead =
+  | { readonly kind: 'view'; readonly view: OnlineMatchView }
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'unknown' };
 
 /** The interval of the background poll of a waiting entry. */
 export const ONLINE_QUEUE_POLL_INTERVAL_MS = 2_000;
@@ -159,6 +239,16 @@ export interface OnlineCompositionOptions {
   readonly search?: string;
   /** The local storage seam of the queue intent. */
   readonly storage?: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+  /**
+   * The lock of the shared queue entry.
+   *
+   * The lock is held while the browser claims the shared entry, so two tabs
+   * of the same browser never claim two keys for the same entry. The default
+   * uses the lock of the browser, when it has one, and refuses the queue
+   * without it: the browser cannot share one entry between its tabs when it
+   * cannot lock them.
+   */
+  readonly queueLock?: <T>(name: string, run: () => Promise<T>) => Promise<T>;
   /** The timer seam of the background poll and the heartbeat. */
   readonly timers?: {
     readonly setTimer: (callback: () => void, delayMs: number) => unknown;
@@ -326,6 +416,44 @@ export interface OnlineComposition {
    */
   trackInvitation(invitationId: string, ownerToken: string, selection?: ModelSelection | null): void;
   /**
+   * The invitations this identity owns, with the state the service published.
+   *
+   * The list belongs to the identity that created the invitations. Another
+   * identity never sees it, and the owner token of an invitation never
+   * reaches it: the list carries the public metadata of the invitation only.
+   */
+  readonly ownedInvitations: readonly FriendInvitation[];
+  /**
+   * True when this identity owns the invitation.
+   *
+   * The answer comes from the identity scoped secret store, so a browser that
+   * signs in as another account never owns the invitation of the first one.
+   */
+  ownsInvitation(invitationId: string): boolean;
+  /**
+   * Publishes the state of an invitation this identity owns.
+   *
+   * The invitation is published only when the identity owns it, so a state
+   * of another identity never reaches the screen.
+   */
+  publishOwnedInvitation(invitation: FriendInvitation): void;
+  /**
+   * Reads the invitations this identity owns.
+   *
+   * The read uses the owner token of the identity scoped record, so the
+   * service sees the owner of the invitation and nobody else. The answer of
+   * an identity that is no longer current never reaches the current one.
+   */
+  refreshOwnedInvitations(): Promise<void>;
+  /**
+   * Cancels an invitation this identity owns.
+   *
+   * The owner token stays in the browser and travels in the private header of
+   * the surface. The record of the invitation is settled only when the
+   * service confirms a terminal state.
+   */
+  cancelOwnedInvitation(invitationId: string): Promise<FriendInvitation>;
+  /**
    * Tracks a rematch this browser proposed.
    *
    * The proposer claims the seat of the new match after the opponent accepted
@@ -347,6 +475,19 @@ export interface OnlineComposition {
    * paused or failed phase by itself.
    */
   agentDecision(matchId: string, seat: Seat, decision: 'retry' | 'switch-model' | 'takeover', choice?: string): Promise<AgentDecisionOutcome>;
+  /**
+   * Hands the seat of the owner to its agent.
+   *
+   * The transition belongs to the composition: the control change of the
+   * service, the private binding of the seat and the runner of the seat are
+   * one change. The seat never waits for the deadline of its turn with a
+   * runner that gave up, and the browser never plays the seat with a model
+   * the owner did not choose.
+   *
+   * The outcome is the outcome of the service: a refused or an unknown
+   * hand-back never reads as a seat the agent plays.
+   */
+  handSeatToAgent(matchId: string, seat: Seat): Promise<AgentDecisionOutcome>;
   /**
    * Attaches a match and shows it.
    *
@@ -426,10 +567,22 @@ function readIntents(storage: OnlineCompositionOptions['storage'], identity: str
         timeControl: timeControl as TimeControl,
         entryId: typeof record.entryId === 'string' ? record.entryId : null,
         recordId: typeof record.recordId === 'string' ? record.recordId : '',
+        // An intent of an older build carries no state: it names an entry that
+        // may still be reached.
+        state: record.state === 'terminal' ? 'terminal' : 'live',
+        // An intent of an older build carries no answer state: the request may
+        // have been sent, so the recovery asks again with the same key.
+        sent: record.sent !== false,
+        // An intent of an older build carries no role: it may be the shared
+        // entry of the owner, so the default enter still reaches it.
+        shared: record.shared !== false,
         selection: parseModelSelection(record.selection),
         // An intent of an older build carries no game: the recovery reads the
         // state of the entry first.
         engineMatchId: typeof record.engineMatchId === 'string' ? record.engineMatchId : null,
+        // An intent of an older build carries no obligation: it names an
+        // entry the owner still waits with.
+        cleanup: record.cleanup === true,
       });
     }
     return intents;
@@ -468,6 +621,198 @@ function intentSettings(control: SeatControl, timeControl: TimeControl): string 
 }
 
 /**
+ * The durable claim of the shared entry of one identity.
+ *
+ * The claim names the key of the entry the owner waits with. It lives beside
+ * the intents, so a write of the intents never drops it, and it is taken
+ * under the lock of the browser: two tabs of the same browser that enter the
+ * queue at the same moment claim one key and reach one entry.
+ */
+interface SharedClaimRecord {
+  /** The idempotency key of the claimed entry. */
+  readonly key: string;
+  /** The settings of the claimed entry. */
+  readonly settings: string;
+  /** The instant the claim was taken. */
+  readonly at: number;
+}
+
+/** The storage key of the claim of one identity. */
+function claimKey(identity: string): string {
+  return `${ONLINE_QUEUE_INTENT_KEY}:claim:${encodeURIComponent(identity)}`;
+}
+
+/** Reads the claim of one identity. */
+function readSharedClaim(storage: OnlineCompositionOptions['storage'], identity: string): SharedClaimRecord | null {
+  try {
+    const raw = storage?.getItem(claimKey(identity));
+    if (!raw) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const record = parsed as Record<string, unknown>;
+    const key = record.key;
+    if (typeof key !== 'string' || key.length < 8) return null;
+    const settings = record.settings;
+    if (typeof settings !== 'string') return null;
+    return { key, settings, at: typeof record.at === 'number' ? record.at : 0 };
+  } catch {
+    return null;
+  }
+}
+
+/** Writes the claim of one identity. */
+function writeSharedClaim(storage: OnlineCompositionOptions['storage'], identity: string, claim: SharedClaimRecord): void {
+  try {
+    storage?.setItem(claimKey(identity), JSON.stringify(claim));
+  } catch {
+    // A browser that refuses the storage keeps the claim in memory only.
+  }
+}
+
+/**
+ * Releases the claim of one identity.
+ *
+ * The claim is released when it names another key, so a claim of a terminal
+ * entry never blocks the next entry of the owner.
+ */
+function releaseSharedClaim(storage: OnlineCompositionOptions['storage'], identity: string, key: string): void {
+  try {
+    const claim = readSharedClaim(storage, identity);
+    if (claim === null || claim.key !== key) return;
+    storage?.removeItem(claimKey(identity));
+  } catch {
+    // A browser that refuses the storage keeps the claim in memory only.
+  }
+}
+
+/**
+ * Moves the claim of the shared entry to the key of a record.
+ *
+ * A settings change replaces the entry of the owner with a fresh one, and the
+ * claim follows the record: the key of the replaced entry is terminal, and a
+ * terminal key never reaches the service again. A claim of another entry is
+ * left alone, so the shared entry of another tab keeps its claim.
+ *
+ * A record without a key of its own never moves the claim: an explicit second
+ * game owns its own entry, and it never takes the shared entry of the owner
+ * away from the tabs that wait with it.
+ */
+function moveSharedClaim(
+  storage: OnlineCompositionOptions['storage'],
+  identity: string,
+  previousKey: string | null,
+  intent: QueueIntent,
+): void {
+  try {
+    if (previousKey === null) return;
+    const claim = readSharedClaim(storage, identity);
+    if (claim === null) return;
+    if (claim.key !== previousKey) return;
+    writeSharedClaim(storage, identity, { key: intent.key, settings: intent.settings, at: Date.now() });
+  } catch {
+    // A browser that refuses the storage keeps the claim in memory only.
+  }
+}
+
+/**
+ * The lock manager of the browser.
+ *
+ * The lock of the browser is held across the tabs of the same origin.
+ */
+interface BrowserLockManager {
+  request<R>(name: string, callback: () => Promise<R>): Promise<R>;
+}
+
+/**
+ * The lock of the browser, when it has one.
+ *
+ * The Web Locks API is the lock of the origin, so every tab of the browser
+ * waits for the lock of the other tabs.
+ */
+function browserLockManager(): BrowserLockManager | null {
+  const scope = globalThis as unknown as { navigator?: { locks?: BrowserLockManager } };
+  return scope.navigator?.locks ?? null;
+}
+
+/**
+ * The queue cannot take the lock of the shared entry.
+ *
+ * The browser cannot serialize the tabs of the origin, so the claim of the
+ * shared entry cannot be taken safely. The queue fails closed with this
+ * error, instead of racing the other tabs of the browser.
+ */
+export class OnlineQueueLockUnavailableError extends Error {
+  constructor(
+    message = 'This browser cannot share one queue entry between its tabs. Use a browser with the Web Locks API.',
+  ) {
+    super(message);
+    this.name = 'OnlineQueueLockUnavailableError';
+  }
+}
+
+/**
+ * The identity changed while the queue entry was created.
+ *
+ * The entry may exist under the identity that asked for it, so the browser
+ * keeps a durable obligation to cancel it in the namespace of that identity.
+ * The enter that started the work reports this failure instead of pretending
+ * that the entry was created.
+ */
+export class OnlineQueueIdentityChangedError extends Error {
+  constructor(
+    message = 'The account changed before the queue entry was created. The entry is cancelled when the account returns.',
+  ) {
+    super(message);
+    this.name = 'OnlineQueueIdentityChangedError';
+  }
+}
+
+/**
+ * The entry of a deliberate selection change could not be resolved.
+ *
+ * The owner asked for a new entry, and the entry of the old settings won the
+ * race against its cancellation: it produced exactly one game. The game is
+ * cancelled through the participant command route, and no second entry is
+ * created while that cancellation is unconfirmed, so the owner never ends up
+ * with two eligible shared entries and the assignment is never abandoned.
+ *
+ * The obligation of the replaced entry survives the failure, so a later try
+ * resolves the game instead of starting a second search.
+ */
+export class OnlineQueueUnresolvedEntryError extends Error {
+  constructor(
+    message = 'The previous queue entry could not be cancelled, so no new entry was created. Try again.',
+  ) {
+    super(message);
+    this.name = 'OnlineQueueUnresolvedEntryError';
+  }
+}
+
+/**
+ * The default lock of the shared queue entry.
+ *
+ * The lock of the origin is held across the tabs of the same browser, so two
+ * tabs that enter the queue at the same moment claim one key and reach one
+ * entry.
+ *
+ * A runtime without the lock of the origin cannot serialize its tabs. The
+ * claim of the shared entry is a read-modify-write of the storage, and two
+ * tabs would interleave it and mint two keys for the same logical entry -
+ * two entries, two games and two consents where the owner asked for one.
+ *
+ * There is no sound fallback for that write: the storage of the browser has
+ * no compare-and-swap, so a lock that is not held by the origin cannot make
+ * the claim atomic. The queue therefore fails closed with an actionable error
+ * wherever the lock of the origin is missing, instead of racing the other
+ * tabs of the browser.
+ */
+async function defaultQueueLock<T>(name: string, run: () => Promise<T>): Promise<T> {
+  const manager = browserLockManager();
+  if (manager === null) throw new OnlineQueueLockUnavailableError();
+  return manager.request(name, run);
+}
+
+/**
  * The idempotency key of one queue operation.
  *
  * The same operation of the same entry always carries the same key, so a
@@ -475,6 +820,18 @@ function intentSettings(control: SeatControl, timeControl: TimeControl): string 
  */
 function operationId(kind: string, entryId: string): string {
   return `${kind}-${entryId}`.replace(/[^A-Za-z0-9_-]/g, '-');
+}
+
+/**
+ * The idempotency key of the cancellation of an assigned game.
+ *
+ * The key is stable: the same intent always cancels its game with the same
+ * key, so a retry of the cancellation answers with the same receipt instead
+ * of acting twice. One entry produces exactly one game, so the key of the
+ * intent names that game and nothing else.
+ */
+function matchCancelOperationId(intentKey: string): string {
+  return `cancel-${intentKey}`.replace(/[^A-Za-z0-9_-]/g, '-').slice(0, 64);
 }
 
 /**
@@ -490,11 +847,48 @@ function isDefinitiveRefusal(error: unknown): boolean {
   return status >= 400 && status < 500;
 }
 
+/**
+ * True when the service refused a request with a conflict.
+ *
+ * A conflict is not a final answer: it means the state of the service moved
+ * on. The queue refuses the cancellation of an assigned entry with a
+ * conflict, because the entry produced exactly one game and the game is
+ * cancelled through the participant command route, not through the queue.
+ *
+ * A conflict therefore never releases an obligation on its own: the browser
+ * reconciles the state first.
+ */
+function isConflictRefusal(error: unknown): boolean {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === 'number' && Number.isFinite(status) && status === 409;
+}
+
 function createIntentId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID().replace(/-/g, '');
   }
   return `intent${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * Mints the identity of the runner of this browser tab.
+ *
+ * The identity is opaque and unique to the tab. The service refuses a second
+ * runner of a seat that a live lease holds, so two tabs of one owner need two
+ * identities: a tab that shares the identity of another tab is taken for the
+ * holder of the lease instead of for a duplicate, and both tabs drive the
+ * seat and ask the provider a second time.
+ *
+ * The identity of a tab never changes while the tab lives, so the runner of a
+ * seat keeps the lease it took when it renews it and when it takes a new one
+ * after a loss.
+ */
+function createRunnerTabIdentity(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID().replace(/-/g, '');
+  }
+  const random = `${Math.random().toString(36)}${Math.random().toString(36)}`.replace(/[^a-z0-9]/g, '');
+  return `runner${random}`.slice(0, 40);
 }
 
 /**
@@ -573,6 +967,19 @@ function toQueueAssignment(assignment: QueueAssignment): OnlineQueueAssignment {
   };
 }
 
+/** The state of a queue entry that owns nothing. */
+function idleQueueState(): OnlineQueueState {
+  return {
+    phase: 'idle',
+    entry: null,
+    detail: '',
+    assignment: null,
+    engineState: 'idle',
+    cutoffAt: null,
+    options: [],
+  };
+}
+
 /**
  * Creates the online composition.
  *
@@ -581,6 +988,13 @@ function toQueueAssignment(assignment: QueueAssignment): OnlineQueueAssignment {
  */
 export function createOnlineComposition(options: OnlineCompositionOptions): OnlineComposition {
   const { baseUrl } = options;
+  /**
+   * The lock of the shared queue entry.
+   *
+   * The claim of the shared entry is taken under it, so the tabs of the same
+   * browser never claim two keys for the same entry.
+   */
+  const queueLock: <T>(name: string, run: () => Promise<T>) => Promise<T> = options.queueLock ?? defaultQueueLock;
   const fetcher = options.fetch;
   const storage = options.storage ?? (typeof localStorage === 'undefined' ? undefined : localStorage);
   const timers = options.timers ?? {
@@ -597,6 +1011,25 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   const engineSeats = new Map<string, OnlineEngineSeat>();
   /** The browser runners of the owner's own agent seats. */
   const agentRunners = new Map<string, OnlineProviderRunner>();
+  /**
+   * The pending record of the agent seats of this composition.
+   *
+   * The record names the provider request that may still be running. It
+   * belongs to the seat and not to one runner, so a runner that replaces
+   * another one still sees it and never asks the provider for a second answer
+   * by itself.
+   */
+  const agentPendingStore = createLocalPendingStore();
+  /**
+   * The identity of the runner of this browser tab.
+   *
+   * The lease of a seat is held by one runner, and the service refuses a
+   * second runner of a seat that a live lease holds. The identity is unique to
+   * the tab, so a duplicate tab of the owner is refused instead of being taken
+   * for the holder of the lease. It never changes while the tab lives, so the
+   * runner of a seat keeps the lease it took.
+   */
+  const runnerTabIdentity = createRunnerTabIdentity();
   /** The seats that are driven by a guest seat credential. */
   const guestSeats = new Set<string>();
   /** The identities whose seat authority was revoked. */
@@ -638,7 +1071,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    */
   interface PendingAgentDecision {
     /** The decision the owner took. */
-    readonly kind: 'switch' | 'takeover';
+    readonly kind: 'switch' | 'takeover' | 'handoff';
     /** The public label the owner declared, when the decision declared one. */
     readonly label: string | null;
     /** The private selection the owner chose, captured before the await. */
@@ -784,6 +1217,15 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
 
   /** The browser owned secrets of the friend surface. */
   const friendSecrets = createFriendSecretStore({ identity: 'guest', ...(storage ? { storage } : {}) });
+  /**
+   * The published state of the invitations this identity owns.
+   *
+   * The view is the public metadata of the invitation. The owner token stays
+   * in the secret store, so the screen never carries it.
+   */
+  const ownedInvitationViews = new Map<string, FriendInvitation>();
+  /** The published list of the owned invitations. */
+  let ownedInvitationList: readonly FriendInvitation[] = [];
   /** True when the composition finished its construction. */
   let ready = false;
 
@@ -844,8 +1286,23 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       // private bindings leave the memory. The persisted records of that
       // identity stay on the device, so the identity finds them again when it
       // returns.
-      queue.reset();
-      fenceAccountSeats();
+      //
+      // The runners of the previous identity stop at once. A runner holds a
+      // provider request that may still be on the wire and the lease of a
+      // seat: a runner that keeps working after the identity left would keep
+      // a private model request of the previous identity alive, and it could
+      // submit a move of it. The runners give their leases back with the
+      // authority that took them, so the transport of a seat stays usable
+      // until they released them.
+      const releasedRunners = fenceAgentRunners();
+      // The queue records of the previous identity leave the browser as
+      // well. A record belongs to the identity that created it: the new
+      // identity never shows the idle row of another account, and it never
+      // controls the entry of that account. The durable intents and the claim
+      // of the previous identity stay in its own namespace on the device, so
+      // that identity finds them again when it returns.
+      fenceQueueRecords();
+      fenceAccountSeats(releasedRunners);
       agentBindings.clear();
       // The decisions of the owner and the epochs they proved belong to the
       // identity that took them.
@@ -859,6 +1316,11 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       for (const [rematchId, tracked] of [...proposedRematches]) {
         if (tracked.identityKey === previousKey) proposedRematches.delete(rematchId);
       }
+      // The published invitations belong to the identity that created them.
+      // The new identity finds its own invitations again in the read that
+      // follows.
+      ownedInvitationViews.clear();
+      ownedInvitationList = [];
       restoreTrackedInvitations();
       restoreAcceptedSeats();
       restorePersistedMatches();
@@ -866,6 +1328,11 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       // the service gave them. The restoration reads the entries and never
       // creates one.
       restoreWaitingEntries();
+      // The entries the identity left behind while a creation was on the wire
+      // are resolved now. The obligation belongs to the identity that asked
+      // for them, so the cancellation runs with the credential of that
+      // identity and never with the credential of another one.
+      resolvePendingCleanups(queueIdentity(), identityGeneration);
       // The engine seats of the games of this identity need a usable
       // credential again.
       recoverEngineCredentials();
@@ -979,8 +1446,57 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     return { requester, session };
   }
 
-  /** Disposes the seat authority the previous account held. */
-  function fenceAccountSeats(): void {
+  /**
+   * Stops the browser runners of this composition.
+   *
+   * A runner holds the lease of a seat and may hold a provider request that is
+   * still on the wire. A runner that keeps working after its owner left would
+   * keep a private provider request of the previous identity alive, and it
+   * could submit a move of it. The runners are stopped at once: the pending
+   * provider request is aborted, the lease of the seat is given back with the
+   * authority that took it, and the runners leave the map, so a fenced runner
+   * is never driven again.
+   *
+   * The promise settles when every runner released its lease. The caller keeps
+   * the transport of a seat usable until it settles, so a release that is
+   * still on the wire never loses its requester.
+   */
+  function fenceAgentRunners(): Promise<void> {
+    const runners = [...agentRunners.values()];
+    agentRunners.clear();
+    if (runners.length === 0) return Promise.resolve();
+    return Promise.all(runners.map(runner => runner.dispose().catch(() => undefined)))
+      .then(() => undefined);
+  }
+
+  /**
+   * Disposes the transport of one seat after its runners released their leases.
+   *
+   * A runner gives its lease back with the authority that took it, so the
+   * transport of the seat stays usable until the runners released them. A
+   * release that could not be made never blocks the disposal of the seat.
+   */
+  async function disposeSeatTransport(
+    transport: { readonly requester: AuthorizedRequester | null; readonly session: ParticipantSession | null },
+    released: Promise<unknown>,
+  ): Promise<void> {
+    try {
+      await released;
+    } catch {
+      // A lease that could not be released never blocks the disposal.
+    }
+    transport.requester?.dispose();
+    transport.session?.dispose();
+  }
+
+  /**
+   * Disposes the seat authority the previous account held.
+   *
+   * The runners of the previous identity release their leases with the
+   * authority that took them, so the transport of a seat stays usable until
+   * the runners gave their leases back.
+   */
+  function fenceAccountSeats(released: Promise<unknown>): void {
     for (const [key, registered] of [...seats]) {
       if (registered.owner !== 'account') continue;
       // The authority of the seat is invalid at once.
@@ -991,18 +1507,53 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       const transport = detachSeatTransport(key);
       const engine = engineSeats.get(key);
       if (!engine) {
-        transport.requester?.dispose();
-        transport.session?.dispose();
+        void disposeSeatTransport(transport, released);
         continue;
       }
       engineSeats.delete(key);
       // The engine seat releases the lease of its turn with the transport it
       // used, and that transport is disposed afterwards.
-      void engine.dispose().catch(() => undefined).then(() => {
-        transport.requester?.dispose();
-        transport.session?.dispose();
-      });
+      void engine.dispose().catch(() => undefined).then(() => disposeSeatTransport(transport, released));
     }
+  }
+
+  /**
+   * Removes the queue records of the identities that are no longer current.
+   *
+   * A record belongs to the identity that created it, so the identity change
+   * takes the records of the previous identity away. The new identity never
+   * shows the idle row of another account, and it never controls the entry of
+   * that account: a cancel of a record of another identity would release the
+   * claim and the intent under the wrong namespace.
+   *
+   * The durable intents and the claim of the previous identity stay in its
+   * own namespace on the device, so that identity finds them again when it
+   * returns.
+   */
+  function fenceQueueRecords(): void {
+    const current = queueIdentity();
+    let removed = false;
+    for (const record of [...queueRecords.values()]) {
+      if (record.identity === current) continue;
+      removed = true;
+      queueRecords.delete(record.id);
+      // The controller of the record is disposed, so the attempt of the
+      // previous identity is fenced and its timer stops.
+      record.controller.dispose();
+      if (record.pollTimer !== null) {
+        timers.clearTimer(record.pollTimer);
+        record.pollTimer = null;
+      }
+      // The entry of the record is not shown by this browser any more.
+      for (const [entryId, recordId] of [...entryRecords]) {
+        if (recordId === record.id) entryRecords.delete(entryId);
+      }
+    }
+    if (!removed) return;
+    const active = activeQueueId === null ? null : queueRecords.get(activeQueueId) ?? null;
+    activeQueueId = active?.id ?? null;
+    queueState = active?.state ?? idleQueueState();
+    notify();
   }
 
   const queueRequester = createAuthorizedRequester({
@@ -1050,60 +1601,176 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       }),
       acceptReady: async (request: { control: SeatControl; timeControl: TimeControl }) => {
         const identity = queueIdentity();
+        // The generation fences the whole preparation of the entry. An
+        // identity that leaves and comes back is a different generation, so
+        // the entry of the older one never reaches the current identity.
+        const generation = identityGeneration;
         const settings = intentSettings(request.control, request.timeControl);
+        // The record owns the entry of these settings from now on, so a
+        // second request knows whether it asks for the entry of the owner or
+        // for another one.
+        record.settings = settings;
         const intents = readIntents(storage, identity);
-        const own = intents.filter(intent => intent.recordId === record.id);
+        // The intent of the record is the one it claimed. The intent of an
+        // older session of the browser never becomes the intent of this
+        // record. An intent with a cleanup obligation is never reused: it
+        // names an entry that has to be cancelled, not an entry to wait with.
+        const own = record.intentKey === null
+          ? []
+          : intents.filter(intent => intent.key === record.intentKey && !intent.cleanup);
         const previous = own.length > 0 ? own[own.length - 1]! : null;
+        // The planned intent is the entry of the owner: the answer of its
+        // creation was lost, and the same key reaches the same entry.
+        const planned = record.planned !== null && record.planned.settings === settings
+          ? record.planned
+          : null;
+        record.planned = null;
         if (previous && previous.settings !== settings) {
           // A settings change resolves the entry of the previous intent
           // first, so the service never keeps an abandoned entry.
-          await resolveIntentEntry(previous, identity);
+          const resolution = await resolveIntentEntry(previous, identity, generation);
+          assertCurrentIdentity(identity, generation);
+          if (resolution !== 'resolved') {
+            // The entry of the previous intent is not over, so no new entry
+            // is created: the owner never ends up with two eligible shared
+            // entries. The obligation of the previous entry survives, so a
+            // later try resolves it instead of abandoning it.
+            await markCleanupObligation(identity, previous.key, previous.entryId);
+            throw new OnlineQueueUnresolvedEntryError();
+          }
+        }
+        // A deliberate selection change replaces the entry of the previous
+        // settings. The entry is cancelled after the readiness of the new
+        // settings, so a failed readiness never abandons it. The other
+        // entries of the owner keep waiting.
+        if (record.replaces !== null) {
+          const replaced = record.replaces;
+          const resolution = await resolveIntentEntry(replaced, identity, generation);
+          assertCurrentIdentity(identity, generation);
+          if (resolution !== 'resolved') {
+            // The entry of the replaced settings won the race against its
+            // cancellation and its game could not be cancelled, so no second
+            // entry is created: the owner never ends up with two eligible
+            // shared entries, and the assignment is never abandoned.
+            //
+            // The replaced intent keeps the obligation, so a later try
+            // resolves the game instead of starting a second search.
+            record.replaces = replaced;
+            await markCleanupObligation(identity, replaced.key, replaced.entryId);
+            throw new OnlineQueueUnresolvedEntryError();
+          }
+          record.replaces = null;
         }
         const current = readIntents(storage, identity);
-        const reusable = previous !== null && previous.settings === settings
+        // A terminal intent never reaches the service again: the owner asked
+        // for a game, so a fresh entry is created instead of the finished one.
+        const reusable = planned ?? (previous !== null && previous.settings === settings && previous.state !== 'terminal'
           ? current.find(intent => intent.key === previous.key) ?? previous
-          : null;
-        const intent: QueueIntent = reusable ?? {
+          : null);
+        const intent: QueueIntent = reusable !== null
+          ? { ...reusable, recordId: record.id }
+          : {
           key: createIntentId(),
           settings,
           control: request.control,
           timeControl: request.timeControl,
           entryId: null,
           recordId: record.id,
+          // The intent names an entry that may still be reached.
+          state: 'live',
+          // The request has not left the browser yet.
+          sent: false,
+          // The record owns the shared entry of the owner, or an explicit
+          // entry of its own.
+          shared: record.shared,
           // The private selection of the agent is captured before the service
           // is asked. A model the owner picks later never replaces the agent
           // of this entry.
           selection: request.control.kind === 'agent' ? agent?.selection ?? null : null,
           // The entry has no game yet.
           engineMatchId: null,
+          // The entry has no cleanup obligation: it is an entry the owner
+          // waits with.
+          cleanup: false,
         };
-        writeIntents(storage, identity, [
-          ...current.filter(existing => existing.key !== intent.key),
-          intent,
-        ]);
+        // The readiness of the seat succeeded, so the request leaves the
+        // browser now. The intent says so before it goes, so a lost answer is
+        // recovered with the same key and never with a second entry.
+        const sending: QueueIntent = { ...intent, sent: true };
+        // The key of the record changes when the settings change. The claim of
+        // the shared entry follows the record, so no tab ever reaches the
+        // terminal key of the replaced entry.
+        const previousKey = record.intentKey;
+        await withQueueLock(identity, async () => {
+          // The identity may have changed while the lock was waited for.
+          assertCurrentIdentity(identity, generation);
+          const stored = readIntents(storage, identity);
+          writeIntents(storage, identity, [
+            ...stored.filter(existing => existing.key !== sending.key),
+            sending,
+          ]);
+          moveSharedClaim(storage, identity, previousKey, sending);
+        });
+        // The record owns the intent from now on, so its retry reaches the
+        // same entry.
+        record.intentKey = sending.key;
+        // The identity may have changed while the lock was held. The entry of
+        // the older identity never reaches the service.
+        assertCurrentIdentity(identity, generation);
+        let created: QueueEntry;
         try {
-          const created = await queueClient.createEntry({
+          created = await queueClient.createEntry({
             schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
             control: request.control,
             timeControl: request.timeControl,
-            clientRequestId: intent.key,
+            clientRequestId: sending.key,
           });
-          // The entry of the intent is tracked, so a later settings change can
-          // resolve it instead of abandoning it.
-          upsertIntent(intent.key, { ...intent, entryId: created.entryId });
-          // The record of the browser owns the entry, so a reload resumes
-          // the same record instead of showing the entry twice.
-          entryRecords.set(created.entryId, record.id);
-          // The seat of the entry is the seat of the owner. The binding of
-          // the private selection happens when the match is assigned, because
-          // only the assignment knows the seat of the owner.
-          return created;
         } catch (error) {
-          // A definitive refusal releases the intent. An unknown answer keeps
-          // it, so the retry reaches the same entry instead of a second one.
-          if (isDefinitiveRefusal(error)) removeIntent(intent.key);
+          // A definitive refusal releases the intent and the claim of it. An
+          // unknown answer keeps them, so the retry reaches the same entry
+          // instead of a second one.
+          if (isDefinitiveRefusal(error)) {
+            await withQueueLock(identity, async () => {
+              const stored = readIntents(storage, identity);
+              writeIntents(storage, identity, stored.filter(existing => existing.key !== sending.key));
+              releaseSharedClaim(storage, identity, sending.key);
+            });
+          } else if (!identityIs(identity, generation)) {
+            // The identity changed while the creation was on the wire. The
+            // service may have accepted the entry under the identity that
+            // asked, and the answer never arrives. The obligation to cancel
+            // that entry is persisted in the namespace of the identity that
+            // asked, so the entry is recovered with the same key and
+            // cancelled when that identity returns.
+            //
+            // The new identity never issues a request for the entry of the
+            // old one: a cancel under the credential of another identity would
+            // be a request of the old entry made by the wrong participant.
+            await markCleanupObligation(identity, sending.key, null);
+            record.failure = new OnlineQueueIdentityChangedError();
+          }
           throw error;
         }
+        if (!identityIs(identity, generation)) {
+          // The identity changed while the entry was created. The entry
+          // belongs to the identity that asked for it, so the obligation to
+          // cancel it is persisted in the namespace of that identity and the
+          // entry is cancelled when that identity returns. The entry is never
+          // stored under the identity that signed in in the meantime.
+          await markCleanupObligation(identity, sending.key, created.entryId);
+          record.failure = new OnlineQueueIdentityChangedError();
+          throw record.failure;
+        }
+        // The entry of the intent is tracked, so a later settings change can
+        // resolve it instead of abandoning it.
+        await upsertIntent(identity, sending.key, { ...sending, entryId: created.entryId });
+        // The record of the browser owns the entry, so a reload resumes
+        // the same record instead of showing the entry twice.
+        entryRecords.set(created.entryId, record.id);
+        // The seat of the entry is the seat of the owner. The binding of
+        // the private selection happens when the match is assigned, because
+        // only the assignment knows the seat of the owner.
+        return created;
       },
       readEntry: (entryId: string) => queueClient.readEntry(entryId),
       readyEntry: (entryId: string) => queueClient.ready(entryId),
@@ -1144,21 +1811,93 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     };
   }
 
-  /** Replaces one intent of the active identity. */
-  function upsertIntent(key: string, intent: QueueIntent): void {
-    const identity = queueIdentity();
-    const intents = readIntents(storage, identity);
-    writeIntents(storage, identity, [
-      ...intents.filter(existing => existing.key !== key),
-      intent,
-    ]);
+  /**
+   * Replaces one intent of an identity, under the lock.
+   *
+   * The intents of an identity live in one storage key, so a write of one
+   * tab and a write of another tab have to be serialized: the lock of the
+   * origin makes the read-modify-write of the list atomic.
+   */
+  async function upsertIntent(identity: string, key: string, intent: QueueIntent): Promise<void> {
+    await withQueueLock(identity, async () => {
+      const intents = readIntents(storage, identity);
+      const stored = intents.find(existing => existing.key === key);
+      // A terminal intent stays terminal: the key of a finished entry never
+      // reaches the service again, whatever the browser writes into it.
+      const next = stored !== undefined && stored.state === 'terminal'
+        ? { ...intent, state: 'terminal' as QueueIntentState }
+        : intent;
+      writeIntents(storage, identity, [
+        ...intents.filter(existing => existing.key !== key),
+        next,
+      ]);
+    });
   }
 
-  /** Removes one intent of the active identity. */
-  function removeIntent(key: string): void {
-    const identity = queueIdentity();
-    const intents = readIntents(storage, identity);
-    writeIntents(storage, identity, intents.filter(existing => existing.key !== key));
+  /**
+   * Removes one intent of an identity, under the lock.
+   *
+   * The removal is serialized with the writes of the other tabs, so a tab
+   * never drops the intent of an entry that another tab still waits with.
+   */
+  async function removeIntent(identity: string, key: string): Promise<void> {
+    await withQueueLock(identity, async () => {
+      const intents = readIntents(storage, identity);
+      writeIntents(storage, identity, intents.filter(existing => existing.key !== key));
+    });
+  }
+
+  /**
+   * Marks one intent of an identity as terminal, under the lock.
+   *
+   * A completed game keeps its intent, because the recovery of the engine
+   * seat needs it. The intent is terminal, so the key of the finished entry
+   * never reaches the service again and never pins the next entry.
+   */
+  async function markIntentTerminal(identity: string, key: string): Promise<void> {
+    await withQueueLock(identity, async () => {
+      const intents = readIntents(storage, identity);
+      writeIntents(storage, identity, intents.map(existing => existing.key === key
+        ? { ...existing, state: 'terminal' as QueueIntentState }
+        : existing));
+    });
+  }
+
+  /**
+   * Releases the claim of the shared entry of an identity, under the lock.
+   *
+   * The release is serialized with the claim of the other tabs, so a claim of
+   * a terminal entry never survives the terminal state of that entry.
+   */
+  async function releaseSharedClaimOf(identity: string, key: string): Promise<void> {
+    await withQueueLock(identity, async () => {
+      releaseSharedClaim(storage, identity, key);
+    });
+  }
+
+  /**
+   * Discards an intent whose entry is over, under the lock.
+   *
+   * A cancelled, an expired or a completed entry never waits again. The
+   * intent is marked terminal and the claim of the shared entry is released,
+   * so the next enter of the owner reaches a fresh entry and never the
+   * terminal one: the read of the service wins over a stale claim and a
+   * stale intent.
+   */
+  async function discardTerminalIntent(
+    identity: string,
+    generation: number,
+    intent: QueueIntent,
+  ): Promise<void> {
+    if (!identityIs(identity, generation)) return;
+    await withQueueLock(identity, async () => {
+      const intents = readIntents(storage, identity);
+      if (!intents.some(existing => existing.key === intent.key)) return;
+      writeIntents(storage, identity, intents.map(existing => existing.key === intent.key
+        ? { ...existing, state: 'terminal' as QueueIntentState }
+        : existing));
+      releaseSharedClaim(storage, identity, intent.key);
+    });
   }
 
   /**
@@ -1168,10 +1907,35 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * key with the original settings answers with the same entry, so the entry
    * is recovered before it is cancelled. A cancellation whose outcome is
    * unknown keeps the entry tracked.
+   *
+   * An intent whose request never left the browser has no entry at all: the
+   * readiness of an agent failed, so the service knows nothing about it. The
+   * intent is dropped without asking the service for an entry, so a failed
+   * readiness never creates a queue entry that could be matched.
+   *
+   * The work belongs to the identity that owns the intent. When the
+   * generation is given, the resolution stops as soon as that identity is no
+   * longer the current one, so a cancellation is never issued under the
+   * credential of another identity. The learned entry id is kept in the
+   * namespace of the identity that owns the intent, so a later return of that
+   * identity cancels the entry without asking the service for it again.
+   *
+   * The answer tells the caller whether the entry is over. An unknown answer
+   * keeps the entry tracked, so a later try resolves it.
    */
-  async function resolveIntentEntry(intent: QueueIntent, identity: string): Promise<void> {
+  async function resolveIntentEntry(
+    intent: QueueIntent,
+    identity: string,
+    generation?: number,
+  ): Promise<IntentResolution> {
+    const current = (): boolean => generation === undefined || identityIs(identity, generation);
     let entryId = intent.entryId;
     if (entryId === null) {
+      if (!intent.sent) {
+        // The request was never sent, so there is no entry to recover.
+        await removeIntent(identity, intent.key);
+        return 'resolved';
+      }
       try {
         const recovered = await queueClient.createEntry({
           schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
@@ -1180,22 +1944,238 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
           clientRequestId: intent.key,
         });
         entryId = recovered.entryId;
-        upsertIntent(intent.key, { ...intent, entryId });
+        // The learned entry id belongs to the identity that asked, so it is
+        // kept in its own namespace even when that identity is no longer the
+        // current one.
+        await upsertIntent(identity, intent.key, { ...intent, entryId });
       } catch {
         // The outcome is unknown. The entry stays tracked, so a later retry
         // resolves it instead of abandoning it.
-        return;
+        return 'pending';
       }
     }
+    // The identity may have changed while the entry was recovered. The
+    // cancellation is not issued then: a request for the entry of another
+    // identity would be made with the credential of the wrong participant.
+    // The entry id is already known, so the identity that owns the intent
+    // cancels it when it returns.
+    if (!current()) return 'pending';
     try {
       await queueClient.cancel(entryId, queueOperationBody(operationId('cancel', entryId)));
-      removeIntent(intent.key);
+      await removeIntent(identity, intent.key);
+      return 'resolved';
     } catch (error) {
-      // A definitive refusal means the entry is gone or committed. An
-      // unknown outcome keeps the entry tracked.
-      if (isDefinitiveRefusal(error)) removeIntent(intent.key);
+      // A conflict means the entry won the race against the cancellation: it
+      // is assigned and it produced exactly one game. The game is cancelled
+      // through the participant command route, not through the queue.
+      if (isConflictRefusal(error)) {
+        return resolveAssignedGame(intent, identity, entryId, current);
+      }
+      // A definitive refusal means the entry is gone. An unknown outcome
+      // keeps the entry tracked.
+      if (isDefinitiveRefusal(error)) {
+        await removeIntent(identity, intent.key);
+        return 'resolved';
+      }
+      return 'pending';
     }
-    void identity;
+  }
+
+  /**
+   * Resolves the game of an entry that won the race against a cancellation.
+   *
+   * The queue refuses the cancellation of an assigned entry with a conflict:
+   * the entry produced exactly one game, and the game is cancelled through the
+   * participant command route, not through the queue. The service decides what
+   * the cancellation means: a cancellation before the first accepted move of
+   * the seat aborts the game, and a cancellation afterwards resigns it.
+   *
+   * The command carries a stable operation identifier, so a retry answers with
+   * the same receipt instead of acting twice. The version and the control
+   * epoch come from the authoritative view of the game, so the command names
+   * the state the service holds and the seat is the seat of the owner.
+   *
+   * The obligation of the intent survives an unknown outcome: the entry stays
+   * tracked, so a later try cancels the game instead of abandoning it. The
+   * work never leaves the identity that owns the intent, so a cancellation is
+   * never issued under the credential of another identity.
+   */
+  async function resolveAssignedGame(
+    intent: QueueIntent,
+    identity: string,
+    entryId: string,
+    current: () => boolean,
+  ): Promise<IntentResolution> {
+    // The entry is read again. The refusal may have changed it: the entry may
+    // be cancelled already, or it may be assigned.
+    const read = await readQueueEntry(entryId);
+    if (read.kind === 'unknown') {
+      // The service did not answer, so the outcome is unknown.
+      return 'pending';
+    }
+    if (!current()) return 'pending';
+    if (read.kind === 'absent') {
+      // The entry is gone.
+      await removeIntent(identity, intent.key);
+      return 'resolved';
+    }
+    const entry = read.entry;
+    if (entry.status === 'cancelled') {
+      // The cancellation of the entry happened after all.
+      await removeIntent(identity, intent.key);
+      return 'resolved';
+    }
+    if (entry.status !== 'assigned' || entry.assignedMatchId === null) {
+      // The entry still waits. The conflict named another state of the entry,
+      // so the cancellation is tried once more with the same operation key.
+      try {
+        await queueClient.cancel(entryId, queueOperationBody(operationId('cancel', entryId)));
+      } catch {
+        return 'pending';
+      }
+      await removeIntent(identity, intent.key);
+      return 'resolved';
+    }
+    // The entry produced its game. The state of the game is read from the
+    // service: the browser never guesses the seat of the owner, the version of
+    // the game or its outcome.
+    const game = await readGame(entry.assignedMatchId);
+    if (!current()) return 'pending';
+    if (game.kind === 'absent') {
+      // The game is gone.
+      await removeIntent(identity, intent.key);
+      return 'resolved';
+    }
+    if (game.kind === 'unknown') {
+      // The service did not answer, so the outcome is unknown.
+      return 'pending';
+    }
+    const view = game.view;
+    if (view.status !== 'active') {
+      // The game is over. Nothing is left to cancel.
+      await removeIntent(identity, intent.key);
+      return 'resolved';
+    }
+    const seat = view.yourSeat;
+    if (seat === null) return 'pending';
+    const client = commandClient(view.matchId, seat);
+    if (client === null) {
+      // The browser holds no authority for the seat of the owner, so the game
+      // cannot be cancelled. The obligation survives.
+      return 'pending';
+    }
+    try {
+      await client.cancel({
+        operationId: matchCancelOperationId(intent.key),
+        expectedVersion: view.version,
+        controlEpoch: view.controlEpoch,
+      });
+    } catch {
+      // The service refused the command or its answer was lost. The game
+      // decides: a game that ended is over, and a game that still plays keeps
+      // the obligation of the intent.
+      const confirmed = await readGame(view.matchId);
+      if (confirmed.kind === 'absent') {
+        await removeIntent(identity, intent.key);
+        return 'resolved';
+      }
+      if (confirmed.kind === 'view' && confirmed.view.status !== 'active') {
+        await removeIntent(identity, intent.key);
+        return 'resolved';
+      }
+      return 'pending';
+    }
+    await removeIntent(identity, intent.key);
+    return 'resolved';
+  }
+
+  /**
+   * Reads the authoritative view of one game.
+   *
+   * The view is the participant view of the service. It owns the seat of the
+   * owner, the version of the game and its outcome, and the browser reads them
+   * instead of guessing them.
+   */
+  async function readGame(matchId: string): Promise<GameRead> {
+    const requester = accountRequester();
+    if (!requester) return { kind: 'unknown' };
+    let result: { readonly status: number; readonly ok: boolean; readonly data: unknown };
+    try {
+      result = await requester.request({ kind: 'account' }, {
+        path: `/v1/online/matches/${encodeURIComponent(matchId)}`,
+      });
+    } catch {
+      return { kind: 'unknown' };
+    }
+    if (!result.ok) return result.status === 404 ? { kind: 'absent' } : { kind: 'unknown' };
+    try {
+      return { kind: 'view', view: parseOnlineMatchView(result.data, matchId) };
+    } catch {
+      return { kind: 'unknown' };
+    }
+  }
+
+  /**
+   * Persists the obligation to cancel the entry of one intent.
+   *
+   * The obligation is written in the namespace of the identity that asked for
+   * the entry, so it belongs to that identity alone. Another identity never
+   * reads it and never resolves it.
+   *
+   * The intent of the entry keeps its key, so the entry is recovered with the
+   * same key and the service never sees a second entry for it.
+   */
+  async function markCleanupObligation(
+    identity: string,
+    key: string,
+    entryId: string | null,
+  ): Promise<void> {
+    await withQueueLock(identity, async () => {
+      const intents = readIntents(storage, identity);
+      if (!intents.some(existing => existing.key === key)) return;
+      writeIntents(storage, identity, intents.map(existing => existing.key === key
+        ? { ...existing, cleanup: true, ...(entryId === null ? {} : { entryId }) }
+        : existing));
+    });
+  }
+
+  /**
+   * Resolves the obligations of the entries of one identity.
+   *
+   * An obligation is the entry that the service may have accepted under an
+   * identity that left while the creation was on the wire. The identity that
+   * owns the obligation resolves it when it returns: the entry is recovered
+   * with the same key and cancelled, so it never waits behind the owner's
+   * back and never matches as abandoned work.
+   *
+   * The obligation of another identity is never resolved here: the request
+   * would be made with the credential of the wrong participant.
+   */
+  function resolvePendingCleanups(identityKey: string, generation: number): void {
+    if (disposed) return;
+    for (const intent of readIntents(storage, identityKey)) {
+      if (!intent.cleanup) continue;
+      if (intent.state === 'terminal') continue;
+      void resolveCleanupObligation(intent, identityKey, generation);
+    }
+  }
+
+  /**
+   * Resolves one obligation of an entry.
+   *
+   * The claim of the shared entry is released with the intent, so a claim
+   * never names an entry that is over.
+   */
+  async function resolveCleanupObligation(
+    intent: QueueIntent,
+    identityKey: string,
+    generation: number,
+  ): Promise<void> {
+    const resolution = await resolveIntentEntry(intent, identityKey, generation);
+    if (resolution !== 'resolved') return;
+    await withQueueLock(identityKey, async () => {
+      releaseSharedClaim(storage, identityKey, intent.key);
+    });
   }
 
   /**
@@ -1207,6 +2187,66 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    */
   interface QueueRecord {
     readonly id: string;
+    /**
+     * True when the record owns the shared entry of the owner.
+     *
+     * The shared entry is the entry the default enter joins: a second tab, a
+     * reload and a settings change reach it. An explicit second game owns
+     * its own record, and the default enter never joins it, never replaces
+     * it and never cancels it.
+     */
+    shared: boolean;
+    /**
+     * The identity that owns the record.
+     *
+     * A record belongs to the identity that created it. The identity change
+     * removes the records of the previous identity, so the new identity never
+     * shows the row of another account and never controls its entry. The
+     * terminal handling of the record - the release of the claim and the
+     * removal of the intent - is scoped to this identity, so it never touches
+     * the namespace of another one.
+     */
+    identity: string;
+    /**
+     * The settings of the entry the record owns.
+     *
+     * The settings are locked while the entry waits, so a later request
+     * knows whether it asks for the entry of the owner or for another one.
+     */
+    settings: string;
+    /**
+     * The key of the intent the record owns.
+     *
+     * The record knows its own intent, so the intent of an older session of
+     * the browser never becomes the intent of a new record. The durable
+     * intent of the owner is found by its settings, not by the name of a
+     * record.
+     */
+    intentKey: string | null;
+    /**
+     * The intent the record must use, when the owner reached an entry whose
+     * creation answer was lost.
+     *
+     * The key of the intent reaches the entry of the owner, so the recovery
+     * of a lost answer never creates a second entry.
+     */
+    planned: QueueIntent | null;
+    /**
+     * The intent of the entry a deliberate selection change replaces.
+     *
+     * The entry is cancelled after the readiness of the new settings, so a
+     * failed readiness never abandons the entry of the owner.
+     */
+    replaces: QueueIntent | null;
+    /**
+     * The failure of the last attempt of the record.
+     *
+     * The failure is kept when the attempt could not be proven, so the enter
+     * that started it reports it instead of pretending that the entry was
+     * created. A record of another identity never carries the failure of the
+     * identity that left.
+     */
+    failure: Error | null;
     controller: OnlineQueueController;
     state: OnlineQueueState;
     pollTimer: unknown;
@@ -1245,20 +2285,25 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     return `${identityKey}:${generation}:${entryId}`;
   }
 
-  function createQueueRecord(): QueueRecord {
+  function createQueueRecord(options: {
+    readonly settings: string;
+    readonly planned?: QueueIntent | null;
+    readonly replaces?: QueueIntent | null;
+    readonly shared?: boolean;
+    readonly identity?: string;
+  }): QueueRecord {
     const id = `queue-${queueRecords.size + 1}`;
     const record: QueueRecord = {
       id,
+      shared: options.shared ?? false,
+      identity: options.identity ?? queueIdentity(),
+      settings: options.settings,
+      intentKey: null,
+      planned: options.planned ?? null,
+      replaces: options.replaces ?? null,
+      failure: null,
       controller: null as unknown as OnlineQueueController,
-      state: {
-        phase: 'idle',
-        entry: null,
-        detail: '',
-        assignment: null,
-        engineState: 'idle',
-        cutoffAt: null,
-        options: [],
-      },
+      state: idleQueueState(),
       pollTimer: null,
     };
     record.controller = createOnlineQueueController({
@@ -1267,29 +2312,60 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       onState: state => {
         record.state = state;
         if (activeQueueId === id) queueState = state;
+        // A terminal entry releases the claim of the shared entry, and it does
+        // so before the intent of the record leaves. The claim of the owner
+        // names the entry that waits, so a cancelled, an expired and a
+        // completed entry never hold the next entry of the owner.
+        //
+        // The claim is released by the key of the record, never by a scan of
+        // the intents: the intent of a cancelled entry is gone by then, and a
+        // scan would keep the claim of the cancelled key and pin the next
+        // enter of the owner to it.
+        //
+        // The claim belongs to the identity that owns the record. The
+        // identity that owns the entry releases its own claim, never the
+        // claim of the identity that is signed in now.
+        if (state.phase === 'cancelled' || state.phase === 'expired' || state.phase === 'matched') {
+          const identity = record.identity;
+          const key = record.intentKey;
+          if (key !== null) {
+            void releaseSharedClaimOf(identity, key).catch(() => undefined);
+          }
+        }
         // A terminal entry releases the intent of *this* record. The intent of
         // another entry stays untouched. A matched entry keeps its intent:
         // the entry id is the only way to ask the service to rotate the
         // credential of the engine seat when the identity comes back, and the
-        // credential of a lost answer never returns on its own.
+        // credential of a lost answer never returns on its own. The intent of
+        // a matched entry is terminal, so the key of the finished entry never
+        // reaches the service again.
         if (state.phase === 'cancelled' || state.phase === 'expired') {
-          const identity = queueIdentity();
-          for (const intent of readIntents(storage, identity)) {
-            if (intent.recordId === id) removeIntent(intent.key);
+          const identity = record.identity;
+          const key = record.intentKey;
+          if (key !== null) {
+            void removeIntent(identity, key).catch(() => undefined);
+          }
+        }
+        if (state.phase === 'matched') {
+          const identity = record.identity;
+          const key = record.intentKey;
+          if (key !== null) {
+            void markIntentTerminal(identity, key).catch(() => undefined);
           }
         }
         // A committed assignment is attached and shown. The seat keeps the
         // private selection the entry was created with.
         if (state.phase === 'matched' && state.assignment) {
-          const identity = queueIdentity();
+          const identity = record.identity;
           const intent = readIntents(storage, identity)
-            .filter(candidate => candidate.recordId === id)
+            .filter(candidate => candidate.key === record.intentKey)
             .slice(-1)[0] ?? null;
           // The game of a browser engine fallback is remembered with the
           // intent, so the recovery of the engine credential only ever asks
           // the service about an entry that already produced its game.
           if (intent && state.assignment.control?.kind === 'engine' && intent.engineMatchId !== state.assignment.matchId) {
-            upsertIntent(intent.key, { ...intent, engineMatchId: state.assignment.matchId });
+            void upsertIntent(identity, intent.key, { ...intent, engineMatchId: state.assignment.matchId })
+              .catch(() => undefined);
           }
           attachAndFocus(state.assignment.matchId, state.assignment.seat, undefined, intent?.selection ?? null);
         }
@@ -1309,8 +2385,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       return record?.state ?? queueState;
     },
     enter: async (request: { control: SeatControl; timeControl: TimeControl }) => {
-      const record = createQueueRecord();
-      await record.controller.enter(request);
+      await enterSharedEntry(request);
     },
     retry: async () => {
       const record = activeQueueId === null ? null : queueRecords.get(activeQueueId) ?? null;
@@ -1349,6 +2424,521 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   };
 
   /**
+   * The enter that runs right now.
+   *
+   * The enters are serialized: a second click waits for the first one, so
+   * two simultaneous calls never create two entries.
+   */
+  let enterChain: Promise<void> = Promise.resolve();
+
+  /**
+   * The plan of the shared enter.
+   *
+   * The plan names the entry of the owner: the entry that waits with the
+   * requested settings, the entry of another tab of this browser, the entry
+   * whose creation answer was lost, or the entry a deliberate selection change
+   * replaces.
+   */
+  interface SharedPlan {
+    readonly kind: 'stale' | 'joined' | 'adopt' | 'reuse' | 'replace' | 'create';
+    /** The record of this browser that waits already. */
+    readonly record: QueueRecord | null;
+    /** The intent of the entry of the owner. */
+    readonly intent: QueueIntent | null;
+    /** The entry of another tab of this browser. */
+    readonly entry: QueueEntry | null;
+    /** The entry a deliberate selection change replaces. */
+    readonly replaced: QueueIntent | null;
+  }
+
+  /**
+   * The claim of the shared entry.
+   *
+   * The claim carries the key of the entry the owner waits with. The entry is
+   * created with that key, so the service answers with the entry of the owner
+   * and never with a second one.
+   */
+  type SharedClaim =
+    | { readonly kind: 'adopt'; readonly intent: QueueIntent; readonly entry: QueueEntry }
+    | { readonly kind: 'enter'; readonly intent: QueueIntent };
+
+  /**
+   * Enters the queue with the entry the owner already waits with.
+   *
+   * The default joins the entry of the owner: a second tab, a second click
+   * and a reload reach the same entry. Only an explicit second game asks for
+   * another one.
+   */
+  async function enterSharedEntry(request: { control: SeatControl; timeControl: TimeControl }): Promise<void> {
+    // The identity of the enter is captured when it is scheduled. The same
+    // account that signs in again is a different generation, so an enter of
+    // an older identity never reaches the current one.
+    const identity = queueIdentity();
+    const generation = identityGeneration;
+    const run = enterChain.then(async () => {
+      if (!identityIs(identity, generation)) return;
+      await runSharedEnter(request, identity, generation);
+    });
+    // The chain never rejects, so a failed enter never blocks a later one.
+    enterChain = run.then(() => undefined, () => undefined);
+    await run;
+  }
+
+  /**
+   * Creates an explicit parallel entry.
+   *
+   * The entry owns its own intent, its own key and its own timer. The
+   * entries of the owner stay untouched, and the entry of the owner is never
+   * cancelled by it.
+   */
+  async function enterExplicitEntry(request: { control: SeatControl; timeControl: TimeControl }): Promise<void> {
+    const record = createQueueRecord({ settings: intentSettings(request.control, request.timeControl) });
+    await record.controller.enter(request);
+    // The attempt that could not be proven is reported, so the owner never
+    // reads a success that never happened.
+    if (record.failure !== null) throw record.failure;
+  }
+
+  /**
+   * Joins the entry of the owner, or creates the shared one.
+   *
+   * A record of this browser that already waits with the requested settings
+   * is joined, never duplicated. The durable intent of the identity is the
+   * entry of another tab of the same browser, so the entry of the owner is
+   * reached instead of a second one.
+   */
+  async function runSharedEnter(
+    request: { control: SeatControl; timeControl: TimeControl },
+    identity: string,
+    generation: number,
+  ): Promise<void> {
+    const settings = intentSettings(request.control, request.timeControl);
+    // The shared entry of this browser that waits with the requested settings
+    // is the entry of the owner. It is joined.
+    //
+    // An explicit second game owns its own entry. The default enter never
+    // joins it, never replaces it and never cancels it, so an explicit entry
+    // with the same settings is never the target of the default action.
+    const matching = liveRecords().filter(record => record.shared && record.settings === settings);
+    if (matching.length > 0) {
+      await focusSharedRecord(matching[matching.length - 1]!, identity, generation);
+      return;
+    }
+    const plan = await planSharedEnter(identity, generation, settings);
+    if (plan.kind === 'stale') return;
+    if (plan.kind === 'joined') {
+      focusRecord(plan.record!);
+      return;
+    }
+    // The record of the entry is created before the claim, so the claim names
+    // the record that owns it.
+    const previousActiveId = activeQueueId;
+    const record = createQueueRecord({
+      settings,
+      replaces: plan.kind === 'replace' ? plan.replaced : null,
+      // The default enter owns the shared entry of the owner.
+      shared: true,
+    });
+    let claim: SharedClaim | null;
+    try {
+      claim = await claimSharedEntry(identity, generation, settings, request, record, plan);
+    } catch (error) {
+      // The claim failed, so the record owns no entry. It leaves again, so the
+      // owner never sees an idle entry that the service does not know. The
+      // error is not swallowed: the owner learns that the browser cannot
+      // share one entry between its tabs.
+      discardQueueRecord(record, previousActiveId);
+      throw error;
+    }
+    if (claim === null || !identityIs(identity, generation)) {
+      // The claim was refused, so the record owns no entry either.
+      discardQueueRecord(record, previousActiveId);
+      return;
+    }
+    if (claim.kind === 'adopt') {
+      // The entry of another tab of this browser is adopted. Nothing is
+      // created: the entry already exists in the service.
+      entryRecords.set(claim.entry.entryId, record.id);
+      record.controller.adopt(claim.entry);
+      return;
+    }
+    // The claim carries the key of the entry, so the service answers with the
+    // entry of the owner.
+    record.planned = claim.intent;
+    await record.controller.enter(request);
+    // The attempt that could not be proven is reported, so the owner never
+    // reads a success that never happened.
+    if (record.failure !== null) throw record.failure;
+  }
+
+  /**
+   * Shows the shared entry of the owner and names it in the claim.
+   *
+   * The claim of the shared entry is the durable name of the entry the owner
+   * waits with. The default enter shows the shared record, so the claim is
+   * written for that record: the other tabs of the browser reach the same
+   * entry, and the explicit entries of the owner keep their own key.
+   */
+  async function focusSharedRecord(
+    record: QueueRecord,
+    identity: string,
+    generation: number,
+  ): Promise<void> {
+    focusRecord(record);
+    const key = record.intentKey;
+    if (key === null) return;
+    await withQueueLock(identity, async () => {
+      // The identity may have changed while the lock was waited for.
+      if (!identityIs(identity, generation)) return;
+      const claim = readSharedClaim(storage, identity);
+      if (claim !== null && claim.key === key) return;
+      writeSharedClaim(storage, identity, { key, settings: record.settings, at: Date.now() });
+    });
+  }
+
+  /**
+   * Removes a record that never owned an entry.
+   *
+   * The record of an entry is created before the claim of the shared entry, so
+   * a refused claim - a browser that cannot lock its tabs - would leave an
+   * idle record that the service knows nothing about. The record leaves
+   * again, so the owner never sees an entry that does not exist.
+   */
+  function discardQueueRecord(record: QueueRecord, previousActiveId: string | null): void {
+    if (!queueRecords.delete(record.id)) return;
+    record.controller.dispose();
+    if (activeQueueId !== record.id) return;
+    activeQueueId = previousActiveId;
+    const previous = previousActiveId === null ? null : queueRecords.get(previousActiveId) ?? null;
+    if (previous) queueState = previous.state;
+    notify();
+  }
+
+  /**
+   * Reads the plan of the shared enter from the durable intents.
+   *
+   * The intents are ordered from the oldest to the newest, so the newest one
+   * is the current entry of the owner. A completed game keeps its intent -
+   * the recovery of the engine seat needs it - and never authorizes another
+   * entry by itself: only the request of the owner creates one.
+   *
+   * The shared entry of the owner is the one a deliberate settings change
+   * replaces. An explicit second game owns its own entry, and the default
+   * enter never takes it away from the owner.
+   */
+  async function planSharedEnter(identity: string, generation: number, settings: string): Promise<SharedPlan> {
+    const intents = readIntents(storage, identity);
+    let replaceable: QueueIntent | null = null;
+    for (const intent of [...intents].reverse()) {
+      const record = recordOfIntent(intent);
+      const live = record !== null && isLivePhase(record.state.phase);
+      // A finished entry never waits again and never authorizes another
+      // entry. Its intent stays for the recovery of the engine seat, and the
+      // plan ignores it.
+      if (intent.state === 'terminal') continue;
+      // An entry with a cleanup obligation is never joined and never
+      // replaced here: it names an entry that has to be cancelled, and the
+      // obligation is resolved by the identity that owns it.
+      if (intent.cleanup) continue;
+      if (intent.settings === settings) {
+        // An explicit second game owns its own entry. The default enter never
+        // joins it, never replaces it and never cancels it.
+        if (!intent.shared) continue;
+        // The entry of this browser waits already.
+        if (live) return sharedPlan('joined', { record });
+        // The answer of the creation was lost. The same key reaches the same
+        // entry, so the entry of the owner is recovered instead of a second
+        // one.
+        if (intent.entryId === null) return sharedPlan('reuse', { intent });
+        const read = await readQueueEntry(intent.entryId);
+        if (!identityIs(identity, generation)) return sharedPlan('stale');
+        if (read.kind === 'unknown') {
+          // The service did not answer. The entry may exist, so the intent of
+          // the owner is preserved and its key is reused: the service answers
+          // with the same entry instead of a second one.
+          return sharedPlan('reuse', { intent });
+        }
+        // A definitive refusal means the entry is gone.
+        if (read.kind === 'absent') {
+          await discardTerminalIntent(identity, generation, intent);
+          continue;
+        }
+        if (isSearchingEntry(read.entry)) {
+          // The entry is shown already: it is joined, never shown twice.
+          const shown = recordOfEntry(read.entry.entryId);
+          if (shown !== null) return sharedPlan('joined', { record: shown });
+          // The entry of another tab of this browser is adopted, so both tabs
+          // show the same entry.
+          return sharedPlan('adopt', { intent, entry: read.entry });
+        }
+        // A matched entry produced its game already. A cancelled or an
+        // expired entry never waits again. The owner asked for a game, so a
+        // new entry is created. The terminal entry is discarded here, so the
+        // stale claim and the stale intent of it never win over the read of
+        // the service.
+        await discardTerminalIntent(identity, generation, intent);
+        continue;
+      }
+      // Another settings. The shared entry of the owner is the one a
+      // deliberate selection change replaces. An explicit entry of the owner
+      // is never replaced by the default enter.
+      if (!intent.shared) continue;
+      if (replaceable !== null) continue;
+      if (live) {
+        replaceable = intent;
+        continue;
+      }
+      if (intent.entryId === null) {
+        // The answer of the creation was lost, so the entry may exist under
+        // the old settings. The intent is resolved before the new entry is
+        // created, so the owner never ends up with two eligible shared
+        // entries.
+        replaceable = intent;
+        continue;
+      }
+      const read = await readQueueEntry(intent.entryId);
+      if (!identityIs(identity, generation)) return sharedPlan('stale');
+      if (read.kind === 'found' && isSearchingEntry(read.entry)) {
+        replaceable = intent;
+        continue;
+      }
+      if (read.kind === 'found') {
+        await discardTerminalIntent(identity, generation, intent);
+        continue;
+      }
+      // The service did not answer. The entry may still wait, so it is never
+      // treated as absent: the intent is resolved before the new entry is
+      // created, and the resolution recovers the entry with the same key and
+      // cancels it. The owner never ends up with two eligible shared
+      // entries, and the key of the old entry survives the uncertainty.
+      replaceable = intent;
+    }
+    return replaceable === null
+      ? sharedPlan('create')
+      : sharedPlan('replace', { replaced: replaceable });
+  }
+
+  /** Builds one plan of the shared enter. */
+  function sharedPlan(kind: SharedPlan['kind'], extra: Partial<SharedPlan> = {}): SharedPlan {
+    return { kind, record: null, intent: null, entry: null, replaced: null, ...extra };
+  }
+
+  /**
+   * Claims the shared entry of the owner.
+   *
+   * The claim is durable and it names the key of the entry the owner waits
+   * with. It is taken under the lock of the browser, so two tabs of the same
+   * browser that enter the queue at the same moment claim one key and reach
+   * one entry. The claim of the other tab is adopted when it is visible, so
+   * the entry of the owner is reached even without the lock.
+   */
+  async function claimSharedEntry(
+    identity: string,
+    generation: number,
+    settings: string,
+    request: { control: SeatControl; timeControl: TimeControl },
+    record: QueueRecord,
+    plan: SharedPlan,
+  ): Promise<SharedClaim | null> {
+    return withQueueLock(identity, async () => {
+      if (!identityIs(identity, generation)) return null;
+      // The entry of the owner is known: its key is reused, so the service
+      // answers with the same entry.
+      if (plan.kind === 'adopt' || plan.kind === 'reuse') {
+        const intent = plan.intent!;
+        const owned: QueueIntent = { ...intent, recordId: record.id };
+        // The claim of the owner names the key of the entry, so the other
+        // tabs of the browser reach it too.
+        writeSharedClaim(storage, identity, { key: owned.key, settings: owned.settings, at: Date.now() });
+        writeIntents(storage, identity, replaceIntent(readIntents(storage, identity), owned));
+        record.intentKey = owned.key;
+        if (plan.kind === 'adopt') return { kind: 'adopt', intent: owned, entry: plan.entry! };
+        return { kind: 'enter', intent: owned };
+      }
+      // A new entry is created. The claim of another tab may have landed in
+      // the meantime: the same key reaches the same entry.
+      const claimed = readSharedClaim(storage, identity);
+      if (claimed !== null && claimed.settings === settings) {
+        // The claim is usable only when a live intent of these settings backs
+        // it. A claim that no intent backs is an orphan, and a claim of a
+        // terminal entry - a cancelled, an expired or a completed one - never
+        // pins the next entry of the owner: the service would answer with the
+        // terminal entry and the owner would wait for a game that is over.
+        //
+        // A claim of an entry with a cleanup obligation is never used: that
+        // entry has to be cancelled, so the owner reaches a fresh one.
+        const backed = readIntents(storage, identity)
+          .find(candidate => candidate.key === claimed.key);
+        if (backed !== undefined && backed.state === 'live' && !backed.cleanup && backed.settings === settings) {
+          // The claim of the owner is reached: the same key reaches the same
+          // entry of the service.
+          const owned: QueueIntent = { ...backed, recordId: record.id };
+          writeIntents(storage, identity, replaceIntent(readIntents(storage, identity), owned));
+          record.intentKey = owned.key;
+          return { kind: 'enter', intent: owned };
+        }
+        // The claim names a key that no live intent backs. It is released, so
+        // the next entry of the owner is a fresh one.
+        releaseSharedClaim(storage, identity, claimed.key);
+      }
+      // The claim of the entry is written before the service is asked, so a
+      // lost answer and a second tab reach the same entry.
+      const intent = intentForClaim(createIntentId(), settings, request, record.id);
+      writeSharedClaim(storage, identity, { key: intent.key, settings, at: Date.now() });
+      writeIntents(storage, identity, [...readIntents(storage, identity), intent]);
+      record.intentKey = intent.key;
+      return { kind: 'enter', intent };
+    });
+  }
+
+  /** Builds the intent of a claimed entry. */
+  function intentForClaim(    key: string,
+    settings: string,
+    request: { control: SeatControl; timeControl: TimeControl },
+    recordId: string,
+  ): QueueIntent {
+    return {
+      key,
+      settings,
+      control: request.control,
+      timeControl: request.timeControl,
+      entryId: null,
+      recordId,
+      // The intent names an entry that may still be reached.
+      state: 'live',
+      // The request has not left the browser yet. The readiness of an agent
+      // may still fail, and a failed readiness never reaches the service.
+      sent: false,
+      // The claim of the shared entry names this intent, so it is the entry
+      // the default enter of the owner joins.
+      shared: true,
+      // The private selection of the agent is captured before the service is
+      // asked. A model the owner picks later never replaces the agent of this
+      // entry.
+      selection: request.control.kind === 'agent' ? agent?.selection ?? null : null,
+      // The entry has no game yet.
+      engineMatchId: null,
+      // The entry has no cleanup obligation: it is an entry the owner waits
+      // with.
+      cleanup: false,
+    };
+  }
+
+  /** Replaces one intent of a list, and keeps the order of the list. */
+  function replaceIntent(intents: readonly QueueIntent[], intent: QueueIntent): QueueIntent[] {
+    return intents.map(candidate => candidate.key === intent.key ? intent : candidate);
+  }
+
+  /**
+   * Runs one part of the queue flow under the lock of the browser.
+   *
+   * The lock belongs to the origin, so the tabs of the same browser never
+   * claim two keys for the same entry.
+   */
+  async function withQueueLock<T>(identity: string, run: () => Promise<T>): Promise<T> {
+    const name = `${ONLINE_QUEUE_INTENT_KEY}:lock:${encodeURIComponent(identity)}`;
+    return queueLock(name, run);
+  }
+
+  /**
+   * True while a record still owns an entry that waits.
+   *
+   * A matched entry produced its game, and a cancelled or an expired entry
+   * never waits again, so neither of them is the entry of the owner.
+   */
+  function isLivePhase(phase: OnlineQueueState['phase']): boolean {
+    return phase === 'checking-agent'
+      || phase === 'ready'
+      || phase === 'searching'
+      || phase === 'engine-unavailable';
+  }
+
+  /** The records of this browser whose entry still waits. */
+  function liveRecords(): QueueRecord[] {
+    return [...queueRecords.values()].filter(record => isLivePhase(record.state.phase));
+  }
+
+  /**
+   * The record of this browser that shows one entry of the service.
+   *
+   * An entry that is shown already is never shown twice.
+   */
+  function recordOfEntry(entryId: string): QueueRecord | null {
+    const recordId = entryRecords.get(entryId);
+    if (recordId === undefined) return null;
+    return queueRecords.get(recordId) ?? null;
+  }
+
+  /**
+   * The record of this browser that owns one intent.
+   *
+   * The record knows the intent it claimed, so the intent of an older
+   * session of the browser never reaches the record of a new one.
+   */
+  function recordOfIntent(intent: QueueIntent): QueueRecord | null {
+    for (const record of queueRecords.values()) {
+      if (record.intentKey === intent.key) return record;
+    }
+    return null;
+  }
+
+  /** Shows one entry of this browser in the interface. */
+  function focusRecord(record: QueueRecord): void {
+    activeQueueId = record.id;
+    queueState = record.state;
+    notify();
+  }
+
+  /**
+   * The answer of a read of one entry.
+   *
+   * A definitive refusal means the entry is gone. An unknown outcome means
+   * the entry may exist, so the intent of the owner is preserved and its key
+   * is reused: the entry of the owner is never replaced by a second one.
+   */
+  type EntryRead =
+    | { readonly kind: 'found'; readonly entry: QueueEntry }
+    | { readonly kind: 'absent' }
+    | { readonly kind: 'unknown' };
+
+  /** Reads one entry of the service. */
+  async function readQueueEntry(entryId: string): Promise<EntryRead> {
+    try {
+      return { kind: 'found', entry: await queueClient.readEntry(entryId) };
+    } catch (error) {
+      // A definitive refusal means the service did not perform the read, so
+      // the entry is gone. An unknown outcome means the entry may exist.
+      return isDefinitiveRefusal(error) ? { kind: 'absent' } : { kind: 'unknown' };
+    }
+  }
+
+  /**
+   * True when the identity of the browser is still the one the work started
+   * with.
+   *
+   * The generation moves with every identity change, so an account that
+   * signs out and signs in again is a different identity even when its name
+   * is the same. The answer of an older generation never reaches the current
+   * one.
+   */
+  function identityIs(identity: string, generation: number): boolean {
+    return !disposed && identityGeneration === generation && queueIdentity() === identity;
+  }
+
+  /**
+   * Refuses the work of an identity that is no longer current.
+   *
+   * The work belongs to the identity that started it. An identity that signs
+   * out, or that comes back after another identity was signed in, is a
+   * different generation, so the entry of the older one never reaches the
+   * service under the credential of the current one.
+   */
+  function assertCurrentIdentity(identity: string, generation: number): void {
+    if (identityIs(identity, generation)) return;
+    throw new Error('The identity changed before the queue entry was created.');
+  }
+
+  /**
    * The invitations this browser created.
    *
    * The inviter holds the owner token of its invitation. When the invitee
@@ -1359,6 +2949,35 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   /** The rematches this browser proposed, with the selection of the proposer. */
   const proposedRematches = new Map<string, { matchId: string; selection: ModelSelection | null; identityKey: string }>();
   let invitationTimer: unknown = null;
+
+  /**
+   * Publishes the state of an invitation this identity owns.
+   *
+   * Only an invitation the identity owns is published, so the state of
+   * another identity never reaches the screen. The published list is stable
+   * between two publications, so the screen does not redraw for nothing.
+   */
+  function publishOwnedInvitation(invitation: FriendInvitation): void {
+    if (!friendSecrets.ownsInvitation(invitation.invitationId)) return;
+    const previous = ownedInvitationViews.get(invitation.invitationId);
+    ownedInvitationViews.set(invitation.invitationId, invitation);
+    ownedInvitationList = [...ownedInvitationViews.values()];
+    if (previous && previous.status === invitation.status) return;
+    notify();
+  }
+
+  /**
+   * Settles an invitation whose terminal state the service confirmed.
+   *
+   * A cancelled or an expired invitation never produces a match, so its
+   * record can go and the poll of the composition stops following it. A
+   * consumed invitation is never settled here: the inviter still claims the
+   * seat of its match.
+   */
+  function settleOwnedInvitation(invitationId: string): void {
+    createdInvitations.delete(invitationId);
+    friendSecrets.forgetOwnerToken(invitationId);
+  }
 
   /**
    * Tracks an invitation this browser created.
@@ -1401,6 +3020,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     for (const intent of readIntents(storage, identityKey)) {
       const entryId = intent.entryId;
       if (!entryId) continue;
+      // An entry with a cleanup obligation is never resumed: it has to be
+      // cancelled, not waited with.
+      if (intent.cleanup) continue;
       // One recovery per entry at a time. A reload and an identity change in
       // the same moment never rotate the same credential twice, so the engine
       // seat is never replaced while its turn runs. The claim belongs to the
@@ -1526,6 +3148,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     for (const intent of readIntents(storage, identityKey)) {
       const entryId = intent.entryId;
       if (!entryId) continue;
+      // An entry with a cleanup obligation is never resumed: it has to be
+      // cancelled, not waited with.
+      if (intent.cleanup) continue;
       // One restoration per entry at a time. A reload and an identity change
       // in the same moment never restore the same entry twice. The claim
       // belongs to the identity and the generation that made it: a
@@ -1578,11 +3203,12 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       tracked.controller.adopt(entry);
       return;
     }
-    const record = createQueueRecord();
+    const record = createQueueRecord({ settings: intent.settings, shared: intent.shared });
     entryRecords.set(entryId, record.id);
     // The intent follows the record of the entry, so the entry keeps its own
     // intent and the recovery of its engine credential knows it.
-    upsertIntent(intent.key, { ...intent, recordId: record.id });
+    record.intentKey = intent.key;
+    await upsertIntent(identityKey, intent.key, { ...intent, recordId: record.id });
     // The entry is adopted with its original cutoff. The controller never
     // creates an entry and never asks for the fallback.
     record.controller.adopt(entry);
@@ -1646,6 +3272,67 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     scheduleInvitationWork();
   }
 
+  /**
+   * Reads the invitations this identity owns.
+   *
+   * The read uses the owner token of the identity scoped record, so the
+   * service sees the owner of the invitation and nobody else. The answer of
+   * an identity that is no longer current never reaches the current one.
+   *
+   * A record whose terminal state the service confirmed is settled here, so
+   * the poll of the composition stops following it.
+   */
+  async function refreshOwnedInvitations(): Promise<void> {
+    if (disposed) return;
+    const identityKey = queueIdentity();
+    const generation = identityGeneration;
+    for (const invitationId of [...friendSecrets.listOwnedInvitations()]) {
+      try {
+        const invitation = await friends.preview(invitationId);
+        if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
+        publishOwnedInvitation(invitation);
+        if (invitation.status === 'cancelled' || invitation.status === 'expired') {
+          settleOwnedInvitation(invitationId);
+        }
+      } catch {
+        // The service did not answer, or the invitation is gone. The record
+        // stays on the device, and the next read tries again.
+      }
+    }
+  }
+
+  /**
+   * Cancels an invitation this identity owns.
+   *
+   * The owner token stays in the browser and travels in the private header of
+   * the surface, so the service proves the ownership itself. The record of
+   * the invitation is settled only when the service confirms a terminal
+   * state: an invitation that is still open stays recoverable.
+   *
+   * The answer of an identity that is no longer current never settles the
+   * record of another identity.
+   */
+  async function cancelOwnedInvitation(invitationId: string): Promise<FriendInvitation> {
+    if (!friendSecrets.ownsInvitation(invitationId)) {
+      throw new Error('This browser does not own the invitation.');
+    }
+    const identityKey = queueIdentity();
+    const generation = identityGeneration;
+    const cancelled = await friends.cancel(invitationId);
+    if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) {
+      // The identity changed while the cancellation was on the wire. The
+      // record of the previous identity keeps its own namespace, and this
+      // identity never settles it.
+      return cancelled;
+    }
+    publishOwnedInvitation(cancelled);
+    if (cancelled.status === 'cancelled' || cancelled.status === 'expired') {
+      settleOwnedInvitation(invitationId);
+    }
+    notify();
+    return cancelled;
+  }
+
   /** Polls the tracked invitations and claims the seat of a consumed one. */
   function scheduleInvitationWork(): void {
     if (invitationTimer !== null) {
@@ -1665,6 +3352,15 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
           try {
             const invitation = await friends.preview(invitationId);
             if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
+            // The state of the invitation is published, so the inviter sees
+            // the pending invitation of its own identity after a reload.
+            publishOwnedInvitation(invitation);
+            // A cancelled or an expired invitation never produces a match, so
+            // the poll stops following it and its record is settled.
+            if (invitation.status === 'cancelled' || invitation.status === 'expired') {
+              settleOwnedInvitation(invitationId);
+              return;
+            }
             if (invitation.status !== 'consumed' || !invitation.matchId) return;
             const claimed = await friends.claimSeatCredential(invitationId, tracked.ownerToken, invitation.matchId);
             if (disposed || identityGeneration !== generation || queueIdentity() !== identityKey) return;
@@ -1679,8 +3375,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
             // The answer names the match and the seat even for an account
             // inviter, so the inviter follows its own match.
             attachAndFocus(claimed.matchId, claimed.seat, undefined, tracked.selection);
-            createdInvitations.delete(invitationId);
-            friendSecrets.forgetOwnerToken(invitationId);
+            // The seat of the inviter is claimed, so the record of the
+            // invitation is settled: the invitation is not followed any more.
+            settleOwnedInvitation(invitationId);
             notify();
           } catch {
             // The invitation is not consumed yet, or the claim is refused. The
@@ -2127,7 +3824,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * the canonical state and shows its decisions.
    */
   function driveAgentSeats(): void {
-    if (!agent || suspended) return;
+    if (!agent || suspended || disposed) return;
     for (const game of workspace.games) {
       const view = game.snapshot;
       if (!view || view.status !== 'active') continue;
@@ -2144,6 +3841,14 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       if (!binding) continue;
       let runner = agentRunners.get(key);
       let created = false;
+      if (runner !== undefined && runner.state.superseded) {
+        // The control epoch of the seat moved on while the runner played it.
+        // The runner stood down, gave the lease of the seat back and it can
+        // never play the seat again. The composition replaces it, so the seat
+        // never waits for the deadline of its turn with a runner that gave up.
+        void replaceSupersededRunner(key, runner);
+        continue;
+      }
       if (!runner) {
         const authority = seatAuthority(view.matchId, ownSeat);
         if (!authority) continue;
@@ -2152,7 +3857,10 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
           session: authority.session,
           matchId: view.matchId,
           seat: ownSeat,
-          runnerId: `${view.matchId}-${ownSeat}-${agentRunners.size + 1}`,
+          // The identity of the runner is the identity of this tab. Two tabs
+          // of one owner never share it, so the service refuses the second
+          // one instead of handing the lease of the seat to both of them.
+          runnerId: `${view.matchId}-${ownSeat}-${runnerTabIdentity}`,
         });
         const commands = commandClient(view.matchId, ownSeat);
         if (!commands) continue;
@@ -2164,16 +3872,30 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
           })
           : null;
         if (!provider) continue;
-        runner = createOnlineAgentSeat({
+        const createdRunner = createOnlineAgentSeat({
           matchId: view.matchId,
           seat: ownSeat,
           publicModelLabel: binding.label,
           leases,
           commands,
           provider,
+          // The pending record belongs to the seat and not to one runner, so a
+          // runner that replaces another one still sees the request that may
+          // be running and never asks the provider for a second answer.
+          pending: agentPendingStore,
         });
-        agentRunners.set(key, runner);
-        runner.subscribe(() => notify());
+        runner = createdRunner;
+        agentRunners.set(key, createdRunner);
+        createdRunner.subscribe(() => {
+          notify();
+          // A runner that the service superseded can never play the seat again,
+          // so the composition replaces it with a runner of the epoch the
+          // service publishes now. The seat never waits for the deadline of
+          // its turn with a runner that gave up.
+          if (agentRunners.get(key) === createdRunner && createdRunner.state.superseded) {
+            void replaceSupersededRunner(key, createdRunner);
+          }
+        });
         created = true;
       }
       const snapshot = providerRunnerSnapshot(view, ownSeat);
@@ -2191,6 +3913,141 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       // decision.
       if (created) void runner.start().catch(() => undefined);
     }
+  }
+
+  /**
+   * Replaces a runner that the service superseded.
+   *
+   * The runner of the seat gave the lease of the seat back and it can never
+   * play the seat again, so the seat needs a runner that is bound to the
+   * epoch the service publishes now. The replacement waits for the stop of
+   * the old runner, so the lease of the seat is given back before the new
+   * runner takes it.
+   *
+   * The replacement never asks the provider by itself when the request of the
+   * old runner may still be running: the pending record of the seat stays
+   * open, so the new runner waits for the decision of the owner.
+   */
+  async function replaceSupersededRunner(key: string, runner: OnlineProviderRunner): Promise<void> {
+    if (agentRunners.get(key) !== runner) return;
+    // The runner of the seat is gone at once: it gave the lease of the seat
+    // back and it never plays the seat again.
+    agentRunners.delete(key);
+    await runner.stop().catch(() => undefined);
+    driveAgentSeats();
+  }
+
+  /**
+   * Hands the seat of the owner to its agent.
+   *
+   * The transition is one change: the control change of the service, the
+   * private binding of the seat and the runner of the seat. The seat keeps a
+   * runner that is bound to the epoch the service published, so it never waits
+   * for the deadline of its turn with a runner that gave up.
+   *
+   * The private selection of the seat is the choice of the owner: the binding
+   * of the seat when it has one, and the agent of the owner otherwise. The
+   * routing identity of a model never leaves the browser, and the service only
+   * ever sees the public label of the seat.
+   */
+  async function handSeatToAgent(matchId: string, seat: Seat): Promise<AgentDecisionOutcome> {
+    const key = `${matchId}:${seat}`;
+    const bound = agentBindingFor(matchId, seat);
+    const target = bound ?? (agent ? { label: agent.label, selection: agent.selection } : null);
+    if (!target) {
+      // The browser never guesses a model for the seat, so the owner connects
+      // one before the seat can play one.
+      return {
+        kind: 'refused',
+        detail: 'The owner has no connected agent for this seat. Connect a model and hand the seat over again.',
+      };
+    }
+    // The decision of the owner is captured before the service is asked, so a
+    // newer decision, an identity that came and goes and a runner that was
+    // replaced all end this decision.
+    const intent: PendingAgentDecision = {
+      kind: 'handoff',
+      label: target.label,
+      selection: target.selection,
+      generation: identityGeneration,
+    };
+    pendingAgentDecisions.set(key, intent);
+    const runner = agentRunners.get(key);
+    if (runner) {
+      // The runner of the seat owns the handoff: it takes the lease of the
+      // seat, asks the service for the control change and settles the request
+      // that may still be running, so the seat never pays twice for a turn.
+      const outcome = await runner.switchModel(target.label);
+      if (outcome.kind !== 'accepted') {
+        // A refused hand-back is proven negative: the seat did not change, so
+        // the record of the decision is dropped. An unknown hand-back keeps it,
+        // so the owner may replay the decision.
+        if (outcome.kind === 'refused') clearIntent(key, intent);
+        return outcome;
+      }
+      if (!intentIsCurrent(key, intent, runner)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the hand-back.' };
+      }
+      if (outcome.control !== undefined) provenSeatEpochs.set(key, outcome.control.controlEpoch);
+      // The seat plays the private selection the owner chose, so the runner of
+      // the old epoch gives way to a runner of the new one.
+      rebindCapturedAgentSeat(matchId, seat, target);
+      await runner.stop().catch(() => undefined);
+      if (!intentIsCurrent(key, intent, runner)) {
+        return { kind: 'unknown', detail: 'A newer decision of the owner ended the hand-back.' };
+      }
+      clearIntent(key, intent);
+      agentRunners.delete(key);
+      driveAgentSeats();
+      return {
+        kind: 'accepted',
+        publicModelLabel: outcome.publicModelLabel ?? target.label,
+        ...(outcome.detail === undefined ? {} : { detail: outcome.detail }),
+      };
+    }
+    // The seat has no runner of this browser: the owner is the only controller
+    // of the seat, and the composition asks the service for the control change
+    // itself. The command names the version and the epoch of the canonical
+    // view, so the service refuses a command of a state it already left.
+    const client = commandClient(matchId, seat);
+    if (!client) {
+      return { kind: 'refused', detail: 'The seat is not authorized. The owner of the seat has to hand it over.' };
+    }
+    const view = workspace.games.find(game => game.matchId === matchId)?.snapshot ?? null;
+    if (!view) {
+      return { kind: 'refused', detail: 'The match is not known to this browser. Open the game again and hand the seat over.' };
+    }
+    client.setVersion(view.version);
+    client.setControlEpoch(view.controlEpoch);
+    let receipt: Receipt;
+    try {
+      receipt = await client.setControl({ kind: 'agent', modelLabel: target.label });
+    } catch (error) {
+      // A refused command is proven negative: the seat kept its control. A
+      // command that failed on its way may have been applied, so the outcome
+      // stays unknown and the owner may hand the seat over again.
+      if (error instanceof OnlineCommandError && error.code === 'refused') {
+        clearIntent(key, intent);
+        return { kind: 'refused', detail: 'The service refused the hand-back. The seat keeps its control.' };
+      }
+      return {
+        kind: 'unknown',
+        detail: 'The hand-back was not proved. The seat may play the agent now. Hand the seat over again to prove it.',
+      };
+    }
+    if (!intentIsCurrent(key, intent, undefined)) {
+      return { kind: 'unknown', detail: 'A newer decision of the owner ended the hand-back.' };
+    }
+    // The receipt is the proof of the control change, so the runner of the seat
+    // binds the epoch the service published and not the older epoch of a
+    // stale view.
+    provenSeatEpochs.set(key, receipt.controlEpoch);
+    // The seat plays the private selection the owner chose, and not a model
+    // the public label names.
+    rebindCapturedAgentSeat(matchId, seat, target);
+    clearIntent(key, intent);
+    driveAgentSeats();
+    return { kind: 'accepted', publicModelLabel: target.label };
   }
 
   /**
@@ -2214,7 +4071,12 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     }
     if (disposed) return;
     const entry = record.state.entry;
-    if (record.state.phase !== 'searching' || !entry) return;
+    if (!entry) return;
+    // The entry keeps its lease while the owner decides. A waiting entry is
+    // renewed in every phase in which it still waits, so the lease of the
+    // service does not die while the owner weighs a retry against keeping the
+    // search.
+    if (record.state.phase !== 'searching' && record.state.phase !== 'engine-unavailable') return;
     record.pollTimer = timers.setTimer(() => {
       record.pollTimer = null;
       // The entry is renewed and read. The heartbeat keeps the readiness
@@ -2265,7 +4127,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
    * Disposes the composition.
    *
    * The disposal is synchronous in its effect: the composition stops acting
-   * at once. An engine seat releases the lease of its turn when the turn
+   * at once. The browser runners stop with it, so a provider request that is
+   * still on the wire is aborted and no move of a disposed runner reaches the
+   * service. An engine seat releases the lease of its turn when the turn
    * ends, so the cleanup of the seats is awaited by `disposeAsync()` and the
    * requester and the session of a seat go away with it.
    */
@@ -2274,6 +4138,11 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     disposed = true;
     unsubscribeAccount?.();
     unsubscribeAccount = null;
+    // The runners of the composition stop at once: a pending provider request
+    // is aborted, and every lease of a seat is given back with the authority
+    // that took it. The transport of the composition stays usable until the
+    // runners released their leases.
+    const releasedRunners = fenceAgentRunners();
     if (heartbeatTimer !== null) timers.clearTimer(heartbeatTimer);
     for (const record of queueRecords.values()) {
       if (record.pollTimer !== null) timers.clearTimer(record.pollTimer);
@@ -2303,11 +4172,13 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     const guestSessionsOfComposition = [...guestSessions.values()];
     guestRequesters.clear();
     guestSessions.clear();
-    // The engine seats release the lease of their turn while the transport of
-    // the composition is still usable. The requesters and the sessions go
-    // away afterwards, so a release that is still on the wire is never lost.
+    // The engine seats and the browser runners release the lease of their turn
+    // while the transport of the composition is still usable. The requesters
+    // and the sessions go away afterwards, so a release that is still on the
+    // wire is never lost.
     engineCleanup = (async () => {
       await Promise.all(engines.map(engine => engine.dispose().catch(() => undefined)));
+      await releasedRunners;
       account?.dispose();
       accountRequester?.dispose();
       for (const requester of guestTransport) requester.dispose();
@@ -2404,16 +4275,20 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       notify();
     },
     async enterQueue(request, enterOptions) {
-      if (enterOptions?.intent === 'new') {
-        // An explicit second game owns its own intent. The intents of the
-        // older entries stay untouched.
-      }
       if (request.control.kind === 'agent') {
         // The chosen public label is registered before the service accepts
         // the seat, so the service keeps the label the owner chose.
         await registerAgentLabel();
       }
-      await queue.enter(request);
+      if (enterOptions?.intent === 'new') {
+        // An explicit second game owns its own entry, its own intent and its
+        // own timer. The entries of the owner stay untouched.
+        await enterExplicitEntry(request);
+        return;
+      }
+      // The default joins the entry the owner already waits with. A second
+      // tab, a second click and a reload reach the same entry.
+      await enterSharedEntry(request);
     },
     async registerAgentLabel() {
       return registerAgentLabel();
@@ -2421,6 +4296,21 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     commandClient,
     registerGuestCredential,
     trackInvitation,
+    get ownedInvitations() {
+      return ownedInvitationList;
+    },
+    ownsInvitation(invitationId: string) {
+      return friendSecrets.ownsInvitation(invitationId);
+    },
+    publishOwnedInvitation(invitation: FriendInvitation) {
+      publishOwnedInvitation(invitation);
+    },
+    refreshOwnedInvitations() {
+      return refreshOwnedInvitations();
+    },
+    cancelOwnedInvitation(invitationId: string) {
+      return cancelOwnedInvitation(invitationId);
+    },
     trackRematch(rematchId: string, matchId: string, selection?: ModelSelection | null) {
       proposedRematches.set(rematchId, { matchId, selection: selection ?? null, identityKey: queueIdentity() });
       friendSecrets.rememberRematch(rematchId, matchId, selection ?? null);
@@ -2523,6 +4413,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         const control = outcome.control;
         if (control === undefined) return outcome;
         if (intent.kind === 'switch' && control.kind !== 'agent') return outcome;
+        if (intent.kind === 'handoff' && control.kind !== 'agent') return outcome;
         if (intent.kind === 'takeover' && control.kind !== 'human') return outcome;
         provenSeatEpochs.set(key, control.controlEpoch);
         if (control.kind === 'human') {
@@ -2589,7 +4480,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       removeAgentBinding(matchId, seat);
       agentRunners.delete(key);
       return outcome;
-    },    attachAndFocus,
+    },
+    handSeatToAgent,
+    attachAndFocus,
     engineSeat(matchId, seat, credential) {
       return createOnlineEngineSeat({
         matchId,
@@ -2606,6 +4499,11 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       // the service gave them. The restoration reads the entries and never
       // creates one.
       restoreWaitingEntries();
+      // The entries whose creation was left on the wire by an identity that
+      // changed are resolved now. The obligation belongs to the identity that
+      // asked for them, so the cancellation runs with the credential of that
+      // identity.
+      resolvePendingCleanups(queueIdentity(), identityGeneration);
       // The engine seats of the restored games need a usable credential. The
       // browser holds none after a reload, so the service is asked to rotate
       // it.
@@ -2615,7 +4513,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       let service: OnlineFeatureFlags = ONLINE_FEATURES_DISABLED;
       try {
         // The feature answer is public. It carries no participant credential.
-        const response = await (fetcher ?? globalThis.fetch)(`${baseUrl}${ONLINE_FEATURES_ROUTE}`, {
+        const response = await (fetcher ?? globalThis.fetch)(`${baseUrl}${ONLINE_FEATURES_PATH}`, {
           method: 'GET',
           headers: { Accept: 'application/json' },
           credentials: 'omit',
@@ -2648,8 +4546,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
       }
       // The runners stop, and their leases are released, so a superseded
       // composition never keeps a provider request or a heartbeat alive.
-      for (const runner of agentRunners.values()) void runner.stop().catch(() => undefined);
-      agentRunners.clear();
+      void fenceAgentRunners();
       // The engine seats release the lease of their turn. The transport of
       // the composition stays usable, because the composition is only
       // suspended: it can be resumed, and the release is never lost.

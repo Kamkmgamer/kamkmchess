@@ -164,21 +164,11 @@ func (s *Service) ProjectMatch(ctx context.Context, matchID string) (Replay, err
 // Only an explicit removal erases a shared replay. An ordinary account
 // deletion anonymizes the shared game and keeps it, so its projection stays
 // allowed: the seats it reads are the anonymized ones.
+//
+// The check is the one of the online service, so the two publication paths
+// refuse the same matches.
 func matchErased(ctx context.Context, q Querier, matchID string) (bool, error) {
-	var erased bool
-	err := q.QueryRow(ctx, `
-		SELECT
-			EXISTS(
-				SELECT 1 FROM online_removal_ledger l
-				JOIN online_removal_requests r ON r.removal_id = l.removal_id
-				WHERE l.match_id = $1 AND l.scope = 'explicit_removal')
-			OR EXISTS(
-				SELECT 1 FROM online_deletion_markers m
-				WHERE m.match_id = $1 AND m.marker_kind = 'replay_removal')`, matchID).Scan(&erased)
-	if err != nil {
-		return false, err
-	}
-	return erased, nil
+	return online.MatchErased(ctx, q, matchID)
 }
 
 // addTotal moves the aggregate totals of one profile by one result.

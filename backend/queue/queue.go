@@ -25,10 +25,19 @@
 //   - A candidate that is ready exactly at the cutoff wins over the engine
 //     fallback. A candidate that becomes ready after the cutoff never
 //     replaces a committed opponent.
+//   - A candidate that is dropped after it was selected is never consumed,
+//     and it never hands the seat to the engine. The scan runs again at the
+//     decision time, so a candidate that is still eligible wins over the
+//     engine.
 //   - An entry whose owner stops responding expires and needs an explicit
 //     rejoin.
 //   - There is no owner concurrency cap. An owner may hold any number of
 //     entries and games.
+//   - The credential of the engine seat is issued once. The check for a live
+//     credential and the write of a credential are one decision of the
+//     issuer, so a routine retry never rotates a secret the browser holds,
+//     and two tabs of one entry never revoke each other's secret. Only an
+//     explicit recovery rotates the credential on purpose.
 package queue
 
 import (
@@ -103,6 +112,29 @@ var (
 	ErrAccountRemoved = errors.New("queue: the account was removed")
 )
 
+// errFallbackPending means the search window of an entry ended without a
+// compatible candidate and the entry now waits for the browser engine
+// fallback.
+//
+// It wraps ErrNoCandidate, because no candidate was available, and it is
+// only reported by the reconciliation loop: the loop records the pending
+// fallback under the bucket lock, so a kept search that won the interval is
+// never overwritten.
+var errFallbackPending = errors.New("queue: the cutoff was reached without a candidate")
+
+// errCandidateRetry means the decision has to be repeated.
+//
+// A candidate was eligible when the decision ran, but the decision could not
+// pair it: the account scope of its owner is not held by the decision, and a
+// scope lock that is taken after a row lock would break the lock order of
+// the queue. The decision refuses itself instead of consuming a candidate it
+// may not lock, and the caller repeats it with the scope set of the
+// candidate.
+//
+// The refusal is never a missing candidate: a candidate exists, and the
+// caller has to ask again instead of believing that the queue is empty.
+var errCandidateRetry = errors.New("queue: the allocation has to be repeated")
+
 // MatchAllocator is the trusted seam to the canonical match writer.
 //
 // The queue never writes match rows itself. It asks the shared writer to
@@ -158,15 +190,19 @@ type LabelResolver interface {
 // revocable, it is bound to the seat it was issued for, and it never widens
 // the participant checks of the match.
 //
-// The issuer also reports whether the seat already has a live credential, so
-// a routine retry never rotates a secret the browser already holds.
+// The issuance is one atomic decision of the issuer: it reads the live
+// credential of the seat inside the seat lock and it mints a credential only
+// when the seat has none. A routine retry therefore never rotates a secret
+// the browser already holds, and two concurrent routine fallbacks of the same
+// entry can never revoke the secret the first one already delivered.
 type CredentialIssuer interface {
-	// IssueEngineSeatCredential issues the credential of an engine seat. It
-	// supersedes every earlier credential of that seat.
-	IssueEngineSeatCredential(ctx context.Context, request onlineauth.EngineSeatRequest) (onlineauth.IssuedSeatCredential, error)
-	// HasEngineSeatCredential reports whether the seat already has a live
-	// credential.
-	HasEngineSeatCredential(ctx context.Context, matchID string, seat online.Seat) (bool, error)
+	// IssueEngineSeatCredential issues the credential of an engine seat.
+	//
+	// The outcome reports whether a credential was minted. An ordinary
+	// request for a seat with a live credential mints nothing and revokes
+	// nothing. An explicit rotation supersedes the live credential of the
+	// seat on purpose.
+	IssueEngineSeatCredential(ctx context.Context, request onlineauth.EngineSeatRequest) (onlineauth.EngineSeatCredentialOutcome, error)
 }
 
 // Options configures the queue.
@@ -443,6 +479,22 @@ func (r entryRecord) bound(now time.Time) time.Time {
 	return now
 }
 
+// windowEnded reports whether the search window of the entry has ended.
+//
+// The window ends at the original cutoff of the entry, and only there: the
+// cutoff is the deadline the ready acceptance armed, and it never moves. An
+// entry that keeps searching removed its cutoff, so it has no window that
+// ends and the browser engine is never committed for it.
+func (r entryRecord) windowEnded(now time.Time) bool {
+	if r.KeepSearching {
+		return false
+	}
+	if r.OriginalCutoffAt == nil {
+		return false
+	}
+	return !now.Before(*r.OriginalCutoffAt)
+}
+
 const entryColumns = `entry_id,owner_kind,owner_id,seat_control_kind,seat_control_model_label,starting_time_ms,increment_ms,status,internal_state,version,ready_at,cutoff_at,original_cutoff_at,expires_at,last_heartbeat_at,keep_searching,client_request_id,assigned_match_id,created_at,updated_at`
 
 type queryer interface {
@@ -491,6 +543,12 @@ func (s *Service) lockEntry(ctx context.Context, tx pgx.Tx, entryID string) (ent
 // during the browser's own readiness checks, because those checks happen
 // before this call.
 //
+// The ready time is the instant the creation commits, not the instant the
+// call started. The creation samples its time after the bucket lock and the
+// account scope lock it waits for, so an entry that waited for the lock of
+// its time control receives the full search window and the full readiness
+// lease instead of a shortened one.
+//
 // The second return value reports whether a new entry was created. A replay
 // of the same client request identifier returns the existing entry and
 // creates no second game.
@@ -516,13 +574,11 @@ func (s *Service) CreateEntry(ctx context.Context, actor online.ParticipantRef, 
 		return online.QueueEntry{}, false, err
 	}
 	request.Control = resolved
-	now := s.now().UTC()
 	entryID, err := newIdentifier("qe_")
 	if err != nil {
 		return online.QueueEntry{}, false, err
 	}
 	creationHash := creationHashOf(request)
-	cutoff := now.Add(s.searchWindow)
 	var clientRequestID *string
 	if request.ClientRequestID != "" {
 		value := request.ClientRequestID
@@ -553,12 +609,25 @@ func (s *Service) CreateEntry(ctx context.Context, actor online.ParticipantRef, 
 	if err = lockAccount(ctx, tx, actor.ID); err != nil {
 		return online.QueueEntry{}, false, err
 	}
+	// The authoritative creation time is sampled after the locks the
+	// creation waited for and after the durable removal of the owner was
+	// re-read. An entry that waited for the bucket lock of its time control
+	// starts its search window and its readiness lease at the instant it
+	// commits, so it never begins with a shortened window and it is never
+	// already expired when it is created.
+	//
+	// Every timestamp of the entry comes from that one instant, so the
+	// ready time, the cutoff, the lease, the creation time and the update
+	// time of the row agree with each other.
+	now := s.now().UTC()
+	cutoff := now.Add(s.searchWindow)
+	expiresAt := now.Add(s.readinessTTL)
 	row := tx.QueryRow(ctx, `INSERT INTO online_queue_entries(entry_id,owner_kind,owner_id,seat_control_kind,seat_control_model_label,starting_time_ms,increment_ms,status,internal_state,version,ready_at,cutoff_at,original_cutoff_at,expires_at,last_heartbeat_at,keep_searching,client_request_id,creation_hash,created_at,updated_at)
 		VALUES($1,'account',$2,$3,$4,$5,$6,'waiting','waiting',1,$7,$8,$8,$9,$7,false,$10,$11,$7,$7)
 		ON CONFLICT (owner_kind, owner_id, client_request_id) WHERE client_request_id IS NOT NULL DO NOTHING
 		RETURNING `+entryColumns,
 		entryID, actor.ID, string(request.Control.Kind), modelLabel, request.TimeControl.StartingTimeMs, request.TimeControl.IncrementMs,
-		now, cutoff, now.Add(s.readinessTTL), clientRequestID, creationHash)
+		now, cutoff, expiresAt, clientRequestID, creationHash)
 	record, err := scanEntry(row)
 	if err == nil {
 		if err = tx.Commit(ctx); err != nil {
@@ -658,6 +727,13 @@ func (s *Service) Ready(ctx context.Context, actor online.ParticipantRef, entryI
 // A cancellation that loses the race against an assignment sees the assigned
 // entry instead: the game exists, and the game is cancelled through the
 // participant command route, not through the queue.
+//
+// An expired entry is refused with a conflict. The entry already left the
+// eligibility, so there is no search left to cancel, and the database
+// refuses to move an expired entry out of the expiry: only the explicit
+// rejoin clears it. The refusal is the same one the heartbeat and the kept
+// search of an expired entry answer, so the browser reads one rule for an
+// expired entry instead of a database failure.
 func (s *Service) Cancel(ctx context.Context, actor online.ParticipantRef, entryID string, operation Operation) (online.QueueEntry, error) {
 	if err := validateActor(actor); err != nil {
 		return online.QueueEntry{}, err
@@ -668,6 +744,12 @@ func (s *Service) Cancel(ctx context.Context, actor online.ParticipantRef, entry
 			return false, fmt.Errorf("%w: the entry is %s", ErrConflict, record.InternalState)
 		case internalCancelled:
 			return false, nil
+		case internalExpired:
+			// The entry left the eligibility when its owner stopped
+			// responding. There is no search to cancel, and the expiry is
+			// cleared only by an explicit rejoin, so the cancellation is
+			// refused instead of writing a state the database forbids.
+			return false, fmt.Errorf("%w: the entry expired", ErrConflict)
 		default:
 			if _, err := tx.Exec(ctx, `UPDATE online_queue_entries SET status='cancelled',internal_state='cancelled',cutoff_at=NULL,version=version+1,updated_at=$2 WHERE entry_id=$1`, record.EntryID, now); err != nil {
 				return false, err
@@ -685,6 +767,14 @@ func (s *Service) Cancel(ctx context.Context, actor online.ParticipantRef, entry
 //
 // The entry then waits until it is matched, cancelled or expired. It never
 // falls back to the browser engine on its own again.
+//
+// A kept search is a live search. An entry whose cutoff was already reached
+// and that waits for the engine fallback returns to the eligibility, so a
+// candidate that arrives later matches it again. The cutoff stays removed
+// and the original cutoff never moves.
+//
+// The readiness lease of the owner has to be live. A dead lease is not
+// revived by a kept search: only the explicit rejoin arms a fresh window.
 func (s *Service) KeepSearching(ctx context.Context, actor online.ParticipantRef, entryID string, operation Operation) (online.QueueEntry, error) {
 	if err := validateActor(actor); err != nil {
 		return online.QueueEntry{}, err
@@ -696,10 +786,20 @@ func (s *Service) KeepSearching(ctx context.Context, actor online.ParticipantRef
 		case internalExpired:
 			return false, fmt.Errorf("%w: the entry expired", ErrConflict)
 		default:
+			if record.ExpiresAt != nil && !record.ExpiresAt.After(now) {
+				// The lease is dead. A kept search never revives a dead
+				// lease, only the explicit rejoin arms a fresh window.
+				return false, fmt.Errorf("%w: the entry expired", ErrConflict)
+			}
 			if record.KeepSearching {
 				return false, nil
 			}
-			if _, err := tx.Exec(ctx, `UPDATE online_queue_entries SET keep_searching=true,cutoff_at=NULL,version=version+1,updated_at=$2 WHERE entry_id=$1`, record.EntryID, now); err != nil {
+			// The kept search removes the cutoff and returns an entry that
+			// waits for the engine fallback to the eligibility. The
+			// reconciliation loop and this update are serialized by the
+			// bucket lock, so a pending fallback that is recorded after
+			// this update never overwrites the kept search.
+			if _, err := tx.Exec(ctx, `UPDATE online_queue_entries SET keep_searching=true,cutoff_at=NULL,internal_state=CASE WHEN internal_state='fallback' THEN 'waiting' ELSE internal_state END,version=version+1,updated_at=$2 WHERE entry_id=$1`, record.EntryID, now); err != nil {
 				return false, err
 			}
 			return true, nil

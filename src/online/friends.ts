@@ -16,6 +16,12 @@
  *
  * - The invitation identifier is the shareable secret of the link. It is a
  *   bearer secret for exactly one acceptance and never a credential.
+ * - A named challenge names a public name. The service resolves the name to
+ *   the account itself, so an authentication identifier never travels in a
+ *   request and never reaches an answer.
+ * - The owner token of an invitation travels in a private request header. It
+ *   never travels in a URL, a query string or a body, and it is never
+ *   logged.
  * - An acceptance is resumed with the acceptance key. The key is generated
  *   once per accept intent, kept for the page lifetime and reused on every
  *   retry, so a lost answer never consumes a second invitation.
@@ -33,6 +39,12 @@
  *   new match, so the credential of the finished match cannot authorize it
  *   and a guest that lost the answer gets a fresh credential of the new
  *   seat.
+ * - A rematch offer is accepted by the opponent of the proposer only, and
+ *   only while the offer is a live pending offer. The service answers whether
+ *   the reader proposed the offer, and no identity of the proposer ever
+ *   travels in the answer. An accepted offer stays reopenable by the
+ *   opponent, because the duplicate acceptance is the recovery of a lost
+ *   answer.
  * - An expired link reports the `expired` state, both in the preview and in
  *   the refused acceptance, so the interface can say that the link expired
  *   instead of reporting a generic conflict.
@@ -66,6 +78,15 @@ export const FRIENDS_REMATCH_ACCEPT_PATH = '/v1/online/rematches/{rematchId}/acc
 export const FRIENDS_REMATCH_SEAT_CREDENTIAL_PATH = '/v1/online/rematches/{rematchId}/seat-credential';
 /** The route that reads the pending rematch of a finished match. */
 export const FRIENDS_MATCH_REMATCH_PATH = '/v1/online/matches/{matchId}/rematch';
+
+/**
+ * The private header that carries the owner token of an invitation.
+ *
+ * The owner token is the recoverable ownership of an invitation and of the
+ * match it creates. It travels in this header and never in a URL, a query
+ * string or a request body.
+ */
+export const FRIENDS_OWNER_TOKEN_HEADER = 'X-Online-Owner-Token';
 
 /** The two invitation paths. */
 export type FriendInvitationKind = 'link' | 'challenge';
@@ -151,6 +172,16 @@ export interface FriendRematch {
   readonly startingFen: string | null;
   readonly expiresAt: string;
   readonly newMatchId: string | null;
+  /**
+   * True when the reader of the offer proposed it.
+   *
+   * The service compares the stored identity of the proposer with the
+   * identity of the reader, so the answer is a fact about the reader alone
+   * and no identity of the proposer ever travels in the answer. The proposal
+   * is already the consent of the proposer, so only the opponent of the
+   * proposer may accept the offer.
+   */
+  readonly proposedByViewer: boolean;
 }
 
 /** The answer of an accepted rematch. */
@@ -165,8 +196,14 @@ export interface FriendRematchAccepted {
 /** The request that creates one invitation. */
 export interface FriendInvitationCreateRequest {
   readonly kind?: FriendInvitationKind;
-  /** Required for a challenge, forbidden for a link. */
-  readonly recipientAccountId?: string;
+  /**
+   * The public name of the account a challenge names.
+   *
+   * Required for a challenge, forbidden for a link. A public name is a
+   * public identity: the service resolves it to the account itself and the
+   * account subject never travels in a request.
+   */
+  readonly recipientUsername?: string;
   readonly seat: Seat;
   readonly timeControl: TimeControl;
   readonly startingFen?: string;
@@ -213,6 +250,14 @@ export interface FriendRequest {
   readonly path: string;
   readonly method: 'GET' | 'POST';
   readonly body?: unknown;
+  /**
+   * The private headers of the request.
+   *
+   * A secret of the surface travels in a header and never in the body, so
+   * it never reaches a log line of a proxy and never becomes part of a
+   * cached request.
+   */
+  readonly headers?: Readonly<Record<string, string>>;
   readonly signal?: AbortSignal;
 }
 
@@ -224,7 +269,13 @@ export interface FriendTransport {
 /** The typed client of the friend surface. */
 export interface FriendClient {
   createInvitation(request: FriendInvitationCreateRequest): Promise<FriendInvitationCreated>;
-  readInvitation(invitationId: string): Promise<FriendInvitation>;
+  /**
+   * Reads one invitation.
+   *
+   * The owner token authorizes the read for the inviter of a named
+   * challenge. It travels in the private header of the surface.
+   */
+  readInvitation(invitationId: string, ownerToken?: string): Promise<FriendInvitation>;
   acceptInvitation(invitationId: string, request: FriendInvitationAcceptRequest): Promise<FriendInvitationAccepted>;
   cancelInvitation(invitationId: string, ownerToken: string): Promise<FriendInvitation>;
   claimSeatCredential(invitationId: string, ownerToken: string): Promise<FriendSeatCredential>;
@@ -270,7 +321,9 @@ export function createFriendClient(transport: FriendTransport): FriendClient {
         body: {
           schemaVersion: ONLINE_FRIENDS_SCHEMA_VERSION,
           kind: request.kind ?? 'link',
-          recipientAccountId: request.recipientAccountId ?? '',
+          // A challenge names a public name. The account subject of the
+          // recipient is resolved by the service and never travels here.
+          recipientUsername: request.recipientUsername ?? '',
           seat: request.seat,
           timeControl: request.timeControl,
           startingFen: request.startingFen ?? '',
@@ -279,10 +332,11 @@ export function createFriendClient(transport: FriendTransport): FriendClient {
       });
       return parseInvitationCreated(body);
     },
-    async readInvitation(invitationId) {
+    async readInvitation(invitationId, ownerToken) {
       const body = await transport.send({
         path: FRIENDS_INVITATION_PATH.replace('{invitationId}', encodeURIComponent(invitationId)),
         method: 'GET',
+        ...(ownerToken ? { headers: { [FRIENDS_OWNER_TOKEN_HEADER]: ownerToken } } : {}),
       });
       return parseInvitation(body);
     },
@@ -303,7 +357,10 @@ export function createFriendClient(transport: FriendTransport): FriendClient {
       const body = await transport.send({
         path: FRIENDS_INVITATION_CANCEL_PATH.replace('{invitationId}', encodeURIComponent(invitationId)),
         method: 'POST',
-        body: { schemaVersion: ONLINE_FRIENDS_SCHEMA_VERSION, ownerToken },
+        body: { schemaVersion: ONLINE_FRIENDS_SCHEMA_VERSION },
+        // The owner token travels in the private header of the surface. It
+        // never travels in the body and never in the URL.
+        headers: { [FRIENDS_OWNER_TOKEN_HEADER]: ownerToken },
       });
       return parseInvitation(body);
     },
@@ -311,7 +368,10 @@ export function createFriendClient(transport: FriendTransport): FriendClient {
       const body = await transport.send({
         path: FRIENDS_INVITATION_SEAT_CREDENTIAL_PATH.replace('{invitationId}', encodeURIComponent(invitationId)),
         method: 'POST',
-        body: { schemaVersion: ONLINE_FRIENDS_SCHEMA_VERSION, ownerToken },
+        body: { schemaVersion: ONLINE_FRIENDS_SCHEMA_VERSION },
+        // The owner token travels in the private header of the surface. It
+        // never travels in the body and never in the URL.
+        headers: { [FRIENDS_OWNER_TOKEN_HEADER]: ownerToken },
       });
       return parseSeatCredential(body);
     },
@@ -381,6 +441,10 @@ export function createFetchFriendTransport(options: {
   return {
     async send(request) {
       const headers: Record<string, string> = { Accept: 'application/json' };
+      // The private headers of the request carry the owner token of an
+      // invitation. The credential of the caller is applied afterwards, so a
+      // request header never replaces it.
+      if (request.headers) Object.assign(headers, request.headers);
       const credential = options.credential?.();
       if (credential) Object.assign(headers, credential);
       if (request.body !== undefined) headers['Content-Type'] = 'application/json';
@@ -460,6 +524,15 @@ function requiredSeat(object: Record<string, unknown>, key: string, path: string
   const value = object[key];
   if (value !== 'white' && value !== 'black') {
     throw new FriendError('invalid-answer', `${path}.${key} is not a seat.`);
+  }
+  return value;
+}
+
+function optionalBoolean(object: Record<string, unknown>, key: string, path: string): boolean | null {
+  const value = object[key];
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'boolean') {
+    throw new FriendError('invalid-answer', `${path}.${key} is not a boolean.`);
   }
   return value;
 }
@@ -579,6 +652,7 @@ export function parseRematch(value: unknown): FriendRematch {
     startingFen: optionalString(object, 'startingFen', path),
     expiresAt: requiredString(object, 'expiresAt', path),
     newMatchId: optionalString(object, 'newMatchId', path),
+    proposedByViewer: optionalBoolean(object, 'proposedByViewer', path) ?? false,
   };
 }
 
@@ -608,6 +682,51 @@ export function parseRematchAccepted(value: unknown): FriendRematchAccepted {
  */
 export function isAcceptableInvitation(invitation: FriendInvitation): boolean {
   return invitation.status === 'open';
+}
+
+/**
+ * The action the reader of a rematch offer may take.
+ *
+ * - `accept` accepts a live pending offer and creates the new match;
+ * - `open` reopens the new match of an accepted offer, because the duplicate
+ *   acceptance returns the same match and the credential of the seat of the
+ *   accepter;
+ * - `none` leaves the offer alone.
+ */
+export type FriendRematchAction = 'accept' | 'open' | 'none';
+
+/**
+ * The action the reader may take on the rematch offer.
+ *
+ * A rematch needs both participants. The proposal is already the consent of
+ * the proposer, so the proposer never accepts its own offer: the service
+ * refuses that acceptance with a conflict. Only the opponent of the proposer
+ * may act on the offer.
+ *
+ * The opponent of a live pending offer accepts it, because the acceptance
+ * creates the new match. The deadline of the offer has to lie ahead: the
+ * service refuses the acceptance of an offer whose deadline passed, and the
+ * service never publishes such an offer in the first place. The rule keeps
+ * the deadline as well, so an offer that expired while the reader looked at
+ * it is not offered again.
+ *
+ * An accepted offer created its match already. The opponent of the proposer
+ * may still reopen it, because the duplicate acceptance is the recovery of a
+ * lost answer: it returns the same match and it mints the credential of the
+ * seat of the accepter. The proposer has no such recovery, because the
+ * service claims the seat of the proposer with the seat credential route.
+ */
+export function rematchAction(
+  rematch: FriendRematch,
+  options: { readonly now: number },
+): FriendRematchAction {
+  if (rematch.proposedByViewer) return 'none';
+  if (rematch.status === 'accepted') return 'open';
+  if (rematch.status !== 'pending') return 'none';
+  const deadline = Date.parse(rematch.expiresAt);
+  if (Number.isNaN(deadline)) return 'none';
+  if (deadline <= options.now) return 'none';
+  return 'accept';
 }
 
 /**

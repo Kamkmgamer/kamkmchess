@@ -70,7 +70,16 @@ func newPresenceFixture(t *testing.T) presenceFixture {
 // evaluator.
 func newPresenceFixtureWith(t *testing.T, evaluator online.Evaluator) presenceFixture {
 	t.Helper()
-	pool := testPool(t)
+	return newPresenceFixtureOn(t, testPool(t), evaluator)
+}
+
+// newPresenceFixtureOn opens an online service on a pool of the caller.
+//
+// The pool is a parameter, so a fixture can be opened on a bounded pool and
+// prove a behaviour that only appears when the pool cannot hand out a second
+// connection.
+func newPresenceFixtureOn(t *testing.T, pool *pgxpool.Pool, evaluator online.Evaluator) presenceFixture {
+	t.Helper()
 	if err := migrations.Apply(context.Background(), pool); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}

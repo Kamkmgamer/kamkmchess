@@ -38,11 +38,12 @@ func TestLoadFailsClosedAndDoesNotEchoValues(t *testing.T) {
 
 func TestLoadNormalizesOriginLists(t *testing.T) {
 	values := map[string]string{
-		"DATABASE_URL":             "postgres://local/fixture",
-		"CLERK_ISSUER":             "https://fixture.clerk.accounts.dev",
-		"CLERK_JWKS_URL":           "https://fixture.clerk.accounts.dev/.well-known/jwks.json",
-		"CLERK_AUTHORIZED_PARTIES": " https://chess.example,https://chess.example ",
-		"APP_ALLOWED_ORIGINS":      "https://chess.example,,https://staging.example",
+		"DATABASE_URL":              "postgres://local/fixture",
+		"CLERK_ISSUER":              "https://fixture.clerk.accounts.dev",
+		"CLERK_JWKS_URL":            "https://fixture.clerk.accounts.dev/.well-known/jwks.json",
+		"CLERK_AUTHORIZED_PARTIES":  " https://chess.example,https://chess.example ",
+		"APP_ALLOWED_ORIGINS":       "https://chess.example,,https://staging.example",
+		"ONLINE_RESTORE_FENCE_PATH": "/var/lib/kamkmchess/restore-fence",
 	}
 	cfg, err := Load(func(key string) string { return values[key] })
 	if err != nil || len(cfg.Clerk.AuthorizedParties) != 1 || len(cfg.Clerk.AllowedOrigins) != 2 {
@@ -57,6 +58,7 @@ func TestLoadReadsTheDeadlineSweepSettings(t *testing.T) {
 		"CLERK_JWKS_URL":                 "https://fixture.clerk.accounts.dev/.well-known/jwks.json",
 		"CLERK_AUTHORIZED_PARTIES":       "https://chess.example",
 		"APP_ALLOWED_ORIGINS":            "https://chess.example",
+		"ONLINE_RESTORE_FENCE_PATH":      "/var/lib/kamkmchess/restore-fence",
 		"ONLINE_DEADLINE_SWEEP_INTERVAL": "250ms",
 		"ONLINE_DEADLINE_SWEEP_BATCH":    "7",
 	}
@@ -83,11 +85,12 @@ func TestLoadReadsTheDeadlineSweepSettings(t *testing.T) {
 // is not an enablement signal.
 func TestLoadKeepsTheOnlineSurfacesClosedByDefault(t *testing.T) {
 	values := map[string]string{
-		"DATABASE_URL":             "postgres://local/fixture",
-		"CLERK_ISSUER":             "https://fixture.clerk.accounts.dev",
-		"CLERK_JWKS_URL":           "https://fixture.clerk.accounts.dev/.well-known/jwks.json",
-		"CLERK_AUTHORIZED_PARTIES": "https://chess.example",
-		"APP_ALLOWED_ORIGINS":      "https://chess.example",
+		"DATABASE_URL":              "postgres://local/fixture",
+		"CLERK_ISSUER":              "https://fixture.clerk.accounts.dev",
+		"CLERK_JWKS_URL":            "https://fixture.clerk.accounts.dev/.well-known/jwks.json",
+		"CLERK_AUTHORIZED_PARTIES":  "https://chess.example",
+		"APP_ALLOWED_ORIGINS":       "https://chess.example",
+		"ONLINE_RESTORE_FENCE_PATH": "/var/lib/kamkmchess/restore-fence",
 	}
 	cfg, err := Load(func(key string) string { return values[key] })
 	if err != nil {

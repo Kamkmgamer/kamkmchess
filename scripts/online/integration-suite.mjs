@@ -19,6 +19,14 @@ import { join } from 'node:path';
 import process from 'node:process';
 
 import { redactDatabaseUrl, resolveDatabaseUrl } from './fixture-client.mjs';
+import { applyRouteCoverage, auditRouteManifest, routeDependencies } from './route-manifest.mjs';
+import { buildEvidenceRecords } from './evidence-provenance.mjs';
+
+/** The exact command of the database run. The report and the records name it. */
+export const INTEGRATION_COMMAND = 'go test ./backend/integration -count=1 -timeout 60m -json (KHA41_TEST_DATABASE_URL=<local fixture>, KHA66_WORKER_ENTRY=build/rules-worker/worker.mjs)';
+
+/** The exact command of the browser run. The report and the records name it. */
+export const BROWSER_COMMAND = 'pnpm exec playwright test tests/e2e/online-clients.spec.ts (ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1)';
 
 /**
  * @param {string} command
@@ -78,7 +86,7 @@ export function parseGoTestJson(output) {
  * Maps the test results onto the acceptance scenarios.
  * @param {{scenarios: Record<string, string[]>}} map
  * @param {Map<string, string>} tests
- * @returns {{scenarioId: string, status: 'passed'|'failed'|'not_run', tests: string[], detail: string}[]}
+ * @returns {{scenarioId: string, status: 'passed'|'failed'|'not_run'|'not_implemented', tests: string[], detail: string}[]}
  */
 export function mapScenarios(map, tests) {
   return Object.entries(map.scenarios).map(([scenarioId, names]) => {
@@ -115,7 +123,10 @@ export async function runIntegrationSuite(options) {
   const goVersion = (await runCommand('go', ['version'], { cwd: root })).stdout.trim();
   const nodeVersion = (await runCommand('node', ['--version'], { cwd: root })).stdout.trim();
 
-  const testRun = await runCommand('go', ['test', './backend/integration', '-count=1', '-json'], {
+  // The suite runs the real tests against a real database, so it needs more
+  // than the default budget of the test runner of Go. The budget is explicit
+  // and generous, so a slow machine does not cut the suite short.
+  const testRun = await runCommand('go', ['test', './backend/integration', '-count=1', '-timeout', '60m', '-json'], {
     cwd: root,
     env: {
       KHA41_TEST_DATABASE_URL: databaseUrl,
@@ -125,73 +136,56 @@ export async function runIntegrationSuite(options) {
   });
   const { tests, packages } = parseGoTestJson(testRun.stdout);
   const map = JSON.parse(await readFile(join(root, 'scripts', 'online', 'acceptance-map.json'), 'utf8'));
-  const coverage = mapScenarios(map, tests);
+
+  // The route manifest is the route contract of the tooling. A route the
+  // production code does not register is reported as not_implemented, and a
+  // scenario that depends on such a route is never counted as passed.
+  const routes = await auditRouteManifest(root);
+  const dependencies = await routeDependencies(root, map, routes.routes);
+  const coverage = applyRouteCoverage(mapScenarios(map, tests), dependencies, routes.routes);
+  const missingRoutes = routes.routes.filter((route) => route.status === 'not_implemented');
 
   let browser = null;
   if (options.browser) {
     browser = await runBrowserClients(root, databaseUrl);
+    // The browser run happened in the tree of this commit, so the browser
+    // evidence names the same commit as the database run.
+    browser = { ...browser, commit, command: BROWSER_COMMAND };
   }
 
   const report = {
     tool: 'scripts/online/integration-suite.mjs',
     generatedAt: new Date().toISOString(),
     commit,
+    command: INTEGRATION_COMMAND,
     versions: { go: goVersion, node: nodeVersion, rulesWorkerBundle: workerBundle },
     database: redactDatabaseUrl(databaseUrl),
     goTestExitCode: testRun.code,
     packages: [...packages.entries()].map(([name, action]) => ({ package: name, action })),
     tests: [...tests.entries()].map(([name, action]) => ({ test: name, action })),
+    routes: {
+      manifestVersion: routes.manifest?.manifestVersion ?? null,
+      provisional: routes.manifest?.provisional ?? null,
+      routes: routes.routes.map((route) => ({ id: route.id, method: route.method, path: route.path, family: route.family, status: route.status })),
+      notImplemented: missingRoutes.map((route) => `${route.method} ${route.path}`),
+      problems: routes.problems,
+    },
     coverage,
     browser,
     limits: [
       'This run proves local behaviour against a real database and the pinned rules worker.',
       'It proves nothing about native assistive technology, a live host or a released cohort.',
       'A scenario without a mapped test is reported as not_run and stays not_run in the ledger.',
+      'The route manifest is compared with the repository. A route the production code does not register is reported as not_implemented and never as a passed scenario.',
     ],
   };
 
   if (options.record) {
-    await writeRecords(root, report, map);
-    // The browser records are written for every outcome. A failed or skipped
-    // browser run overwrites the earlier records of the same scenarios, so a
-    // stale pass cannot survive a later failure.
-    await writeBrowserRecords(root, report);
+    // The records are built from the same run sources the ledger reads, so a
+    // run never writes a claim that the ledger refuses.
+    await writeRecords(root, report);
   }
   return report;
-}
-
-/**
- * Records the evidence of the browser run.
- *
- * The browser cases are the real clients: two Chromium contexts against the
- * real service. A scenario is only recorded when the browser run passed.
- * @param {string} root
- * @param {any} report
- */
-async function writeBrowserRecords(root, report) {
-  const contract = JSON.parse(await readFile(join(root, 'docs', 'spec', 'online-play-acceptance.json'), 'utf8'));
-  const browserMap = JSON.parse(await readFile(join(root, 'scripts', 'online', 'browser-map.json'), 'utf8'));
-  const directory = join(root, 'docs', 'evidence', 'online', 'records');
-  await mkdir(directory, { recursive: true });
-  const passed = report.browser?.status === 'passed';
-  for (const [scenarioId, cases] of Object.entries(browserMap.scenarios)) {
-    const scenario = contract.cases.find((item) => item.id === scenarioId);
-    const record = {
-      scenarioId,
-      status: passed ? 'passed' : 'failed',
-      kind: 'local',
-      commit: report.commit,
-      command: 'pnpm exec playwright test tests/e2e/online-clients.spec.ts (ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1)',
-      expected: scenario?.scenario ?? '',
-      actual: passed
-        ? `The browser cases passed against the real service: ${cases.join('; ')}.`
-        : `The browser run did not pass (${report.browser?.status ?? 'not run'}), so these scenarios carry no passing evidence: ${cases.join('; ')}.`,
-      notes: passed
-        ? 'Local browser evidence. It does not certify a native assistive-technology run, a live host or a released cohort.'
-        : 'The browser run failed, so this record is a failure and not a pass. It replaces the earlier record of the same scenario.',
-    };
-    await writeFile(join(directory, `${scenarioId}.json`), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
-  }
 }
 
 /**
@@ -252,28 +246,21 @@ async function runBrowserClients(root, databaseUrl) {
 
 /**
  * Writes one evidence record per covered scenario.
+ *
+ * The records are built from the same run sources the ledger reads, so a run
+ * never writes a claim that the ledger refuses. There is one record per
+ * scenario: the database run observes a scenario first and the browser run
+ * confirms it or fails it, so a stale pass cannot survive a later failure.
  * @param {string} root
  * @param {any} report
- * @param {any} map
  */
 async function writeRecords(root, report) {
   const contract = JSON.parse(await readFile(join(root, 'docs', 'spec', 'online-play-acceptance.json'), 'utf8'));
+  const browserMap = JSON.parse(await readFile(join(root, 'scripts', 'online', 'browser-map.json'), 'utf8'));
   const directory = join(root, 'docs', 'evidence', 'online', 'records');
   await mkdir(directory, { recursive: true });
-  for (const entry of report.coverage) {
-    if (entry.status === 'not_run') continue;
-    const scenario = contract.cases.find((item) => item.id === entry.scenarioId);
-    const record = {
-      scenarioId: entry.scenarioId,
-      status: entry.status,
-      kind: 'local',
-      commit: report.commit,
-      command: `go test ./backend/integration -count=1 -json (KHA41_TEST_DATABASE_URL=<local fixture>, KHA66_WORKER_ENTRY=build/rules-worker/worker.mjs)`,
-      expected: scenario?.scenario ?? '',
-      actual: `${entry.detail} against ${report.database} with the pinned rules worker bundle.`,
-      notes: 'Local evidence only. It does not certify a native run, a live host or a released cohort.',
-    };
-    await writeFile(join(directory, `${entry.scenarioId}.json`), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
+  for (const record of buildEvidenceRecords({ report, contract, browserMap })) {
+    await writeFile(join(directory, `${record.scenarioId}.json`), `${JSON.stringify(record, null, 2)}\n`, 'utf8');
   }
 }
 
@@ -298,9 +285,16 @@ async function main() {
     for (const entry of report.coverage) {
       process.stdout.write(`  ${entry.status.toUpperCase().padEnd(8)} ${entry.scenarioId}: ${entry.detail}\n`);
     }
+    const missing = report.routes?.notImplemented ?? [];
+    if (missing.length > 0) {
+      process.stdout.write(`\nnot implemented routes: ${missing.join(', ')}\n`);
+    }
     process.stdout.write(`report written to ${target}\n`);
   }
   if (report.goTestExitCode !== 0) process.exitCode = 1;
+  // A route the production code does not register is a broken route contract,
+  // so the run is never green while one is missing.
+  if ((report.routes?.notImplemented ?? []).length > 0) process.exitCode = 1;
 }
 
 if (process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('scripts/online/integration-suite.mjs')) {

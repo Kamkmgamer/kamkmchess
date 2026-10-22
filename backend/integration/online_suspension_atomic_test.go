@@ -105,7 +105,20 @@ func TestOnlineTwoInstancesPlanOneInterruptionForOneOutage(t *testing.T) {
 	beforeDeadline := *before.Clock.DeadlineAt
 
 	secondEvaluator := &atomicSwitchableEvaluator{}
-	second, err := online.Open(ctx, fixture.pool, secondEvaluator, online.WithHealthReporter(fixture.health))
+	// Both instances read the same authoritative clock, so the interruption of
+	// the one outage is exactly the outage, whoever wins the race of the
+	// plan.
+	//
+	// The boundary of the outage carries the reading of the clock of the
+	// instance that planned it, and the recovery closes the interval with the
+	// reading of the clock of the instance that recovered it. Two instances
+	// with two clocks therefore measure two different outages, and the length
+	// of the interruption depends on which instance won the race of the plan.
+	// One fixture clock makes the one outage exactly two minutes long.
+	second, err := online.Open(ctx, fixture.pool, secondEvaluator,
+		online.WithClockSource(fixture.clock.Source()),
+		online.WithHealthReporter(fixture.health),
+	)
 	if err != nil {
 		t.Fatalf("open the second instance: %v", err)
 	}

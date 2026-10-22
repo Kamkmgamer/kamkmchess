@@ -21,7 +21,12 @@ const GuestCredentialHeader = "X-Guest-Seat-Token"
 
 // OnlineRequestHeaders lists the request headers the online API accepts.
 // Last-Event-ID is accepted for the finite stream renewal that KHA-69 adds.
-var OnlineRequestHeaders = []string{GuestCredentialHeader, "Last-Event-ID"}
+//
+// The owner token of an invitation is accepted as well, because the friend
+// routes live under this surface. It is a private header of the friend
+// surface, and the private single-owner sync API keeps its narrower header
+// set.
+var OnlineRequestHeaders = []string{GuestCredentialHeader, OwnerTokenHeader, "Last-Event-ID"}
 
 // OnlineService is the shared online reader and writer the participant API
 // uses. It is satisfied by *online.Service, which stays the only transaction

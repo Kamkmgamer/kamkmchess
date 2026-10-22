@@ -32,7 +32,7 @@ func TestHealthStateFailsClosedOnAnUnreadableSharedState(t *testing.T) {
 		// The durable write cannot succeed either, which is the point.
 		t.Logf("the durable report failed as expected: %v", err)
 	}
-	state := service.healthState(context.Background())
+	state := service.healthState(context.Background(), nil)
 	if state == HealthHealthy {
 		t.Fatal("a health state that cannot be read must not be healthy")
 	}
@@ -49,19 +49,19 @@ func TestHealthStateIsUnavailableWhileADependencyIsDown(t *testing.T) {
 	if err := reporter.ReportDependency(context.Background(), DependencyRules, HealthHealthy, "the rules process answered"); err != nil {
 		t.Fatal(err)
 	}
-	if state := service.healthState(context.Background()); state != HealthHealthy {
+	if state := service.healthState(context.Background(), nil); state != HealthHealthy {
 		t.Fatalf("the health state = %q, want %q", state, HealthHealthy)
 	}
 	if err := reporter.ReportDependency(context.Background(), DependencyRules, HealthDegraded, "the rules process did not answer"); err != nil {
 		t.Fatal(err)
 	}
-	if state := service.healthState(context.Background()); state != HealthDegraded {
+	if state := service.healthState(context.Background(), nil); state != HealthDegraded {
 		t.Fatalf("the health state = %q, want %q", state, HealthDegraded)
 	}
 	if err := reporter.ReportDependency(context.Background(), DependencyRules, HealthUnavailable, "the rules process is down"); err != nil {
 		t.Fatal(err)
 	}
-	if state := service.healthState(context.Background()); state != HealthUnavailable {
+	if state := service.healthState(context.Background(), nil); state != HealthUnavailable {
 		t.Fatalf("the health state = %q, want %q", state, HealthUnavailable)
 	}
 }

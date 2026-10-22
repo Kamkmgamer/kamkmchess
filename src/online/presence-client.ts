@@ -15,60 +15,61 @@
  *   only sends the claim the service allowed.
  * - The credential travels in the request header of the authorized
  *   requester. It never travels in a URL or a body.
+ * - The shape of every answer belongs to the contract module. The client
+ *   reads the canonical types and parsers of `./contracts` and never keeps a
+ *   second, laxer copy of them.
  */
+import {
+  ONLINE_CONTRACTS_SCHEMA_VERSION,
+  parsePresenceView,
+  parseReceipt,
+  parseSeatPresence,
+} from './contracts';
+import type {
+  ClaimAvailability,
+  ClaimReason,
+  PresenceView,
+  Receipt,
+  Seat,
+  SeatPresence,
+} from './contracts';
 import type { AuthorizedRequester } from './request';
 import type { ParticipantSession } from './session';
 import { matchSeatScope } from './auth';
-import type { Seat } from './contracts';
 
 /** The presence of one seat. */
-export interface OnlineSeatPresence {
-  readonly seat: Seat;
-  readonly state: 'connected' | 'offline' | 'unknown';
-  readonly lastHeartbeatAt: string | null;
-  readonly leaseExpiresAt: string | null;
-  readonly offlineSince: string | null;
-  readonly keepWaitingAt: string | null;
-}
+export type OnlineSeatPresence = SeatPresence;
 
 /** Why the claim is or is not offered. */
-export type OnlineClaimReason =
-  | 'eligible'
-  | 'opponent-connected'
-  | 'opponent-unknown'
-  | 'awaiting-first-moves'
-  | 'opening-reply-outstanding'
-  | 'service-unavailable'
-  | 'match-ended'
-  | 'offline-grace-period';
+export type OnlineClaimReason = ClaimReason;
 
 /** The claim option of one participant. */
-export interface OnlineClaimAvailability {
-  readonly eligible: boolean;
-  readonly reason: OnlineClaimReason;
-  readonly opponentSeat: Seat | null;
-  readonly offlineSince: string | null;
-  readonly graceSecondsLeft: number;
-}
+export type OnlineClaimAvailability = ClaimAvailability;
 
 /** The presence view of one match. */
-export interface OnlinePresenceView {
-  readonly schemaVersion: number;
-  readonly matchId: string;
-  readonly version: number;
-  readonly controlEpoch: number;
-  readonly status: string;
-  readonly seats: readonly OnlineSeatPresence[];
-  readonly serviceState: 'healthy' | 'degraded' | 'unavailable';
-  readonly claim: OnlineClaimAvailability;
-  readonly yourSeat: Seat | null;
-}
+export type OnlinePresenceView = PresenceView;
 
 export interface OnlinePresenceClientOptions {
   readonly requester: AuthorizedRequester;
   readonly session: ParticipantSession;
   readonly matchId: string;
   readonly seat: Seat;
+}
+
+/**
+ * The input of an abandonment claim.
+ *
+ * The claim carries the facts the service checks again under the match lock:
+ * the version and the control epoch the browser last saw, and the seat of the
+ * caller. The identifier of the operation keeps a retry idempotent.
+ */
+export interface OnlineClaimInput {
+  /** The version the browser last saw. */
+  readonly expectedVersion: number;
+  /** The control epoch the browser last saw. */
+  readonly controlEpoch: number;
+  /** The idempotency identifier of the claim. */
+  readonly operationId?: string;
 }
 
 export interface OnlinePresenceClient {
@@ -78,6 +79,13 @@ export interface OnlinePresenceClient {
   view(): Promise<OnlinePresenceView>;
   /** Records that the caller keeps waiting. */
   keepWaiting(): Promise<OnlineSeatPresence>;
+  /**
+   * Claims the win because the opponent stayed offline.
+   *
+   * The service decides whether the claim is allowed. The browser sends the
+   * claim it was offered and reads the receipt the service answered.
+   */
+  claimAbandonment(input: OnlineClaimInput): Promise<Receipt>;
 }
 
 /** The path of the presence route. */
@@ -85,63 +93,32 @@ export function onlinePresencePath(matchId: string): string {
   return `/v1/online/matches/${encodeURIComponent(matchId)}/presence`;
 }
 
-function asRecord(value: unknown, path: string): Record<string, unknown> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`${path} is not an object.`);
-  }
-  return value as Record<string, unknown>;
+/** The path of the abandonment claim route. */
+export function onlineClaimPath(matchId: string): string {
+  return `/v1/online/matches/${encodeURIComponent(matchId)}/claim`;
 }
 
-function optionalTimestamp(value: unknown): string | null {
-  return typeof value === 'string' ? value : null;
+/** Creates the identifier of one claim. */
+function defaultOperationId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID().replace(/-/g, '');
+  }
+  return `op${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
 }
 
-function parseSeatPresence(value: unknown, path: string): OnlineSeatPresence {
-  const record = asRecord(value, path);
-  const seat = record.seat;
-  const state = record.state;
-  if (seat !== 'white' && seat !== 'black') throw new Error(`${path}.seat is invalid.`);
-  if (state !== 'connected' && state !== 'offline' && state !== 'unknown') {
-    throw new Error(`${path}.state is invalid.`);
+/**
+ * Reads the presence view of one match from the answer of the service.
+ *
+ * The contract module owns the shape of the answer. The client keeps one
+ * binding check of its own: the view must belong to the match it asked for,
+ * because a view of another match would carry the presence of other seats.
+ */
+function readPresenceView(value: unknown, matchId: string): PresenceView {
+  const view = parsePresenceView(value);
+  if (view.matchId !== matchId) {
+    throw new Error('The presence view belongs to another match.');
   }
-  return {
-    seat,
-    state,
-    lastHeartbeatAt: optionalTimestamp(record.lastHeartbeatAt),
-    leaseExpiresAt: optionalTimestamp(record.leaseExpiresAt),
-    offlineSince: optionalTimestamp(record.offlineSince),
-    keepWaitingAt: optionalTimestamp(record.keepWaitingAt),
-  };
-}
-
-function parsePresenceView(value: unknown, matchId: string): OnlinePresenceView {
-  const path = 'presence';
-  const record = asRecord(value, path);
-  if (record.matchId !== matchId) throw new Error(`${path}.matchId is another match.`);
-  const seats = Array.isArray(record.seats) ? record.seats : [];
-  const claim = asRecord(record.claim, `${path}.claim`);
-  const serviceState = record.serviceState;
-  if (serviceState !== 'healthy' && serviceState !== 'degraded' && serviceState !== 'unavailable') {
-    throw new Error(`${path}.serviceState is invalid.`);
-  }
-  const opponentSeat = claim.opponentSeat;
-  return {
-    schemaVersion: typeof record.schemaVersion === 'number' ? record.schemaVersion : 1,
-    matchId,
-    version: typeof record.version === 'number' ? record.version : 0,
-    controlEpoch: typeof record.controlEpoch === 'number' ? record.controlEpoch : 0,
-    status: typeof record.status === 'string' ? record.status : 'active',
-    seats: seats.map((seat, index) => parseSeatPresence(seat, `${path}.seats[${index}]`)),
-    serviceState,
-    claim: {
-      eligible: claim.eligible === true,
-      reason: typeof claim.reason === 'string' ? claim.reason as OnlineClaimReason : 'opponent-unknown',
-      opponentSeat: opponentSeat === 'white' || opponentSeat === 'black' ? opponentSeat : null,
-      offlineSince: optionalTimestamp(claim.offlineSince),
-      graceSecondsLeft: typeof claim.graceSecondsLeft === 'number' ? claim.graceSecondsLeft : 0,
-    },
-    yourSeat: record.yourSeat === 'white' || record.yourSeat === 'black' ? record.yourSeat : null,
-  };
+  return view;
 }
 
 /**
@@ -164,7 +141,37 @@ export function createOnlinePresenceClient(options: OnlinePresenceClientOptions)
     if (!result.ok) {
       throw new Error(`The service refused the presence request (${result.status}).`);
     }
-    return parseSeatPresence(result.data, 'presence');
+    return parseSeatPresence(result.data);
+  }
+
+  /**
+   * Sends the abandonment claim of the caller.
+   *
+   * The envelope is closed: the claim carries no action, because a claim never
+   * changes the position, the turn or the clocks of a running game.
+   */
+  async function claimAbandonment(input: OnlineClaimInput): Promise<Receipt> {
+    const command = {
+      schemaVersion: ONLINE_CONTRACTS_SCHEMA_VERSION,
+      matchId,
+      operationId: input.operationId ?? defaultOperationId(),
+      expectedVersion: input.expectedVersion,
+      seat,
+      controlEpoch: input.controlEpoch,
+    };
+    const result = await requester.request(scope, {
+      path: onlineClaimPath(matchId),
+      method: 'POST',
+      body: command,
+    });
+    if (!result.ok) {
+      throw new Error(`The service refused the claim (${result.status}).`);
+    }
+    const receipt = parseReceipt(result.data);
+    if (receipt.matchId !== matchId) {
+      throw new Error('The receipt belongs to another match.');
+    }
+    return receipt;
   }
 
   return {
@@ -174,12 +181,13 @@ export function createOnlinePresenceClient(options: OnlinePresenceClientOptions)
     keepWaiting() {
       return postSeat('/keep-waiting');
     },
+    claimAbandonment,
     async view() {
       const result = await requester.request(scope, { path });
       if (!result.ok) {
         throw new Error(`The service refused the presence request (${result.status}).`);
       }
-      return parsePresenceView(result.data, matchId);
+      return readPresenceView(result.data, matchId);
     },
   };
 }

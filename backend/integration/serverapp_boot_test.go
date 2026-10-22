@@ -299,6 +299,7 @@ func TestServerAppBootOwnsAndClosesTheRulesWorkerProcess(t *testing.T) {
 			DeadlineSweepBatch:     10,
 			HealthCheckInterval:    time.Hour,
 			HistoryPublishInterval: time.Hour,
+			RestoreFencePath:       t.TempDir(),
 		},
 	})
 	if err != nil {
@@ -388,6 +389,7 @@ func TestServerAppFailedBootClosesTheRulesWorkerProcess(t *testing.T) {
 					DeadlineSweepBatch:     10,
 					HealthCheckInterval:    time.Hour,
 					HistoryPublishInterval: time.Hour,
+					RestoreFencePath:       t.TempDir(),
 				},
 			})
 			if err == nil {
@@ -434,6 +436,7 @@ func TestServerAppWarmFailureFailsTheBoot(t *testing.T) {
 			DeadlineSweepBatch:     10,
 			HealthCheckInterval:    time.Hour,
 			HistoryPublishInterval: time.Hour,
+			RestoreFencePath:       t.TempDir(),
 		},
 	})
 	if err == nil {

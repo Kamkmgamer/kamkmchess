@@ -17,33 +17,29 @@
 // alternative key lookups.
 //
 // Strictness:
-//   - no descriptor at all: the run had no fixture, so it skips;
+//   - no descriptor at all: the run had no fixture, so it skips. The skip
+//     says in the report that the run proved no online fixture coverage;
 //   - a descriptor but a closed friend surface, a missing route or a missing
-//     field: the run fails.
+//     field: the run fails;
+//   - a descriptor the caller supplied that cannot be read or that has
+//     another shape: the run fails. An unusable descriptor is a broken run,
+//     not an absent fixture.
 // Set ONLINE_FIXTURE_STRICT=1 to make a missing descriptor fail as well.
 
 import { expect, test } from '@playwright/test';
 import { createPrivateKey, createSign } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-
-type Descriptor = {
-  baseUrl: string;
-  issuer: string;
-  allowedOrigins: string[];
-  accounts: { id: string; token: string }[];
-  keyPath: string;
-};
+import { openOnlineFixtureGate } from '../support/online-fixture-descriptor';
+import type { OnlineFixtureDescriptor } from '../support/online-fixture-descriptor';
 
 type Json = Record<string, unknown>;
 
-const descriptorPath = process.env.ONLINE_FIXTURE_DESCRIPTOR ?? '';
-const strict = process.env.ONLINE_FIXTURE_STRICT === '1';
 // The browser worker publishes the production route it renders for an
 // invitation. When it is not published yet the UI navigation check is
 // reported as not run instead of guessing a selector.
 const uiInvitePath = process.env.ONLINE_FIXTURE_UI_INVITE_PATH ?? '';
 
-let descriptor: Descriptor | null = null;
+let descriptor: OnlineFixtureDescriptor | null = null;
 
 /** Mints a session token for a fixture account with the fixture's own key. */
 async function mintToken(accountId: string): Promise<string> {
@@ -110,19 +106,26 @@ test.describe('online clients against the local fixture', () => {
   // origin, so it needs more than the default budget.
   test.setTimeout(120_000);
   test.beforeAll(async () => {
-    if (!descriptorPath) return;
-    try {
-      descriptor = JSON.parse(await readFile(descriptorPath, 'utf8')) as Descriptor;
-    } catch {
-      descriptor = null;
+    const gate = await openOnlineFixtureGate({
+      reason: 'the online client cases need the real service',
+    });
+    if (gate.action === 'fail') {
+      // A missing descriptor fails a strict run, and a descriptor the caller
+      // supplied that cannot be used fails every run.
+      throw new Error(gate.message);
     }
+    if (gate.action === 'skip') {
+      // The run had no fixture. The cases skip and the reason of the skip is
+      // printed, so the report never reads as online fixture coverage.
+      console.log(`[online-fixture] tests/e2e/online-clients.spec.ts: ${gate.message}`);
+      test.skip(true, gate.message);
+      return;
+    }
+    descriptor = gate.descriptor;
   });
 
   test('the feature switch route reports exactly the two switches', async ({ browser }) => {
-    if (!descriptor) {
-      test.skip(!strict, 'ONLINE_FIXTURE_DESCRIPTOR is not set; start scripts/online/fixture-server.mjs first');
-      throw new Error('the fixture descriptor is missing');
-    }
+    expect(descriptor).not.toBeNull();
     const context = await browser.newContext();
     const page = await context.newPage();
     await page.goto('/');
@@ -135,10 +138,7 @@ test.describe('online clients against the local fixture', () => {
   });
 
   test('a guest accepts a friend invitation and both browser clients observe the same accepted move', async ({ browser }) => {
-    if (!descriptor) {
-      test.skip(!strict, 'ONLINE_FIXTURE_DESCRIPTOR is not set; start scripts/online/fixture-server.mjs first');
-      throw new Error('the fixture descriptor is missing');
-    }
+    expect(descriptor).not.toBeNull();
 
     const ownerContext = await browser.newContext();
     const guestContext = await browser.newContext();
@@ -335,10 +335,7 @@ test.describe('online clients against the local fixture', () => {
   });
 
   test('a consumed invitation cannot be accepted twice and a guest without a credential is refused', async ({ browser }) => {
-    if (!descriptor) {
-      test.skip(!strict, 'ONLINE_FIXTURE_DESCRIPTOR is not set; start scripts/online/fixture-server.mjs first');
-      throw new Error('the fixture descriptor is missing');
-    }
+    expect(descriptor).not.toBeNull();
     const context = await browser.newContext();
     const page = await context.newPage();
     await page.goto('/');
@@ -395,10 +392,7 @@ test.describe('online clients against the local fixture', () => {
 
   test('the production interface renders the invitation link', async ({ browser }) => {
     test.skip(!uiInvitePath, 'ONLINE_FIXTURE_UI_INVITE_PATH is not published yet; the rendered interface check has not run');
-    if (!descriptor) {
-      test.skip(!strict, 'ONLINE_FIXTURE_DESCRIPTOR is not set; start scripts/online/fixture-server.mjs first');
-      throw new Error('the fixture descriptor is missing');
-    }
+    expect(descriptor).not.toBeNull();
     const ownerContext = await browser.newContext();
     const guestContext = await browser.newContext();
     const ownerPage = await ownerContext.newPage();
@@ -431,10 +425,7 @@ test.describe('online clients against the local fixture', () => {
   });
 
   test('the rendered workspace reflects the real service state', async ({ browser }) => {
-    if (!descriptor) {
-      test.skip(!strict, 'ONLINE_FIXTURE_DESCRIPTOR is not set; start scripts/online/fixture-server.mjs first');
-      throw new Error('the fixture descriptor is missing');
-    }
+    expect(descriptor).not.toBeNull();
     const context = await browser.newContext();
     const page = await context.newPage();
     // The service is the authority for the surfaces. The rendered workspace

@@ -9,6 +9,10 @@ import type { OnlineComposition } from '../online/composition.js';
 import { privateAgentEntryFor, privateAgentEntryForBinding, privateAgentId, readPrivateAgentCatalog, seatChoiceAvailable } from '../accounts/agent-catalog.js';
 import type { PrivateAgentEntry } from '../accounts/agent-catalog.js';
 import type { ConnectionNamespace, ConnectionStore } from '../providers/connections/index.js';
+import { createAgentReadinessCheck } from '../online/agent-readiness.js';
+import type { OnlineAgentCheck } from '../online/readiness.js';
+import { OpponentService } from '../opponents/index.js';
+import { fetchProvider } from '../providers/transport.js';
 
 /**
  * The invitation of a published link, when the composition publishes it.
@@ -263,6 +267,25 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     // account changes, so a model that was connected after the page loaded
     // is known without opening the panel first.
   }, [composition, online, onlineResolveNamespace, onlineConnectionStore, catalogRefresh, onlineOpen, accountIdentity]);
+  /**
+   * The readiness check of one selected own model.
+   *
+   * The check runs in the browser, so the credential of the model never
+   * reaches the service. The namespace is resolved when the check runs, so
+   * the check of a signed-in owner reads the connections of that account and
+   * never the guest connections. A failed check blocks an agent seat: the
+   * owner is never given a human seat instead of the model it chose.
+   */
+  const checkOnlineAgent = useCallback(async (selection: ModelSelection): Promise<OnlineAgentCheck> => {
+    const namespace = onlineResolveNamespace?.() ?? composition.namespace;
+    const connections = await (onlineConnectionStore ?? composition.connectionStore);
+    const service = new OpponentService({ connections, namespace, fetch: fetchProvider });
+    return createAgentReadinessCheck({
+      opponentService: service,
+      connectionStore: Promise.resolve(connections),
+      namespace,
+    })(selection);
+  }, [composition, onlineConnectionStore, onlineResolveNamespace]);
   // The chosen agent follows the catalog: the model of the current game when
   // it is connected, and otherwise the first connected model. The choice of
   // the owner wins over both.
@@ -1014,6 +1037,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     </header>}
     {onlineVisible && online && <OnlineWorkspace composition={online} onClose={closeOnline}
       agentLabel={online.agent?.label ?? null}
+      checkAgent={checkOnlineAgent}
       {...(onOpenProfile ? { onOpenProfile } : {})} />}
     {tool && <section className="focus-page" aria-label={tool === 'agents' ? 'Your agents' : 'Match tools'}>
       <div className="panel-heading"><h2>{tool === 'move' ? 'Move' : tool === 'agents' ? 'Your agents' : tool.charAt(0).toUpperCase() + tool.slice(1)}</h2><IconButton icon="close" label="Close" onClick={() => setTool(null)} /></div>

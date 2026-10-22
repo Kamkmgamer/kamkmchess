@@ -95,6 +95,26 @@ func friendGuestRequest(t *testing.T, handler http.Handler, method, path, guestT
 	return recorder
 }
 
+// friendOwnerRequest sends one request with the owner token of an
+// invitation.
+//
+// The owner token travels in the dedicated private header of the surface, so
+// it never reaches a body, a URL or a log line.
+func friendOwnerRequest(t *testing.T, handler http.Handler, method, path, ownerToken, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Origin", friendOrigin)
+	if ownerToken != "" {
+		request.Header.Set(httpapi.OwnerTokenHeader, ownerToken)
+	}
+	if body != "" {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	return recorder
+}
+
 // friendSeatLock holds the seats table of the test schema, so the creation of
 // a match blocks while the acceptance of an invitation runs.
 type friendSeatLock struct {
@@ -278,7 +298,7 @@ func TestPostgresFriendExpiredInvitationReportsItsState(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The preview reports the effective state.
-	preview, err := fixture.friends.Get(ctx, created.Invitation.InvitationID, "")
+	preview, err := fixture.friends.Get(ctx, invite.ViewRequest{InvitationID: created.Invitation.InvitationID})
 	if err != nil {
 		t.Fatalf("preview: %v", err)
 	}
@@ -365,7 +385,7 @@ func TestPostgresFriendNamedChallengeIsInvisibleToAStranger(t *testing.T) {
 		t.Fatalf("the unknown invitation status = %d, want %d", unknown.Code, challenge.Code)
 	}
 	// The challenge is untouched: a refused acceptance consumes nothing.
-	preview, err := fixture.friends.Get(ctx, created.Invitation.InvitationID, "user_recipient")
+	preview, err := fixture.friends.Get(ctx, invite.ViewRequest{InvitationID: created.Invitation.InvitationID, ViewerAccountID: "user_recipient"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -800,7 +820,7 @@ func TestPostgresFriendConcurrentAcceptanceAndCancellationHaveOneWinner(t *testi
 		}
 	}
 	// The state of the invitation is one of the two real states.
-	preview, err := fixture.friends.Get(ctx, created.Invitation.InvitationID, "")
+	preview, err := fixture.friends.Get(ctx, invite.ViewRequest{InvitationID: created.Invitation.InvitationID})
 	if err != nil {
 		t.Fatal(err)
 	}

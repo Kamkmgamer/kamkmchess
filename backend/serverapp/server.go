@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/auth"
+	"github.com/Kamkmgamer/kamkmchess/backend/cohort"
 	"github.com/Kamkmgamer/kamkmchess/backend/history"
 	"github.com/Kamkmgamer/kamkmchess/backend/httpapi"
 	"github.com/Kamkmgamer/kamkmchess/backend/invite"
@@ -71,6 +72,18 @@ type OnlineConfig struct {
 	// QueueEnabled opens the public matchmaking surface. It is off by
 	// default and independent of the friend surface.
 	QueueEnabled bool
+	// FriendCohort narrows the accounts that may use the friend surface.
+	//
+	// It is an allowlist of account identifiers and it is empty by default,
+	// which admits every signed-in account. It never excludes a guest: a
+	// guest has to be able to create a friend link and to accept an
+	// invitation that was issued while friend play was enabled.
+	FriendCohort cohort.Cohort
+	// QueueCohort narrows the accounts that may use the public queue.
+	//
+	// It is an allowlist of account identifiers and it is empty by default,
+	// which admits every signed-in account.
+	QueueCohort cohort.Cohort
 	// QueueSweepInterval is how often the server reconciles the queue
 	// cutoffs, the readiness leases and the pending allocations.
 	QueueSweepInterval time.Duration
@@ -88,6 +101,10 @@ type OnlineConfig struct {
 	// service and the restore tool have to use the same path, and the path
 	// has to be a shared persistent location: a per container or per host
 	// path would let two instances disagree about the state of a restore.
+	//
+	// It is required. A configuration without it is refused, because a
+	// service that never observes the fence serves a restored copy whose
+	// removal ledger was never replayed.
 	RestoreFencePath string
 }
 
@@ -118,6 +135,8 @@ func Load(getenv func(string) string) (Config, error) {
 			HealthCheckInterval:    duration(getenv, "ONLINE_HEALTH_CHECK_INTERVAL", DefaultHealthCheckInterval),
 			FriendEnabled:          flag(getenv, "ONLINE_FRIEND_ENABLED"),
 			QueueEnabled:           flag(getenv, "ONLINE_QUEUE_ENABLED"),
+			FriendCohort:           cohort.Parse(getenv("ONLINE_FRIEND_COHORT")),
+			QueueCohort:            cohort.Parse(getenv("ONLINE_QUEUE_COHORT")),
 			QueueSweepInterval:     duration(getenv, "ONLINE_QUEUE_SWEEP_INTERVAL", DefaultQueueSweepInterval),
 			QueueSweepBatch:        positiveInt(getenv, "ONLINE_QUEUE_SWEEP_BATCH", DefaultQueueSweepBatch),
 			HistoryPublishInterval: duration(getenv, "ONLINE_HISTORY_PUBLISH_INTERVAL", history.DefaultPublishInterval),
@@ -127,6 +146,16 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.DatabaseURL == "" || len(cfg.Clerk.AllowedOrigins) == 0 {
 		return Config{}, errors.New("storage configuration incomplete")
+	}
+	// The durable restore fence is not an optional setting. A service without
+	// it never observes an open fence, so it would serve a restored database
+	// whose removal ledger was never replayed. The absence of the setting
+	// fails closed: the boot stops instead of serving without the fence.
+	//
+	// The error names the setting and never its value: the path is operator
+	// material and it does not belong in a log line or in a report.
+	if cfg.Online.RestoreFencePath == "" {
+		return Config{}, errors.New("the durable restore fence path is not configured")
 	}
 	if _, err := auth.NewVerifier(cfg.Clerk); err != nil {
 		return Config{}, errors.New("invalid Clerk verifier configuration")
@@ -140,6 +169,15 @@ func Load(getenv func(string) string) (Config, error) {
 // its own origin and header policy; the online participant API is mounted
 // under its own path with the guest seat credential header allowed.
 func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
+	// The composition fails closed without the durable restore fence.
+	//
+	// The configuration loader already refuses a missing setting, and the
+	// check here keeps the guarantee for a configuration that was assembled
+	// by hand: a service that never observes the fence would serve a
+	// restored database whose removal ledger was not replayed.
+	if strings.TrimSpace(cfg.Online.RestoreFencePath) == "" {
+		return nil, nil, errors.New("the durable restore fence path is not configured")
+	}
 	verifier, err := auth.NewVerifier(cfg.Clerk)
 	if err != nil {
 		return nil, nil, errors.New("invalid Clerk verifier configuration")
@@ -268,27 +306,33 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		Queue:   cfg.Online.QueueEnabled,
 	}))
 	surface.Handle("/", httpapi.NewOnlineWithPublicReplay(onlineService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}, historyService))
-	if cfg.Online.FriendEnabled {
-		// The friend surface is independent of the participant commands. It
-		// is mounted only when the switch is on, so a closed surface is not
-		// reachable at all.
-		friendService, err := invite.Open(ctx, pool, onlineService, onlineService, onlineauth.NewAllocator(authorizer), invite.Options{
-			GuestCredentialTTL: cfg.Online.GuestCredentialTTL,
-			InvitationTTL:      invite.InvitationTTL,
-		})
-		if err != nil {
-			return nil, nil, errors.New("friend invitation initialization failed")
-		}
-		friendHandler := httpapi.NewFriends(friendService, onlineService, authorizer, httpapi.FriendsOptions{
-			AllowedOrigins: cfg.Clerk.AllowedOrigins,
-			LabelResolver:  invite.NewAccountLabelResolver(pool),
-		})
-		surface.Handle("/v1/online/invitations", friendHandler)
-		surface.Handle("/v1/online/invitations/", friendHandler)
-		surface.Handle("/v1/online/rematches", friendHandler)
-		surface.Handle("/v1/online/rematches/", friendHandler)
-		surface.Handle("GET /v1/online/matches/{matchID}/rematch", friendHandler)
+	// The friend surface stays mounted even when the switch is off. The
+	// switch is a rollback switch: it stops new creations immediately, and
+	// an invitation that was issued while it was open must still be
+	// finishable. The service refuses the creation of a new invitation
+	// while the switch is off, and it serves the preview, the acceptance,
+	// the cancellation and the seat recovery of an issued invitation.
+	friendService, err := invite.Open(ctx, pool, onlineService, onlineService, onlineauth.NewAllocator(authorizer), invite.Options{
+		GuestCredentialTTL: cfg.Online.GuestCredentialTTL,
+		InvitationTTL:      invite.InvitationTTL,
+		Gate:               invite.StaticGate(cfg.Online.FriendEnabled),
+	})
+	if err != nil {
+		return nil, nil, errors.New("friend invitation initialization failed")
 	}
+	friendHandler := httpapi.NewFriends(friendService, onlineService, authorizer, httpapi.FriendsOptions{
+		AllowedOrigins: cfg.Clerk.AllowedOrigins,
+		LabelResolver:  invite.NewAccountLabelResolver(pool),
+		// The cohort narrows the accounts that may use the friend surface.
+		// It is an allowlist, so an empty cohort admits every signed-in
+		// account, and it never excludes a guest.
+		Cohort: cfg.Online.FriendCohort,
+	})
+	surface.Handle("/v1/online/invitations", friendHandler)
+	surface.Handle("/v1/online/invitations/", friendHandler)
+	surface.Handle("/v1/online/rematches", friendHandler)
+	surface.Handle("/v1/online/rematches/", friendHandler)
+	surface.Handle("GET /v1/online/matches/{matchID}/rematch", friendHandler)
 	root.Handle("/v1/online/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders, surface))
 	// The public queue is mounted only when its switch is on. A closed
 	// surface is not mounted at all, so its routes answer 404.
@@ -310,7 +354,13 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 			return nil, nil, errors.New("public queue initialization failed")
 		}
 		root.Handle("/v1/online/queue/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders,
-			httpapi.NewQueue(queueService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins})))
+			httpapi.NewQueue(queueService, authorizer, httpapi.QueueOptions{
+				AllowedOrigins: cfg.Clerk.AllowedOrigins,
+				// The cohort narrows the accounts that may enter the
+				// public queue. It is an allowlist, so an empty cohort
+				// admits every signed-in account.
+				Cohort: cfg.Online.QueueCohort,
+			})))
 	}
 	// The public history API is mounted under its own prefix. Its reads need
 	// no credential at all.

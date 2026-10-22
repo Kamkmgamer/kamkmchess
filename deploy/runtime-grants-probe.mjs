@@ -16,16 +16,13 @@
 // The probe only uses a local database. It creates and drops its own role and
 // schema, and it never touches a hosted database.
 
-import { execFile, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import process from 'node:process';
-import { promisify } from 'node:util';
 
 import { parsePolicy, renderGrantSql } from './runtime-grants.mjs';
 import { discoverLocalDatabaseUrl, redactDatabaseUrl } from '../scripts/online/fixture-client.mjs';
-
-const run = promisify(execFile);
 
 /**
  * @typedef {object} Probe
@@ -350,15 +347,67 @@ export async function runBehaviorScenarios(postgres, role, schema) {
 }
 
 /**
+ * Builds the arguments of the psql call.
+ *
+ * The script is never an argument of the process. A single argument of a
+ * process is limited to a fraction of the memory of the kernel, and the
+ * combined migration script of the repository is larger than that limit, so a
+ * command argument fails with E2BIG before the script ever reaches the
+ * server. The script is read from the standard input instead, and
+ * ON_ERROR_STOP keeps a refused statement from being reported as a success.
+ *
+ * @param {{user: string, database: string}} options
+ * @returns {string[]}
+ */
+export function psqlArguments(options) {
+  return [
+    '--variable', 'ON_ERROR_STOP=1',
+    '--no-psqlrc', '--tuples-only', '--no-align', '--field-separator', '|',
+    '--username', options.user, '--dbname', options.database,
+    '--file', '-',
+  ];
+}
+
+/**
+ * Runs a command and streams the script into its standard input.
+ *
+ * The script never becomes an argument of the process, so a script that is
+ * larger than the argument limit of the kernel still reaches the server.
+ *
+ * @param {{command: string, args: string[], sql: string, env?: Record<string, string>}} options
+ * @returns {Promise<{ok: boolean, stdout: string, stderr: string}>}
+ */
+export function runSqlProcess(options) {
+  return new Promise((resolvePromise) => {
+    const child = spawn(options.command, options.args, {
+      env: options.env ?? process.env,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+    child.on('error', (error) => resolvePromise({ ok: false, stdout, stderr: String(error) }));
+    child.on('close', (code) => resolvePromise({ ok: code === 0, stdout, stderr }));
+    // The server closes the input when it refuses the script, so a broken
+    // pipe must not become an unhandled error of the probe.
+    child.stdin.on('error', () => {});
+    child.stdin.end(options.sql);
+  });
+}
+
+/**
  * Runs SQL against a local PostgreSQL server.
  *
  * It uses a local psql binary when one is available and otherwise runs psql
- * inside the local fixture container. The password is only ever passed in the
- * environment.
+ * inside the local fixture container. The script is always delivered through
+ * the standard input of the client, and the password is only ever passed in
+ * the environment.
  */
 export class LocalPostgres {
   /**
-   * @param {{databaseUrl: string, container?: string|null, psqlPath?: string|null, user?: string, database?: string}} options
+   * @param {{databaseUrl: string, container?: string|null, psqlPath?: string|null, user?: string, database?: string, runSql?: typeof runSqlProcess}} options
    */
   constructor(options) {
     this.databaseUrl = options.databaseUrl;
@@ -366,24 +415,20 @@ export class LocalPostgres {
     this.psqlPath = options.psqlPath ?? null;
     this.user = options.user ?? 'postgres';
     this.database = options.database ?? 'kamkmchess_online_test';
+    // The runner is replaceable, so the delivery of the script can be proved
+    // without a database.
+    this.runSql = options.runSql ?? runSqlProcess;
   }
 
   /** @returns {Promise<{ok: boolean, stdout: string, stderr: string}>} */
   async query(sql) {
     if (this.psqlPath) {
-      try {
-        const { stdout, stderr } = await run(this.psqlPath, [
-          '--no-psqlrc', '--tuples-only', '--no-align', '--field-separator', '|',
-          '--username', this.user, '--dbname', this.database, '--command', sql,
-        ], {
-          env: { ...process.env, PGPASSWORD: this.password() },
-          windowsHide: true,
-        });
-        return { ok: true, stdout, stderr };
-      } catch (error) {
-        const failure = /** @type {any} */ (error);
-        return { ok: false, stdout: failure.stdout ?? '', stderr: failure.stderr ?? String(failure.message ?? error) };
-      }
+      return this.runSql({
+        command: this.psqlPath,
+        args: psqlArguments({ user: this.user, database: this.database }),
+        sql,
+        env: this.environment(),
+      });
     }
     if (this.container) {
       return this.queryInContainer(sql);
@@ -391,21 +436,42 @@ export class LocalPostgres {
     throw new Error('no local PostgreSQL client is available for the grant probe');
   }
 
+  /**
+   * Builds the environment of the client.
+   *
+   * The client runs on the host, so it has to reach the host and the port of
+   * the database url and not the socket of the local machine. The password
+   * belongs in the environment and never in the arguments of a command.
+   * @returns {Record<string, string>}
+   */
+  environment() {
+    /** @type {Record<string, string>} */
+    const environment = { ...process.env, PGPASSWORD: this.password() };
+    try {
+      const parsed = new URL(this.databaseUrl);
+      if (parsed.hostname) {
+        // The client wants the address of an IPv6 host in its brackets.
+        environment.PGHOST = parsed.hostname.includes(':') ? `[${parsed.hostname}]` : parsed.hostname;
+      }
+      if (parsed.port) environment.PGPORT = parsed.port;
+      const sslmode = parsed.searchParams.get('sslmode');
+      if (sslmode) environment.PGSSLMODE = sslmode;
+    } catch {
+      // The defaults of the client stay in place.
+    }
+    return environment;
+  }
+
   /** @returns {Promise<{ok: boolean, stdout: string, stderr: string}>} */
   queryInContainer(sql) {
-    return new Promise((resolvePromise) => {
-      const child = spawn('docker', [
+    return this.runSql({
+      command: 'docker',
+      args: [
         'exec', '-i', String(this.container),
         'psql', '-v', 'ON_ERROR_STOP=1', '--no-psqlrc', '--tuples-only', '--no-align',
         '--field-separator', '|', '-U', this.user, '-d', this.database, '-f', '-',
-      ], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-      let stdout = '';
-      let stderr = '';
-      child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-      child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-      child.on('error', (error) => resolvePromise({ ok: false, stdout, stderr: String(error) }));
-      child.on('close', (code) => resolvePromise({ ok: code === 0, stdout, stderr }));
-      child.stdin.end(sql);
+      ],
+      sql,
     });
   }
 

@@ -261,7 +261,7 @@ func TestPostgresFriendInvitationLinkAndChallengePaths(t *testing.T) {
 	if created.OwnerToken == "" {
 		t.Fatal("the inviter received no owner token")
 	}
-	preview, err := fixture.friends.Get(ctx, created.Invitation.InvitationID, "")
+	preview, err := fixture.friends.Get(ctx, invite.ViewRequest{InvitationID: created.Invitation.InvitationID})
 	if err != nil {
 		t.Fatalf("preview: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestPostgresFriendInvitationLinkAndChallengePaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create challenge: %v", err)
 	}
-	if _, err = fixture.friends.Get(ctx, challenge.Invitation.InvitationID, "user_stranger"); !errors.Is(err, invite.ErrNotFound) {
+	if _, err = fixture.friends.Get(ctx, invite.ViewRequest{InvitationID: challenge.Invitation.InvitationID, ViewerAccountID: "user_stranger"}); !errors.Is(err, invite.ErrNotFound) {
 		t.Fatalf("stranger preview error = %v, want ErrNotFound", err)
 	}
 	if _, err = fixture.friends.Accept(ctx, invite.AcceptRequest{
@@ -345,7 +345,7 @@ func TestPostgresFriendInvitationLinkAndChallengePaths(t *testing.T) {
 		t.Fatalf("stranger acceptance error = %v, want ErrNotFound", err)
 	}
 	// The challenge is still open after the refused attempt.
-	preview, err = fixture.friends.Get(ctx, challenge.Invitation.InvitationID, "user_recipient")
+	preview, err = fixture.friends.Get(ctx, invite.ViewRequest{InvitationID: challenge.Invitation.InvitationID, ViewerAccountID: "user_recipient"})
 	if err != nil {
 		t.Fatalf("recipient preview: %v", err)
 	}
@@ -509,7 +509,7 @@ func TestPostgresFriendCustomPositionIsVisibleAndValidated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create custom position: %v", err)
 	}
-	preview, err := fixture.friends.Get(ctx, created.Invitation.InvitationID, "")
+	preview, err := fixture.friends.Get(ctx, invite.ViewRequest{InvitationID: created.Invitation.InvitationID})
 	if err != nil {
 		t.Fatalf("preview: %v", err)
 	}
@@ -706,7 +706,7 @@ func TestPostgresFriendSelfAcceptanceIsRefusedBeforeConsumption(t *testing.T) {
 		t.Fatalf("self acceptance error = %v, want ErrInvalidContract", err)
 	}
 	// The invitation is still open: the refused attempt consumed nothing.
-	preview, err := fixture.friends.Get(ctx, created.Invitation.InvitationID, "")
+	preview, err := fixture.friends.Get(ctx, invite.ViewRequest{InvitationID: created.Invitation.InvitationID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -750,7 +750,7 @@ func TestPostgresFriendCancelAfterConcurrentAcceptanceReportsTheRealState(t *tes
 	if _, err = fixture.friends.Cancel(ctx, invite.CancelRequest{InvitationID: created.Invitation.InvitationID, OwnerToken: created.OwnerToken}); !errors.Is(err, invite.ErrConflict) {
 		t.Fatalf("cancel after acceptance error = %v, want ErrConflict", err)
 	}
-	preview, err := fixture.friends.Get(ctx, created.Invitation.InvitationID, "")
+	preview, err := fixture.friends.Get(ctx, invite.ViewRequest{InvitationID: created.Invitation.InvitationID})
 	if err != nil {
 		t.Fatal(err)
 	}

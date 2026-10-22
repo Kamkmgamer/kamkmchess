@@ -265,9 +265,16 @@ Fixture: the local trust-authenticated PostgreSQL of the workspace
 `KHA41_REQUIRE_POSTGRES=1`). Every test creates its own schema and applies
 every migration, so the migration set is exercised as well.
 
-The current results were executed on the assembled revision of this round:
+The results below were executed on the assembled revision of this round:
 the parent root `dcd89f6` ("Capture emitted runner requests and match Go
 identity byte limits") plus the commits of this ticket on top of it.
+
+Every result in this section is a result of **that** revision. It is a
+historical record and not a verification of the current tree. The measured
+runs of the assembled tree are recorded in
+`docs/evidence/online/assembled-verification.md` and in
+`docs/implementation/KHA-80-evidence.md`, and the evidence ledger
+(`docs/evidence/online/ledger.json`) is the authority for them.
 
 ```
 go test ./backend/integration -run 'TestPostgresFriendRemoved|…DeadRematchOffer|…SurvivingGuest|…RestoredSeatIdentity|…LegacyAcceptingOffer|…Anonymous|…RemovalIsOrdered|…AnAccountNever|…TheRestart|…TheSurvivorOfARematch|…ARemovedAcceptor' -count=1 -v
@@ -489,7 +496,17 @@ nothing to do with the friend surface. **All of them are pre-existing**:
   (`online_history_test.go:371: execute op-move-2: online: participant does
   not control seat`), and the test fails the same way on the untouched base
   of this branch (the whole change set stashed reproduces it three times out
-  of three);
+  of three). **That failure belongs to the older form of the test.** The
+  line `online_history_test.go:371` is the `historyExecute` call of
+  `op-move-2` in the form the test had at the base of this branch
+  (`3d63aab`) and at `1fc6f6f`; the test was rewritten in `4f34969` to hand
+  the agent seat its lease, and the current form sits at
+  `backend/integration/online_history_test.go:445`. That file is unchanged
+  between the measured pin `ab0dba56`, HEAD `7caaef4` and the working tree,
+  and the recorded run at `ab0dba56`
+  (`docs/evidence/online/KHA-80-integration.json`) records this test as
+  `pass`. The observation above is therefore a record of an older test form
+  at an older pin and not a statement about the current source;
 * `TestQueueCompetingMatchersProduceOneGame` fails with `duplicate key value
   violates unique constraint "online_matches_pkey"`. It is a defect of the
   queue path of `backend/queue`, which this ticket does not touch, and it
@@ -509,6 +526,20 @@ go test ./backend/integration -count=1 -timeout 40m
 --- FAIL: TestQueueCompetingMatchersProduceOneGame (4.55s)
 FAIL	github.com/Kamkmgamer/kamkmchess/backend/integration	743.461s
 ```
+
+The log of this longer run is not kept in the checked-in tree, so the block
+above is the recorded observation of that revision and not a retained
+artifact, and which form of the mixed-control test that run exercised
+cannot be recovered from the tree. Its
+`TestPostgresMixedControlAttributesEveryMoveAndTheTerminalAction` entry
+belongs to the same historical record: the test was rewritten in `4f34969`,
+and the current form, at
+`backend/integration/online_history_test.go:445`, is recorded as `pass` by
+the measured run at `ab0dba56` (797 passing test and subtest outcomes, zero
+failures, zero individual skips, exit 0). A historical pin does not certify
+a tree it does not contain: the production sources that the test exercises
+changed after `ab0dba56`, so a current-tree database run is still required
+before the current form can be called green.
 
 The friend surface itself is green, and the focused friend run is the
 evidence of this ticket.

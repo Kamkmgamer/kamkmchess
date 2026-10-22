@@ -147,7 +147,7 @@ test('two browser engines use Lite evaluation, release workers after setup and S
   await page.getByLabel('Game mode').selectOption('local');
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(page.locator('.evaluation-bar')).toHaveCount(0);
-  expect(workers.size).toBe(0);
+  await expect.poll(() => workers.size).toBe(0);
 });
 
 test('a finished engine match releases its opponent workers and keeps the board full size with game settings open', async ({ page }, testInfo) => {

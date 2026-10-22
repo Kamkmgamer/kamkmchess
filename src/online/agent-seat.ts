@@ -22,6 +22,7 @@ import type {
   OnlineProviderRunner,
   ProviderRunnerCommandPort,
   ProviderRunnerLeasePort,
+  ProviderRunnerPendingStore,
   ProviderRunnerProviderPort,
   ProviderRunnerSnapshot,
   ProviderRunnerTarget,
@@ -129,6 +130,14 @@ export interface OnlineAgentSeatOptions {
   readonly commands: ProviderRunnerCommandPort;
   /** The provider client of this agent. */
   readonly provider: ProviderRunnerProviderPort;
+  /**
+   * The pending record of the seat.
+   *
+   * The record belongs to the seat and not to one runner, so a runner that
+   * replaces another one still sees the request that may be running and never
+   * asks the provider for a second answer by itself.
+   */
+  readonly pending?: ProviderRunnerPendingStore;
   /** The instructions of the match. */
   readonly instructions?: string;
 }
@@ -147,6 +156,7 @@ export function createOnlineAgentSeat(options: OnlineAgentSeatOptions): OnlinePr
     leases: options.leases,
     commands: options.commands,
     provider: options.provider,
+    ...(options.pending ? { pending: options.pending } : {}),
     ...(options.instructions ? { instructions: options.instructions } : {}),
   });
 }

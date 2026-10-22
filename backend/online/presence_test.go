@@ -27,12 +27,13 @@ func offlineOpponent(offlineSince time.Time) SeatPresence {
 func TestEvaluateClaimConnectedOpponentIsNeverClaimable(t *testing.T) {
 	now := time.Now().UTC()
 	availability := EvaluateClaim(ClaimInputs{
-		MatchStatus:  MatchActive,
-		WhiteMoved:   true,
-		BlackMoved:   true,
-		Opponent:     SeatPresence{Seat: SeatBlack, State: PresenceConnected},
-		Now:          now,
-		ServiceState: HealthHealthy,
+		MatchStatus:     MatchActive,
+		WhiteMoved:      true,
+		BlackMoved:      true,
+		Opponent:        SeatPresence{Seat: SeatBlack, State: PresenceConnected},
+		Now:             now,
+		ServiceState:    HealthHealthy,
+		ServiceGateOpen: true,
 	})
 	if availability.Eligible {
 		t.Fatal("a connected opponent must never be claimable")
@@ -52,12 +53,13 @@ func TestEvaluateClaimBoundaries(t *testing.T) {
 	// offline interval is the grace period itself.
 	offlineSince := now.Add(-AbandonmentGracePeriod)
 	short := EvaluateClaim(ClaimInputs{
-		MatchStatus:  MatchActive,
-		WhiteMoved:   true,
-		BlackMoved:   true,
-		Opponent:     offlineOpponent(offlineSince),
-		Now:          now.Add(-time.Second),
-		ServiceState: HealthHealthy,
+		MatchStatus:     MatchActive,
+		WhiteMoved:      true,
+		BlackMoved:      true,
+		Opponent:        offlineOpponent(offlineSince),
+		Now:             now.Add(-time.Second),
+		ServiceState:    HealthHealthy,
+		ServiceGateOpen: true,
 	})
 	if short.Eligible {
 		t.Fatal("the claim must not be available one second early")
@@ -69,12 +71,13 @@ func TestEvaluateClaimBoundaries(t *testing.T) {
 		t.Fatalf("grace seconds left = %d, want 1", short.GraceSecondsLeft)
 	}
 	exact := EvaluateClaim(ClaimInputs{
-		MatchStatus:  MatchActive,
-		WhiteMoved:   true,
-		BlackMoved:   true,
-		Opponent:     offlineOpponent(offlineSince),
-		Now:          now,
-		ServiceState: HealthHealthy,
+		MatchStatus:     MatchActive,
+		WhiteMoved:      true,
+		BlackMoved:      true,
+		Opponent:        offlineOpponent(offlineSince),
+		Now:             now,
+		ServiceState:    HealthHealthy,
+		ServiceGateOpen: true,
 	})
 	if !exact.Eligible {
 		t.Fatalf("the claim must be available at the minute, reason %q", exact.Reason)
@@ -97,7 +100,7 @@ func TestEvaluateClaimRefusals(t *testing.T) {
 			name: "a finished match stays final",
 			input: ClaimInputs{
 				MatchStatus: MatchCompleted, WhiteMoved: true, BlackMoved: true,
-				Opponent: offlineOpponent(offlineSince), Now: now, ServiceState: HealthHealthy,
+				Opponent: offlineOpponent(offlineSince), Now: now, ServiceState: HealthHealthy, ServiceGateOpen: true,
 			},
 			want: ClaimReasonMatchEnded,
 		},
@@ -105,7 +108,7 @@ func TestEvaluateClaimRefusals(t *testing.T) {
 			name: "a service outage is not an absent opponent",
 			input: ClaimInputs{
 				MatchStatus: MatchActive, WhiteMoved: true, BlackMoved: true,
-				Opponent: offlineOpponent(offlineSince), Now: now, ServiceState: HealthUnavailable,
+				Opponent: offlineOpponent(offlineSince), Now: now, ServiceState: HealthUnavailable, ServiceGateOpen: true,
 			},
 			want: ClaimReasonServiceUnavailable,
 		},
@@ -113,7 +116,15 @@ func TestEvaluateClaimRefusals(t *testing.T) {
 			name: "a degraded service is not an absent opponent",
 			input: ClaimInputs{
 				MatchStatus: MatchActive, WhiteMoved: true, BlackMoved: true,
-				Opponent: offlineOpponent(offlineSince), Now: now, ServiceState: HealthDegraded,
+				Opponent: offlineOpponent(offlineSince), Now: now, ServiceState: HealthDegraded, ServiceGateOpen: true,
+			},
+			want: ClaimReasonServiceUnavailable,
+		},
+		{
+			name: "a recovering service is not an absent opponent",
+			input: ClaimInputs{
+				MatchStatus: MatchActive, WhiteMoved: true, BlackMoved: true,
+				Opponent: offlineOpponent(offlineSince), Now: now, ServiceState: HealthHealthy, ServiceGateOpen: false,
 			},
 			want: ClaimReasonServiceUnavailable,
 		},
@@ -121,7 +132,7 @@ func TestEvaluateClaimRefusals(t *testing.T) {
 			name: "the claim never bypasses the opening reply",
 			input: ClaimInputs{
 				MatchStatus: MatchActive, WhiteMoved: true, BlackMoved: true, ReplyOutstanding: true,
-				Opponent: offlineOpponent(offlineSince), Now: now, ServiceState: HealthHealthy,
+				Opponent: offlineOpponent(offlineSince), Now: now, ServiceState: HealthHealthy, ServiceGateOpen: true,
 			},
 			want: ClaimReasonOpeningReply,
 		},
@@ -129,7 +140,7 @@ func TestEvaluateClaimRefusals(t *testing.T) {
 			name: "the claim needs both sides to have moved",
 			input: ClaimInputs{
 				MatchStatus: MatchActive, WhiteMoved: true, BlackMoved: false,
-				Opponent: offlineOpponent(offlineSince), Now: now, ServiceState: HealthHealthy,
+				Opponent: offlineOpponent(offlineSince), Now: now, ServiceState: HealthHealthy, ServiceGateOpen: true,
 			},
 			want: ClaimReasonAwaitingMoves,
 		},
@@ -137,7 +148,7 @@ func TestEvaluateClaimRefusals(t *testing.T) {
 			name: "an opponent that never reported in is not claimable",
 			input: ClaimInputs{
 				MatchStatus: MatchActive, WhiteMoved: true, BlackMoved: true,
-				Opponent: SeatPresence{Seat: SeatBlack, State: PresenceUnknown}, Now: now, ServiceState: HealthHealthy,
+				Opponent: SeatPresence{Seat: SeatBlack, State: PresenceUnknown}, Now: now, ServiceState: HealthHealthy, ServiceGateOpen: true,
 			},
 			want: ClaimReasonOpponentUnknown,
 		},

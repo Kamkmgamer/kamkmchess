@@ -17,6 +17,9 @@
  *   token of the invitation is the proof.
  * - The owner token stays in the browser. It is the recoverable ownership of
  *   the invitation and of the created match.
+ * - The owner token belongs to the identity that created the invitation. A
+ *   deferred answer of an identity that is no longer current never writes the
+ *   token into the records of the current identity.
  * - The credential travels in a request header. It never travels in a URL, a
  *   query string or a body.
  */
@@ -42,13 +45,26 @@ export interface FriendSurface {
   /** Creates one shareable link or one named challenge. */
   create(request: {
     kind?: 'link' | 'challenge';
-    recipientAccountId?: string;
+    /**
+     * The public name of the account a challenge names.
+     *
+     * A public name is a public identity. The service resolves it to the
+     * account itself, so an authentication identifier never travels in a
+     * request.
+     */
+    recipientUsername?: string;
     seat: Seat;
     timeControl: TimeControl;
     startingFen?: string;
     control: SeatControl;
   }): Promise<FriendInvitationCreated>;
-  /** Reads the link preview. */
+  /**
+   * Reads the link preview.
+   *
+   * The owner token of an invitation this browser created authorizes the
+   * read, so the inviter of a named challenge learns that it was consumed
+   * without publishing the challenge.
+   */
   preview(invitationId: string): Promise<FriendInvitation>;
   /**
    * Accepts an invitation.
@@ -118,7 +134,23 @@ export function createFriendSurface(options: FriendSurfaceOptions): FriendSurfac
 
   return {
     async create(request) {
+      // The owner token of an invitation belongs to the identity that
+      // created it. The identity is captured before the answer is awaited,
+      // so a deferred answer of an identity that is no longer current never
+      // reaches the records of the current identity.
+      const identity = options.secrets.identity;
       const created = await (await clientFor()).createInvitation(request);
+      if (options.secrets.identity !== identity) {
+        // The identity changed while the creation was on the wire. The owner
+        // token is stored in the namespace of the identity that created the
+        // invitation, so the token stays recoverable for that identity and
+        // never reaches the records of the current one.
+        options.secrets.rememberOwnerTokenFor(identity, created.invitation.invitationId, created.ownerToken);
+        // The browser knows the invitation it created, so it never accepts
+        // it, whoever is signed in now.
+        ownedInvitations.add(created.invitation.invitationId);
+        return created;
+      }
       // The owner token is the recoverable ownership of the invitation. It
       // stays in the browser.
       options.secrets.rememberOwnerToken(created.invitation.invitationId, created.ownerToken);
@@ -126,7 +158,10 @@ export function createFriendSurface(options: FriendSurfaceOptions): FriendSurfac
       return created;
     },
     async preview(invitationId) {
-      return (await clientFor()).readInvitation(invitationId);
+      // The owner token authorizes the read for the inviter of a named
+      // challenge. It travels in the private header of the surface.
+      const ownerToken = options.secrets.readOwnerToken(invitationId);
+      return (await clientFor()).readInvitation(invitationId, ownerToken ?? undefined);
     },
     async accept(invitationId, control) {
       if (isLocallyOwnedInvitation(invitationId, ownedInvitations) || options.secrets.ownsInvitation(invitationId)) {

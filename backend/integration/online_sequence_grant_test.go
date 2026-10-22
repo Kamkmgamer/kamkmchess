@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -330,7 +331,7 @@ func runLiveSequenceAudit(t *testing.T, config *pgx.ConnConfig, role, schema str
 	if err := os.WriteFile(script, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	databaseURL := fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=disable", config.User, config.Host, config.Port, config.Database)
+	databaseURL := liveAuditDatabaseURL(config)
 	command := exec.Command("node", script, databaseURL, "psql", role, schema, filepath.Join(root, "deploy", "runtime-grants.policy.json"))
 	command.Dir = root
 	var stderr bytes.Buffer
@@ -340,6 +341,22 @@ func runLiveSequenceAudit(t *testing.T, config *pgx.ConnConfig, role, schema str
 		t.Fatalf("read the live rights of the sequences: %v (%s)", err, stderr.String())
 	}
 	return output
+}
+
+// liveAuditDatabaseURL builds the url of the database for the live audit.
+//
+// The audit reads the live rights of the sequences with the psql client, so
+// the client needs the credentials of the fixture. A client without a
+// password asks the server for one and waits for the answer on the terminal
+// of the runner, so the run of the test blocks there until the budget of the
+// suite is gone. The password of the fixture belongs in the url of the audit
+// and never in its arguments.
+func liveAuditDatabaseURL(config *pgx.ConnConfig) string {
+	credentials := url.User(config.User)
+	if config.Password != "" {
+		credentials = url.UserPassword(config.User, config.Password)
+	}
+	return fmt.Sprintf("postgres://%s@%s:%d/%s?sslmode=disable", credentials.String(), config.Host, config.Port, config.Database)
 }
 
 // pythonInterpreter returns the interpreter that runs the provisioning

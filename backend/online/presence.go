@@ -25,8 +25,11 @@ import (
 // "Keep waiting" preserves that option and never concedes anything.
 //
 // A service outage is not opponent abandonment. The claim consumes the
-// durable service health boundary, so a failing rules service can never be
-// read as an absent opponent.
+// durable service health boundary, which has two facts: the health of the
+// dependencies and the durable admission gate of the service. A failing
+// rules service and a service that is still recovering are both states of a
+// service that cannot confirm an absence, so neither is ever read as an
+// absent opponent.
 
 // The presence cadence and the liveness lease.
 const (
@@ -214,6 +217,18 @@ type ClaimInputs struct {
 	Now time.Time
 	// ServiceState is the durable health of the service.
 	ServiceState HealthState
+	// ServiceGateOpen reports whether the durable admission gate of the
+	// service is open.
+	//
+	// The gate is the durable boundary of the service: a restore that was
+	// not replayed, a suspension that was not applied, or a service epoch
+	// whose recovery has not completed closes it. A closed gate means the
+	// service is not serving, so the claim is never offered while it is
+	// closed, even when every dependency is healthy.
+	//
+	// The zero value is a closed gate, so a caller that does not state the
+	// gate never hands out a win.
+	ServiceGateOpen bool
 }
 
 // EvaluateClaim decides whether the optional abandonment claim is available.
@@ -222,8 +237,10 @@ type ClaimInputs struct {
 //
 //   - A finished match is never claimable, because an earlier terminal
 //     outcome stays final.
-//   - A service that is not healthy never offers the claim, so a service
-//     outage cannot masquerade as opponent absence.
+//   - A service that is not serving never offers the claim. The durable
+//     admission gate and the dependency health are both facts of the same
+//     boundary, so a closed gate refuses the claim exactly like an unhealthy
+//     service: a service outage can never masquerade as opponent absence.
 //   - An open opening reply window never offers the claim, so the claim
 //     cannot bypass the opening abort rules.
 //   - A participant that has not moved yet never offers the claim, because
@@ -237,7 +254,7 @@ func EvaluateClaim(in ClaimInputs) ClaimAvailability {
 	if in.MatchStatus != MatchActive {
 		return ClaimAvailability{Reason: ClaimReasonMatchEnded, OpponentSeat: &opponent}
 	}
-	if !in.ServiceState.Valid() || !in.ServiceState.ClaimsAllowed() {
+	if !in.ServiceGateOpen || !in.ServiceState.Valid() || !in.ServiceState.ClaimsAllowed() {
 		return ClaimAvailability{Reason: ClaimReasonServiceUnavailable, OpponentSeat: &opponent}
 	}
 	if in.ReplyOutstanding {
@@ -420,6 +437,11 @@ func (s *Service) GetPresence(ctx context.Context, actor ParticipantRef, matchID
 		// The recovering state of the service is durable, so every instance
 		// reports the same state to the client.
 		gate, gateErr := s.gateState(ctx, tx)
+		// The durable gate and the dependency health are two facts of the
+		// same boundary: the service only serves while both hold. The gate
+		// is read once here, and the claim consumes it, so a closed gate
+		// never reads an absent opponent as an abandonment.
+		serving := gate.Open && gateErr == nil
 		view = PresenceView{
 			SchemaVersion: ContractsSchemaVersion,
 			MatchID:       matchID,
@@ -427,8 +449,8 @@ func (s *Service) GetPresence(ctx context.Context, actor ParticipantRef, matchID
 			ControlEpoch:  match.ControlEpoch,
 			Status:        match.Status,
 			Seats:         seats,
-			ServiceState:  s.healthState(ctx),
-			Recovered:     gate.Open && gateErr == nil,
+			ServiceState:  s.healthState(ctx, tx),
+			Recovered:     serving,
 		}
 		if !ok {
 			return ErrNotFound
@@ -453,6 +475,11 @@ func (s *Service) GetPresence(ctx context.Context, actor ParticipantRef, matchID
 			Opponent:         opponentPresence,
 			Now:              decision,
 			ServiceState:     view.ServiceState,
+			// The claim consumes the durable service health boundary, so it
+			// reads the same durable gate as the recovering state of the
+			// view. A closed gate means the service is not serving, so an
+			// absence during a recovery is never an absent opponent.
+			ServiceGateOpen: serving,
 		})
 		// The waiting choice belongs to the offline interval of the
 		// opponent, so the marker sits on the opponent's presence record.
@@ -551,6 +578,11 @@ func (s *Service) ClaimAbandonment(ctx context.Context, actor ParticipantRef, cm
 	if err != nil {
 		return CommandResult{}, err
 	}
+	// The claim consumes the durable service health boundary, so it reads
+	// the same durable gate as the presence view. A closed gate means the
+	// service is not serving, so an absence during a recovery is never an
+	// absent opponent.
+	gate, gateErr := s.gateState(ctx, tx)
 	availability := EvaluateClaim(ClaimInputs{
 		MatchStatus:      match.Status,
 		WhiteMoved:       match.Clock.WhiteMoved,
@@ -558,7 +590,8 @@ func (s *Service) ClaimAbandonment(ctx context.Context, actor ParticipantRef, cm
 		ReplyOutstanding: match.Clock.AwaitingOpeningReply(),
 		Opponent:         opponentPresence,
 		Now:              decision,
-		ServiceState:     s.healthState(ctx),
+		ServiceState:     s.healthState(ctx, tx),
+		ServiceGateOpen:  gate.Open && gateErr == nil,
 	})
 	if !availability.Eligible {
 		return CommandResult{}, ErrActionNotAllowed

@@ -4,16 +4,23 @@
 // a database, a network service or a credential.
 
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, test } from 'node:test';
 
-import { auditBackup, auditBackupCoverage, restoreRunbookHooks } from './backup-coverage.mjs';
+import { auditBackup, auditBackupCoverage, restoreRunbookHooks, verifyRestoreReplay } from './backup-coverage.mjs';
 import { buildLedger, familyOf, validateRecord } from './evidence-ledger.mjs';
-import { buildPacket, evaluateEvidence, GATE_SCENARIOS } from './feature-gates.mjs';
+import { buildPacket, evaluateEvidence, evaluateRequirements, GATE_SCENARIOS } from './feature-gates.mjs';
 import { mapScenarios, parseGoTestJson } from './integration-suite.mjs';
 import { percentiles } from './load-suite.mjs';
+import {
+  applyRouteCoverage,
+  auditRouteManifest,
+  loadRouteManifest,
+  manifestRoutes,
+  routeDependencies,
+} from './route-manifest.mjs';
 import { auditServiceWiring, switchDefaultState } from './service-wiring.mjs';
 import { composeFencePaths, completeReport as fenceCompleteReport, documentedFencePath, fencePathAgreement, fenceVolumeAgreement, fenceVolumeControl, holderDatabaseUrl, ownedSchemaName, planCleanup as planFenceCleanup, proofExitCode as fenceExitCode, readmeFencePath, REQUIRED_STEPS as FENCE_REQUIRED_STEPS, resolveTarget, RUN_SCHEMA, targetFromEnvironment, verifyFenceAccess } from '../../deploy/verify-fence-access.mjs';
 import { completeReport, createAndMigrate, insideDatabaseUrl, planCleanup as planRestoreCleanup, redactReport, reportFailure, REQUIRED_STEPS, RUN_SCHEMA as RESTORE_RUN_SCHEMA } from './restore-proof.mjs';
@@ -79,6 +86,18 @@ test('an evidence record needs a commit, a command and an observed result', () =
   assert.ok(invalid.problems.some((problem) => problem.includes('actual')));
 });
 
+test('an evidence record needs the expected behaviour of the scenario', () => {
+  const known = new Set(['MAT-03']);
+  const missing = validateRecord({ scenarioId: 'MAT-03', status: 'failed', kind: 'local', commit: 'a', command: 'b', actual: 'c' }, known);
+  assert.equal(missing.valid, false);
+  assert.ok(missing.problems.some((problem) => problem.includes('expected')));
+  const empty = validateRecord({ scenarioId: 'MAT-03', status: 'failed', kind: 'local', commit: 'a', command: 'b', actual: 'c', expected: '   ' }, known);
+  assert.equal(empty.valid, false);
+  assert.ok(empty.problems.some((problem) => problem.includes('expected')));
+  const named = validateRecord({ scenarioId: 'MAT-03', status: 'failed', kind: 'local', commit: 'a', command: 'b', actual: 'c', expected: 'the ordering of the events' }, known);
+  assert.deepEqual(named.problems, []);
+});
+
 test('a local run cannot close a native scenario and a plan cannot close an implementation scenario', () => {
   const known = new Set(['UX-02', 'MAT-03']);
   const native = validateRecord({ scenarioId: 'UX-02', status: 'passed', kind: 'local', commit: 'a', command: 'b', actual: 'c' }, known);
@@ -103,12 +122,26 @@ test('the ledger refuses a contradicting second record', () => {
   const ledger = buildLedger({
     cases: [{ id: 'MAT-03', scenario: 'ordering', status: 'not_run' }],
     records: [
-      { file: 'a.json', body: { scenarioId: 'MAT-03', status: 'passed', kind: 'local', commit: 'a', command: 'b', actual: 'c' } },
-      { file: 'b.json', body: { scenarioId: 'MAT-03', status: 'failed', kind: 'local', commit: 'a', command: 'b', actual: 'c' } },
+      { file: 'a.json', body: { scenarioId: 'MAT-03', status: 'passed', kind: 'local', commit: 'a', command: 'b', expected: 'the ordering of the events', actual: 'c' } },
+      { file: 'b.json', body: { scenarioId: 'MAT-03', status: 'failed', kind: 'local', commit: 'a', command: 'b', expected: 'the ordering of the events', actual: 'c' } },
     ],
     problems: [],
+    // The run source of the first record: the run observed the scenario at
+    // the commit of the record and it passed.
+    sources: {
+      channels: [{
+        id: 'local-integration',
+        kind: 'local',
+        path: 'docs/evidence/online/KHA-80-integration.json',
+        commit: 'a',
+        command: 'b',
+        outcomes: new Map([['MAT-03', { outcome: 'passed', detail: 'the mapped test passed' }]]),
+      }],
+      problems: [],
+    },
   });
   assert.equal(ledger.invalidRecords.length, 1);
+  assert.equal(ledger.cases[0].status, 'passed');
 });
 
 test('a gate is not ready while a required scenario has no evidence', () => {
@@ -181,6 +214,262 @@ test('the backup coverage audit of the repository reports its findings', async (
   const report = await auditBackupCoverage(process.cwd());
   assert.ok(report.tables.includes('online_matches'));
   assert.ok(report.findings.some((finding) => finding.code === 'dump-covers-database'));
+});
+
+/**
+ * Copies the tree the backup audit reads into an isolated directory.
+ *
+ * The copy is the mutation fixture: the audit has to see the change and
+ * nothing else.
+ * @returns {Promise<string>}
+ */
+async function makeBackupTree() {
+  const root = await mkdtemp(join(tmpdir(), 'kha-backup-mutation-'));
+  trees.push(root);
+  const source = process.cwd();
+  await cp(join(source, 'backend'), join(root, 'backend'), { recursive: true });
+  await mkdir(join(root, 'deploy'), { recursive: true });
+  await cp(join(source, 'deploy', 'runtime-grants.policy.json'), join(root, 'deploy', 'runtime-grants.policy.json'));
+  await cp(join(source, 'deploy', 'backup.sh'), join(root, 'deploy', 'backup.sh'));
+  await mkdir(join(root, 'docs', 'implementation'), { recursive: true });
+  await cp(join(source, 'docs', 'implementation', 'MVP-operations.md'), join(root, 'docs', 'implementation', 'MVP-operations.md'));
+  return root;
+}
+
+/**
+ * Deletes the production replay calls of the restore path.
+ *
+ * This is the mutation the audit has to catch: the restore keeps the ledger
+ * of the bundle, but it never replays it any more.
+ * @param {string} source
+ * @returns {string}
+ */
+function removeTheReplayCalls(source) {
+  return source
+    .replace(/if err = request\.Removals\.ApplyRemovalRecords\(ctx, removals\); err != nil \{\s*return RestoreResult\{\}, err\s*\}/, '')
+    .replace(/if err = request\.Removals\.ApplySubjectRemovalRecords\(ctx, subjectRemovals\); err != nil \{\s*return RestoreResult\{\}, err\s*\}/, '');
+}
+
+test('the backup audit fails closed when the restore no longer replays the removal ledger', async () => {
+  const tree = await makeBackupTree();
+  const file = join(tree, 'backend', 'backup', 'backup.go');
+  const original = await readFile(file, 'utf8');
+  const mutated = removeTheReplayCalls(original);
+  assert.notEqual(mutated, original, 'the mutation has to delete the replay calls');
+  assert.ok(!mutated.includes('request.Removals.ApplyRemovalRecords(ctx, removals)'));
+  await writeFile(file, mutated, 'utf8');
+
+  const report = await auditBackupCoverage(tree);
+  const codes = report.findings.map((finding) => finding.code);
+  assert.ok(codes.includes('online-removal-ledger-uncovered'));
+  assert.ok(!codes.includes('online-removal-ledger-reapplied'));
+  assert.ok(report.findings.some((finding) => finding.severity === 'blocker'));
+  assert.ok(report.hooks.warnings.length > 0);
+  assert.ok(report.restoreReplay.problems.some((problem) => problem.includes('online removal ledger')));
+});
+
+test('the backup audit of an untouched copy of the repository replays the removal ledger', async () => {
+  const tree = await makeBackupTree();
+  const report = await auditBackupCoverage(tree);
+  const codes = report.findings.map((finding) => finding.code);
+  assert.ok(codes.includes('online-removal-ledger-reapplied'));
+  assert.ok(!codes.includes('online-removal-ledger-uncovered'));
+  assert.equal(report.hooks.warnings.length, 0);
+  assert.deepEqual(report.restoreReplay.problems, []);
+});
+
+test('the backup audit of an untouched copy of the repository enforces the local maximum age', async () => {
+  const tree = await makeBackupTree();
+  const report = await auditBackupCoverage(tree);
+  const codes = report.findings.map((finding) => finding.code);
+  assert.ok(codes.includes('local-retention-cap-enforced'));
+  assert.ok(codes.includes('retention-unresolved-fails-closed'));
+  assert.ok(codes.includes('deployment-rotation-applied'));
+  assert.ok(codes.includes('restore-evidence-outside-the-pruning'));
+  assert.ok(!report.findings.some((finding) => finding.severity === 'blocker'));
+});
+
+test('the backup audit fails closed when the rotation has no maximum age', async () => {
+  const tree = await makeBackupTree();
+  const file = join(tree, 'backend', 'backup', 'plan.go');
+  const original = await readFile(file, 'utf8');
+  const mutated = original.replace('MaxBundleAgeDays = 30', 'MaxBundleAgeDays = 0');
+  assert.notEqual(mutated, original, 'the mutation has to remove the maximum age');
+  await writeFile(file, mutated, 'utf8');
+
+  const report = await auditBackupCoverage(tree);
+  const codes = report.findings.map((finding) => finding.code);
+  assert.ok(codes.includes('local-retention-cap-missing'));
+  assert.ok(!codes.includes('local-retention-cap-enforced'));
+  assert.ok(report.findings.some((finding) => finding.severity === 'blocker'));
+});
+
+test('the backup audit fails closed when the rotation does not report an unresolved retention', async () => {
+  const tree = await makeBackupTree();
+  const file = join(tree, 'backend', 'backup', 'cmd', 'khabackup', 'main.go');
+  const original = await readFile(file, 'utf8');
+  const mutated = original.replaceAll('backup.ErrRetentionUnresolved', 'errors.New("unresolved")');
+  assert.notEqual(mutated, original, 'the mutation has to remove the failure of the rotation');
+  await writeFile(file, mutated, 'utf8');
+
+  const report = await auditBackupCoverage(tree);
+  const codes = report.findings.map((finding) => finding.code);
+  assert.ok(codes.includes('retention-unresolved-not-reported'));
+  assert.ok(!codes.includes('retention-unresolved-fails-closed'));
+  assert.ok(report.findings.some((finding) => finding.severity === 'blocker'));
+});
+
+test('the backup audit fails closed when the deployment does not run the rotation', async () => {
+  const tree = await makeBackupTree();
+  const file = join(tree, 'deploy', 'backup.sh');
+  const original = await readFile(file, 'utf8');
+  const mutated = original.replace('khabackup rotate --dir /backups --apply', 'khabackup rotate --dir /backups');
+  assert.notEqual(mutated, original, 'the mutation has to remove the applied rotation');
+  await writeFile(file, mutated, 'utf8');
+
+  const report = await auditBackupCoverage(tree);
+  const codes = report.findings.map((finding) => finding.code);
+  assert.ok(codes.includes('deployment-rotation-missing'));
+  assert.ok(!codes.includes('deployment-rotation-applied'));
+  assert.ok(report.findings.some((finding) => finding.severity === 'blocker'));
+});
+
+test('the release gate does not report the backup coverage as met when the replay is gone', async () => {
+  const tree = await makeBackupTree();
+  const file = join(tree, 'backend', 'backup', 'backup.go');
+  await writeFile(file, removeTheReplayCalls(await readFile(file, 'utf8')), 'utf8');
+  const requirements = await evaluateRequirements({ gate: 'friend', root: tree, decision: null, cohort: null, host: null });
+  const backup = requirements.find((requirement) => requirement.id === 'backup-coverage');
+  assert.ok(backup);
+  assert.equal(backup.status, 'unmet');
+});
+
+test('the restore path verifier reads the replay out of the restore and not out of the interface', () => {
+  const source = [
+    'package backup',
+    '',
+    'type RemovalLedgerSink interface {',
+    '\tApplyRemovalRecords(ctx context.Context, records []RemovalRecord) error',
+    '\tApplySubjectRemovalRecords(ctx context.Context, records []SubjectRemovalRecord) error',
+    '}',
+    '',
+    'func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error) {',
+    '\tif err := request.Restorer.Restore(ctx, payload); err != nil {',
+    '\t\treturn RestoreResult{}, err',
+    '\t}',
+    '\tif err := request.Removals.ApplyRemovalRecords(ctx, removals); err != nil {',
+    '\t\treturn RestoreResult{}, err',
+    '\t}',
+    '\tif err := request.Removals.ApplySubjectRemovalRecords(ctx, subjectRemovals); err != nil {',
+    '\t\treturn RestoreResult{}, err',
+    '\t}',
+    '\treturn RestoreResult{}, nil',
+    '}',
+  ].join('\n');
+  const verified = verifyRestoreReplay(source);
+  assert.equal(verified.restoreFound, true);
+  assert.equal(verified.appliesRemovalRecords, true);
+  assert.equal(verified.appliesSubjectRemovalRecords, true);
+  // The ledger the replay uses is not merged, so the restore replays a ledger
+  // that is not the current one.
+  assert.equal(verified.replaysMergedLedger, false);
+  assert.ok(verified.problems.some((problem) => problem.includes('not the merged ledger')));
+});
+
+test('the restore path verifier sees no replay when the restore only names the sink', () => {
+  const source = [
+    'package backup',
+    '',
+    'type RemovalLedgerSink interface {',
+    '\tApplyRemovalRecords(ctx context.Context, records []RemovalRecord) error',
+    '}',
+    '',
+    'func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error) {',
+    '\tif err := request.Restorer.Restore(ctx, payload); err != nil {',
+    '\t\treturn RestoreResult{}, err',
+    '\t}',
+    '\treturn RestoreResult{}, nil',
+    '}',
+  ].join('\n');
+  const verified = verifyRestoreReplay(source);
+  assert.equal(verified.appliesRemovalRecords, false);
+  assert.ok(verified.problems.some((problem) => problem.includes('does not replay the online removal ledger')));
+});
+
+test('the restore path verifier fails when the fence closes before the ledger is replayed', () => {
+  const source = [
+    'package backup',
+    '',
+    'func Restore(ctx context.Context, request RestoreRequest) (RestoreResult, error) {',
+    '\tif err := request.Restorer.Restore(ctx, payload); err != nil {',
+    '\t\treturn RestoreResult{}, err',
+    '\t}',
+    '\tif err := handle.Finish(applied); err != nil {',
+    '\t\treturn RestoreResult{}, err',
+    '\t}',
+    '\tif err := request.Removals.ApplyRemovalRecords(ctx, removals); err != nil {',
+    '\t\treturn RestoreResult{}, err',
+    '\t}',
+    '\treturn RestoreResult{}, nil',
+    '}',
+  ].join('\n');
+  const verified = verifyRestoreReplay(source);
+  assert.equal(verified.appliesRemovalRecords, true);
+  assert.equal(verified.replayBeforeFenceClose, false);
+  assert.ok(verified.problems.some((problem) => problem.includes('closes the restore fence before')));
+});
+
+test('the route manifest is well formed and agrees with the contract and the production code', async () => {
+  const report = await auditRouteManifest(process.cwd());
+  assert.deepEqual(report.problems, []);
+  assert.equal(report.manifest.provisional, false);
+  assert.equal(report.contractProvisional, false);
+  assert.ok(report.routes.length > 0);
+  assert.deepEqual(report.routes.filter((route) => route.status !== 'implemented'), []);
+});
+
+test('the route manifest names every route of the presence and recovery runner', async () => {
+  const { manifest } = await loadRouteManifest(process.cwd());
+  const keys = new Set(manifestRoutes(manifest).map((route) => `${route.method} ${route.path}`));
+  const text = await readFile(join(process.cwd(), 'docs', 'architecture', 'online-presence-recovery-runner.md'), 'utf8');
+  const pattern = /^\|\s*`(GET|POST)`\s*\|\s*`([^`]+)`/gm;
+  /** @type {string[]} */
+  const required = [];
+  let match = pattern.exec(text);
+  while (match !== null) {
+    required.push(`${match[1]} ${match[2].split('?')[0]}`);
+    match = pattern.exec(text);
+  }
+  assert.ok(required.length >= 7, 'the runner contract names its routes');
+  for (const route of required) {
+    assert.ok(keys.has(route), `the manifest does not name ${route}`);
+  }
+});
+
+test('a route the production code does not register is never a passed scenario', () => {
+  const coverage = [{ scenarioId: 'MAT-03', status: 'passed', detail: 'the mapped tests passed' }];
+  const dependencies = new Map([['MAT-03', new Set(['match-command'])]]);
+  const routes = [{
+    id: 'match-command',
+    method: 'POST',
+    path: '/v1/online/matches/{matchID}/commands',
+    family: 'match',
+    state: 'existing',
+    status: 'not_implemented',
+  }];
+  const result = applyRouteCoverage(coverage, dependencies, routes);
+  assert.equal(result[0].status, 'not_implemented');
+  assert.ok(result[0].detail.includes('not implemented'));
+});
+
+test('the route dependency of a scenario is read from the tests of the scenario', async () => {
+  const { manifest } = await loadRouteManifest(process.cwd());
+  const routes = manifestRoutes(manifest);
+  const map = JSON.parse(await readFile(join(process.cwd(), 'scripts', 'online', 'acceptance-map.json'), 'utf8'));
+  const dependencies = await routeDependencies(process.cwd(), map, routes);
+  assert.ok(dependencies.get('ARC-02')?.has('match-command'));
+  // A scenario whose tests never name a route does not depend on one.
+  assert.equal(dependencies.get('MAT-03')?.size, 0);
 });
 
 test('the wiring audit blocks a tree without the feature route and the server switches', async () => {

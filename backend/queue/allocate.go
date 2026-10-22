@@ -12,6 +12,7 @@ import (
 	"github.com/Kamkmgamer/kamkmchess/backend/locks"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/Kamkmgamer/kamkmchess/backend/subject"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -119,6 +120,12 @@ func (s *Service) Match(ctx context.Context, actor online.ParticipantRef, entryI
 // engine. The engine seat is created in the match and the answer carries the
 // seat-scoped credential that lets the owner's browser move it.
 //
+// A candidate that is dropped after it was selected is never consumed, and
+// the engine never takes the seat of an entry whose later candidate is still
+// eligible. The decision refuses itself with a conflict in that case, so the
+// caller repeats the fallback and the waiting candidate wins over the
+// engine.
+//
 // The fallback is committed only after the browser reported a ready engine:
 // the call itself is that report.
 //
@@ -160,6 +167,13 @@ type allocationRequest struct {
 	Origin string
 	// Fallback asks for the browser engine when no candidate is available.
 	Fallback bool
+	// RecordFallbackPending asks the decision to record the pending engine
+	// fallback when the window ended without a candidate.
+	//
+	// Only the reconciliation loop asks for it. The record is written in
+	// the transaction of the decision, under the bucket lock, so a kept
+	// search that won the interval is never overwritten.
+	RecordFallbackPending bool
 }
 
 // allocate runs the single authoritative allocation decision.
@@ -189,8 +203,7 @@ func (s *Service) allocate(ctx context.Context, actor online.ParticipantRef, ent
 			}
 		}
 	}
-	now := s.now().UTC()
-	plan, err := s.decide(ctx, actor, entryID, request, now)
+	plan, err := s.decide(ctx, actor, entryID, request)
 	if err != nil {
 		return Assignment{}, err
 	}
@@ -236,7 +249,19 @@ type reservationPlan struct {
 // The bucket lock is held from the first read of the entry until the commit,
 // so the candidate selection, the consumption of the entries and the write of
 // the canonical match are one ordered decision.
-func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entryID string, request allocationRequest, now time.Time) (reservationPlan, error) {
+//
+// The entry row is read again under the bucket lock, so a transition of the
+// entry that committed while the decision waited for the lock is part of the
+// decision and not a later poll: a kept search and a re-armed window move the
+// bound of the entry, and the first scan of the decision uses the bound of
+// the row that the decision observes under the lock.
+//
+// The decision time is sampled after the locks of the decision, not before
+// them. A decision that waited for the bucket lock, for an account scope
+// lock or for its own row observes the instant it actually runs at: a
+// readiness lease that died during the wait is a dead lease, and a cutoff
+// that passed during the wait is a passed cutoff.
+func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entryID string, request allocationRequest) (reservationPlan, error) {
 	mode := modeCandidate
 	if request.Fallback {
 		mode = modeFallback
@@ -277,11 +302,39 @@ func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entry
 	if err = lockBucket(ctx, tx, record.StartingTimeMs, record.IncrementMs); err != nil {
 		return reservationPlan{}, err
 	}
-	bound := record.bound(now)
+	// The initiator row is read again under the bucket lock. Every queue
+	// write of an entry takes the bucket lock before it writes the row, so
+	// the row that is read here is the authoritative one: a kept search or a
+	// re-armed window that committed while the decision waited for the
+	// bucket lock is observed, and the first scan of the decision uses its
+	// bound.
+	//
+	// The read takes no row lock. The lock order of the queue is the bucket
+	// lock, then the account scope locks, then the row locks, and the row of
+	// the entry is locked further down, after the account scopes.
+	//
+	// The transaction reads in read committed, so this statement observes
+	// every write that committed before it started. The write it has to
+	// observe committed before the bucket lock was free, so the read is
+	// never stale.
+	authoritative, err := s.loadEntry(ctx, tx, entryID)
+	if err != nil {
+		return reservationPlan{}, err
+	}
+	if authoritative.OwnerID != actor.ID {
+		return reservationPlan{}, ErrNotFound
+	}
+	record = authoritative
+	// The scan runs under the bucket lock, so it observes the committed
+	// state of the bucket and the bound of the authoritative row: the
+	// current time before the cutoff and the original cutoff at or after
+	// it, and the current time for an entry that keeps searching.
+	scanNow := s.now().UTC()
+	bound := record.bound(scanNow)
 	// The candidate is selected before the row locks, because the account
 	// scope locks of both participants are taken together and in ascending
 	// order.
-	candidate, found, err := s.findCandidate(ctx, tx, record, bound, now)
+	candidate, found, err := s.findCandidate(ctx, tx, record, bound, scanNow)
 	if err != nil {
 		return reservationPlan{}, err
 	}
@@ -298,12 +351,23 @@ func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entry
 	if err = assertAccountPresent(ctx, tx, actor.ID); err != nil {
 		return reservationPlan{}, err
 	}
+	// dropped marks a candidate that was selected and then lost. A dropped
+	// candidate is never consumed, and it never hands the seat of the entry
+	// to the engine: the scan runs again at the decision time.
+	dropped := false
 	if found {
 		if err = assertAccountPresent(ctx, tx, candidate.OwnerID); err != nil {
 			if !errors.Is(err, ErrAccountRemoved) {
 				return reservationPlan{}, err
 			}
-			// The candidate is gone. The decision continues without it.
+			// The account of the candidate was removed while the decision
+			// waited for the account scope lock of its owner. The candidate
+			// is dropped, exactly like a candidate whose readiness lease
+			// died during that wait: it is never consumed, and it never hands
+			// the seat of the entry to the engine. The scan runs again at the
+			// decision time, so a later candidate that is still eligible
+			// wins over the engine.
+			dropped = true
 			found = false
 		}
 	}
@@ -338,6 +402,12 @@ func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entry
 	case internalExpired:
 		return reservationPlan{}, fmt.Errorf("%w: the entry expired", ErrConflict)
 	}
+	// The authoritative decision time is sampled after every lock of the
+	// decision: the bucket lock, the account scope locks and the row lock.
+	// A decision that waited observes the instant it runs at, so a lease
+	// that died during the wait is a dead lease and a cutoff that passed
+	// during the wait is a passed cutoff.
+	now := s.now().UTC()
 	// The readiness lease of the initiator is enforced inside the decision.
 	// An entry whose owner stopped responding never consumes a live
 	// candidate and never produces a game nobody will play.
@@ -345,13 +415,76 @@ func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entry
 		return reservationPlan{}, fmt.Errorf("%w: the entry expired", ErrConflict)
 	}
 	if found {
-		candidate, found, err = s.lockCandidate(ctx, tx, record, candidate, bound, now)
+		// The final candidate check uses the decision time and the bound of
+		// the locked entry. A candidate that is no longer eligible at the
+		// decision time is not consumed, and a candidate that was ready by
+		// the original cutoff still wins over the engine.
+		candidate, found, err = s.lockCandidate(ctx, tx, record, candidate, record.bound(now), now)
 		if err != nil {
 			return reservationPlan{}, err
 		}
+		if !found {
+			// The selected candidate was dropped: its readiness lease died
+			// while the decision waited for the account scope lock of its
+			// owner. The scan runs again at the decision time, so a later
+			// candidate that is still eligible is never lost to the engine.
+			dropped = true
+		}
 	}
-	if !found && mode == modeCandidate {
-		return reservationPlan{}, ErrNoCandidate
+	if dropped {
+		// A dropped candidate never hands the seat of the entry to the
+		// engine. The scan runs again at the decision time, so a later
+		// candidate that is still eligible is never lost to the engine.
+		candidate, found, err = s.rescanCandidate(ctx, tx, record, scopes, record.bound(now), now)
+		if err != nil {
+			if !errors.Is(err, errCandidateRetry) {
+				return reservationPlan{}, err
+			}
+			if mode == modeFallback {
+				// The browser engine may not take the seat while a candidate
+				// is still eligible. The refusal is a retryable conflict: the
+				// caller repeats the fallback and the candidate wins over
+				// the engine.
+				return reservationPlan{}, fmt.Errorf("%w: %w", ErrConflict, err)
+			}
+			// The pairing of two owners has no deadline. The answer is "no
+			// candidate right now", and the caller asks again.
+			return reservationPlan{}, ErrNoCandidate
+		}
+	}
+	// The window guard is the same for the pending engine fallback and for
+	// the browser engine itself. The engine may only take the seat of an
+	// entry whose original cutoff the service has reached, and the pending
+	// record says the same thing about the deadline.
+	windowEnded := record.windowEnded(now)
+	if !found {
+		if mode == modeCandidate {
+			if request.RecordFallbackPending && windowEnded {
+				// The window ended without a candidate. The entry waits for
+				// the browser engine fallback. The record is written in the
+				// transaction of the decision, under the bucket lock, so a
+				// kept search that won the interval is never overwritten.
+				recorded, err := s.recordFallbackPending(ctx, tx, record, now)
+				if err != nil {
+					return reservationPlan{}, err
+				}
+				if recorded {
+					if err = tx.Commit(ctx); err != nil {
+						return reservationPlan{}, err
+					}
+					return reservationPlan{}, fmt.Errorf("%w: %w", errFallbackPending, ErrNoCandidate)
+				}
+			}
+			return reservationPlan{}, ErrNoCandidate
+		}
+		// The browser engine may only be committed when the search window of
+		// the entry has ended. The cutoff is the deadline the ready
+		// acceptance armed and it never moves, so an engine that is
+		// committed before it would take the seat of an opponent the owner
+		// was still promised a chance to find.
+		if !windowEnded {
+			return reservationPlan{}, fmt.Errorf("%w: the search window of the entry has not ended", ErrConflict)
+		}
 	}
 	operationID, err := newIdentifier("qa_")
 	if err != nil {
@@ -391,6 +524,11 @@ func (s *Service) decide(ctx context.Context, actor online.ParticipantRef, entry
 // The candidate has to be ready by the bound, which is the current time
 // before the cutoff and the original cutoff at or after it.
 //
+// A removed account is never a candidate. The removal of an account deletes
+// its waiting entries, and a restored copy may carry an entry of a removed
+// account without that sanitation: a removed account is never paired, so its
+// entry never answers the scan.
+//
 // The scan does not lock the row. The bucket lock orders the whole decision,
 // so a candidate that another transaction reserved is already committed as
 // consumed when this transaction reads the bucket. The row itself is locked
@@ -406,6 +544,8 @@ func (s *Service) findCandidate(ctx context.Context, tx pgx.Tx, record entryReco
 		  AND (e.expires_at IS NULL OR e.expires_at>$6)
 		  AND NOT (e.seat_control_kind='human' AND $7='human')
 		  AND NOT EXISTS (SELECT 1 FROM online_queue_allocation_entries x WHERE x.entry_id=e.entry_id)
+		  AND NOT EXISTS (SELECT 1 FROM online_account_deletions d WHERE d.account_id=`+subject.SQLReference("e.owner_id")+`)
+		  AND NOT EXISTS (SELECT 1 FROM online_removal_requests r WHERE r.subject_kind='account' AND r.subject_id=`+subject.SQLReference("e.owner_id")+`)
 		ORDER BY e.ready_at, e.created_at, e.entry_id
 		LIMIT 1`,
 		record.StartingTimeMs, record.IncrementMs, record.EntryID, record.OwnerID, bound, now, record.ControlKind)
@@ -420,8 +560,92 @@ func (s *Service) findCandidate(ctx context.Context, tx pgx.Tx, record entryReco
 	return candidate, true, nil
 }
 
+// maxCandidateRescans bounds the rescan of one decision.
+//
+// Every round of the rescan drops one candidate, and a dropped candidate is
+// never eligible again, so the bound is a safety net and never the normal
+// path of a decision.
+const maxCandidateRescans = 4
+
+// rescanCandidate selects a candidate again at the decision time.
+//
+// The candidate of the first scan can be dropped after it was selected: its
+// readiness lease may die while the decision waits for the account scope
+// lock of its owner, or its account may be removed during that wait. A
+// dropped candidate is never consumed, and the browser engine must not take
+// the seat while another candidate is still eligible.
+//
+// The scan therefore runs again at the decision time, with the bound the
+// first scan used: a candidate that was ready by the original cutoff still
+// wins over the engine.
+//
+// A candidate is only paired when the account scope of its owner is already
+// held by the decision. The scope locks are taken before the row locks, and
+// a scope that is taken after a row lock would break the lock order of the
+// queue. A candidate whose scope is not held is therefore refused with
+// errCandidateRetry: the caller repeats the decision, and the repeat starts
+// it with the scope set of that candidate.
+func (s *Service) rescanCandidate(ctx context.Context, tx pgx.Tx, record entryRecord, scopes []string, bound, now time.Time) (candidateRecord, bool, error) {
+	for round := 0; round < maxCandidateRescans; round++ {
+		candidate, found, err := s.findCandidate(ctx, tx, record, bound, now)
+		if err != nil {
+			return candidateRecord{}, false, err
+		}
+		if !found {
+			return candidateRecord{}, false, nil
+		}
+		if !scopeHeld(scopes, locks.AccountScope("account", candidate.OwnerID)) {
+			return candidateRecord{}, false, fmt.Errorf("%w: the account scope of the candidate is not held by the decision", errCandidateRetry)
+		}
+		locked, ok, err := s.lockCandidate(ctx, tx, record, candidate, bound, now)
+		if err != nil {
+			return candidateRecord{}, false, err
+		}
+		if ok {
+			return locked, true, nil
+		}
+	}
+	// The scan keeps finding candidates that this decision cannot consume.
+	// The engine is not committed while a candidate is still eligible, so the
+	// decision is refused and the caller repeats it.
+	return candidateRecord{}, false, fmt.Errorf("%w: the candidates of the bucket are not consumed", errCandidateRetry)
+}
+
+// scopeHeld reports whether the decision holds the account scope of one
+// owner.
+func scopeHeld(scopes []string, scope string) bool {
+	for _, held := range scopes {
+		if held == scope {
+			return true
+		}
+	}
+	return false
+}
+
+// recordFallbackPending records that the window of an entry ended without a
+// compatible candidate.
+//
+// The row of the entry is locked by the decision, so the record is written
+// under the bucket lock and in the same transaction as the decision that
+// found no candidate. A kept search that won the interval is never
+// overwritten: the condition of the update refuses an entry that keeps
+// searching.
+func (s *Service) recordFallbackPending(ctx context.Context, tx pgx.Tx, record entryRecord, now time.Time) (bool, error) {
+	tag, err := tx.Exec(ctx, `UPDATE online_queue_entries SET internal_state='fallback',version=version+1,updated_at=$2 WHERE entry_id=$1 AND internal_state='waiting' AND keep_searching=false`, record.EntryID, now)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
 // lockCandidate locks the row of the selected candidate and re-checks its
 // eligibility.
+//
+// This is the final candidate check of the decision. It runs with the
+// decision time and the bound of the locked entry, so a candidate whose
+// readiness lease died while the decision waited is not consumed, and a
+// candidate that was ready by the original cutoff still wins over the
+// engine.
 //
 // The candidate is locked after the account scope of its owner, so the row
 // lock never precedes a scope lock.
@@ -654,6 +878,16 @@ func assignmentFor(plan reservationPlan) Assignment {
 // holds it, and a rotation would break the engine seat of a running game. The
 // credential is issued when the seat has none, and an explicit recovery of an
 // owner that lost the answer rotates it on purpose.
+//
+// The issuance is one atomic decision of the issuer. The issuer reads the
+// live credential of the seat inside the seat lock and it mints a credential
+// only when the seat has none, so the check and the write cannot be split.
+// A separate read before the issuance would race with a concurrent issuance:
+// two tabs of one entry would both observe that the seat has no credential,
+// and the second issuance would revoke the secret the first tab already
+// holds. The outcome of the issuance reports whether a credential was minted
+// at all, so a routine retry that found a live credential answers with the
+// assignment and without a secret.
 func (s *Service) engineCredential(ctx context.Context, plan reservationPlan, request allocationRequest) (GuestCredential, bool, error) {
 	if s.credentials == nil {
 		return GuestCredential{}, false, fmt.Errorf("%w: the queue cannot issue an engine credential", ErrUnavailable)
@@ -662,26 +896,23 @@ func (s *Service) engineCredential(ctx context.Context, plan reservationPlan, re
 	if engineID == "" {
 		engineID = engineParticipantID(plan.allocation.OperationID)
 	}
-	if !request.CredentialRecovery {
-		live, err := s.credentials.HasEngineSeatCredential(ctx, plan.matchID, plan.engineSeat)
-		if err != nil {
-			return GuestCredential{}, false, fmt.Errorf("%w: %v", ErrUnavailable, err)
-		}
-		if live {
-			// The browser holds a usable credential. The answer names the
-			// assignment and carries no secret.
-			return GuestCredential{}, false, nil
-		}
-	}
-	issued, err := s.credentials.IssueEngineSeatCredential(ctx, onlineauth.EngineSeatRequest{
+	outcome, err := s.credentials.IssueEngineSeatCredential(ctx, onlineauth.EngineSeatRequest{
 		MatchID: plan.matchID,
 		Seat:    plan.engineSeat,
 		GuestID: engineID,
 		Origin:  request.Origin,
+		// Only an explicit recovery rotates the credential of the seat.
+		Rotate: request.CredentialRecovery,
 	})
 	if err != nil {
 		return GuestCredential{}, false, fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
+	if !outcome.Issued {
+		// The seat already had a live credential. The browser holds it, so
+		// the answer names the assignment and carries no secret.
+		return GuestCredential{}, false, nil
+	}
+	issued := outcome.Credential
 	return GuestCredential{
 		GuestID:   issued.GuestID,
 		MatchID:   issued.MatchID,

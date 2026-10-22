@@ -3,6 +3,7 @@ package invite
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,4 +47,30 @@ func (r *AccountLabelResolver) PublicLabel(ctx context.Context, accountID string
 		return "Player", nil
 	}
 	return *username, nil
+}
+
+// AccountIDByUsername returns the account of the owner of a public name.
+//
+// The comparison is case-insensitive, so the lookup a named challenge needs
+// finds the owner whichever spelling the challenger used.
+//
+// The account identifier is an authorization identity. It stays inside the
+// service: it is never published, it never reaches an answer and it never
+// crosses the boundary of the public request.
+func (r *AccountLabelResolver) AccountIDByUsername(ctx context.Context, username string) (string, error) {
+	key := strings.ToLower(strings.TrimSpace(username))
+	if r == nil || r.db == nil || key == "" {
+		return "", ErrRecipientNotFound
+	}
+	var accountID string
+	if err := r.db.QueryRow(ctx, `SELECT account_id FROM online_public_profiles WHERE username_key=$1`, key).Scan(&accountID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", ErrRecipientNotFound
+		}
+		return "", err
+	}
+	if strings.TrimSpace(accountID) == "" {
+		return "", ErrRecipientNotFound
+	}
+	return accountID, nil
 }

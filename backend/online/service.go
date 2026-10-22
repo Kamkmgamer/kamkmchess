@@ -1045,6 +1045,13 @@ func (s *Service) executeMutation(ctx context.Context, actor ParticipantRef, cmd
 			decision, markerID, match.MatchID); err != nil {
 			return CommandResult{}, err
 		}
+		// The removal is recorded in the durable removal ledger, so a restore
+		// of an older backup replays it before the restored database serves
+		// traffic. Without the record, a bundle that was sealed before this
+		// removal would restore the public replay of the match.
+		if err = recordReplayRemoval(ctx, tx, match.MatchID, markerID, cmd.Action.RemoveReplay.Reason, decision); err != nil {
+			return CommandResult{}, err
+		}
 		event.Kind = EventReplayRemoved
 		receipt.Outcome = OutcomeReplayRemoved
 	default:
@@ -1374,7 +1381,29 @@ func (s *Service) updateMatch(ctx context.Context, tx pgx.Tx, match Match, decis
 	return nil
 }
 
+// publishProjection publishes the public projection of a finished match.
+//
+// The caller holds the match row lock, so the publication and the removal of
+// the same match are ordered instead of racing: either the removal was
+// recorded first and the publication refuses to publish, or the publication
+// published first and the removal revokes or anonymizes the published
+// payload.
+//
+// A match whose shared replay was erased is never published. The result of the
+// match stays in the shared state, but the public projection of an erased
+// match must not come back, and a match that was removed while it was still
+// running must not publish when it finishes.
 func (s *Service) publishProjection(ctx context.Context, tx pgx.Tx, match Match) error {
+	erased, err := MatchErased(ctx, tx, match.MatchID)
+	if err != nil {
+		return err
+	}
+	if erased {
+		// The shared replay of this match was erased. The public projection
+		// of an erased match is not published, so the public URL of the match
+		// stays empty.
+		return nil
+	}
 	projection, err := BuildPublicProjection(match)
 	if err != nil {
 		return err

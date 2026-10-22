@@ -24,11 +24,22 @@ import (
 // credential at all. A guest may create an invitation and a guest may join one
 // by link, so the surface never requires a signed-in account for the guest
 // path. The public queue is a different surface and does require an account.
+//
+// The owner token of an invitation travels in the dedicated private header of
+// the surface. It never travels in a URL, a query string or a request body,
+// and it is never logged.
+
+// OwnerTokenHeader carries the revocable owner secret of an invitation.
+//
+// It is a dedicated private header, so the owner token can never be mistaken
+// for an account session or for a guest seat credential, and so the private
+// single-owner sync API keeps its narrower header set.
+const OwnerTokenHeader = "X-Online-Owner-Token"
 
 // FriendsService is the invitation and rematch service the routes call.
 type FriendsService interface {
 	Create(ctx context.Context, request invite.CreateRequest) (invite.Created, error)
-	Get(ctx context.Context, invitationID string, viewerAccountID string) (invite.Invitation, error)
+	Get(ctx context.Context, request invite.ViewRequest) (invite.Invitation, error)
 	Accept(ctx context.Context, request invite.AcceptRequest) (invite.Accepted, error)
 	Cancel(ctx context.Context, request invite.CancelRequest) (invite.Invitation, error)
 	SeatCredential(ctx context.Context, request invite.SeatCredentialRequest) (invite.SeatCredentialResult, error)
@@ -46,12 +57,35 @@ type FriendsOptions struct {
 	// LabelResolver returns the public label of an account. A nil resolver
 	// labels every account as a guest.
 	LabelResolver PublicLabelResolver
+	// Cohort narrows the accounts that may use the friend surface. A nil
+	// authorizer admits every account.
+	//
+	// The cohort is an allowlist of accounts. It never excludes a guest: a
+	// guest has to be able to create a friend link and to accept an
+	// invitation that was issued while friend play was enabled.
+	Cohort AccountAuthorizer
 }
 
 // PublicLabelResolver returns the public label of an account.
 type PublicLabelResolver interface {
 	PublicLabel(ctx context.Context, accountID string) (string, error)
 }
+
+// invitationOwnership is the optional capability of a friends service that can
+// prove the ownership of an invitation without changing it.
+//
+// The capability is optional, and a service without it fails closed: an
+// account that the cohort excludes never reaches an owner-scoped route, so a
+// composition without the proof cannot widen the surface.
+type invitationOwnership interface {
+	// OwnsInvitation reports whether the caller owns the invitation.
+	OwnsInvitation(ctx context.Context, invitationID, ownerToken string, owner *invite.Identity) bool
+}
+
+// The invitation service of the composition proves the ownership of an
+// invitation, so the owner recovery of a narrowed cohort works with the
+// service of the tree and not only with a double.
+var _ invitationOwnership = (*invite.Service)(nil)
 
 type friendsAPI struct {
 	friends FriendsService
@@ -130,13 +164,18 @@ type guestCredentialResponse struct {
 }
 
 type createInvitationRequest struct {
-	SchemaVersion      int                `json:"schemaVersion"`
-	Kind               string             `json:"kind"`
-	RecipientAccountID string             `json:"recipientAccountId"`
-	Seat               online.Seat        `json:"seat"`
-	TimeControl        online.TimeControl `json:"timeControl"`
-	StartingFEN        string             `json:"startingFen"`
-	Control            online.SeatControl `json:"control"`
+	SchemaVersion int    `json:"schemaVersion"`
+	Kind          string `json:"kind"`
+	// RecipientUsername names the account of a challenge by its public name.
+	//
+	// A public name is a public identity, so it may travel in a request. The
+	// account subject of the recipient never does: the service resolves the
+	// name itself and keeps the subject private.
+	RecipientUsername string             `json:"recipientUsername"`
+	Seat              online.Seat        `json:"seat"`
+	TimeControl       online.TimeControl `json:"timeControl"`
+	StartingFEN       string             `json:"startingFen"`
+	Control           online.SeatControl `json:"control"`
 }
 
 type createInvitationResponse struct {
@@ -164,13 +203,11 @@ type acceptInvitationResponse struct {
 }
 
 type cancelInvitationRequest struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	OwnerToken    string `json:"ownerToken"`
+	SchemaVersion int `json:"schemaVersion"`
 }
 
 type seatCredentialRequest struct {
-	SchemaVersion int    `json:"schemaVersion"`
-	OwnerToken    string `json:"ownerToken"`
+	SchemaVersion int `json:"schemaVersion"`
 }
 
 type seatCredentialResponse struct {
@@ -211,6 +248,15 @@ type rematchView struct {
 	StartingFEN   *string            `json:"startingFen"`
 	ExpiresAt     time.Time          `json:"expiresAt"`
 	NewMatchID    *string            `json:"newMatchId"`
+	// ProposedByViewer tells the caller whether the caller proposed the
+	// offer.
+	//
+	// It is a fact about the caller alone: the stored identity of the
+	// proposer is never published, and the opponent of the proposer learns
+	// nothing about it beyond the fact that the offer is not its own. The
+	// proposal is already the consent of the proposer, so only the opponent
+	// may accept the offer.
+	ProposedByViewer bool `json:"proposedByViewer"`
 }
 
 // createInvitation creates one shareable link or one named challenge.
@@ -219,7 +265,7 @@ type rematchView struct {
 // anonymous guest. An anonymous inviter receives an owner token that is its
 // only recoverable ownership of the invitation.
 func (a *friendsAPI) createInvitation(w http.ResponseWriter, r *http.Request) {
-	principal, authenticated, ok := a.auth.maybe(w, r, true)
+	principal, authenticated, ok := a.caller(w, r, true)
 	if !ok {
 		return
 	}
@@ -237,13 +283,13 @@ func (a *friendsAPI) createInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created, err := a.friends.Create(r.Context(), invite.CreateRequest{
-		Kind:               invite.Kind(body.Kind),
-		Inviter:            inviter,
-		RecipientAccountID: body.RecipientAccountID,
-		Seat:               body.Seat,
-		TimeControl:        body.TimeControl,
-		StartingFEN:        body.StartingFEN,
-		Control:            body.Control,
+		Kind:              invite.Kind(body.Kind),
+		Inviter:           inviter,
+		RecipientUsername: body.RecipientUsername,
+		Seat:              body.Seat,
+		TimeControl:       body.TimeControl,
+		StartingFEN:       body.StartingFEN,
+		Control:           body.Control,
 	})
 	if err != nil {
 		writeInviteError(w, err)
@@ -260,16 +306,35 @@ func (a *friendsAPI) createInvitation(w http.ResponseWriter, r *http.Request) {
 //
 // The preview shows the inviter's public name or Guest, the inviter's seat,
 // the clock and the custom position. It never invents a pairing.
+//
+// A named challenge is private. Its named recipient may read it, and its
+// inviter may read it with the owner token of the invitation. Every other
+// caller is answered exactly like an unknown invitation, so the status of a
+// challenge is never public.
 func (a *friendsAPI) previewInvitation(w http.ResponseWriter, r *http.Request) {
 	principal, authenticated, ok := a.auth.maybe(w, r, false)
 	if !ok {
+		return
+	}
+	ownerToken, ok := a.ownerToken(w, r)
+	if !ok {
+		return
+	}
+	// The preview is owner-scoped: the inviter reads its own invitation
+	// with the owner token, and that proof keeps the inviter able to see
+	// the invitation it owns after a cohort narrowed the surface.
+	if !a.ownerScoped(w, r, principal, ownerToken, nil) {
 		return
 	}
 	viewer := ""
 	if authenticated && principal.Kind == online.ParticipantAccount {
 		viewer = principal.Participant.ID
 	}
-	invitation, err := a.friends.Get(r.Context(), r.PathValue("invitationID"), viewer)
+	invitation, err := a.friends.Get(r.Context(), invite.ViewRequest{
+		InvitationID:    r.PathValue("invitationID"),
+		ViewerAccountID: viewer,
+		OwnerToken:      ownerToken,
+	})
 	if err != nil {
 		writeInviteError(w, err)
 		return
@@ -297,7 +362,7 @@ func (a *friendsAPI) previewInvitation(w http.ResponseWriter, r *http.Request) {
 // The answer is an envelope: the match view is the `match` field and it is
 // byte-compatible with the participant live view of the online surface.
 func (a *friendsAPI) acceptInvitation(w http.ResponseWriter, r *http.Request) {
-	principal, authenticated, ok := a.auth.maybe(w, r, true)
+	principal, authenticated, ok := a.caller(w, r, true)
 	if !ok {
 		return
 	}
@@ -344,9 +409,32 @@ func (a *friendsAPI) acceptInvitation(w http.ResponseWriter, r *http.Request) {
 }
 
 // cancelInvitation cancels an open invitation.
+//
+// The owner token travels in the private header of the surface, so it never
+// reaches a body, a URL or a log line.
+//
+// The cancellation is owner-scoped: the inviter withdraws its own
+// invitation with the owner token, and that proof keeps the inviter able to
+// withdraw an outstanding invitation after a cohort narrowed the surface. A
+// closed surface and a narrowed cohort both keep the inviter able to cancel
+// the invitation it owns.
 func (a *friendsAPI) cancelInvitation(w http.ResponseWriter, r *http.Request) {
 	principal, authenticated, ok := a.auth.maybe(w, r, true)
 	if !ok {
+		return
+	}
+	ownerToken, ok := a.ownerToken(w, r)
+	if !ok {
+		return
+	}
+	// The proof of the ownership names the participant of the caller. The
+	// public label is not part of the proof, so the label is not resolved
+	// before the cohort answered.
+	var owner *invite.Identity
+	if authenticated && principal.Kind == online.ParticipantAccount {
+		owner = &invite.Identity{Participant: principal.Participant}
+	}
+	if !a.ownerScoped(w, r, principal, ownerToken, owner) {
 		return
 	}
 	var body cancelInvitationRequest
@@ -368,7 +456,7 @@ func (a *friendsAPI) cancelInvitation(w http.ResponseWriter, r *http.Request) {
 	}
 	invitation, err := a.friends.Cancel(r.Context(), invite.CancelRequest{
 		InvitationID: r.PathValue("invitationID"),
-		OwnerToken:   body.OwnerToken,
+		OwnerToken:   ownerToken,
 		Canceller:    canceller,
 	})
 	if err != nil {
@@ -398,8 +486,12 @@ func (a *friendsAPI) cancelInvitation(w http.ResponseWriter, r *http.Request) {
 // The credential is bound to the created match seat, so it cannot exist
 // before the invitee accepted. The mint supersedes an earlier credential of
 // the same seat.
+//
+// The owner token travels in the private header of the surface, so it never
+// reaches a body, a URL or a log line.
 func (a *friendsAPI) seatCredential(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := a.auth.maybe(w, r, true); !ok {
+	principal, authenticated, ok := a.caller(w, r, true)
+	if !ok {
 		return
 	}
 	var body seatCredentialRequest
@@ -410,10 +502,22 @@ func (a *friendsAPI) seatCredential(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
+	ownerToken, ok := a.ownerToken(w, r)
+	if !ok {
+		return
+	}
+	// The identity of the caller proves that it may see the invitation. It
+	// never authorizes the mint of the credential: the owner token and the
+	// inviter alone do that.
+	var viewer *invite.Identity
+	if authenticated {
+		viewer = &invite.Identity{Participant: principal.Participant}
+	}
 	result, err := a.friends.SeatCredential(r.Context(), invite.SeatCredentialRequest{
 		InvitationID: r.PathValue("invitationID"),
-		OwnerToken:   body.OwnerToken,
+		OwnerToken:   ownerToken,
 		Origin:       a.origin(r),
+		Viewer:       viewer,
 	})
 	if err != nil {
 		writeInviteError(w, err)
@@ -432,7 +536,7 @@ func (a *friendsAPI) seatCredential(w http.ResponseWriter, r *http.Request) {
 
 // proposeRematch proposes a new game after a finished match.
 func (a *friendsAPI) proposeRematch(w http.ResponseWriter, r *http.Request) {
-	principal, authenticated, ok := a.auth.maybe(w, r, true)
+	principal, authenticated, ok := a.caller(w, r, true)
 	if !ok {
 		return
 	}
@@ -466,13 +570,13 @@ func (a *friendsAPI) proposeRematch(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, rematchResponse{
 		SchemaVersion: online.ContractsSchemaVersion,
-		Rematch:       toRematchView(rematch),
+		Rematch:       toRematchView(rematch, principal.Participant),
 	})
 }
 
 // acceptRematch accepts a rematch offer and creates the new match.
 func (a *friendsAPI) acceptRematch(w http.ResponseWriter, r *http.Request) {
-	principal, authenticated, ok := a.auth.maybe(w, r, true)
+	principal, authenticated, ok := a.caller(w, r, true)
 	if !ok {
 		return
 	}
@@ -510,7 +614,7 @@ func (a *friendsAPI) acceptRematch(w http.ResponseWriter, r *http.Request) {
 	}
 	response := acceptRematchResponse{
 		SchemaVersion: online.ContractsSchemaVersion,
-		Rematch:       toRematchView(result.Rematch),
+		Rematch:       toRematchView(result.Rematch, principal.Participant),
 		Match:         view,
 		Seat:          result.Seat,
 	}
@@ -526,7 +630,7 @@ func (a *friendsAPI) acceptRematch(w http.ResponseWriter, r *http.Request) {
 // A rematch is a new match, so the credential of the finished match cannot
 // authorize the new seat.
 func (a *friendsAPI) rematchSeatCredential(w http.ResponseWriter, r *http.Request) {
-	principal, authenticated, ok := a.auth.maybe(w, r, true)
+	principal, authenticated, ok := a.caller(w, r, true)
 	if !ok {
 		return
 	}
@@ -566,7 +670,7 @@ func (a *friendsAPI) rematchSeatCredential(w http.ResponseWriter, r *http.Reques
 
 // pendingRematch answers the pending rematch offer of a finished match.
 func (a *friendsAPI) pendingRematch(w http.ResponseWriter, r *http.Request) {
-	principal, authenticated, ok := a.auth.maybe(w, r, false)
+	principal, authenticated, ok := a.caller(w, r, false)
 	if !ok {
 		return
 	}
@@ -585,8 +689,75 @@ func (a *friendsAPI) pendingRematch(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, rematchResponse{
 		SchemaVersion: online.ContractsSchemaVersion,
-		Rematch:       toRematchView(rematch),
+		Rematch:       toRematchView(rematch, principal.Participant),
 	})
+}
+
+// caller authenticates the request and checks the account cohort.
+//
+// The cohort is checked before the request reaches the service, so an account
+// that is not allowed never learns whether an invitation exists. A guest is
+// never refused by the cohort.
+func (a *friendsAPI) caller(w http.ResponseWriter, r *http.Request, mutation bool) (onlineauth.Principal, bool, bool) {
+	principal, authenticated, ok := a.auth.maybe(w, r, mutation)
+	if !ok {
+		return onlineauth.Principal{}, false, false
+	}
+	if !allowParticipant(w, r, a.options.Cohort, principal) {
+		return onlineauth.Principal{}, false, false
+	}
+	return principal, authenticated, true
+}
+
+// ownerScoped reports whether a request of an owner-scoped route may use the
+// surface.
+//
+// The cohort narrows the account access of the surface. An account that the
+// cohort excludes may not create an invitation, may not accept one, and may
+// not read the state of one.
+//
+// The owner of an invitation is the one narrow exception, and the exception
+// exists because a closed surface still has to let the inviter withdraw an
+// outstanding invitation. The owner token of the invitation is the proof of
+// the ownership, so the inviter keeps the preview and the cancellation of
+// the invitation it owns after a cohort narrowed the surface.
+//
+// The exception is narrow in three ways:
+//
+//   - without the proof the answer is the ordinary refusal of the cohort, and
+//     the service is never consulted, so the refusal cannot reveal whether an
+//     invitation exists,
+//   - a proof that fails is answered exactly like an unknown invitation, so a
+//     wrong owner token is indistinguishable from an invitation that was
+//     never issued,
+//   - the proof covers the invitation of the request and nothing else, so it
+//     never widens the access to another invitation, to a challenge of
+//     somebody else, or to the creation of an invitation.
+func (a *friendsAPI) ownerScoped(w http.ResponseWriter, r *http.Request, principal onlineauth.Principal, ownerToken string, owner *invite.Identity) bool {
+	allowed, err := participantAllowed(r.Context(), a.options.Cohort, principal)
+	if err != nil {
+		// An authorizer that cannot answer fails closed.
+		writeError(w, http.StatusForbidden, "not_authorized")
+		return false
+	}
+	if allowed {
+		return true
+	}
+	if ownerToken == "" && owner == nil {
+		writeError(w, http.StatusForbidden, "not_authorized")
+		return false
+	}
+	prover, ok := a.friends.(invitationOwnership)
+	if !ok {
+		// A service that cannot prove the ownership fails closed.
+		writeError(w, http.StatusForbidden, "not_authorized")
+		return false
+	}
+	if !prover.OwnsInvitation(r.Context(), r.PathValue("invitationID"), ownerToken, owner) {
+		writeError(w, http.StatusNotFound, "not_found")
+		return false
+	}
+	return true
 }
 
 // identity returns the participant identity of a request.
@@ -682,6 +853,23 @@ func (a *friendsAPI) origin(r *http.Request) string {
 	return ""
 }
 
+// ownerToken returns the owner token of a request.
+//
+// The token travels in the dedicated private header of the surface. A request
+// that carries the header twice is refused, so the server never has to
+// choose which of two tokens wins.
+func (a *friendsAPI) ownerToken(w http.ResponseWriter, r *http.Request) (string, bool) {
+	values := r.Header.Values(OwnerTokenHeader)
+	if len(values) > 1 {
+		writeError(w, http.StatusBadRequest, "invalid_request")
+		return "", false
+	}
+	if len(values) == 0 {
+		return "", true
+	}
+	return strings.TrimSpace(values[0]), true
+}
+
 // toInvitationResponse maps an invitation to its public view.
 func toInvitationResponse(invitation invite.Invitation) invitationResponse {
 	return invitationResponse{
@@ -703,17 +891,21 @@ func toInvitationResponse(invitation invite.Invitation) invitationResponse {
 }
 
 // toRematchView maps a rematch offer to its public view.
-func toRematchView(rematch invite.Rematch) rematchView {
+//
+// The viewer is the caller of the request. The view tells the caller whether
+// the caller proposed the offer, and it publishes no identity of the proposer.
+func toRematchView(rematch invite.Rematch, viewer online.ParticipantRef) rematchView {
 	return rematchView{
-		RematchID:     rematch.RematchID,
-		MatchID:       rematch.MatchID,
-		Status:        string(rematch.Status),
-		ProposerLabel: rematch.ProposerLabel,
-		ProposerSeat:  rematch.ProposerSeat,
-		TimeControl:   rematch.TimeControl,
-		StartingFEN:   optionalString(rematch.StartingFEN),
-		ExpiresAt:     rematch.ExpiresAt,
-		NewMatchID:    rematch.NewMatchID,
+		RematchID:         rematch.RematchID,
+		MatchID:           rematch.MatchID,
+		Status:            string(rematch.Status),
+		ProposerLabel:     rematch.ProposerLabel,
+		ProposerSeat:      rematch.ProposerSeat,
+		TimeControl:       rematch.TimeControl,
+		StartingFEN:       optionalString(rematch.StartingFEN),
+		ExpiresAt:         rematch.ExpiresAt,
+		NewMatchID:        rematch.NewMatchID,
+		ProposedByViewer:  rematch.ProposedBy(viewer),
 	}
 }
 
@@ -747,7 +939,7 @@ func optionalString(value string) *string {
 // conflict.
 func writeInviteError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, invite.ErrNotFound):
+	case errors.Is(err, invite.ErrNotFound), errors.Is(err, invite.ErrRecipientNotFound):
 		writeError(w, http.StatusNotFound, "not_found")
 	case errors.Is(err, invite.ErrNotAuthorized):
 		writeError(w, http.StatusForbidden, "not_authorized")
@@ -756,6 +948,12 @@ func writeInviteError(w http.ResponseWriter, err error) {
 		// browser sees the same refusal as an unauthorized caller, so the
 		// error vocabulary of the surface does not change.
 		writeError(w, http.StatusForbidden, "not_authorized")
+	case errors.Is(err, invite.ErrDisabled):
+		// The friend surface is closed. The refusal is the rollback
+		// behaviour of the switch: it stops new creations and it never
+		// invalidates an invitation that was issued while the surface was
+		// open.
+		writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable")
 	case errors.Is(err, invite.ErrInvalidContract), errors.Is(err, invite.ErrInvalidArgument):
 		writeError(w, http.StatusBadRequest, "invalid_request")
 	case errors.Is(err, invite.ErrExpired):

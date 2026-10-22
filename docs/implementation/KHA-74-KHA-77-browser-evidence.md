@@ -13,7 +13,7 @@ acceptance sign-off, and it grants no deployment or public launch.
 | `src/online/engine-seat.ts` | the browser Stockfish 19 Lite seat of a fallback game, with its runner lease |
 | `src/online/runner-lease.ts` | the runner lease and runner request client of the participant API |
 | `src/online/match-client.ts` | the participant command client, including the optional `leaseId` |
-| `src/online/queue-client.ts` | the HTTP adapter of the queue routes |
+| `src/online/queue.ts` | the typed queue client and the queue domain rules |
 | `src/online/composition.ts` | the composition of the online browser parts and the real service calls |
 | `src/online/features.ts` | the two rollout switches and the loopback-only test opt-in |
 | `src/online/clock.ts` | the interpolated reading of the canonical clock |

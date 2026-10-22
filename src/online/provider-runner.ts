@@ -1007,15 +1007,31 @@ export function createLocalConversationStore(
  * The record names the provider request that may still be running. It is
  * browser-local, it holds no credential and no conversation, and it is the
  * honest trace that keeps a runner from issuing a second billable request.
+ *
+ * The record lives in the storage of the browser, so it survives a reload. A
+ * browser that has no storage keeps it in the memory of the store, so the
+ * runners of one composition share it: a runner that replaces another one
+ * still sees the request that may be running and never asks the provider for
+ * a second answer by itself.
  */
 export function createLocalPendingStore(
   prefix = 'kamkmchess.online.runner.pending.v1',
 ): ProviderRunnerPendingStore {
   const keyOf = (matchId: string, seat: Seat): string => `${prefix}:${encodeURIComponent(matchId)}:${seat}`;
+  const memory = new Map<string, string>();
+  /** The storage of the browser, when the browser has one. */
+  const storage = (): Storage | null => {
+    try {
+      return globalThis.localStorage ?? null;
+    } catch {
+      return null;
+    }
+  };
   return {
     read(matchId, seat) {
       try {
-        const raw = globalThis.localStorage?.getItem(keyOf(matchId, seat));
+        const key = keyOf(matchId, seat);
+        const raw = storage()?.getItem(key) ?? memory.get(key) ?? null;
         if (!raw) return null;
         const parsed: unknown = JSON.parse(raw);
         if (typeof parsed !== 'object' || parsed === null) return null;
@@ -1034,15 +1050,25 @@ export function createLocalPendingStore(
       }
     },
     write(record) {
+      const key = keyOf(record.matchId, record.seat);
+      const value = JSON.stringify({ ...record });
+      const browser = storage();
+      if (browser === null) {
+        memory.set(key, value);
+        return;
+      }
       try {
-        globalThis.localStorage?.setItem(keyOf(record.matchId, record.seat), JSON.stringify({ ...record }));
+        browser.setItem(key, value);
       } catch {
         // A browser that refuses the storage keeps the record in memory only.
+        memory.set(key, value);
       }
     },
     clear(matchId, seat) {
+      const key = keyOf(matchId, seat);
+      memory.delete(key);
       try {
-        globalThis.localStorage?.removeItem(keyOf(matchId, seat));
+        storage()?.removeItem(key);
       } catch {
         // A browser that refuses the storage has nothing to clear.
       }
@@ -3264,6 +3290,11 @@ export function createOnlineProviderRunner(options: ProviderRunnerOptions): Onli
         advanceLifecycle();
         setPhase('idle');
       }
+      // A runner that already plays the seat does not play it a second time.
+      // The turn of a running runner belongs to the request that is on the
+      // wire, so a second turn would ask the provider for an answer the
+      // browser already paid for.
+      if (running) return;
       schedule();
     },
     async resume() {

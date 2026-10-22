@@ -8,6 +8,33 @@ import (
 	"time"
 )
 
+// The scopes of a match bound removal record.
+const (
+	// ScopeAccountDeletion anonymizes the shared games of a subject and keeps
+	// them.
+	ScopeAccountDeletion = "account_deletion"
+	// ScopeExplicitRemoval erases the shared replays of a subject from both
+	// histories and from the public URLs.
+	ScopeExplicitRemoval = "explicit_removal"
+	// ScopeReplayRemoval erases the public replay of one match.
+	//
+	// It is not a removal of a participant: the participant keeps its seat,
+	// its history and its other games. The record names no subject, so the
+	// ledger of a per match removal carries no reference of a person at all.
+	ScopeReplayRemoval = "replay_removal"
+)
+
+// The subject kinds of a match bound removal record.
+const (
+	// SubjectKindAccount is a removal of an account.
+	SubjectKindAccount = "account"
+	// SubjectKindGuest is a removal of a guest.
+	SubjectKindGuest = "guest"
+	// SubjectKindMatch is a removal that names no subject: the per match
+	// removal of a public replay.
+	SubjectKindMatch = "match"
+)
+
 // RemovalRecord is one removal that a restore has to replay.
 //
 // A record states that a shared replay, an identifying snapshot or a private
@@ -18,16 +45,24 @@ import (
 // not the subject identifier. A restore finds the rows of that subject by the
 // reference, so neither the ledger nor the encrypted bundle retains the
 // identifier of a removed person.
+//
+// A record with the scope replay_removal names no subject: it states that the
+// public replay of one match was removed. Its subject kind is match and it
+// carries no subject reference, so the key of the record is the match alone
+// and it can never collide with the removal of a participant.
 type RemovalRecord struct {
-	// RemovalID identifies the removal request.
+	// RemovalID identifies the removal. It is the identifier of the removal
+	// request of a participant removal and the identifier of the durable
+	// ledger row of a per match removal of a public replay.
 	RemovalID string `json:"removalId"`
-	// SubjectKind is account or guest.
+	// SubjectKind is account, guest or match.
 	SubjectKind string `json:"subjectKind"`
-	// SubjectID is the one-way reference of the removed subject.
+	// SubjectID is the one-way reference of the removed subject. It is empty
+	// for a removal that names no subject.
 	SubjectID string `json:"subjectId"`
 	// MatchID is the shared match the removal touched.
 	MatchID string `json:"matchId"`
-	// Scope is account_deletion or explicit_removal.
+	// Scope is account_deletion, explicit_removal or replay_removal.
 	Scope string `json:"scope"`
 	// RemovedAt is when the removal was applied.
 	RemovedAt time.Time `json:"removedAt"`
@@ -35,13 +70,24 @@ type RemovalRecord struct {
 
 // validate checks the shape of a removal record.
 func (r RemovalRecord) validate() error {
-	if r.RemovalID == "" || r.MatchID == "" || r.SubjectID == "" {
+	if r.RemovalID == "" || r.MatchID == "" {
 		return fmt.Errorf("%w: incomplete removal record for match %q", ErrLedgerConflict, r.MatchID)
 	}
-	if r.SubjectKind != "account" && r.SubjectKind != "guest" {
-		return fmt.Errorf("%w: invalid removal subject kind %q", ErrLedgerConflict, r.SubjectKind)
-	}
-	if r.Scope != "account_deletion" && r.Scope != "explicit_removal" {
+	switch r.Scope {
+	case ScopeAccountDeletion, ScopeExplicitRemoval:
+		if r.SubjectKind != SubjectKindAccount && r.SubjectKind != SubjectKindGuest {
+			return fmt.Errorf("%w: invalid removal subject kind %q", ErrLedgerConflict, r.SubjectKind)
+		}
+		if r.SubjectID == "" {
+			return fmt.Errorf("%w: incomplete removal record for match %q", ErrLedgerConflict, r.MatchID)
+		}
+	case ScopeReplayRemoval:
+		// The per match removal of a public replay names no subject: it
+		// removes the replay of one match and keeps its participants.
+		if r.SubjectKind != SubjectKindMatch || r.SubjectID != "" {
+			return fmt.Errorf("%w: invalid removal subject for the replay removal of match %q", ErrLedgerConflict, r.MatchID)
+		}
+	default:
 		return fmt.Errorf("%w: invalid removal scope %q", ErrLedgerConflict, r.Scope)
 	}
 	if r.RemovedAt.IsZero() {
@@ -78,7 +124,7 @@ func MergeRemovalLedgers(older, newer []RemovalRecord) ([]RemovalRecord, error) 
 				// strength and the same time, are an inconsistency. The merge
 				// refuses them instead of picking one by the order of the
 				// input.
-				return nil, fmt.Errorf("%w: the removal of %q has two identifiers", ErrLedgerConflict, entry.SubjectID)
+				return nil, fmt.Errorf("%w: the removal of %q in match %q has two identifiers", ErrLedgerConflict, entry.SubjectKind, entry.MatchID)
 			}
 			if strongerRemoval(entry, current) {
 				bySubject[key] = entry
@@ -97,6 +143,11 @@ func MergeRemovalLedgers(older, newer []RemovalRecord) ([]RemovalRecord, error) 
 }
 
 // removalKey is the complete key of a removal record.
+//
+// The key is the match, the kind of the subject and the subject itself. The
+// kind keeps the per match removal of a public replay apart from the removal
+// of a participant: a replay removal names the match as its subject kind and
+// carries no subject reference, so its key is the match alone.
 func removalKey(matchID, subjectKind, subjectID string) string {
 	return matchID + "\x00" + subjectKind + "\x00" + subjectID
 }
@@ -115,11 +166,31 @@ func strongerSubjectRemoval(candidate, current SubjectRemovalRecord) bool {
 // An explicit removal erases the shared replay and an ordinary deletion only
 // anonymizes it, so the explicit removal always wins. Two removals of the same
 // strength are ordered by their time, and the later one wins.
+//
+// The per match removal of a public replay erases the replay of one match and
+// keeps its participants, so it sits between the two: it removes more than an
+// ordinary deletion and less than the removal of a participant.
 func strongerRemoval(candidate, current RemovalRecord) bool {
 	if candidate.Scope != current.Scope {
-		return candidate.Scope == "explicit_removal"
+		return removalStrength(candidate.Scope) > removalStrength(current.Scope)
 	}
 	return candidate.RemovedAt.After(current.RemovedAt)
+}
+
+// removalStrength is the strength of a removal scope.
+//
+// The strengths are ordered, so the merge of two ledgers is deterministic
+// whatever order the ledgers arrive in.
+func removalStrength(scope string) int {
+	switch scope {
+	case ScopeExplicitRemoval:
+		return 3
+	case ScopeReplayRemoval:
+		return 2
+	case ScopeAccountDeletion:
+		return 1
+	}
+	return 0
 }
 
 // RemovalLedgerContains reports whether the applied ledger holds every record

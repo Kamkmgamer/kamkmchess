@@ -9,6 +9,7 @@
   "functions": {
     "online_resolve_public_model_label": ["EXECUTE"],
     "online_neutral_model_label": ["EXECUTE"],
+    "online_redact_seat_model_aliases": ["EXECUTE"],
     "online_removed_account_request": ["EXECUTE"]
   },
   "functionNote": "PostgreSQL grants EXECUTE on a new function to PUBLIC. The two functions that are not trigger functions can therefore be called directly, outside the write path that owns them, and the resolver can look up another owner's public label. The deployment revokes EXECUTE from PUBLIC and grants it to the runtime role only.",
@@ -44,7 +45,7 @@
     "online_service_epochs": ["SELECT", "INSERT", "UPDATE"],
     "online_suspension_boundaries": ["SELECT", "INSERT", "UPDATE"],
     "online_recovery_adjustments": ["SELECT", "INSERT"],
-    "online_seat_control_timeline": ["SELECT", "INSERT"],
+    "online_seat_control_timeline": ["SELECT", "INSERT", "UPDATE"],
     "online_friend_invitations": ["SELECT", "INSERT", "UPDATE", "DELETE"],
     "online_invitation_acceptances": ["SELECT", "INSERT", "UPDATE", "DELETE"],
     "online_rematch_offers": ["SELECT", "INSERT", "UPDATE"],
@@ -58,6 +59,7 @@
     "online_account_deletions": ["SELECT", "INSERT"],
     "online_removal_requests": ["SELECT", "INSERT", "UPDATE"],
     "online_removal_ledger": ["SELECT", "INSERT"],
+    "online_replay_removal_ledger": ["SELECT", "INSERT"],
     "online_restore_gates": ["SELECT", "INSERT", "UPDATE"],
     "online_removal_subjects": ["SELECT", "INSERT"]
   },
@@ -91,7 +93,7 @@
     "online_service_epochs": "Service epochs are append-only. An old epoch can never be reopened.",
     "online_suspension_boundaries": "A planned restart records its suspension boundary. The row is updated when the service resumes.",
     "online_recovery_adjustments": "The recovery adjustments are append-only. Every unfinished active deadline is adjusted exactly once.",
-    "online_seat_control_timeline": "The declared control timeline is append-only for the service. The seat and control-change triggers append the new attribution as the invoking role, so the role needs INSERT. It never updates and never deletes a row, so an earlier attribution still cannot be rewritten.",
+    "online_seat_control_timeline": "The declared control timeline is append-only for the service. The seat and control-change triggers append the new attribution as the invoking role, so the role needs INSERT. The redaction of the personal alias of a removed seat is the one rewrite the guard of the table accepts, and it needs UPDATE. It never deletes a row, so an earlier attribution of a live seat still cannot be rewritten.",
     "online_friend_invitations": "An invitation is created, updated when it is consumed or cancelled, read for the link preview and deleted by the auxiliary sanitation of a removed subject.",
     "online_invitation_acceptances": "An acceptance is created, updated when it is linked to an account, read for the idempotent retry and deleted by the auxiliary sanitation of a removed subject.",
     "online_rematch_offers": "A rematch offer is created, updated when it is accepted and read for the pending offer.",
@@ -105,6 +107,7 @@
     "online_account_deletions": "The account deletion markers are append-only. They are the evidence that a deleted account stays deleted.",
     "online_removal_requests": "A removal request is created, updated when it is verified or applied and read by the ledger.",
     "online_removal_ledger": "The removal ledger is append-only. It is replayed after a restore and must survive it.",
+    "online_replay_removal_ledger": "The ledger of the per match removals of a public replay is append-only. It is replayed after a restore and must survive it.",
     "online_restore_gates": "A restore gate is created when a restored copy is prepared and released only after the removal ledger is applied.",
     "online_removal_subjects": "The subject removals are append-only. They record which owner or guest a removal request applies to and survive a restore."
   }

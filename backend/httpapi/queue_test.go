@@ -109,7 +109,7 @@ func newQueueHandler(service QueueService) http.Handler {
 	}, guest: map[string]onlineauth.Principal{
 		"token-guest": guestParticipant("guest-1", "match-1", online.SeatWhite),
 	}}
-	return NewQueue(service, authenticator, OnlineOptions{AllowedOrigins: []string{testOrigin}})
+	return NewQueue(service, authenticator, QueueOptions{AllowedOrigins: []string{testOrigin}})
 }
 
 func queueRequest(t *testing.T, handler http.Handler, method, path, token, body string) *httptest.ResponseRecorder {

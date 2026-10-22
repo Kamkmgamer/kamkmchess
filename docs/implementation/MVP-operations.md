@@ -22,8 +22,9 @@ Scope boundaries that the rest of the repository depends on:
 
 | Path | Purpose |
 | --- | --- |
-| `backend/backup/` | Container format, rotation planner, deletion-ledger recovery |
+| `backend/backup/` | Container format, rotation planner with the thirty day maximum age, deletion-ledger recovery |
 | `backend/backup/cmd/khabackup/` | The `khabackup` operator command |
+| `backend/online/cmd/khasuspend/` | The `khasuspend` operator command of a planned restart |
 | `scripts/release/kha-backup.ps1` | Windows operator wrapper for `khabackup` |
 | `scripts/release/readiness-audit.mjs` | Offline deployment and boundary audit |
 | `scripts/release/readiness-audit.test.mjs` | Offline tests for that audit |
@@ -56,7 +57,7 @@ a secret, and it exits non-zero when a blocker is present. It checks:
 | Server boundary | No Go file references a model provider key or provider host; every API handler resolves a verified owner from context |
 | Identity | A Clerk browser SDK, when present, has CSP script/connect/frame origins. With no SDK installed, the audit reports an **external** gap rather than a pass |
 | Account storage | `CLOUD_STORAGE_ENABLED` is documented and disabled, and `api/index.go` enforces the gate with a generic `no-store` 503 |
-| Backup | Tooling and command are present, the runbook exists, and the local rehearsal record is checked in. Hosted rotation and a private destination are reported as **external** gaps until an operator runs them |
+| Backup | Tooling and command are present, the runbook exists, and the local rehearsal record is checked in. The rotation enforces the thirty day maximum age of the repo-managed bundles. Hosted rotation, the offsite copies and the schedule of the host are reported as **external** gaps until an operator runs and verifies them |
 | Hygiene | `.env` ignored, lockfiles and the Node pin present, `engines.node` agrees with `.node-version` |
 
 Severity is `blocker`, `warning`, `external` or `info`. `external` means only an
@@ -145,6 +146,63 @@ when it is protected, when it has no recorded creation time, or when it is dated
 after the reference time, because a future date usually means a clock problem.
 Two bundles claiming one label is an error, not a coin flip. A file in the
 directory that cannot be parsed is reported as unreadable and left alone.
+
+#### The maximum age of thirty days
+
+The count of the rotation is not a promise about the age of a copy: seven daily
+and four weekly copies span more than thirty days when the rotation did not
+run, and a copy that never claims a slot can stay forever. The rotation
+therefore applies a **second and independent rule**: an ordinary bundle of the
+managed directory that is older than thirty days is retired even when a slot of
+the count would keep it.
+
+The boundary is exact and it is proved by the tests:
+
+| Age of the bundle at the reference time | Result |
+| --- | --- |
+| younger than thirty days | kept by the count of the rotation |
+| exactly thirty days | kept: it is still inside the maximum |
+| older than thirty days (one second is enough) | retired, even when a slot is free |
+
+A bundle the rotation may not delete is **never** deleted:
+
+* a **protected** bundle (`--protect LABEL`) is kept whatever its age;
+* a bundle **without a creation time** is kept;
+* a bundle **dated after the reference time** is kept;
+* a bundle whose **manifest cannot be read** is left alone.
+
+Every one of those leaves the retention of the directory **unresolved**: the
+plan names it under `unresolved`, with the reason, and the command exits with
+a **nonzero status** while it remains. The run of the backup therefore cannot
+claim success while an old recovery copy is still there. `deploy/backup.sh`
+runs the rotation with `--apply`, so the daily run fails loudly instead of
+reporting a clean backup.
+
+The operator resolves an unresolved bundle explicitly, never by ignoring the
+failure: retire the bundle (delete it, or move it to the private destination
+that holds the recovery copies), or - when the bundle is protected - remove the
+protection so the rotation can retire it by age. A protection is not a
+retention exemption: it only says the rotation never deletes that bundle. A
+bundle without a creation time and a bundle dated after the reference time are
+operator questions: inspect the bundle, retire it when it is no longer needed,
+and check the clock of the host.
+
+The rotation never descends into a subdirectory. The durable evidence of the
+restores lives in `/backups/restore-evidence`, next to the bundles, and it is
+not a candidate of the rotation: the evidence of a restore is never retired by
+the age rule.
+
+**What this does not prove.** The rotation only sees the managed directory of
+the host. A copy of the bundles on an offsite store, a copy on the operator's
+own machine and a copy in any other destination are **not** covered by the
+maximum age, and the rotation can neither reach nor prove them. The schedule
+that runs `deploy/backup.sh` is a property of the host, not of this tree. The
+deployed store inventory and the schedule therefore still need owner and host
+verification, and the `recovery_sanitized_at` of a removal is **not** set by
+the rotation: a local rotation cannot prove that the external copies were
+sanitized, so the sanitization ledger of `backend/privacy/ledger.go` stays
+unset. See
+[`docs/online-history-privacy-contract.md`](../online-history-privacy-contract.md).
 
 Delete an applied bundle from a *separate* private destination if the operator's
 retention requires it; this tool only rotates its own directory.
@@ -394,6 +452,84 @@ removal ledger was replayed leaves the restored database without the removals
 that only the live database carried: the recovery refuses it, the gate stays
 closed, and the take-over replays the owed ledger from the durable evidence.
 
+### A planned restart of the API
+
+A restart of the API is an interruption, and an interruption is never charged
+to a player. The interval of the interruption has to be known, so the restart
+is announced **before** the service stops. The announcement is a durable
+boundary, and the boundary closes the durable gate of the service.
+
+Without the announcement the service can only infer the interruption from the
+stale liveness record when it comes back. The inferred interval runs from the
+last moment the service was seen alive, so a restart that lasts longer than
+the liveness TTL of thirty seconds is read as an unknown outage: every
+unfinished clock is refunded for the whole interval and the runner work of the
+old epoch is fenced.
+
+The announcement is the private operator command `khasuspend`. There is no
+public route for it: a route that closes the gate would be an unauthenticated
+way to stop the service. The database url is read only from the environment
+variable that the operator names, it is never accepted as an argument and it
+is never printed.
+
+The command runs inside the database container, with the private
+`backup.env` of the deployment. That file carries the administrative role, and
+the administrative role owns the tables of the online service. The command
+needs those privileges: the recovery of a planned interruption refreshes the
+liveness of the service, and a role without the update privilege on the
+liveness cannot write it.
+
+```sh
+# 1. The planned interruption is persisted. The durable gate closes, so no
+#    mutation is admitted from this moment on. The plan is idempotent: a
+#    second run finds the pending boundary and writes no second one.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend plan --database-url-env DATABASE_URL'
+
+# 2. The API is stopped and drained.
+docker compose -f postgres.compose.yml -f api.compose.yml stop api
+
+# 3. The API is started again. Its own recovery applies the planned boundary:
+#    the announced interval is refunded to the unfinished matches, the
+#    canonical state is published before a resumed action is accepted, and the
+#    durable gate opens again.
+docker compose -f postgres.compose.yml -f api.compose.yml start api
+
+# 4. The operator verifies the state of the gate.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend status --database-url-env DATABASE_URL'
+```
+
+The two remaining commands cover the rest of the procedure:
+
+```sh
+# The restart was called off. The plan is cancelled, the durable gate opens
+# again and no clock is refunded, because no interruption took place. The row
+# of the plan stays the evidence that the plan existed.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend abort --database-url-env DATABASE_URL'
+
+# The API could not finish its own recovery. The operator applies the planned
+# boundary by hand: the announced interval is refunded, the canonical state is
+# published and the durable gate opens again.
+#
+# The command refuses when no planned interruption is pending. The recovery of
+# an *unexpected* interruption belongs to the service itself and is never an
+# operator decision.
+docker compose -f postgres.compose.yml -f api.compose.yml exec -T postgres sh -c '
+  set -a; . /run/secrets/backup.env; set +a
+  exec /opt/kamkmchess/khasuspend recover --database-url-env DATABASE_URL'
+```
+
+The exit code of the command is `0` when it did what it was asked and `1` when
+it refused or failed. A refusal never leaves the service in a state the
+operator did not ask for: the plan refuses without the named environment
+variable, the recovery refuses without a pending planned interruption, and the
+abort refuses when the interruption was applied already.
+
 ### Recovery situations and what to do
 
 | Situation | Action | Truthful limit |
@@ -467,9 +603,24 @@ The Go tests are offline and deterministic: they use a fake dumper, a fake
 ledger and a fake restorer, so no database, network or credential is needed.
 They cover wrong-passphrase rejection, ciphertext and manifest tampering,
 owner-only bundle permissions, the size bound, canonical ledger encoding, the
-seven-daily/four-weekly rotation and its refusals, the apply/refresh/keep
-deletion recovery, "no database write before authentication", and that a failed
-load does not run recovery.
+seven-daily/four-weekly rotation and its refusals, the thirty day maximum age
+with its exact boundary, the unresolved retention of a protected bundle and of
+an unreadable bundle, the apply/refresh/keep deletion recovery, "no database
+write before authentication", and that a failed load does not run recovery.
+
+The rotation tests never run `--apply` against a real path: the new tests
+print the plan and read the directory, so the maximum age is proved without a
+deletion.
+
+```sh
+node scripts/online/backup-coverage.mjs             # the local retention policy of the audit
+node --test scripts/online/online-ops.test.mjs       # the mutations of the audit
+```
+
+The audit reads the repository only. It reports the local retention policy of
+the managed directory - the declared maximum age, the failure of the rotation
+on an unresolved bundle, the rotation of the deployment and the evidence
+outside the pruning - and it certifies nothing about the deployed store.
 
 ## What is still open
 
@@ -481,7 +632,18 @@ These are external gaps. The tooling above does not close any of them.
   game deletions. Daily server backups and certificate checks are scheduled.
 * **Recurring offsite copies remain open.** Encrypted bundles stay in a private
   server directory, with an initial recovery copy outside the server. The daily
-  cron does not synchronize that separate recovery copy.
+  cron does not synchronize that separate recovery copy. The thirty day maximum
+  age of the rotation reaches the managed directory of the host and **nothing
+  else**: the offsite copies are not covered by it, the deployed store
+  inventory is not known to this tree, and the schedule that runs the rotation
+  is a property of the host. Both still need owner and host verification.
+* **The sanitization ledger of a removal stays unset.** The rotation retires
+  the local copies of the managed directory; it cannot prove that an offsite
+  copy was sanitized, so `recovery_sanitized_at` is not written and
+  `PendingRecoverySanitizations` and `MarkRecoverySanitized` still have no
+  production caller. The thirty day target of the contract is therefore still
+  **not met** by this tree; the local rotation only enforces the age of the
+  bundles it manages.
 * **No free-tier capacity has been measured.** Archive growth, quotas, inactivity
   pauses and read-only modes are unrecorded. If free operation cannot hold the
   contract, that constraint returns to the owner before a purchase.

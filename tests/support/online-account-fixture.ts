@@ -13,48 +13,21 @@
 import { createPrivateKey, createSign } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
+import type { OnlineFixtureDescriptor } from './online-fixture-descriptor';
 
-/** The descriptor the fixture writes for the harness. */
-export interface OnlineFixtureDescriptor {
-  readonly baseUrl: string;
-  readonly issuer: string;
-  readonly allowedOrigins: readonly string[];
-  readonly accounts: readonly { readonly id: string; readonly token: string }[];
-  readonly keyPath: string;
-}
+/**
+ * The descriptor the fixture writes for the harness.
+ *
+ * The reader of the descriptor lives in `online-fixture-descriptor.ts`: it
+ * knows the three states of a run, so a descriptor the caller supplied but
+ * that cannot be used fails the run instead of passing for an absent one.
+ */
+export type { OnlineFixtureDescriptor };
 
 /** The identity the page receives. */
 interface PageIdentity {
   readonly accountId: string;
   readonly token: string;
-}
-
-/**
- * Reads the descriptor of the fixture of this run.
- *
- * The answer is null when the run has no fixture. The caller then skips the
- * rendered cases instead of testing a different service.
- */
-export async function readOnlineFixtureDescriptor(path = process.env.ONLINE_FIXTURE_DESCRIPTOR ?? ''): Promise<OnlineFixtureDescriptor | null> {
-  if (!path) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(await readFile(path, 'utf8'));
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== 'object') return null;
-  const value = parsed as Partial<OnlineFixtureDescriptor>;
-  if (typeof value.baseUrl !== 'string' || !value.baseUrl.startsWith('http://127.0.0.1')) return null;
-  if (typeof value.issuer !== 'string' || typeof value.keyPath !== 'string') return null;
-  if (!Array.isArray(value.accounts) || value.accounts.length === 0) return null;
-  return {
-    baseUrl: value.baseUrl,
-    issuer: value.issuer,
-    allowedOrigins: Array.isArray(value.allowedOrigins) ? value.allowedOrigins : [],
-    accounts: value.accounts,
-    keyPath: value.keyPath,
-  };
 }
 
 /**

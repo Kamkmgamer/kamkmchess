@@ -287,4 +287,97 @@ describe('the browser adapter of the friend surface', () => {
     const reloaded = createFriendSecretStore({ storage, identity: 'account-1' });
     expect(reloaded.listAcceptedSeats()).toEqual([]);
   });
+
+  it('never writes the owner token of a deferred creation into the records of another identity', async () => {
+    // The identity changes while the creation is on the wire. The owner
+    // token belongs to the identity that created the invitation, so it never
+    // reaches the records of the identity that is current now.
+    const storage = createStorage();
+    const secrets = createFriendSecretStore({ storage, identity: 'account-1' });
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const fetcher = vi.fn(async () => {
+      await gate;
+      return new Response(JSON.stringify({
+        schemaVersion: 2,
+        invitation: invitationAnswer,
+        ownerToken: 'owner-token',
+      }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+    });
+    const surface = createFriendSurface({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher as unknown as typeof fetch,
+      secrets,
+    });
+    const creation = surface.create({ seat: 'white', timeControl, control: { kind: 'human' } });
+    // The identity of the browser changes while the answer is on the wire.
+    secrets.setIdentity('account-2');
+    release?.();
+    await creation;
+    // The token of the previous identity never reached the current one.
+    expect(secrets.readOwnerToken('invitation-0001')).toBeNull();
+    expect(secrets.listOwnedInvitations()).toEqual([]);
+    // The invitation stays recoverable for the identity that created it.
+    secrets.setIdentity('account-1');
+    expect(secrets.readOwnerToken('invitation-0001')).toBe('owner-token');
+    expect(secrets.listOwnedInvitations()).toEqual(['invitation-0001']);
+  });
+
+  it('keeps the owner token of a deferred creation with the identity that created it', async () => {
+    // The identity leaves and comes back while the creation is on the wire.
+    // The token belongs to the identity that created the invitation, so it
+    // is stored in its namespace and the other identity never sees it.
+    const storage = createStorage();
+    const secrets = createFriendSecretStore({ storage, identity: 'account-1' });
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const fetcher = vi.fn(async () => {
+      await gate;
+      return new Response(JSON.stringify({
+        schemaVersion: 2,
+        invitation: invitationAnswer,
+        ownerToken: 'owner-token',
+      }), { status: 201, headers: { 'Content-Type': 'application/json' } });
+    });
+    const surface = createFriendSurface({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher as unknown as typeof fetch,
+      secrets,
+    });
+    const creation = surface.create({ seat: 'white', timeControl, control: { kind: 'human' } });
+    secrets.setIdentity('account-2');
+    secrets.setIdentity('account-1');
+    release?.();
+    await creation;
+    // The identity that created the invitation owns its owner token.
+    expect(secrets.readOwnerToken('invitation-0001')).toBe('owner-token');
+    // The other identity never saw it.
+    secrets.setIdentity('account-2');
+    expect(secrets.readOwnerToken('invitation-0001')).toBeNull();
+    expect(secrets.listOwnedInvitations()).toEqual([]);
+  });
+
+  it('sends the owner token of a preview in the private header', async () => {
+    // The inviter of a named challenge reads it with its owner token, so
+    // the challenge never has to be published.
+    const storage = createStorage();
+    const secrets = createFriendSecretStore({ storage, identity: 'account-1' });
+    secrets.rememberOwnerToken('invitation-0001', 'owner-token');
+    const seen: { url: string; headers: Record<string, string>; body: string | undefined }[] = [];
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries((init?.headers ?? {}) as Record<string, string>)) headers[name] = value;
+      seen.push({ url: String(input), headers, body: init?.body === undefined ? undefined : String(init.body) });
+      return new Response(JSON.stringify(invitationAnswer), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+    const surface = createFriendSurface({
+      baseUrl: 'https://api.example.test',
+      fetch: fetcher as unknown as typeof fetch,
+      secrets,
+    });
+    await surface.preview('invitation-0001');
+    expect(seen[0]?.headers['X-Online-Owner-Token']).toBe('owner-token');
+    expect(seen[0]?.url).not.toContain('owner-token');
+    expect(seen[0]?.body).toBeUndefined();
+  });
 });

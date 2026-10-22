@@ -142,8 +142,8 @@ without it keeps its exact fingerprint and its stored receipt.
 ## TypeScript contracts
 
 `src/online/contracts.ts` gains the presence and lease DTOs and their
-parsers. `src/online/presence.ts` and `src/online/runner.ts` hold the client
-interfaces.
+parsers. `src/online/presence-client.ts` and `src/online/runner-lease.ts`
+hold the client interfaces.
 
 ```ts
 export type PresenceState = 'connected' | 'offline' | 'unknown';
@@ -256,6 +256,15 @@ while `claim.eligible` is false. The `Claim win` and `Keep waiting` actions
 are the only two states the offline minute produces, and `Keep waiting` never
 concedes a result.
 
+The claim consumes the durable service health boundary, which has two facts:
+the health of the dependencies and the durable admission gate of the service.
+A service that is suspended, restoring or still recovering is not serving, so
+it cannot confirm that the opponent is absent: its presence view publishes
+`recovered` as `false` and the claim as ineligible with the
+`service-unavailable` reason, while the health of the dependencies stays
+truthfully healthy. A service outage is therefore never read as an opponent
+abandonment, and the claim command refuses the same way.
+
 ## Runner rules
 
 - One lease per seat. The lease binds a runner to a seat and to the turn it
@@ -275,7 +284,11 @@ concedes a result.
 ## Recovery rules
 
 - A planned suspension is persisted before the service stops, so its interval
-  is exact.
+  is exact. The operator announces it with the private `khasuspend` command,
+  which has no public route.
+- A plan that will not happen is cancelled with the same command: the
+  boundary is marked as aborted, the durable gate opens again and no clock is
+  refunded.
 - An unexpected suspension derives a conservative interval from the durable
   health checkpoints and the accepted match activity.
 - The canonical adjustment shifts the armed deadline of an unfinished match

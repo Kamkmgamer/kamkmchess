@@ -2,7 +2,7 @@
   "tool": "Assembled log import using scripts/online/integration-suite.mjs parseGoTestJson and mapScenarios; no new integration-suite invocation is claimed",
   "generatedAt": "2026-10-21T20:14:42.588Z",
   "commit": "ab0dba56eaa837d1db3aaea0df2ed3d2773d65d1",
-  "command": "go test -race -timeout=60m -json -count=1 ./backend/... ./cmd/...; required PostgreSQL and pinned rules worker in Linux, DAC_OVERRIDE and DAC_READ_SEARCH dropped",
+  "command": "go test -race -timeout=60m -json -count=1 ./backend/... ./cmd/...",
   "goTestExitCode": 0,
   "packages": [
     {
@@ -3544,11 +3544,14 @@
           "passed"
         ]
       }
-    ]
+    ],
+    "command": "pnpm exec playwright test tests/e2e/account-online.spec.ts tests/e2e/online-ui.spec.ts tests/e2e/online-requests.spec.ts tests/e2e/online-clients.spec.ts --project=chromium --reporter=json",
+    "environment": "ONLINE_FIXTURE_DESCRIPTOR, ONLINE_FIXTURE_STRICT=1, ONLINE_FIXTURE_UI_INVITE_PATH=/invite/{invitationId}, KAMKM_E2E_PORT=5397"
   },
   "limits": [
     "Named automated cases are partial evidence for the broader acceptance scenarios.",
     "The approved acceptance contract remains unchanged and both rollout gates remain off.",
     "Earlier failed and incomplete attempts are described in assembled-verification.md."
-  ]
+  ],
+  "environment": "Required PostgreSQL and pinned rules worker in Linux; DAC_OVERRIDE and DAC_READ_SEARCH dropped."
 }

@@ -462,10 +462,30 @@ func (h *HealthReporter) OverallHealthy() bool {
 // recorded one. The in-memory state of the caller is combined with it by the
 // caller, and the worse of the two wins.
 func (h *HealthReporter) SharedState(ctx context.Context) (HealthState, error) {
+	return h.sharedState(ctx, nil)
+}
+
+// sharedState reads the shared health state from the reader of the caller.
+//
+// The reader is the connection that the caller already holds. A caller that
+// runs inside a transaction holds a connection of the pool, so a read of the
+// pool would wait for a second connection that the transaction itself is
+// holding: a bounded pool would deadlock the caller against itself.
+//
+// A reader of nil means that the caller holds no connection of its own, so
+// the pool answers.
+//
+// The aggregation is the aggregation of the shared state: the newest
+// checkpoint of every dependency, and the worst of them. A read that fails
+// returns the error, so the caller fails closed.
+func (h *HealthReporter) sharedState(ctx context.Context, reader queryer) (HealthState, error) {
 	if h == nil || h.db == nil {
 		return HealthHealthy, nil
 	}
-	rows, err := h.db.Query(ctx, `SELECT DISTINCT ON (dependency) dependency,state FROM online_service_health ORDER BY dependency,observation_order DESC`)
+	if reader == nil {
+		reader = h.db
+	}
+	rows, err := reader.Query(ctx, `SELECT DISTINCT ON (dependency) dependency,state FROM online_service_health ORDER BY dependency,observation_order DESC`)
 	if err != nil {
 		return HealthHealthy, err
 	}
@@ -652,7 +672,14 @@ func (s *Service) Health(ctx context.Context) (HealthReport, error) {
 // The state is the worse of the local observation and the durable shared
 // state, so an instance that never saw a failure still refuses to offer a
 // claim while another instance recorded one.
-func (s *Service) healthState(ctx context.Context) HealthState {
+//
+// The shared state is read from the reader of the caller. The claim path runs
+// inside a transaction that holds a connection of the pool, and a read of the
+// pool would wait for a second connection that the transaction itself is
+// holding: a bounded pool would deadlock the claim path against itself. A
+// reader of nil means that the caller holds no connection of its own, so the
+// pool answers then.
+func (s *Service) healthState(ctx context.Context, reader queryer) HealthState {
 	if s.health == nil {
 		return HealthHealthy
 	}
@@ -660,7 +687,7 @@ func (s *Service) healthState(ctx context.Context) HealthState {
 	if !local.Valid() {
 		return HealthUnavailable
 	}
-	shared, err := s.health.SharedState(ctx)
+	shared, err := s.health.sharedState(ctx, reader)
 	if err != nil || !shared.Valid() {
 		// A shared health state that cannot be read is an unavailable
 		// service, never a healthy one. The claim path fails closed, so a

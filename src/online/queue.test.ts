@@ -38,6 +38,16 @@ function entry(overrides: Partial<QueueEntry> = {}): QueueEntry {
   };
 }
 
+/**
+ * The instant the phase of an entry is read at.
+ *
+ * The fixture of an entry carries fixed timestamps, so the phase is read at a
+ * fixed instant too. A wall clock would read the pending fallback of a
+ * waiting entry as soon as the fixture grows old, and the suite would fail in
+ * the future instead of at the change that broke it.
+ */
+const READ_AT = Date.parse('2026-10-21T21:59:00.000Z');
+
 describe('queue routes', () => {
   it('names the queue routes of the service', () => {
     expect(QUEUE_ENTRIES_PATH).toBe('/v1/online/queue/entries');
@@ -132,33 +142,41 @@ describe('queue domain rules', () => {
   it('reads an expired entry as waiting without a ready time', () => {
     const expired = entry({ readyAt: null, cutoffAt: null });
     expect(isExpiredEntry(expired)).toBe(true);
-    expect(queuePhaseOf(expired)).toBe('expired');
+    expect(queuePhaseOf(expired, READ_AT)).toBe('expired');
   });
 
   it('reads an assigned entry as assigned', () => {
     const assigned = entry({ status: 'assigned', assignedMatchId: 'm_match0001', cutoffAt: null });
     expect(isAssignedEntry(assigned)).toBe(true);
-    expect(queuePhaseOf(assigned)).toBe('assigned');
+    expect(queuePhaseOf(assigned, READ_AT)).toBe('assigned');
   });
 
   it('reads a cancelled entry as cancelled', () => {
-    expect(queuePhaseOf(entry({ status: 'cancelled', cutoffAt: null }))).toBe('cancelled');
+    expect(queuePhaseOf(entry({ status: 'cancelled', cutoffAt: null }), READ_AT)).toBe('cancelled');
   });
 
   it('reads a waiting entry as searching', () => {
-    expect(queuePhaseOf(entry())).toBe('searching');
+    expect(queuePhaseOf(entry(), READ_AT)).toBe('searching');
   });
 
   it('reads an entry without a cutoff as searching, never as a fallback', () => {
     const kept = entry({ cutoffAt: null });
-    expect(isPendingFallbackEntry(kept)).toBe(false);
-    expect(queuePhaseOf(kept)).toBe('searching');
+    expect(isPendingFallbackEntry(kept, READ_AT)).toBe(false);
+    expect(queuePhaseOf(kept, READ_AT)).toBe('searching');
   });
 
   it('reads a passed cutoff as a pending fallback', () => {
     const pending = entry({ cutoffAt: '2020-01-01T00:00:00.000Z' });
-    expect(isPendingFallbackEntry(pending)).toBe(true);
-    expect(queuePhaseOf(pending)).toBe('pending-fallback');
+    expect(isPendingFallbackEntry(pending, READ_AT)).toBe(true);
+    expect(queuePhaseOf(pending, READ_AT)).toBe('pending-fallback');
+  });
+
+  it('reads the cutoff of an entry against the instant of the caller', () => {
+    // The instant decides the phase, so the same entry is a search before its
+    // cutoff and a pending fallback after it.
+    const waiting = entry();
+    expect(queuePhaseOf(waiting, Date.parse('2026-10-21T22:00:05.000Z'))).toBe('searching');
+    expect(queuePhaseOf(waiting, Date.parse('2026-10-21T22:00:10.000Z'))).toBe('pending-fallback');
   });
 });
 

@@ -132,6 +132,15 @@ Rules the browser must honour:
   when it is a known public model name or a label the owner registered. Any other declared value
   is replaced by the neutral label `Custom model` before it is stored, so a private routing
   identity never reaches a shared table, a receipt, or a public payload.
+* A **registered public label is personal**. An ordinary account deletion replaces the declared
+  model label of the deleted seat in the published payloads of the match (the public replay and the
+  older public projection) and in the declared control timeline of that seat. The replacement
+  follows the policy of the seat anonymization: the label is resolved as the label of an
+  anonymized owner, so a known public model name keeps its label and a label the owner registered
+  becomes the neutral label `Custom model`. The label of the opponent is never touched. The
+  redaction runs in the transaction of the removal, right after the anonymization of the seat, and
+  the replay of the removal ledger after a restore applies it again, so a signed-out reader of a
+  public replay never sees the alias of a removed owner.
 * The browser owns every provider secret and every provider request. The server never receives
   them.
 
@@ -151,9 +160,39 @@ Rules the browser must honour:
 * The live service data and the public projections are removed inside the removal transaction, so
   they are gone long before the twenty-four hour target. The answer states `liveDeleteDueAt` and
   `liveDeletedAt`.
-* The recovery copies are sanitized within thirty days. The answer states
-  `recoverySanitizeDueAt`. The removal ledger travels inside the encrypted backup bundle, and a
-  restore replays it before the restored database serves traffic.
+* The sanitization of the recovery copies within thirty days is a **required future target** of
+  the owner-approved contract (`docs/spec/online-play-handoff.md`), not a certification of the
+  current operations. This tree only **records** the obligation: the answer states
+  `recoverySanitizeDueAt`, and the removal request keeps that due timestamp together with an
+  unset `recovery_sanitized_at`. **Nothing in this tree performs the sanitization.** There is no
+  scheduled executor, no sweep and no operator operation that reads the due removals, rewrites or
+  retires the encrypted recovery bundles, and marks the completion. `backend/privacy/ledger.go`
+  defines `PendingRecoverySanitizations` and `MarkRecoverySanitized`, but neither has a caller
+  anywhere in the repository, so the schedule is not enforced by the service and no removal is
+  ever marked as sanitized. The thirty-day target is therefore **not met** by this tree.
+* The **local** retention of the repo-managed recovery bundles is enforced by the rotation of the
+  managed directory (`backend/backup/plan.go`, `backend/backup/cmd/khabackup`). The rotation
+  keeps the seven newest daily and four newest weekly bundles and retires every **ordinary**
+  bundle of that directory that is **older than thirty days**, even when a slot of the count would
+  keep it. A bundle that is exactly thirty days old is still inside the maximum.
+* A bundle the rotation may not delete is never deleted: a **protected** bundle, a bundle without
+  a creation time, a bundle dated after the reference time and a bundle whose manifest cannot be
+  read are all kept. Each of them leaves the retention **unresolved**: the rotation names it with
+  its reason and exits with a **nonzero status** while it remains, so `deploy/backup.sh` fails
+  and the run of the backup cannot claim success while an old recovery copy is there. The
+  durable restore evidence lives in its own directory (`/backups/restore-evidence`), the rotation
+  never descends into a subdirectory, and the evidence is never retired by the age rule.
+* The local rotation is **not** the thirty-day guarantee of the contract. It only reaches the
+  managed directory of the host: a copy on an offsite store, a copy on the operator's own machine
+  and a copy in any other destination are outside it, and the rotation can neither reach nor
+  prove them. The schedule that runs the rotation is a property of the host. The deployed store
+  inventory and the schedule therefore still need owner and host verification. The rotation also
+  does **not** write `recovery_sanitized_at`: a local rotation cannot prove that the external
+  copies were sanitized, so the record of the sanitization stays unset and the two functions of
+  `backend/privacy/ledger.go` still have no production caller.
+* The removal ledger travels inside the encrypted backup bundle, and a restore replays it before
+  the restored database serves traffic. That replay re-applies the removals to the restored
+  database; it is a separate guarantee and it does not sanitize or retire the recovery copies.
 * The restore gate (`online_restore_gates`) blocks the service while a restored database has not
   released its gate. The service refuses to **start** while the removal ledger is not applied in
   the database, and every request is checked again while it runs. A restore releases the gate only
@@ -469,6 +508,12 @@ that account exists. Everything else about an entry, an allocation and a match s
 * The declared label of a model opponent is published only when it is a known public model name or
   a label the owner registered before the control was declared. Every other declared value is
   stored as the neutral label `Custom model`.
+* The **accepted events and the operation receipts of a removed seat keep the declared label of a
+  control change**. Both tables are append-only: the accepted event is the record of what was
+  accepted, and the receipt is the record of the accepted command. They are service-held, they are
+  never public, and the public replay and the public history never read them. The redaction of the
+  alias covers the published payloads and the declared control timeline, which are the records a
+  reader of a public replay can reach.
 
 ## Integration notes for the foundation and the queue owners
 

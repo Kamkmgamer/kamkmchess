@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createOnlineQueueController } from './readiness';
 import type { OnlineQueueAssignment, OnlineQueueController, OnlineQueuePorts, OnlineQueueTimers } from './readiness';
 import type { QueueEntry, SeatControl, TimeControl } from './contracts';
@@ -10,6 +10,11 @@ const agentControl: SeatControl = { kind: 'agent', modelLabel: 'Test Model' };
 /** Lets every pending microtask and timer callback settle. */
 function tick(): Promise<void> {
   return new Promise<void>(resolve => { setTimeout(resolve, 0); });
+}
+
+/** Lets every pending microtask of a chain of awaits settle. */
+async function flush(): Promise<void> {
+  for (let index = 0; index < 6; index += 1) await tick();
 }
 
 function entry(overrides: Partial<QueueEntry> = {}): QueueEntry {
@@ -201,7 +206,7 @@ describe('engine preparation never blocks the search (QUE-12)', () => {
     expect(harness.controller.state.options).toContain('keep-searching');
   });
 
-  it('offers Retry while the engine is still preparing at the cutoff', async () => {
+  it('waits for the engine that is still preparing at the cutoff', async () => {
     const gate: { release: (() => void) | null } = { release: null };
     const prepareEngine = vi.fn<() => Promise<void>>(async () => {
       await new Promise<void>(resolve => { gate.release = resolve; });
@@ -211,9 +216,15 @@ describe('engine preparation never blocks the search (QUE-12)', () => {
     expect(harness.controller.state.engineState).toBe('preparing');
     harness.fireCutoff();
     await tick();
-    expect(harness.controller.state.phase).toBe('engine-unavailable');
-    expect(harness.controller.state.options).toContain('retry');
+    // The cutoff waits for the engine. A slow preparation never ends the
+    // search and never loses the fallback of the entry.
+    expect(harness.controller.state.phase).toBe('searching');
+    expect(harness.ports.commitFallback).not.toHaveBeenCalled();
     gate.release?.();
+    await flush();
+    // The engine is ready, so the fallback is committed.
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+    expect(harness.controller.state.phase).toBe('matched');
   });
 
   it('commits the Stockfish fallback at the cutoff when the engine is ready', async () => {
@@ -400,6 +411,42 @@ describe('a refused cancellation keeps the committed opponent (F-13)', () => {
   });
 });
 
+describe('the cancellation of an expired entry leaves no running search (QUE-07)', () => {
+  it('reports the expiry when the service refuses the cancellation', async () => {
+    // The service refuses to cancel an expired entry: the expiry is cleared
+    // only by an explicit rejoin.
+    const cancelEntry = vi.fn<(entryId: string) => Promise<QueueEntry>>(async () => {
+      throw new Error('conflict');
+    });
+    const readEntry = vi.fn<(entryId: string) => Promise<QueueEntry>>(async () => entry({
+      status: 'waiting',
+      readyAt: null,
+      cutoffAt: null,
+    }));
+    const harness = createHarness({ cancelEntry, readEntry });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.controller.cancel();
+    // The search is over. The browser never reports a running search for an
+    // entry that the service expired.
+    expect(harness.controller.state.phase).toBe('expired');
+    expect(harness.controller.state.detail).not.toContain('could not be cancelled');
+    expect(harness.controller.state.options).toContain('rejoin');
+  });
+
+  it('reports the expiry when the service answers with the expired entry', async () => {
+    const cancelEntry = vi.fn<(entryId: string) => Promise<QueueEntry>>(async () => entry({
+      status: 'waiting',
+      readyAt: null,
+      cutoffAt: null,
+    }));
+    const harness = createHarness({ cancelEntry });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.controller.cancel();
+    expect(harness.controller.state.phase).toBe('expired');
+    expect(harness.controller.state.options).toContain('rejoin');
+  });
+});
+
 describe('the assignment is authoritative (QUE-11, F-19)', () => {
   it('reads the seat, the label and the declared control from the participant view', async () => {
     const readMatch = vi.fn<(matchId: string) => Promise<OnlineMatchView>>(async () => matchView({
@@ -561,5 +608,524 @@ describe('the controller adopts an entry that the browser already owns (R6-01)',
     expect(harness.controller.state.phase).toBe('matched');
     harness.controller.adopt(entry({ entryId: 'entry-0000004', status: 'assigned', assignedMatchId: 'match-00000001' }));
     expect(harness.controller.state.assignment?.matchId).toBe('match-00000001');
+  });
+});
+
+
+/** The instant the service accepted the entry, in the clock of the service. */
+const serviceReadyAt = Date.parse('2026-10-21T10:00:00.000Z');
+
+/** The window of the service is ten seconds. */
+const serviceWindowMs = 10_000;
+
+/**
+ * A refusal of the service.
+ *
+ * The queue client keeps the status of the refusal, so the browser tells a
+ * conflict of the service from a lost answer without guessing.
+ */
+function refusal(status = 409): Error {
+  const error = new Error(`The service refused the queue request (${status}).`) as Error & { status: number };
+  error.status = status;
+  return error;
+}
+
+interface ClockHarness {
+  readonly controller: OnlineQueueController;
+  readonly ports: {
+    readonly prepareEngine: ReturnType<typeof vi.fn<() => Promise<void>>>;
+    readonly acceptReady: ReturnType<typeof vi.fn<(request: { control: SeatControl; timeControl: TimeControl }) => Promise<QueueEntry>>>;
+    readonly readEntry: ReturnType<typeof vi.fn<(entryId: string) => Promise<QueueEntry>>>;
+    readonly commitFallback: ReturnType<typeof vi.fn<(entryId: string) => Promise<OnlineQueueAssignment>>>;
+    readonly findCompatibleEntry: ReturnType<typeof vi.fn<(entryId: string) => Promise<OnlineQueueAssignment | null>>>;
+    readonly keepSearching: ReturnType<typeof vi.fn<(entryId: string) => Promise<QueueEntry>>>;
+  };
+  /** The number of attempts that ran at the same time. */
+  readonly concurrency: { current: number; max: number };
+  /** The real time of every attempt to commit the engine. */
+  readonly attempts: number[];
+  /** Every phase the interface saw. */
+  readonly phases: string[];
+  /** Moves the clock of the browser and lets every pending promise settle. */
+  advance(ms: number): Promise<void>;
+}
+
+interface ClockHarnessOptions {
+  /** How far the clock of the browser runs ahead of the service. */
+  readonly skewMs?: number;
+  /** How long the browser engine needs before it is ready. */
+  readonly engineDelayMs?: number;
+  /** How long the window of the service still runs, in real time. */
+  readonly windowMs?: number;
+  /** The entry the service accepts. */
+  readonly entry?: () => QueueEntry;
+  /** The answer of the read of the entry. */
+  readonly readEntry?: () => Promise<QueueEntry>;
+  /** The answer of the fallback route. */
+  readonly commitFallback?: (attempt: number) => Promise<OnlineQueueAssignment>;
+  /** The answer of the route that asks for a compatible entry. */
+  readonly findCompatibleEntry?: () => Promise<OnlineQueueAssignment | null>;
+}
+
+/**
+ * A controller on a fake clock.
+ *
+ * The clock of the browser can run ahead of the service or behind it, and the
+ * service answers with the instants of its own clock. The harness measures
+ * the real time of every attempt, so a try that runs at the same time as
+ * another one is visible.
+ */
+function createClockHarness(options: ClockHarnessOptions = {}): ClockHarness {
+  vi.useFakeTimers();
+  vi.setSystemTime(serviceReadyAt + (options.skewMs ?? 0));
+  const startedAt = Date.now();
+  const elapsed = (): number => Date.now() - startedAt;
+  const concurrency = { current: 0, max: 0 };
+  const attempts: number[] = [];
+  const phases: string[] = [];
+  const engineDelayMs = options.engineDelayMs ?? 0;
+  const windowMs = options.windowMs ?? serviceWindowMs;
+  const ports = {
+    checkAgent: vi.fn(async () => ({ ready: true, detail: '' })),
+    prepareEngine: vi.fn(async () => {
+      if (engineDelayMs <= 0) return;
+      await new Promise<void>(resolve => { setTimeout(resolve, engineDelayMs); });
+    }),
+    acceptReady: vi.fn(async () => (options.entry ? options.entry() : entry())),
+    readEntry: vi.fn(async () => (options.readEntry
+      ? await options.readEntry()
+      : (options.entry ? options.entry() : entry()))),
+    readyEntry: vi.fn(async () => entry()),
+    readMatch: vi.fn(async () => matchView()),
+    cancelEntry: vi.fn(async () => entry({ status: 'cancelled' })),
+    keepSearching: vi.fn(async () => entry({ cutoffAt: null })),
+    findCompatibleEntry: vi.fn(async () => (options.findCompatibleEntry
+      ? await options.findCompatibleEntry()
+      : null)),
+    commitFallback: vi.fn(async () => {
+      attempts.push(elapsed());
+      concurrency.current += 1;
+      concurrency.max = Math.max(concurrency.max, concurrency.current);
+      try {
+        if (options.commitFallback) return await options.commitFallback(attempts.length);
+        // The service refuses the fallback while its own window runs.
+        if (elapsed() < windowMs) throw refusal();
+        return assignment;
+      } finally {
+        concurrency.current -= 1;
+      }
+    }),
+  };
+  const controller = createOnlineQueueController({
+    ports: ports as unknown as OnlineQueuePorts,
+    now: () => Date.now(),
+    onState: state => { phases.push(state.phase); },
+  });
+  return {
+    controller,
+    ports: ports as unknown as ClockHarness['ports'],
+    concurrency,
+    attempts,
+    phases,
+    async advance(ms: number): Promise<void> {
+      await vi.advanceTimersByTimeAsync(ms);
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(0);
+    },
+  };
+}
+
+describe('the early cutoff of the service recovers on its own (P2-2)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('keeps the queue searching and commits the engine when the window of the service ends', async () => {
+    // The browser found the entry in the middle of its window, so it asks
+    // for the engine before the window of the service ended.
+    const harness = createClockHarness({
+      entry: () => entry({ updatedAt: '2026-10-21T10:00:09.000Z' }),
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(2_000);
+    // The service refuses the fallback: its window has not ended yet.
+    expect(harness.ports.commitFallback.mock.calls.length).toBeGreaterThanOrEqual(1);
+    expect(harness.controller.state.phase).toBe('searching');
+    expect(harness.controller.state.detail).toContain('has not ended yet');
+    // The window of the service ends, and the next try commits the engine.
+    await harness.advance(12_000);
+    expect(harness.controller.state.phase).toBe('matched');
+    expect(harness.controller.state.assignment?.matchId).toBe('match-00000001');
+    // The owner never has to retry the engine by hand.
+    expect(harness.phases).not.toContain('engine-unavailable');
+  });
+
+  it('backs off between the tries and never asks the service in a tight loop', async () => {
+    const harness = createClockHarness({
+      entry: () => entry({ updatedAt: '2026-10-21T10:00:09.000Z' }),
+      commitFallback: async () => { throw refusal(); },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(2_000);
+    await harness.advance(60_000);
+    // The refusal of the service is reported honestly, and the tries stop.
+    expect(harness.controller.state.phase).toBe('engine-unavailable');
+    expect(harness.controller.state.detail).toContain('refused the engine fallback');
+    const gaps = harness.attempts.slice(1).map((value, index) => value - harness.attempts[index]!);
+    expect(gaps.length).toBeGreaterThan(1);
+    expect(gaps[0]).toBeGreaterThanOrEqual(200);
+    // The delay grows, so the service is never asked in a tight loop.
+    expect(gaps[gaps.length - 1]!).toBeGreaterThanOrEqual(1_000);
+    // The number of tries is bounded.
+    expect(harness.ports.commitFallback.mock.calls.length).toBeLessThanOrEqual(13);
+  });
+
+  it('stops the try when the service committed an opponent meanwhile', async () => {
+    let reads = 0;
+    const harness = createClockHarness({
+      commitFallback: async () => { throw refusal(); },
+      readEntry: async () => {
+        reads += 1;
+        // The service committed an opponent while the browser waited.
+        return reads === 1
+          ? entry()
+          : entry({ status: 'assigned', assignedMatchId: 'match-00000007' });
+      },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    // The entry is terminal, so the search ends with the committed opponent.
+    expect(harness.controller.state.phase).toBe('matched');
+    expect(harness.controller.state.assignment?.matchId).toBe('match-00000007');
+    await harness.advance(30_000);
+    // No second game is created and the tries stop.
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the try when the entry expired', async () => {
+    let reads = 0;
+    const harness = createClockHarness({
+      commitFallback: async () => { throw refusal(); },
+      readEntry: async () => {
+        reads += 1;
+        return reads === 1 ? entry() : entry({ readyAt: null, cutoffAt: null });
+      },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    expect(harness.controller.state.phase).toBe('expired');
+    expect(harness.controller.state.options).toContain('rejoin');
+    await harness.advance(30_000);
+    // The engine is never committed for an expired entry.
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the try when the owner cancels the entry', async () => {
+    const harness = createClockHarness({
+      commitFallback: async () => { throw refusal(); },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+    await harness.controller.cancel();
+    expect(harness.controller.state.phase).toBe('cancelled');
+    await harness.advance(30_000);
+    // The timer of the try is gone with the cancelled entry.
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the try when the controller is disposed', async () => {
+    const harness = createClockHarness({
+      commitFallback: async () => { throw refusal(); },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+    harness.controller.dispose();
+    await harness.advance(30_000);
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not treat the refusal of an entry that keeps searching as the early cutoff', async () => {
+    const harness = createClockHarness({
+      commitFallback: async () => { throw refusal(); },
+      readEntry: async () => entry({ cutoffAt: null }),
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    // The engine is never committed for an entry without a cutoff, so the
+    // refusal is reported instead of being retried.
+    expect(harness.controller.state.phase).toBe('engine-unavailable');
+    expect(harness.controller.state.detail).toContain('refused the engine fallback');
+    await harness.advance(30_000);
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a candidate win over the engine during the try', async () => {
+    let finds = 0;
+    const harness = createClockHarness({
+      commitFallback: async () => { throw refusal(); },
+      findCompatibleEntry: async () => {
+        finds += 1;
+        return finds === 1 ? null : assignment;
+      },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+    await harness.advance(1_000);
+    // The candidate wins over the engine, and no second fallback is committed.
+    expect(harness.controller.state.phase).toBe('matched');
+    expect(harness.controller.state.assignment?.matchId).toBe('match-00000001');
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not restart the cutoff when the service is polled during the try', async () => {
+    const harness = createClockHarness({
+      commitFallback: async () => { throw refusal(); },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+    // The service is polled while the try waits.
+    harness.controller.observe(entry());
+    await harness.advance(2_000);
+    expect(harness.controller.state.phase).toBe('searching');
+    // The try keeps its own backoff: the poll did not ask the service for
+    // the engine again.
+    expect(harness.ports.commitFallback.mock.calls.length).toBeLessThanOrEqual(5);
+  });
+});
+
+describe('the cutoff of the service does not depend on the clock of the browser (F1)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('waits for the window of the service when the clock of the browser runs ahead of it', async () => {
+    const harness = createClockHarness({ skewMs: 30_000 });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    // The clock of the browser is thirty seconds ahead of the service. The
+    // window of the service still runs, so the cutoff is not due and the
+    // service is not asked for the engine.
+    await harness.advance(1_000);
+    expect(harness.ports.commitFallback).not.toHaveBeenCalled();
+    expect(harness.controller.state.phase).toBe('searching');
+    // The window of the service ends, and the engine is committed then.
+    await harness.advance(10_000);
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+    expect(harness.controller.state.phase).toBe('matched');
+    // The engine is never blamed for the clock of the browser.
+    expect(harness.phases).not.toContain('engine-unavailable');
+  });
+
+  it('waits for the window of the service when the clock of the browser runs behind it', async () => {
+    const harness = createClockHarness({ skewMs: -30_000 });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(1_000);
+    expect(harness.ports.commitFallback).not.toHaveBeenCalled();
+    expect(harness.controller.state.phase).toBe('searching');
+    await harness.advance(10_000);
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+    expect(harness.controller.state.phase).toBe('matched');
+    expect(harness.phases).not.toContain('engine-unavailable');
+  });
+
+  it('waits for the engine that is still starting instead of losing the fallback', async () => {
+    const harness = createClockHarness({ skewMs: 30_000, engineDelayMs: 12_000 });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    // The window of the service ends before the engine is ready.
+    await harness.advance(10_000);
+    expect(harness.controller.state.engineState).toBe('preparing');
+    expect(harness.ports.commitFallback).not.toHaveBeenCalled();
+    expect(harness.controller.state.phase).toBe('searching');
+    // The engine is ready, and the fallback is committed.
+    await harness.advance(3_000);
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+    expect(harness.controller.state.phase).toBe('matched');
+    // A slow preparation never ends the search.
+    expect(harness.phases).not.toContain('engine-unavailable');
+  });
+});
+
+describe('one fallback runs at a time (F2)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('does not start a second attempt when the service is polled during a try', async () => {
+    let release = (): void => undefined;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const harness = createClockHarness({
+      commitFallback: async () => {
+        await gate;
+        throw refusal();
+      },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    // The cutoff arrived and the attempt waits for the service.
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+    expect(harness.concurrency.max).toBe(1);
+    // The service is polled while the attempt waits for the service.
+    harness.controller.observe(entry());
+    await harness.advance(12_000);
+    // The poll did not start a second attempt.
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+    expect(harness.concurrency.max).toBe(1);
+    release();
+    await harness.advance(2_000);
+    // The next try is the backoff of the refusal, never a second attempt at
+    // the same time.
+    expect(harness.concurrency.max).toBe(1);
+    expect(harness.ports.commitFallback.mock.calls.length).toBeGreaterThan(1);
+  });
+});
+
+describe('a failure of the service is not a failure of the engine (F3)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('keeps searching when the read of the entry fails once', async () => {
+    let reads = 0;
+    const harness = createClockHarness({
+      readEntry: async () => {
+        reads += 1;
+        // The first read of the service fails. The entry is read again.
+        if (reads === 1) throw new Error('The answer was lost.');
+        return entry();
+      },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    // The entry could not be read, so no fallback was committed and the
+    // search continues.
+    expect(harness.ports.commitFallback).not.toHaveBeenCalled();
+    expect(harness.controller.state.phase).toBe('searching');
+    // The next try reads the entry and commits the engine.
+    await harness.advance(1_000);
+    expect(harness.ports.commitFallback).toHaveBeenCalledTimes(1);
+    expect(harness.controller.state.phase).toBe('matched');
+  });
+
+  it('reports a lost answer of the service without blaming the engine', async () => {
+    const harness = createClockHarness({
+      commitFallback: async () => { throw new Error('The answer was lost.'); },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    // The engine is ready. The service is the one that did not answer.
+    expect(harness.controller.state.engineState).toBe('ready');
+    expect(harness.controller.state.detail).toContain('did not answer');
+    expect(harness.controller.state.detail).not.toContain('Stockfish');
+    // The owner may recover the search.
+    expect(harness.controller.state.options).toContain('retry');
+    expect(harness.controller.state.options).toContain('keep-searching');
+  });
+
+  it('does not blame the engine when the service answers with a server error', async () => {
+    const harness = createClockHarness({
+      commitFallback: async () => { throw refusal(503); },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    expect(harness.controller.state.engineState).toBe('ready');
+    expect(harness.controller.state.detail).toContain('did not answer');
+    expect(harness.controller.state.detail).not.toContain('Stockfish');
+    // The failure of the service is retried a bounded number of times.
+    await harness.advance(30_000);
+    expect(harness.ports.commitFallback.mock.calls.length).toBeLessThanOrEqual(7);
+  });
+});
+
+describe('the recovery of the owner stays available (F4)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('offers Retry and Keep searching while the service has not ended its window', async () => {
+    // The browser found the entry in the middle of its window, so it asks
+    // for the engine before the window of the service ended.
+    const harness = createClockHarness({
+      entry: () => entry({ updatedAt: '2026-10-21T10:00:09.000Z' }),
+      commitFallback: async () => { throw refusal(); },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(2_000);
+    // The service refused the engine, and the queue keeps searching.
+    expect(harness.controller.state.phase).toBe('searching');
+    expect(harness.controller.state.detail).toContain('has not ended yet');
+    // The owner may recover the search while the service decides.
+    expect(harness.controller.state.options).toContain('retry');
+    expect(harness.controller.state.options).toContain('keep-searching');
+    expect(harness.controller.state.options).toContain('cancel');
+  });
+
+  it('offers Retry and Keep searching after the budget of the tries is spent', async () => {
+    const harness = createClockHarness({
+      commitFallback: async () => { throw refusal(); },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    await harness.advance(60_000);
+    // The tries stop, and the owner may still recover the search.
+    expect(harness.controller.state.phase).toBe('engine-unavailable');
+    expect(harness.controller.state.options).toContain('retry');
+    expect(harness.controller.state.options).toContain('keep-searching');
+    expect(harness.controller.state.options).toContain('cancel');
+  });
+
+  it('removes the cutoff when the owner keeps searching', async () => {
+    const harness = createClockHarness({
+      entry: () => entry({ updatedAt: '2026-10-21T10:00:09.000Z' }),
+      commitFallback: async () => { throw refusal(); },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(2_000);
+    const attempts = harness.ports.commitFallback.mock.calls.length;
+    await harness.controller.keepSearching();
+    expect(harness.ports.keepSearching).toHaveBeenCalledWith('entry-0000001');
+    expect(harness.controller.state.cutoffAt).toBeNull();
+    // The cutoff is gone, so the engine is never committed for the entry.
+    await harness.advance(30_000);
+    expect(harness.ports.commitFallback.mock.calls.length).toBe(attempts);
+  });
+});
+
+describe('a conflict of the service is not always the early window (F5)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('describes a dropped candidate as a conflict and not as the early window', async () => {
+    // The last write of the service is at the cutoff of the entry, so the
+    // service knows that its window ended. The conflict is not the early
+    // window: a candidate that was dropped wins over the engine when the
+    // request is repeated.
+    const harness = createClockHarness({
+      entry: () => entry({ updatedAt: '2026-10-21T10:00:10.000Z' }),
+      commitFallback: async () => { throw refusal(); },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(100);
+    expect(harness.controller.state.phase).toBe('searching');
+    expect(harness.controller.state.detail).not.toContain('has not ended yet');
+    expect(harness.controller.state.detail).toContain('refused the engine fallback');
+  });
+
+  it('stops the tries of a conflict the service did not name', async () => {
+    const harness = createClockHarness({
+      entry: () => entry({ updatedAt: '2026-10-21T10:00:10.000Z' }),
+      commitFallback: async () => { throw refusal(); },
+    });
+    await harness.controller.enter({ control: agentControl, timeControl });
+    await harness.advance(10_000);
+    await harness.advance(60_000);
+    // A conflict the service did not name is retried a few times and never
+    // more.
+    expect(harness.ports.commitFallback.mock.calls.length).toBeLessThanOrEqual(5);
+    expect(harness.controller.state.phase).toBe('engine-unavailable');
+    expect(harness.controller.state.detail).toContain('refused the engine fallback');
   });
 });

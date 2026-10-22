@@ -25,6 +25,30 @@ type EngineSeatRequest struct {
 	Origin string
 	// TTL bounds the credential lifetime. Zero uses the configured default.
 	TTL time.Duration
+	// Rotate asks for an explicit rotation of the credential of the seat.
+	//
+	// It is the recovery of an owner that lost the answer of the fallback and
+	// holds no usable credential. A rotation supersedes the live credential
+	// of the seat, so it is never set by a routine retry: a routine retry
+	// would revoke the secret the browser still holds.
+	Rotate bool
+}
+
+// EngineSeatCredentialOutcome is the result of one engine seat credential
+// request.
+//
+// The outcome reports whether a credential was minted at all. An ordinary
+// request for a seat that already has a live credential mints nothing and
+// supersedes nothing: the secret the browser already holds keeps working, and
+// the seat never carries a second live secret.
+type EngineSeatCredentialOutcome struct {
+	// Issued reports whether this call minted a credential.
+	Issued bool
+	// Credential is the minted credential. It carries the plaintext secret,
+	// and it is the zero value when nothing was minted. A request that minted
+	// nothing never carries a secret, so a lost answer is never answered with
+	// a secret that was already handed out.
+	Credential IssuedSeatCredential
 }
 
 // IssueEngineSeatCredential issues a seat-scoped credential for a browser
@@ -39,41 +63,87 @@ type EngineSeatRequest struct {
 //
 // The issuance takes the same advisory lock the participant command path and
 // the revocation path take, so a rotation is ordered against an accepted
-// write and against a seat revocation. A rotation supersedes every earlier
-// credential of that seat, so a seat never carries two usable secrets at
-// once.
+// write and against a seat revocation.
+//
+// The live credential of the seat is read inside that lock, so the decision
+// to mint and the write of the credential are one ordered decision. An
+// ordinary request never supersedes a live credential: it mints nothing, it
+// revokes nothing, and the outcome reports that nothing was minted. The
+// secret a browser already holds therefore keeps working, and a second
+// routine fallback of the same entry can never revoke the secret the first
+// one already delivered.
+//
+// An explicit rotation supersedes every earlier credential of that seat, so a
+// seat never carries two usable secrets at once. The rotation is the recovery
+// of an owner that lost the answer of the fallback, and it is the only path
+// that revokes a live credential.
 //
 // The credential is minted in its own transaction, so the seat row is read
 // from committed state. A caller that creates the match and the seat has to
 // commit them before it issues the credential. A lost answer is recoverable:
 // the owner asks again and receives a fresh credential for the same seat.
-func (a *Allocator) IssueEngineSeatCredential(ctx context.Context, request EngineSeatRequest) (IssuedSeatCredential, error) {
+func (a *Allocator) IssueEngineSeatCredential(ctx context.Context, request EngineSeatRequest) (EngineSeatCredentialOutcome, error) {
 	if a == nil || a.service == nil {
-		return IssuedSeatCredential{}, errors.New("onlineauth: no allocator is configured")
+		return EngineSeatCredentialOutcome{}, errors.New("onlineauth: no allocator is configured")
 	}
 	if !matchIDShape(request.MatchID) {
-		return IssuedSeatCredential{}, errors.New("onlineauth: invalid match id")
+		return EngineSeatCredentialOutcome{}, errors.New("onlineauth: invalid match id")
 	}
 	if request.Seat != online.SeatWhite && request.Seat != online.SeatBlack {
-		return IssuedSeatCredential{}, errors.New("onlineauth: invalid seat")
+		return EngineSeatCredentialOutcome{}, errors.New("onlineauth: invalid seat")
 	}
 	if !participantIDShape(request.GuestID) {
-		return IssuedSeatCredential{}, errors.New("onlineauth: invalid engine identity")
+		return EngineSeatCredentialOutcome{}, errors.New("onlineauth: invalid engine identity")
 	}
 	if !originShape(request.Origin) {
-		return IssuedSeatCredential{}, errors.New("onlineauth: invalid origin")
+		return EngineSeatCredentialOutcome{}, errors.New("onlineauth: invalid origin")
 	}
+	tx, err := a.service.db.Begin(ctx)
+	if err != nil {
+		return EngineSeatCredentialOutcome{}, err
+	}
+	defer tx.Rollback(ctx)
+	if err = lockScope(ctx, tx, seatLockKey(request.MatchID, request.Seat)); err != nil {
+		return EngineSeatCredentialOutcome{}, err
+	}
+	// The seat must exist and must still belong to the engine participant.
+	// The seat owner is immutable, so a credential never moves a seat.
+	owned, err := seatOwnedByGuest(ctx, tx, request.MatchID, request.Seat, request.GuestID)
+	if err != nil {
+		return EngineSeatCredentialOutcome{}, err
+	}
+	if !owned {
+		return EngineSeatCredentialOutcome{}, errors.New("onlineauth: the seat does not belong to the engine")
+	}
+	// The live credential of the seat is read under the seat lock. A caller
+	// that read it before it came here would race with a concurrent
+	// issuance: two routine fallbacks of one entry would both observe that
+	// the seat has no credential, and the second issuance would revoke the
+	// secret the first one already handed to a browser.
+	live, err := a.service.HasLiveSeatCredential(ctx, tx, request.MatchID, request.Seat)
+	if err != nil {
+		return EngineSeatCredentialOutcome{}, err
+	}
+	if live && !request.Rotate {
+		// An ordinary issue keeps the live credential. The browser holds a
+		// usable secret, so the answer of the caller names the assignment
+		// and carries no secret.
+		return EngineSeatCredentialOutcome{Issued: false}, nil
+	}
+	// The secret is minted after the decision to mint it. A request that
+	// mints nothing never creates a secret, so no secret is ever generated
+	// for a credential that is not stored.
 	ttl := request.TTL
 	if ttl <= 0 {
 		ttl = a.service.options.GuestCredentialTTL
 	}
 	secret, err := newSecret(credentialPrefix)
 	if err != nil {
-		return IssuedSeatCredential{}, err
+		return EngineSeatCredentialOutcome{}, err
 	}
 	credentialID, err := newIdentifier("kg")
 	if err != nil {
-		return IssuedSeatCredential{}, err
+		return EngineSeatCredentialOutcome{}, err
 	}
 	issuedAt := a.service.now()
 	expiresAt := issuedAt.Add(ttl)
@@ -87,49 +157,18 @@ func (a *Allocator) IssueEngineSeatCredential(ctx context.Context, request Engin
 		IssuedAt:     issuedAt,
 		ExpiresAt:    expiresAt,
 	}
-	tx, err := a.service.db.Begin(ctx)
-	if err != nil {
-		return IssuedSeatCredential{}, err
-	}
-	defer tx.Rollback(ctx)
-	if err = lockScope(ctx, tx, seatLockKey(request.MatchID, request.Seat)); err != nil {
-		return IssuedSeatCredential{}, err
-	}
-	// The seat must exist and must still belong to the engine participant.
-	// The seat owner is immutable, so a credential never moves a seat.
-	owned, err := seatOwnedByGuest(ctx, tx, request.MatchID, request.Seat, request.GuestID)
-	if err != nil {
-		return IssuedSeatCredential{}, err
-	}
-	if !owned {
-		return IssuedSeatCredential{}, errors.New("onlineauth: the seat does not belong to the engine")
-	}
-	// A seat has at most one live credential.
+	// A seat has at most one live credential. The rotation supersedes every
+	// earlier credential of the seat, so two usable secrets never coexist.
 	if _, err = tx.Exec(ctx, `UPDATE online_guest_seat_credentials SET superseded_at=clock_timestamp() WHERE match_id=$1 AND seat=$2 AND revoked_at IS NULL AND superseded_at IS NULL`,
 		request.MatchID, string(request.Seat)); err != nil {
-		return IssuedSeatCredential{}, err
+		return EngineSeatCredentialOutcome{}, err
 	}
 	if _, err = tx.Exec(ctx, `INSERT INTO online_guest_seat_credentials(credential_id,guest_id,match_id,seat,secret_hash,origin,issued_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
 		credential.CredentialID, credential.GuestID, credential.MatchID, string(credential.Seat), hashSecret("seat-control", credential.Secret), credential.Origin, credential.IssuedAt, credential.ExpiresAt); err != nil {
-		return IssuedSeatCredential{}, err
+		return EngineSeatCredentialOutcome{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
-		return IssuedSeatCredential{}, err
+		return EngineSeatCredentialOutcome{}, err
 	}
-	return credential, nil
-}
-
-// HasEngineSeatCredential reports whether the seat already has a live
-// credential.
-//
-// The trusted allocation seam uses it to avoid an unnecessary rotation: a
-// credential that is already live is never superseded by a routine retry, so
-// the secret a browser already holds keeps working.
-//
-// The check is read-only. It never mints and never revokes.
-func (a *Allocator) HasEngineSeatCredential(ctx context.Context, matchID string, seat online.Seat) (bool, error) {
-	if a == nil || a.service == nil {
-		return false, errors.New("onlineauth: no allocator is configured")
-	}
-	return a.service.HasLiveSeatCredential(ctx, a.service.db, matchID, seat)
+	return EngineSeatCredentialOutcome{Issued: true, Credential: credential}, nil
 }

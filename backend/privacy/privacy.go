@@ -23,18 +23,31 @@ package privacy
 import (
 	"errors"
 	"time"
+
+	"github.com/Kamkmgamer/kamkmchess/backend/backup"
 )
 
 // SchemaVersion is the version of the privacy answer wire contract.
 const SchemaVersion = 1
 
 // The scopes of a removal.
+//
+// The values are the scopes of the removal ledger of the backup package: the
+// ledger and the removal service speak the same vocabulary, so a record that
+// the ledger carries is a record the removal service understands.
 const (
 	// ScopeAccountDeletion anonymizes the shared games and keeps them.
-	ScopeAccountDeletion = "account_deletion"
+	ScopeAccountDeletion = backup.ScopeAccountDeletion
 	// ScopeExplicitRemoval erases the shared replays from both histories.
-	ScopeExplicitRemoval = "explicit_removal"
+	ScopeExplicitRemoval = backup.ScopeExplicitRemoval
 )
+
+// replayRemovalReason is the reason a replayed per match removal records.
+//
+// The removal ledger does not carry the reason a participant gave for the
+// removal of a public replay, so the replayed marker names the reason of a
+// participant request.
+const replayRemovalReason = "owner_request"
 
 // The operating targets of the specification.
 //

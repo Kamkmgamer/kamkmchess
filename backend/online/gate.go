@@ -21,7 +21,9 @@ import (
 //   - a restore gate that was not released yet: the database was restored
 //     from a backup and the removal ledger was not replayed;
 //   - a suspension boundary that was not applied yet: a planned suspension,
-//     or an interruption that is still being recovered;
+//     or an interruption that is still being recovered. A planned suspension
+//     that was cancelled is not one of them: it never interrupted the
+//     service, so it never closed the gate;
 //   - the latest service epoch, when its recovery has not completed.
 //
 // Only the latest epoch counts. An epoch that an earlier instance opened and
@@ -88,7 +90,7 @@ func ServiceGate(ctx context.Context, q Querier) (GateState, error) {
 	var restore, suspension, recovery bool
 	err := q.QueryRow(ctx, `SELECT
   EXISTS (SELECT 1 FROM online_restore_gates WHERE serving_allowed = false),
-  EXISTS (SELECT 1 FROM online_suspension_boundaries WHERE adjusted_at IS NULL),
+  EXISTS (SELECT 1 FROM online_suspension_boundaries WHERE adjusted_at IS NULL AND aborted_at IS NULL),
   EXISTS (SELECT 1 FROM online_service_epochs
           WHERE recovered_at IS NULL
             AND epoch = (SELECT COALESCE(MAX(epoch),0) FROM online_service_epochs))`).

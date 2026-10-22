@@ -144,6 +144,14 @@ func run() error {
 	}
 	defer os.RemoveAll(workDir)
 
+	// The durable restore fence is required by the server configuration. The
+	// fixture owns one inside its throwaway work directory, so the composed
+	// service observes a fence that no restore holds.
+	fencePath := filepath.Join(workDir, "restore-fence")
+	if err := os.MkdirAll(fencePath, 0o700); err != nil {
+		return errors.New("fixture restore fence directory could not be created")
+	}
+
 	signingKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return errors.New("fixture signing key could not be generated")
@@ -232,6 +240,7 @@ func run() error {
 		"ONLINE_RULES_WORKER_ENTRY": strings.TrimSpace(*rulesWorker),
 		"ONLINE_FRIEND_ENABLED":   strconv.FormatBool(*friendEnabled),
 		"ONLINE_QUEUE_ENABLED":    strconv.FormatBool(*queueEnabled),
+		"ONLINE_RESTORE_FENCE_PATH": fencePath,
 	}
 	config, err := serverapp.Load(func(key string) string { return environment[key] })
 	if err != nil {
