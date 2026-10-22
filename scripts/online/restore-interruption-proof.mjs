@@ -650,6 +650,7 @@ export async function runInterruptionProof(options = {}) {
     const evidenceHelperRun = async (args, env) => run('docker', [
       'run', '--rm',
       '--network', endpoint.network,
+      '--add-host', 'host.docker.internal:host-gateway',
       '--user', API_UID,
       '--mount', `type=volume,source=${VOLUME},target=/backups`,
       '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
@@ -1365,6 +1366,7 @@ export async function runInterruptionProof(options = {}) {
     const noSink = await run('docker', [
       'run', '--rm',
       '--network', endpoint.network,
+      '--add-host', 'host.docker.internal:host-gateway',
       '--user', API_UID,
       '--mount', `type=volume,source=${VOLUME},target=/backups`,
       '--mount', `type=bind,source=${DIRECTORY},target=/fixtures`,
