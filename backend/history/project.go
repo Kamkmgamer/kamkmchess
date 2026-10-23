@@ -538,6 +538,9 @@ func declaredControl(kind string, label *string) DeclaredControl {
 		return control
 	case online.ControlEngine:
 		engine := EngineLabel
+		if label != nil && *label == ServerEngineLabel {
+			engine = ServerEngineLabel
+		}
 		control.ModelLabel = &engine
 		return control
 	case online.ControlAgent:

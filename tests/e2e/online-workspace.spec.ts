@@ -17,7 +17,7 @@ async function expectNoOverflow(page: Page) {
 test('the online workspace is reachable and keeps the offline game intact', async ({ page }) => {
   await page.goto('/play?online=1');
   await expect(page.getByRole('region', { name: 'Chess match board' })).toBeVisible();
-  await page.getByRole('button', { name: 'Online play' }).click();
+  await page.getByRole('button', { name: 'Play online' }).click();
   await expect(page.getByRole('region', { name: 'Online play' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'New play' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Games' })).toBeVisible();
@@ -34,13 +34,13 @@ test('the online workspace is reachable and keeps the offline game intact', asyn
 test('the offline game never shows the online entry without the deliberate switch', async ({ page }) => {
   await page.goto('/play');
   await expect(page.getByRole('region', { name: 'Chess match board' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Online play' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Play online' })).toHaveCount(0);
 });
 
 test('the online workspace fits a phone viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/play?online=1');
-  await page.getByRole('button', { name: 'Online play' }).click();
+  await page.getByRole('button', { name: 'Play online' }).click();
   await expect(page.getByRole('region', { name: 'Online play' })).toBeVisible();
   await expectNoOverflow(page);
   await page.getByRole('button', { name: 'Close online play' }).click();
@@ -66,10 +66,10 @@ test('the offline game keeps its draw and resign icons', async ({ page }) => {
 
 test('the online workspace actions keep an accessible name and a visible focus', async ({ page }) => {
   await page.goto('/play?online=1');
-  await page.getByRole('button', { name: 'Online play' }).click();
+  await page.getByRole('button', { name: 'Play online' }).click();
   const newPlay = page.getByRole('button', { name: 'New play' });
   await expect(newPlay).toBeVisible();
-  await expect(newPlay).toHaveAttribute('title', 'New play');
+  await expect(newPlay).toHaveText('New game');
   await newPlay.focus();
   const outline = await newPlay.evaluate(element => {
     const style = getComputedStyle(element);

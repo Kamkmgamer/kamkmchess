@@ -10,7 +10,8 @@ import { editorSideToMove, positionSetupError, readEditorPieces, setPositionCast
 import { PositionEditorBoard } from './PositionEditorBoard.js';
 import { OpponentPanel } from './OpponentPanel.js';
 import { EnginePanel } from './EnginePanel.js';
-import { composePlayers, MATCH_MODES, seatKinds } from './match-modes.js';
+import { agentFacesSide, composePlayers, isAgentMode, MATCH_MODES, seatKinds } from './match-modes.js';
+import { AGENT_TIME_CONTROL } from '../agents/seat.js';
 import type { MatchMode } from './match-modes.js';
 import { conciseError } from './concise-error.js';
 import './new-game-setup.css';
@@ -63,12 +64,17 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
   const [modelSelection, setModelSelection] = useState<ModelSelection | null>(draft?.modelSelection ?? null);
   const [opponentIdentity, setOpponentIdentity] = useState<OpponentIdentityV1 | null>(draft?.opponentIdentity ?? null);
   const setupKinds = seatKinds(matchMode, 'white', engineSide);
-  const setupSelections: Record<'white' | 'black', ModelSelection | null> = matchMode === 'ai' ? { white: null, black: modelSelection }
-    : matchMode === 'human-engine' ? { white: null, black: engineSeats.black }
-      : { white: setupKinds.white === 'engine' ? engineSeats.white : aiSeats.white,
-        black: setupKinds.black === 'engine' ? engineSeats.black : aiSeats.black };
-  const setupReady = matchMode === 'local' || (matchMode === 'ai' || matchMode === 'human-engine'
-    ? setupSelections.black !== null : setupSelections.white !== null && setupSelections.black !== null);
+  const seatSelection = (side: 'white' | 'black') => setupKinds[side] === 'engine' ? engineSeats[side]
+    : setupKinds[side] === 'ai' ? matchMode === 'ai' ? modelSelection : aiSeats[side] : null;
+  const setupSelections: Record<'white' | 'black', ModelSelection | null> = { white: seatSelection('white'), black: seatSelection('black') };
+  // Human and agent seats need no checked selection; engines and AI models do.
+  const setupReady = (['white', 'black'] as const).every(side => setupKinds[side] === 'human' || setupKinds[side] === 'agent' || setupSelections[side] !== null);
+  const changeMode = (next: MatchMode) => {
+    if (isAgentMode(next) && !isAgentMode(matchMode)) { setSetupMinutes(AGENT_TIME_CONTROL.minutes); setSetupIncrement(AGENT_TIME_CONTROL.incrementSeconds); }
+    else if (!isAgentMode(next) && isAgentMode(matchMode)) { setSetupMinutes(15); setSetupIncrement(10); }
+    setMatchMode(next);
+    setSetupError('');
+  };
   const createNewGame = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSetupError('');
@@ -110,15 +116,16 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
     editorSide = editorSideToMove(setupFen || STANDARD_FEN);
   } catch { /* The FEN field reports the validation error on submit. */ }
 
-  const singleOpponent = matchMode === 'ai' || matchMode === 'human-engine';
+  const singleOpponent = matchMode === 'ai' || matchMode === 'human-engine' || matchMode === 'human-agent';
   const seats: readonly ('white' | 'black')[] = singleOpponent ? ['black'] : ['white', 'black'];
   return <section className={`sidebar-game-setup${editorOpen ? ' position-editor-page' : ''}`} aria-label="Game settings">
     <div className="game-mode-options">
-      <label>Game mode<select id="game-mode" aria-label="Game mode" value={matchMode} onChange={event => { setMatchMode(event.target.value as MatchMode); setSetupError(''); }}>{MATCH_MODES.map(mode => <option key={mode.id} value={mode.id}>{mode.label}</option>)}</select></label>
+      <label>Game mode<select id="game-mode" aria-label="Game mode" value={matchMode} onChange={event => changeMode(event.target.value as MatchMode)}>{MATCH_MODES.map(mode => <option key={mode.id} value={mode.id}>{mode.label}</option>)}</select></label>
       {singleOpponent && <label>Your side<select aria-label="Your side" value={humanSide} onChange={event => setHumanSide(event.target.value as typeof humanSide)}><option value="white">White</option><option value="black">Black</option><option value="random">Random</option></select></label>}
+      {agentFacesSide(matchMode) && <label>Agent plays<select aria-label="Agent plays" value={engineSide} onChange={event => setEngineSide(event.target.value as typeof engineSide)}><option value="white">White</option><option value="black">Black</option></select></label>}
       {matchMode === 'engine-ai' && <label>Engine plays<select aria-label="Engine plays" value={engineSide} onChange={event => setEngineSide(event.target.value as typeof engineSide)}><option value="white">White</option><option value="black">Black</option></select></label>}
     </div>
-    {seats.map(side => setupKinds[side] === 'human' ? null : <section className="game-opponent-options" aria-label={`${side === 'white' ? 'White' : 'Black'} opponent setup`} key={`${side}-${setupKinds[side]}`}>
+    {seats.map(side => setupKinds[side] === 'human' ? null : setupKinds[side] === 'agent' ? <AgentSeatNote key={`${side}-agent`} side={singleOpponent ? null : side} /> : <section className="game-opponent-options" aria-label={`${side === 'white' ? 'White' : 'Black'} opponent setup`} key={`${side}-${setupKinds[side]}`}>
       {!singleOpponent && setupKinds[side] !== 'engine' && <h3>{side === 'white' ? 'White' : 'Black'} opponent</h3>}
       {setupKinds[side] === 'engine'
         ? <EnginePanel label={singleOpponent ? 'Your engine opponent' : `${side === 'white' ? 'White' : 'Black'} engine`} heading={singleOpponent ? 'Engine opponent' : `${side === 'white' ? 'White' : 'Black'} opponent`} selected={engineSeats[side]} onSelect={selection => setEngineSeats(current => ({ ...current, [side]: selection }))} />
@@ -150,5 +157,13 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
       {setupError && <p role="alert">{conciseError(new Error(setupError))}</p>}
       <button className="button primary game-start-button" aria-label="Start game" disabled={working || !setupReady} type="submit">{working ? 'Starting...' : 'Start game'}</button>
     </form>
+  </section>;
+}
+
+/** Agents play through the page's tools; there is nothing to connect here. */
+function AgentSeatNote({ side }: { readonly side: 'white' | 'black' | null }) {
+  return <section className="game-opponent-options agent-seat-note" aria-label={side ? `${side === 'white' ? 'White' : 'Black'} agent` : 'Agent opponent'}>
+    <h3>{side ? `${side === 'white' ? 'White' : 'Black'}: agent` : 'Agent'}</h3>
+    <p>Your agent plays through this page's tools. Start, then ask it to join.</p>
   </section>;
 }

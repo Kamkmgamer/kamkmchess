@@ -69,7 +69,7 @@ import (
 )
 
 const (
-	keyID             = "onlinefixture-key-1"
+	keyID            = "onlinefixture-key-1"
 	authorizedParty  = "https://online.fixture.local"
 	loopbackHost     = "127.0.0.1"
 	fixtureKeyPEMDir = "keys"
@@ -84,18 +84,18 @@ type account struct {
 // descriptor is the machine-readable handoff for the browser and the harness.
 // It is written to a throwaway directory and never committed.
 type descriptor struct {
-	BaseURL        string   `json:"baseUrl"`
-	Issuer         string   `json:"issuer"`
-	JWKSURL        string   `json:"jwksUrl"`
-	AllowedOrigins []string `json:"allowedOrigins"`
+	BaseURL        string    `json:"baseUrl"`
+	Issuer         string    `json:"issuer"`
+	JWKSURL        string    `json:"jwksUrl"`
+	AllowedOrigins []string  `json:"allowedOrigins"`
 	Accounts       []account `json:"accounts"`
-	Schema         string   `json:"schema"`
-	Database       string   `json:"database"`
-	RulesWorker    string   `json:"rulesWorker"`
-	KeyPath        string   `json:"keyPath"`
-	PID            int      `json:"pid"`
-	StartedAt      string   `json:"startedAt"`
-	ExpiresAt      string   `json:"expiresAt"`
+	Schema         string    `json:"schema"`
+	Database       string    `json:"database"`
+	RulesWorker    string    `json:"rulesWorker"`
+	KeyPath        string    `json:"keyPath"`
+	PID            int       `json:"pid"`
+	StartedAt      string    `json:"startedAt"`
+	ExpiresAt      string    `json:"expiresAt"`
 }
 
 func main() {
@@ -106,17 +106,19 @@ func main() {
 
 func run() error {
 	var (
-		databaseURL     = flag.String("database-url", "", "PostgreSQL URL of the local test database")
-		rulesWorker     = flag.String("rules-worker", "", "Path to the private rules worker bundle")
-		descriptorPath  = flag.String("descriptor", "", "File the descriptor is written to")
-		apiPort         = flag.Int("api-port", 0, "Loopback port for the API (0 chooses a free port)")
-		jwksPort        = flag.Int("jwks-port", 0, "Loopback port for the JWKS server (0 chooses a free port)")
-		maxLifetime     = flag.Duration("max-lifetime", 30*time.Minute, "Hard upper bound on the fixture lifetime")
-		allowRemote     = flag.Bool("allow-remote-database", false, "Permit a database host that is not loopback")
-		keepSchema      = flag.Bool("keep-schema", false, "Keep the isolated schema after shutdown")
-		friendEnabled   = flag.Bool("friend-enabled", true, "Set ONLINE_FRIEND_ENABLED for the fixture run")
-		queueEnabled    = flag.Bool("queue-enabled", false, "Set ONLINE_QUEUE_ENABLED for the fixture run")
-		allowedOrigins  stringList
+		databaseURL    = flag.String("database-url", "", "PostgreSQL URL of the local test database")
+		rulesWorker    = flag.String("rules-worker", "", "Path to the private rules worker bundle")
+		descriptorPath = flag.String("descriptor", "", "File the descriptor is written to")
+		apiPort        = flag.Int("api-port", 0, "Loopback port for the API (0 chooses a free port)")
+		jwksPort       = flag.Int("jwks-port", 0, "Loopback port for the JWKS server (0 chooses a free port)")
+		maxLifetime    = flag.Duration("max-lifetime", 30*time.Minute, "Hard upper bound on the fixture lifetime")
+		allowRemote    = flag.Bool("allow-remote-database", false, "Permit a database host that is not loopback")
+		keepSchema     = flag.Bool("keep-schema", false, "Keep the isolated schema after shutdown")
+		friendEnabled  = flag.Bool("friend-enabled", true, "Set ONLINE_FRIEND_ENABLED for the fixture run")
+		queueEnabled   = flag.Bool("queue-enabled", false, "Set ONLINE_QUEUE_ENABLED for the fixture run")
+		serverEngine   = flag.String("server-engine", "", "Native UCI engine path; turns on the server engine seat, the remote MCP endpoint and the agent boards")
+		ownerAccounts  = flag.String("owner-accounts", "", "Set ONLINE_OWNER_ACCOUNTS: comma-separated accounts that may switch the online surfaces")
+		allowedOrigins stringList
 	)
 	flag.Var(&allowedOrigins, "allow-origin", "Origin allowed to call the fixture API (repeatable)")
 	flag.Parse()
@@ -232,15 +234,22 @@ func run() error {
 	// fixture picks up every online setting the server understands, including
 	// the feature switches, without repeating them here.
 	environment := map[string]string{
-		"DATABASE_URL":            scopedDatabaseURL(*databaseURL, schema),
-		"CLERK_ISSUER":            issuer,
-		"CLERK_JWKS_URL":          jwksURL,
-		"CLERK_AUTHORIZED_PARTIES": authorizedParty,
-		"APP_ALLOWED_ORIGINS":     strings.Join(origins, ","),
+		"DATABASE_URL":              scopedDatabaseURL(*databaseURL, schema),
+		"CLERK_ISSUER":              issuer,
+		"CLERK_JWKS_URL":            jwksURL,
+		"CLERK_AUTHORIZED_PARTIES":  authorizedParty,
+		"APP_ALLOWED_ORIGINS":       strings.Join(origins, ","),
 		"ONLINE_RULES_WORKER_ENTRY": strings.TrimSpace(*rulesWorker),
-		"ONLINE_FRIEND_ENABLED":   strconv.FormatBool(*friendEnabled),
-		"ONLINE_QUEUE_ENABLED":    strconv.FormatBool(*queueEnabled),
+		"ONLINE_FRIEND_ENABLED":     strconv.FormatBool(*friendEnabled),
+		"ONLINE_QUEUE_ENABLED":      strconv.FormatBool(*queueEnabled),
+		"ONLINE_OWNER_ACCOUNTS":     strings.TrimSpace(*ownerAccounts),
 		"ONLINE_RESTORE_FENCE_PATH": fencePath,
+	}
+	if path := strings.TrimSpace(*serverEngine); path != "" {
+		environment["ONLINE_SERVER_ENGINE_ENABLED"] = "true"
+		environment["ONLINE_SERVER_ENGINE_PATH"] = path
+		environment["ONLINE_MCP_ENABLED"] = "true"
+		environment["ONLINE_AGENT_BOARDS_ENABLED"] = "true"
 	}
 	config, err := serverapp.Load(func(key string) string { return environment[key] })
 	if err != nil {

@@ -127,8 +127,9 @@ func queueRequest(t *testing.T, handler http.Handler, method, path, token, body 
 	return w
 }
 
-// The feature answer carries exactly the two rollout switches.
-func TestOnlineFeaturesAnswerCarriesExactlyTwoSwitches(t *testing.T) {
+// The feature answer carries exactly the two rollout switches and the
+// remote MCP state.
+func TestOnlineFeaturesAnswerCarriesExactlyTheSwitches(t *testing.T) {
 	closed := httptest.NewRecorder()
 	NewFeatures(OnlineFeatures{}).ServeHTTP(closed, httptest.NewRequest(http.MethodGet, "/v1/online/features", nil))
 	if closed.Code != http.StatusOK {
@@ -138,18 +139,18 @@ func TestOnlineFeaturesAnswerCarriesExactlyTwoSwitches(t *testing.T) {
 	if err := json.Unmarshal(closed.Body.Bytes(), &answer); err != nil {
 		t.Fatal(err)
 	}
-	if len(answer) != 2 {
+	if len(answer) != 4 {
 		t.Fatalf("the feature answer has %d fields: %s", len(answer), closed.Body.String())
 	}
-	if answer["friends"] != false || answer["queue"] != false {
+	if answer["friends"] != false || answer["queue"] != false || answer["mcp"] != false || answer["boards"] != false {
 		t.Fatalf("a closed surface is not closed: %s", closed.Body.String())
 	}
 	open := httptest.NewRecorder()
-	NewFeatures(OnlineFeatures{Friends: true, Queue: true}).ServeHTTP(open, httptest.NewRequest(http.MethodGet, "/v1/online/features", nil))
+	NewFeatures(OnlineFeatures{Friends: true, Queue: true, MCP: true}).ServeHTTP(open, httptest.NewRequest(http.MethodGet, "/v1/online/features", nil))
 	if err := json.Unmarshal(open.Body.Bytes(), &answer); err != nil {
 		t.Fatal(err)
 	}
-	if answer["friends"] != true || answer["queue"] != true {
+	if answer["friends"] != true || answer["queue"] != true || answer["mcp"] != true {
 		t.Fatalf("an open surface is not open: %s", open.Body.String())
 	}
 }

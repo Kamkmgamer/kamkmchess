@@ -1,6 +1,6 @@
 import { useId, useSyncExternalStore } from 'react';
 import {
-  Icon, Book, ChessKnight, Code, Home, Information, Link, List, Play, Settings, UserAvatar,
+  Icon, Book, Bot, ChessKnight, Code, Home, Information, Link, List, Play, Settings, UserAvatar,
 } from '../components/quartz/icon';
 import { Button } from '../components/quartz/ui/button';
 import type { AccountControlsState } from '../accounts/account-controls';
@@ -30,16 +30,16 @@ export function GameNavigation({ onOptions, onNavigate, onAppearance, account, o
   const section = useSyncExternalStore(subscribeToSection, currentSection, () => '#home');
   const accountLabel = account.status === 'loading' ? 'Loading account' : account.status === 'error' ? 'Retry account' : account.user ? 'Account settings' : 'Sign in';
   const accountDescription = account.user ? account.user.email ?? 'Signed in'
-    : account.status === 'disabled' ? 'Board preview' : account.status === 'loading' ? 'Loading account...' : 'Sign in';
+    : account.status === 'disabled' ? 'Playing locally' : account.status === 'loading' ? 'Loading account...' : 'Sign in';
 
   return (
     <div className="sidebar-content">
       <Button className="sidebar-play" size="lg" onClick={() => onOptions('modelId')}>
-        <Icon icon={ChessKnight} size={24} /><span>AI opponent</span>
+        <Icon icon={ChessKnight} size={20} /><span>AI opponent</span>
       </Button>
       <nav className="game-navigation" aria-label="Chess navigation">
         <a className="sidebar-row" href="#home" aria-current={section === '#home' ? 'location' : undefined} onClick={onNavigate}>
-          <Icon icon={Home} size={24} /><span>Home</span>
+          <Icon icon={Home} size={20} /><span>Home</span>
         </a>
         <a className="sidebar-row" href="/play" onClick={onNavigate}>
           <Icon icon={Play} size={24} /><span>Play</span>
@@ -51,10 +51,13 @@ export function GameNavigation({ onOptions, onNavigate, onAppearance, account, o
           <Icon icon={List} size={24} /><span>Profile &amp; history</span>
         </a>
         <a className="sidebar-row" href="#opening-preview" aria-current={section === '#opening-preview' ? 'location' : undefined} onClick={onNavigate}>
-          <Icon icon={ChessKnight} size={24} /><span>Watch a game</span>
+          <Icon icon={ChessKnight} size={20} /><span>Watch a game</span>
         </a>
         <a className="sidebar-row" href="#the-idea" aria-current={section === '#the-idea' ? 'location' : undefined} onClick={onNavigate}>
-          <Icon icon={Book} size={24} /><span>How it works</span>
+          <Icon icon={Book} size={20} /><span>How it works</span>
+        </a>
+        <a className="sidebar-row" href="#agents" aria-current={section === '#agents' ? 'location' : undefined} onClick={onNavigate}>
+          <Icon icon={Bot} size={24} /><span>Play with your agent</span>
         </a>
       </nav>
 
@@ -66,7 +69,7 @@ export function GameNavigation({ onOptions, onNavigate, onAppearance, account, o
           <a className="sidebar-row" href="#questions" aria-current={section === '#questions' ? 'location' : undefined} onClick={onNavigate}>
             <Icon icon={Information} size={20} /><span>Help</span>
           </a>
-          <a className="sidebar-row" href="https://github.com/Kamkmgamer/kamkmchess">
+          <a className="sidebar-row" href="https://github.com/Kamkmgamer/kamkmchess" target="_blank" rel="noopener noreferrer">
             <Icon icon={Code} size={20} /><span>Project</span>
           </a>
         </nav>
