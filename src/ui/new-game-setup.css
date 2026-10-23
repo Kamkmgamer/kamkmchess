@@ -90,3 +90,20 @@
   .sidebar-game-setup .editor-castling-rights label { min-height: 44px; }
   .sidebar-game-setup .editor-piece-choice { height: auto; min-height: 44px; aspect-ratio: 1; }
 }
+
+/* Grouped sections: muted labels, small section headings and hairline dividers. */
+.right-game-sidebar .sidebar-game-setup label { color: var(--t3-text-muted, var(--t3-text)); }
+.sidebar-game-setup > .game-opponent-options, .sidebar-game-setup > .game-start-form { padding-top: 24px; border-top: 1px solid var(--t3-border); }
+.sidebar-game-setup .opponent-panel .panel-heading :is(h2, h3), .quartz .sidebar-game-setup .opponent-panel .panel-heading :is(h2, h3),
+.sidebar-game-setup > .game-opponent-options > h3, .sidebar-game-setup .game-time-options legend, .sidebar-game-setup .game-position-heading > span {
+  color: var(--t3-text-muted, var(--t3-text)); font: 600 12px/1.5 'Inter Tight', system-ui, sans-serif; letter-spacing: .06em; text-transform: uppercase;
+}
+.right-game-sidebar .sidebar-game-setup :is(input, select, textarea) { transition: border-color 120ms ease; }
+.right-game-sidebar .sidebar-game-setup :is(input, select, textarea):hover:not(:disabled) { border-color: var(--t3-text-muted, var(--t3-text)); }
+.right-game-sidebar .sidebar-game-setup select:not([multiple]) {
+  appearance: none; padding-inline-end: 36px; background-repeat: no-repeat; background-position: right 12px center; background-size: 12px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5'/%3E%3C/svg%3E");
+}
+.sidebar-game-setup .connection-form .button-row > .button.primary { flex: 1; }
+.sidebar-game-setup .button.primary:disabled { opacity: 1; background: color-mix(in srgb, var(--t3-accent) 16%, transparent); border-color: color-mix(in srgb, var(--t3-accent) 28%, transparent); color: color-mix(in srgb, var(--t3-accent) 70%, var(--t3-text-muted, var(--t3-text))); }
+.sidebar-game-setup .game-position-heading .button { min-height: 36px; padding-block: 4px; }

@@ -33,6 +33,13 @@ export function RightGameSidebar({ open, onOpenChange, showReopenButton = true, 
     saveSidebarPreferences({ width, collapsed: !open });
   }, [open, width]);
 
+  useEffect(() => {
+    // Page content can keep clear of the docked drawer; the mobile sheet covers everything.
+    const root = document.documentElement;
+    root.style.setProperty('--game-options-inset', open && !mobile ? `${clampSidebarWidth(width)}px` : '0px');
+    return () => { root.style.removeProperty('--game-options-inset'); };
+  }, [open, mobile, width]);
+
   function changeOpen(next: boolean) {
     saveSidebarPreferences({ width, collapsed: !next });
     onOpenChange(next);
