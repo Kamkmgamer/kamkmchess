@@ -29,3 +29,19 @@ Every call returns `{ ok, result }` or `{ ok: false, error }`; WebMCP receives t
 ## Tests
 
 `src/agents/agents.test.ts` runs agent turns on a real controller and store: the compact input, plan carry-over, the four-illegal-move loss and fencing a stopped turn. `tests/e2e/agent-seat.spec.ts` has a scripted agent play Stockfish Lite through `window.kamkmChessAgent`, and checks the new modes, the long clock default and joining a game a person set up.
+
+## Play with your agent
+
+The landing page's **Play with your agent** section (`#agents`, also in the
+sidebar) turns this into copy-ready setup. People choose the opponent, the
+color and Stockfish's strength, or tick **Let my agent ask me first** so the
+agent asks before it starts. Each client gets its own steps:
+
+- **Claude in Chrome** (or any browser agent): one prompt that opens `/play`
+  and uses the page tools. Always available.
+- **Claude Code, Codex, claude.ai, ChatGPT, Cursor / any MCP**: an install
+  command, connector URL or config for the remote endpoint, then the same
+  prompt. These appear only when `/v1/online/features` reports `mcp: true`
+  (see `docs/implementation/remote-mcp.md`).
+
+The prompts are built in `src/agents/connect.ts`.

@@ -1,6 +1,6 @@
 import { useId, useSyncExternalStore } from 'react';
 import {
-  Icon, Book, ChessKnight, Code, Home, Information, Settings, UserAvatar,
+  Icon, Book, Bot, ChessKnight, Code, Home, Information, Settings, UserAvatar,
 } from '../components/quartz/icon';
 import { Button } from '../components/quartz/ui/button';
 import type { AccountControlsState } from '../accounts/account-controls';
@@ -46,6 +46,9 @@ export function GameNavigation({ onOptions, onNavigate, onAppearance, account, o
         </a>
         <a className="sidebar-row" href="#the-idea" aria-current={section === '#the-idea' ? 'location' : undefined} onClick={onNavigate}>
           <Icon icon={Book} size={24} /><span>How it works</span>
+        </a>
+        <a className="sidebar-row" href="#agents" aria-current={section === '#agents' ? 'location' : undefined} onClick={onNavigate}>
+          <Icon icon={Bot} size={24} /><span>Play with your agent</span>
         </a>
       </nav>
 
