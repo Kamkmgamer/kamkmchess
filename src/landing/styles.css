@@ -349,6 +349,30 @@ body { margin: 0; }
   .board-square, .chess-piece img { forced-color-adjust: none; }
 }
 @keyframes place-piece { from { opacity: 0.5; transform: translateY(var(--space-1)); } to { opacity: 1; transform: translateY(0); } }
+.page-sections .boards-section { display: flex; flex-direction: column; gap: var(--space-6); padding-block: var(--space-15) var(--space-10); }
+.boards-heading { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: var(--space-4); }
+.boards-tabs { display: flex; gap: var(--space-1); }
+.quartz .boards-tab { color: var(--text-2); }
+.quartz .boards-tab[aria-selected='true'] { background: var(--surface-selected); color: var(--text-1); font-weight: var(--weight-medium); }
+.boards-panel { min-width: 0; display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); background: var(--surface-card); border-radius: calc(var(--radius-frame) * 2); }
+.quartz .boards-note, .quartz .boards-empty { color: var(--text-2); font: var(--type-label-sm); }
+.boards-scroll { min-width: 0; overflow-x: auto; }
+.boards-table { width: 100%; border-collapse: collapse; color: var(--text-1); font: var(--type-body); font-variant-numeric: tabular-nums; }
+.boards-table :is(th, td) { padding: var(--space-3) var(--space-4); text-align: right; white-space: nowrap; border-bottom: 1px solid color-mix(in srgb, var(--text-1) 10%, transparent); }
+.boards-table :is(th, td):first-child { padding-left: 0; text-align: left; }
+.boards-table :is(th, td):last-child { padding-right: 0; }
+.boards-table thead th { color: var(--text-2); font: var(--type-label-sm); }
+.boards-table tbody th { min-width: 10ch; font-weight: var(--weight-medium); white-space: normal; overflow-wrap: break-word; }
+.boards-table tbody tr:last-child :is(th, td) { border-bottom: 0; }
+.boards-level { text-transform: capitalize; }
+@media (max-width: 900px) {
+  .boards-panel { padding: var(--space-4); }
+  .boards-table :is(th, td) { padding-inline: var(--space-2); }
+  .boards-table :is(th, td):first-child { padding-left: 0; }
+  .boards-table :is(th, td):last-child { padding-right: 0; }
+}
+@media (max-width: 480px) {
+  .boards-games { display: none; }
 
 /* Play with your agent: choices, a client tab row and copy-ready steps. */
 .page-sections .agents-section { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.618fr); gap: calc(var(--space-6) * var(--golden-ratio)); align-items: start; padding-block: var(--space-15); }

@@ -5,6 +5,7 @@ import { Icon, Bot, Close, ChessKnight, SidePanelOpen } from '../components/quar
 import { useQuartzPortal } from '../lib/quartz/portal';
 import { OpeningPreview } from './OpeningPreview';
 import { Questions } from './Questions';
+import { AgentBoards } from './AgentBoards';
 import { AgentConnect } from './AgentConnect';
 import { HeroDither } from './HeroDither';
 import { resolveHeroDitherVariant } from './hero-dither';
@@ -136,8 +137,8 @@ export function App() {
             <OpeningPreview setup={defaultSetup} onOptions={() => openGameOptions('fen')} />
           </div>
 
+          <AgentBoards />
           <AgentConnect />
-
           <Questions />
           <footer className="site-footer">
             <div className="footer-top page-width">

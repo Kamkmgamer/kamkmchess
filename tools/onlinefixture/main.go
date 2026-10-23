@@ -116,7 +116,7 @@ func run() error {
 		keepSchema     = flag.Bool("keep-schema", false, "Keep the isolated schema after shutdown")
 		friendEnabled  = flag.Bool("friend-enabled", true, "Set ONLINE_FRIEND_ENABLED for the fixture run")
 		queueEnabled   = flag.Bool("queue-enabled", false, "Set ONLINE_QUEUE_ENABLED for the fixture run")
-		serverEngine   = flag.String("server-engine", "", "Native UCI engine path; turns on the server engine seat and the remote MCP endpoint")
+		serverEngine   = flag.String("server-engine", "", "Native UCI engine path; turns on the server engine seat, the remote MCP endpoint and the agent boards")
 		ownerAccounts  = flag.String("owner-accounts", "", "Set ONLINE_OWNER_ACCOUNTS: comma-separated accounts that may switch the online surfaces")
 		allowedOrigins stringList
 	)
@@ -249,6 +249,7 @@ func run() error {
 		environment["ONLINE_SERVER_ENGINE_ENABLED"] = "true"
 		environment["ONLINE_SERVER_ENGINE_PATH"] = path
 		environment["ONLINE_MCP_ENABLED"] = "true"
+		environment["ONLINE_AGENT_BOARDS_ENABLED"] = "true"
 	}
 	config, err := serverapp.Load(func(key string) string { return environment[key] })
 	if err != nil {

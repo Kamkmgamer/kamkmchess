@@ -139,10 +139,10 @@ func TestOnlineFeaturesAnswerCarriesExactlyTheSwitches(t *testing.T) {
 	if err := json.Unmarshal(closed.Body.Bytes(), &answer); err != nil {
 		t.Fatal(err)
 	}
-	if len(answer) != 3 {
+	if len(answer) != 4 {
 		t.Fatalf("the feature answer has %d fields: %s", len(answer), closed.Body.String())
 	}
-	if answer["friends"] != false || answer["queue"] != false || answer["mcp"] != false {
+	if answer["friends"] != false || answer["queue"] != false || answer["mcp"] != false || answer["boards"] != false {
 		t.Fatalf("a closed surface is not closed: %s", closed.Body.String())
 	}
 	open := httptest.NewRecorder()

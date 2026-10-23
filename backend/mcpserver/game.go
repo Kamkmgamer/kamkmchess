@@ -11,6 +11,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/agentboards"
 	"github.com/Kamkmgamer/kamkmchess/backend/engine"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
@@ -42,6 +43,13 @@ type Authenticator interface {
 	AuthenticateGuest(ctx context.Context, secret, origin string) (onlineauth.Principal, error)
 }
 
+// Records keeps the record of agent games for the boards. It is optional:
+// without it no game is recorded and invite codes are refused.
+type Records interface {
+	InviteValid(ctx context.Context, code string) (bool, error)
+	Record(ctx context.Context, game agentboards.Game, code string) (bool, error)
+}
+
 // ActiveGames counts the unfinished agent games.
 type ActiveGames func(ctx context.Context) (int, error)
 
@@ -67,6 +75,7 @@ type Options struct {
 	Credentials   Credentials
 	Authenticator Authenticator
 	ActiveGames   ActiveGames
+	Records       Records
 	// AllowedOrigins are the browser origins that may call the endpoint.
 	AllowedOrigins []string
 	// TrustProxy reads the client address from X-Forwarded-For.
@@ -162,6 +171,8 @@ func toolList() []map[string]any {
 				"engine_think_ms":   map[string]any{"type": "integer", "minimum": 100, "maximum": 10000, "default": 1000, "description": "Stockfish thinking time per move. Higher is stronger."},
 				"minutes":           map[string]any{"type": "integer", "minimum": 1, "maximum": 180, "default": 180},
 				"increment_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 60, "default": 60},
+				"invite_code":       map[string]any{"type": "string", "description": "Only for the official runner: an operator-issued code that puts the game on the verified board."},
+				"runner":            map[string]any{"type": "string", "description": "Optional name of the program driving you, e.g. kamkm-runner/api."},
 			}}},
 		{"name": "resume_game", "description": "Re-attach a game after your session expired, with the resume_token start_game returned.", "inputSchema": map[string]any{
 			"type": "object", "required": []string{"resume_token"}, "properties": map[string]any{"resume_token": map[string]any{"type": "string"}}}},
@@ -231,6 +242,20 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 	if _, ok := args["model_name"].(string); !ok || name == "" {
 		return nil, errTool("model_name is required: give your exact model and variant")
 	}
+	code, _ := args["invite_code"].(string)
+	code = strings.TrimSpace(code)
+	if code != "" {
+		valid := false
+		if s.options.Records != nil {
+			var err error
+			if valid, err = s.options.Records.InviteValid(ctx, code); err != nil {
+				return nil, err
+			}
+		}
+		if !valid {
+			return nil, errTool("that invite_code is not valid: leave it out to play on the community board")
+		}
+	}
 	active, err := s.options.ActiveGames(ctx)
 	if err != nil {
 		return nil, err
@@ -289,6 +314,18 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		return nil, errTool("the game was created but your seat could not be claimed: start another game")
 	}
 	sess.attach(onlineauth.NewGuestPrincipal(outcome.Credential), name, outcome.Credential.Secret)
+	verified := false
+	if s.options.Records != nil {
+		runner, _ := args["runner"].(string)
+		verified, err = s.options.Records.Record(ctx, agentboards.Game{
+			MatchID: match.MatchID, AgentSeat: string(agentSeat), ModelName: name,
+			EngineThinkMs: int(engine.ClampThink(think).Milliseconds()), Runner: clip(cleanName(runner), 40),
+		}, code)
+		if err != nil {
+			s.cleanupFailedStart(sess)
+			return nil, errTool("the game was created but could not be recorded: start another game")
+		}
+	}
 	if err = s.waitForTurn(ctx, sess, s.options.MoveWait); err != nil {
 		return nil, err
 	}
@@ -297,7 +334,26 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		return nil, err
 	}
 	board["resume_token"] = sess.resumeToken
+	if s.options.Records != nil {
+		board["board"] = map[bool]string{true: "verified", false: "community"}[verified]
+	}
 	return board, nil
+}
+
+// cleanupFailedStart releases a match that was created but could not finish
+// initialization. This uses a bounded, independent context so a canceled
+// request cannot leave an active match consuming the server's capacity.
+func (s *Server) cleanupFailedStart(sess *session) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	match, err := s.options.Matches.GetMatch(cleanupCtx, sess.matchID)
+	if err == nil && match.Status == online.MatchActive {
+		principalCtx := onlineauth.WithPrincipal(cleanupCtx, sess.principal)
+		if lease, leaseErr := s.lease(principalCtx, sess, match); leaseErr == nil {
+			_, _ = s.options.Matches.Execute(principalCtx, sess.principal.Participant, s.command(sess, match, lease, online.Action{Kind: online.ActionResign}))
+		}
+	}
+	sess.detach()
 }
 
 func (s *Server) resumeGame(ctx context.Context, sess *session, args map[string]any) (any, error) {

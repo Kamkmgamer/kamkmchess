@@ -40,6 +40,17 @@ func (sess *session) attach(principal onlineauth.Principal, name, resumeToken st
 	sess.plan = ""
 }
 
+// detach clears the session's game after a failed start cleanup. The caller
+// holds sess.mu.
+func (sess *session) detach() {
+	sess.principal = onlineauth.Principal{}
+	sess.matchID = ""
+	sess.seat = ""
+	sess.agentName = ""
+	sess.resumeToken = ""
+	sess.plan = ""
+}
+
 type sessionStore struct {
 	mu       sync.Mutex
 	sessions map[string]*session
