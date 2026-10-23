@@ -15,13 +15,17 @@ type OnlineFeatures struct {
 	Friends bool `json:"friends"`
 	// Queue opens the public matchmaking surface.
 	Queue bool `json:"queue"`
+	// MCP reports that the remote MCP endpoint is mounted, so the page can
+	// offer its connection prompts.
+	MCP bool `json:"mcp"`
 }
 
 // NewFeatures returns the feature state route.
 //
 // The route is always mounted, even when both surfaces are closed, because
 // the browser asks it before it shows anything. The answer carries exactly
-// the two independent switches.
+// the two independent play switches and whether the remote MCP endpoint is
+// mounted.
 func NewFeatures(features OnlineFeatures) http.Handler {
 	return NewLiveFeatures(func(context.Context) OnlineFeatures { return features })
 }

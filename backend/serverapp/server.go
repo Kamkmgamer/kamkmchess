@@ -14,6 +14,7 @@ import (
 	"github.com/Kamkmgamer/kamkmchess/backend/history"
 	"github.com/Kamkmgamer/kamkmchess/backend/httpapi"
 	"github.com/Kamkmgamer/kamkmchess/backend/invite"
+	"github.com/Kamkmgamer/kamkmchess/backend/mcpserver"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineswitch"
@@ -124,6 +125,17 @@ type OnlineConfig struct {
 	// ServerEngineSweepInterval is how often the server looks for engine
 	// seats that are to move.
 	ServerEngineSweepInterval time.Duration
+	// MCPEnabled mounts the anonymous remote MCP endpoint at /v1/mcp, where
+	// an agent plays the server engine. It is off by default and needs the
+	// server engine.
+	MCPEnabled bool
+	// MCPMaxActiveGames bounds the unfinished agent games.
+	MCPMaxActiveGames int
+	// MCPStartsPerHour bounds the games one client address may start.
+	MCPStartsPerHour int
+	// MCPTrustProxy reads the client address from X-Forwarded-For. Set it
+	// only behind a proxy that overwrites the header.
+	MCPTrustProxy bool
 }
 
 // flag reads an optional boolean setting. A missing or malformed value keeps
@@ -165,6 +177,10 @@ func Load(getenv func(string) string) (Config, error) {
 			ServerEnginePath:          strings.TrimSpace(getenv("ONLINE_SERVER_ENGINE_PATH")),
 			ServerEngineSlots:         positiveInt(getenv, "ONLINE_SERVER_ENGINE_SLOTS", DefaultServerEngineSlots),
 			ServerEngineSweepInterval: duration(getenv, "ONLINE_SERVER_ENGINE_SWEEP_INTERVAL", DefaultServerEngineSweepInterval),
+			MCPEnabled:                flag(getenv, "ONLINE_MCP_ENABLED"),
+			MCPMaxActiveGames:         positiveInt(getenv, "ONLINE_MCP_MAX_ACTIVE_GAMES", DefaultMCPMaxActiveGames),
+			MCPStartsPerHour:          positiveInt(getenv, "ONLINE_MCP_STARTS_PER_HOUR", DefaultMCPStartsPerHour),
+			MCPTrustProxy:             flag(getenv, "ONLINE_MCP_TRUST_PROXY"),
 		},
 	}
 	if cfg.DatabaseURL == "" || len(cfg.Clerk.AllowedOrigins) == 0 {
@@ -182,6 +198,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.Online.ServerEngineEnabled && cfg.Online.ServerEnginePath == "" {
 		return Config{}, errors.New("the server engine is enabled without an engine path")
+	}
+	if cfg.Online.MCPEnabled && !cfg.Online.ServerEngineEnabled {
+		return Config{}, errors.New("the remote MCP endpoint needs the server engine")
 	}
 	if _, err := auth.NewVerifier(cfg.Clerk); err != nil {
 		return Config{}, errors.New("invalid Clerk verifier configuration")
@@ -336,7 +355,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	surface := http.NewServeMux()
 	surface.Handle("/v1/online/features", httpapi.NewLiveFeatures(func(ctx context.Context) httpapi.OnlineFeatures {
 		state := switches.State(ctx)
-		return httpapi.OnlineFeatures{Friends: state.Friends, Queue: state.Queue}
+		return httpapi.OnlineFeatures{Friends: state.Friends, Queue: state.Queue, MCP: cfg.Online.MCPEnabled}
 	}))
 	surface.Handle("/", httpapi.NewOnlineWithPublicReplay(onlineService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}, historyService))
 	// The friend surface stays mounted even when the switch is off. The
@@ -398,11 +417,30 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// The server engine plays its own seats in the matches created against
 	// it. It is started only when its switch is on.
 	if cfg.Online.ServerEngineEnabled {
-		stopServerEngine, err := openServerEngine(ctx, cfg.Online, pool, onlineService, onlineauth.NewAllocator(authorizer))
+		engineSeats, stopServerEngine, err := openServerEngine(ctx, cfg.Online, pool, onlineService, onlineauth.NewAllocator(authorizer))
 		if err != nil {
 			return nil, nil, err
 		}
 		owned.own(stopServerEngine)
+		// The remote MCP endpoint is mounted only when its switch is on. A
+		// closed endpoint is not mounted at all, so it answers 404.
+		if cfg.Online.MCPEnabled {
+			endpoint, err := mcpserver.New(mcpserver.Options{
+				Matches:        onlineService,
+				Engine:         engineSeats,
+				Credentials:    onlineauth.NewAllocator(authorizer),
+				Authenticator:  authorizer,
+				ActiveGames:    mcpserver.PostgresActiveGames(pool),
+				AllowedOrigins: cfg.Clerk.AllowedOrigins,
+				TrustProxy:     cfg.Online.MCPTrustProxy,
+				MaxActiveGames: cfg.Online.MCPMaxActiveGames,
+				StartsPerHour:  cfg.Online.MCPStartsPerHour,
+			})
+			if err != nil {
+				return nil, nil, errors.New("remote MCP initialization failed")
+			}
+			root.Handle("/v1/mcp", endpoint)
+		}
 	}
 	// The public history API is mounted under its own prefix. Its reads need
 	// no credential at all.

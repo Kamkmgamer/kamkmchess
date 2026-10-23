@@ -15,15 +15,17 @@ const (
 	DefaultServerEngineSlots         = 2
 	DefaultServerEngineSweepInterval = 500 * time.Millisecond
 	serverEngineSweepBatch           = 64
+	DefaultMCPMaxActiveGames         = 50
+	DefaultMCPStartsPerHour          = 20
 )
 
 // openServerEngine starts the native engine pool and the loop that plays the
-// server engine seats. The returned stop function waits for the moves in
+// server engine seats, and returns the driver that creates matches against it. The returned stop function waits for the moves in
 // flight and then stops the engine processes.
-func openServerEngine(ctx context.Context, cfg OnlineConfig, pool *pgxpool.Pool, matches serverengine.Matches, credentials serverengine.Credentials) (func(), error) {
+func openServerEngine(ctx context.Context, cfg OnlineConfig, pool *pgxpool.Pool, matches serverengine.Matches, credentials serverengine.Credentials) (*serverengine.Service, func(), error) {
 	engines, err := engine.Open(ctx, engine.Config{Path: cfg.ServerEnginePath, Size: cfg.ServerEngineSlots})
 	if err != nil {
-		return nil, errors.New("the server engine could not start")
+		return nil, nil, errors.New("the server engine could not start")
 	}
 	driver, err := serverengine.New(serverengine.Options{
 		Matches:     matches,
@@ -34,10 +36,10 @@ func openServerEngine(ctx context.Context, cfg OnlineConfig, pool *pgxpool.Pool,
 	})
 	if err != nil {
 		engines.Close()
-		return nil, err
+		return nil, nil, err
 	}
 	stop := driver.Start(ctx, cfg.ServerEngineSweepInterval, serverEngineSweepBatch)
-	return func() {
+	return driver, func() {
 		stop()
 		engines.Close()
 	}, nil
