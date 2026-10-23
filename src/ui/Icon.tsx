@@ -14,7 +14,7 @@ const paths = {
   account: 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0M4 21v-2a8 8 0 0 1 16 0v2',
   save: 'M3 3h14l4 4v14H3zM7 3v6h10V3M7 21v-8h10v8',
   link: 'M10 13a5 5 0 0 0 7 .5l3-3a5 5 0 0 0-7-7l-2 2m3 5a5 5 0 0 0-7-.5l-3 3a5 5 0 0 0 7 7l2-2',
-  plus: 'M12 4v16M4 12h16', check: 'm5 12 4 4L19 6',
+  plus: 'M12 4v16M4 12h16', menu: 'M4 6h16M4 12h16M4 18h16', check: 'm5 12 4 4L19 6',
   bot: 'M8 10h8v7H8zM12 7v3M6 12h2m8 0h2M10 14h.01M14 14h.01',
   user: 'M16 7a4 4 0 1 1-8 0 4 4 0 0 1 8 0M4 21v-2a8 8 0 0 1 16 0v2',
   trophy: 'M8 4h8v4a4 4 0 0 1-8 0V4M6 5H3v2a4 4 0 0 0 5 4M18 5h3v2a4 4 0 0 1-5 4M12 12v6M8 21h8M9 18h6',
