@@ -44,7 +44,7 @@
 
     "online_presence": ["SELECT", "INSERT", "UPDATE"],
     "online_service_health": ["SELECT", "INSERT"],
-    "online_service_liveness": ["SELECT", "INSERT"],
+    "online_service_liveness": ["SELECT", "INSERT", "UPDATE"],
     "online_service_epochs": ["SELECT", "INSERT", "UPDATE"],
     "online_suspension_boundaries": ["SELECT", "INSERT", "UPDATE"],
     "online_recovery_adjustments": ["SELECT", "INSERT"],
