@@ -48,6 +48,15 @@ export function createThinkingRecord(currentInput: string, result: ProtocolStrea
   return thinking === undefined ? null : JSON.stringify({ kind: 'model-thinking', side: input.sideToMove, ...thinking });
 }
 
+/** Thinking for an answer authored outside a provider stream, such as a browser agent's tool call. */
+export function createAnswerThinkingRecord(currentInput: string, answerText: string): string | null {
+  const input = objectFromText(currentInput);
+  if (input?.kind !== 'current-match-input' || typeof input.fen !== 'string' ||
+      (input.sideToMove !== 'white' && input.sideToMove !== 'black')) return null;
+  const thinking = thinkingFromAnswer(input.fen, answerText, '', '');
+  return thinking === undefined ? null : JSON.stringify({ kind: 'model-thinking', side: input.sideToMove, ...thinking });
+}
+
 /** Return one retained thinking record for the playing side, never an accumulating transcript. */
 export function latestThinking(history: HistoryCheckpointV1, rules: RulesCheckpointV1): ModelThinkingV1 | undefined {
   let legacyReplies: string[] = [];
