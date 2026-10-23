@@ -22,6 +22,7 @@ configuration.
 | --- | --- | --- | --- |
 | `ONLINE_FRIEND_ENABLED` | API server | `false` | Friend invitation creation, acceptance and friend play are served. |
 | `ONLINE_QUEUE_ENABLED` | API server | `false` | Public queue entry, allocation and fallback are served. |
+| `ONLINE_OWNER_ACCOUNTS` | API server | empty | Comma-separated account identifiers that may open and close friend play and the public queue from the site's Account panel (`GET`/`PUT /v1/account/online-switches`). The two switches above are the defaults; an owner's choice is stored in `online_runtime_switches` and every API process picks it up within 5 seconds. Empty means the switches follow the configuration only. |
 | `ONLINE_FRIEND_COHORT` | API server | empty | Optional comma-separated account identifiers allowed to use friend play. Empty means every signed-in account. |
 | `ONLINE_QUEUE_COHORT` | API server | empty | Optional comma-separated account identifiers allowed to use the public queue. Empty means every signed-in account. |
 
@@ -143,7 +144,8 @@ Consequences the API owner implements:
 Turning `ONLINE_FRIEND_ENABLED` or `ONLINE_QUEUE_ENABLED` off stops new
 creations immediately. It does not abort, resign or invalidate matches that
 are already running, and it does not remove issued guest credentials. Rollback
-is therefore reversible and does not change a result.
+is therefore reversible and does not change a result. The same holds when a
+site owner closes a surface from the Account panel.
 
 ### Queue
 

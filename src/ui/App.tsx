@@ -68,6 +68,7 @@ import { getGenerationJournal } from '../integration/generation-runner.js';
 import type { GenerationJournalV1 } from '../integration/generation-runner.js';
 import type { HandoffSnapshotV1, OpponentIdentityV1 } from '../opponents/index.js';
 import { RightGameSidebar } from '../navigation/RightGameSidebar.js';
+import { LeftGameRail } from '../navigation/LeftGameRail.js';
 import { readSidebarPreferences } from '../navigation/sidebar-preferences.js';
 import { NewGameSetup } from './NewGameSetup.js';
 import type { NewGameDraft, StartedSidebarGame } from './NewGameSetup.js';
@@ -162,6 +163,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [journalRefresh, setJournalRefresh] = useState(0);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [onlineOpen, setOnlineOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [onlineInitialTab, setOnlineInitialTab] = useState<'games' | 'new' | 'profile'>('games');
   /** The online game the owner is looking at. */
   const focusedMatchId = online?.workspace.focusedMatchId ?? null;
@@ -1008,6 +1010,11 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const archiveWords = archiveText.split(/\s+/).filter(Boolean);
   const openTool = (next: typeof tool) => { setTool(next); setToolPage(0); setFeedback(''); setCoordinateError(''); };
   const focusPage = tool !== null || recoveryOpen;
+  const downloadArchive = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify({ checkpoint: snapshot.checkpoint, conversation: generationJournal }, null, 2)], { type: 'application/json' }));
+    const link = document.createElement('a'); link.href = url; link.download = `chess-${session.gameId}.json`; link.click(); URL.revokeObjectURL(url);
+  };
+  const openAgents = () => { setCatalogRefresh(value => value + 1); openTool('agents'); };
   const showEvaluation = spectator && !focusPage && !setupOpen;
   const acceptSidebarGame = ({ session: nextSession, snapshot: started, identities, draft }: StartedSidebarGame) => {
     setSetupDraft(draft);
@@ -1034,8 +1041,21 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         <button className="button quiet game-options-tools" type="button" onClick={() => { close(); openTool('settings'); }}>Settings</button>
       </>}
     </RightGameSidebar>
+    <LeftGameRail tool={tool} recoveryOpen={recoveryOpen} onlineOpen={onlineVisible && Boolean(online)}
+      showConversation={(['white', 'black'] as const).some(side => snapshot.checkpoint.selections.players[side].kind === 'model')}
+      onNewGame={() => openSetup()}
+      onBoard={() => { setTool(null); setRecoveryOpen(false); if (onlineVisible) closeOnline(); }}
+      onTool={next => next === 'agents' ? openAgents() : openTool(next)}
+      onDownload={downloadArchive}
+      onAccount={onOpenAccount}
+      onOnline={online ? () => openOnline('new') : undefined}
+      onHistory={online ? () => openOnline('profile') : undefined}
+      onProfile={onOpenProfile}
+      onAgents={online ? openAgents : undefined}
+      menuOpen={menuOpen} onMenuOpenChange={setMenuOpen} />
     <main className="workspace minimal-workspace" id="main">
     {!focusPage && <header className="topbar">
+      <IconButton className="button quiet icon-button topbar-menu" icon="menu" label="Menu" onClick={() => setMenuOpen(true)} />
       <a className="wordmark" href="/" aria-label="Kamkm Chess home">kamkm chess</a>
       <nav className="topbar-destinations" aria-label="Game destinations">
         {online && <button className="button secondary topbar-destination" type="button" onClick={() => openOnline('new')}>
@@ -1050,7 +1070,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       </nav>
       <div className="topbar-actions">
         {onOpenAccount && <IconButton icon="account" label="Account and saved games" onClick={onOpenAccount} />}
-        {online && <IconButton icon="change" label="Your agents" onClick={() => { setCatalogRefresh(value => value + 1); openTool('agents'); }} />}
+        {online && <IconButton icon="change" label="Your agents" onClick={openAgents} />}
         {!setupOpen && <IconButton icon="settings" label="Settings" onClick={() => openTool('settings')} />}
         <button className="button primary" type="button" onClick={() => openSetup()} aria-label="New game">New</button></div>
     </header>}
@@ -1064,10 +1084,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         <label>Theme<select value={theme} onChange={event => setTheme(event.target.value)}>{T3_PALETTES.map(palette => <option key={palette.id} value={palette.id}>{palette.label}</option>)}</select></label>
         <label>Appearance<select value={appearance} onChange={event => setAppearance(event.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
         <PieceStyleOptions />
-        <div className="button-row"><IconButton icon="board" label="Position" onClick={() => openTool('position')} /><IconButton icon="archive" label="Conversation and archive" onClick={() => openTool('archive')} /><IconButton icon="download" label="Download match archive" onClick={() => {
-          const url = URL.createObjectURL(new Blob([JSON.stringify({ checkpoint: snapshot.checkpoint, conversation: generationJournal }, null, 2)], { type: 'application/json' }));
-          const link = document.createElement('a'); link.href = url; link.download = `chess-${session.gameId}.json`; link.click(); URL.revokeObjectURL(url);
-        }} /></div>
+        <div className="button-row"><IconButton icon="board" label="Position" onClick={() => openTool('position')} /><IconButton icon="archive" label="Conversation and archive" onClick={() => openTool('archive')} /><IconButton icon="download" label="Download match archive" onClick={downloadArchive} /></div>
       </div>}
       {tool === 'move' && <form className="coordinate-form" onSubmit={submitCoordinate}><label className="sr-label" htmlFor="coordinate-move">Enter a move by coordinates</label><input id="coordinate-move" aria-label="Enter a move by coordinates" value={coordinate} onChange={event => { setCoordinate(event.target.value); setCoordinateError(''); }} placeholder="e2e4" autoComplete="off" autoCapitalize="none" spellCheck={false} enterKeyHint="go" /><button className="button primary" type="submit" aria-label="Play move" disabled={disabled}>Play</button>{coordinateError && <p role="alert">{coordinateError}</p>}</form>}
       {tool === 'position' && <><p className="fen-value">{history.position.fen}</p><IconButton icon="board" label="Edit starting position" onClick={() => openSetup(history.position.fen)} /></>}

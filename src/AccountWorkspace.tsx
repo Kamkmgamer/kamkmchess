@@ -12,6 +12,7 @@ import { ProfilePanel } from './ui/ProfilePanel.js';
 import { MatchComposition } from './ui/match-composition.js';
 import type { LocalGameSession } from './ui/match-composition.js';
 import { createProfileClient } from './profile/client.js';
+import { createOwnerSwitches } from './online/owner-switches.js';
 import type { GuestSeatBinding } from './profile/client.js';
 import { createProfileIdentityTracker } from './profile/identity.js';
 import type { ProfileIdentityBinding, ProfileIdentityTracker } from './profile/identity.js';
@@ -292,6 +293,14 @@ export function AccountWorkspace(initialView: WorkspaceView) {
     return createProfileClient({ baseUrl: publicConfig.apiBaseUrl, identity: profileIdentity });
   }, [profileIdentity]);
 
+  // The site owner's online switches. The service refuses every account that
+  // is not an owner, and the panel then shows nothing.
+  const ownerSwitches = useMemo(() => {
+    const account = profileIdentity?.account;
+    if (!publicConfig.apiBaseUrl || !account) return null;
+    return createOwnerSwitches({ baseUrl: publicConfig.apiBaseUrl, token: () => account.token() });
+  }, [profileIdentity]);
+
   // The guest seat this browser controls, when there is one.
   const guestSeat = useMemo<GuestSeatBinding | null>(
     () => (guestCredential ? { matchId: guestCredential.matchId, seat: guestCredential.seat } : null),
@@ -446,7 +455,7 @@ export function AccountWorkspace(initialView: WorkspaceView) {
   return <>
     {accountPage && <section className="focus-page account-workspace" aria-label="Account and saved games">
       <div className="panel-heading"><IconButton icon="back" label="Back" onClick={() => setAccountPage('account')} disabled={accountPage === 'account'} /><IconButton icon="close" label="Close account" onClick={() => setAccountPage(null)} /></div>
-      {accountPage === 'account' ? session ? <AccountPanel session={session} guestImport={repositories} onIdentityChanged={() => setRevision(value => value + 1)} onOpenGames={() => { setGamePage(0); setAccountPage('games'); }} onOpenProfile={profileClient ? () => setAccountPage('profile') : undefined} /> : <p>Loading…</p>
+      {accountPage === 'account' ? session ? <AccountPanel session={session} guestImport={repositories} onIdentityChanged={() => setRevision(value => value + 1)} onOpenGames={() => { setGamePage(0); setAccountPage('games'); }} onOpenProfile={profileClient ? () => setAccountPage('profile') : undefined} ownerSwitches={ownerSwitches} /> : <p>Loading…</p>
         : accountPage === 'profile' ? profileSurface : <>
         <h2>Saved games</h2>
         <div className="account-actions">

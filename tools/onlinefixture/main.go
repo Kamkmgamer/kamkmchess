@@ -116,6 +116,7 @@ func run() error {
 		keepSchema      = flag.Bool("keep-schema", false, "Keep the isolated schema after shutdown")
 		friendEnabled   = flag.Bool("friend-enabled", true, "Set ONLINE_FRIEND_ENABLED for the fixture run")
 		queueEnabled    = flag.Bool("queue-enabled", false, "Set ONLINE_QUEUE_ENABLED for the fixture run")
+		ownerAccounts   = flag.String("owner-accounts", "", "Set ONLINE_OWNER_ACCOUNTS: comma-separated accounts that may switch the online surfaces")
 		allowedOrigins  stringList
 	)
 	flag.Var(&allowedOrigins, "allow-origin", "Origin allowed to call the fixture API (repeatable)")
@@ -240,6 +241,7 @@ func run() error {
 		"ONLINE_RULES_WORKER_ENTRY": strings.TrimSpace(*rulesWorker),
 		"ONLINE_FRIEND_ENABLED":   strconv.FormatBool(*friendEnabled),
 		"ONLINE_QUEUE_ENABLED":    strconv.FormatBool(*queueEnabled),
+		"ONLINE_OWNER_ACCOUNTS":   strings.TrimSpace(*ownerAccounts),
 		"ONLINE_RESTORE_FENCE_PATH": fencePath,
 	}
 	config, err := serverapp.Load(func(key string) string { return environment[key] })
