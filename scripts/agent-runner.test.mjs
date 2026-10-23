@@ -11,11 +11,14 @@ test('parseAnswer reads the move from plain, fenced and chatty answers', () => {
 
 /** A scripted MCP server and model: the model is wrong once, then plays. */
 function fakes() {
+  /** @type {{ name: string, arguments: Record<string, unknown> }[]} */
   const calls = [];
   let moves = 0;
+  /** @param {string} status */
   const board = (status) => ({ status, gameId: 'g1', yourSide: 'white', moves: [], input: { kind: 'current-match-input', fen: 'x' } });
-  const mcp = (url, init) => {
-    const { id, method, params } = JSON.parse(init.body);
+  /** @type {typeof fetch} */
+  const mcp = async (_url, init) => {
+    const { id, method, params } = JSON.parse(String(init?.body));
     let result = {};
     if (method === 'tools/call') {
       calls.push(params);
@@ -30,13 +33,15 @@ function fakes() {
       }
       result = { content: [{ type: 'text', text: JSON.stringify(value) }], structuredContent: value };
     }
-    return Promise.resolve({ headers: new Headers({ 'mcp-session-id': 's1' }), json: () => Promise.resolve({ jsonrpc: '2.0', id, result }) });
+    return new Response(JSON.stringify({ jsonrpc: '2.0', id, result }), { headers: { 'mcp-session-id': 's1' } });
   };
   const answers = ['e5 please', '{"move":"e2e5"}', '{"move":"e2e4","plan":"centre"}', '{"move":"d2d4"}'];
+  /** @type {unknown[]} */
   const prompts = [];
-  const model = (url, init) => {
-    prompts.push(JSON.parse(init.body).messages);
-    return Promise.resolve({ ok: true, json: () => Promise.resolve({ choices: [{ message: { content: answers.shift() } }] }) });
+  /** @type {typeof fetch} */
+  const model = async (_url, init) => {
+    prompts.push(JSON.parse(String(init?.body)).messages);
+    return new Response(JSON.stringify({ choices: [{ message: { content: answers.shift() } }] }));
   };
   return { calls, mcp, model, prompts };
 }
@@ -49,6 +54,7 @@ test('the api route shows the model only the input and keeps the invite to itsel
   const final = await playApiGame(client, options, () => {}, model);
   assert.equal(final.status, 'finished');
   const start = calls.find((call) => call.name === 'start_game');
+  assert.ok(start, 'the runner never started a game');
   assert.equal(start.arguments.invite_code, 'kinv_secret');
   assert.equal(start.arguments.runner, 'kamkm-runner/api');
   assert.equal(start.arguments.engine_think_ms, 100);

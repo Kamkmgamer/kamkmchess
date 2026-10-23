@@ -27,6 +27,7 @@ import { join } from 'node:path';
 import process from 'node:process';
 import { parseArgs } from 'node:util';
 
+/** @type {Record<string, number>} */
 const LEVELS = { casual: 100, club: 1000, strong: 5000 };
 const VERIFIED_ROUTES = new Set(['api', 'claude-code']);
 
@@ -39,16 +40,47 @@ export const SYSTEM_PROMPT = [
   'Think for yourself. Four illegal moves in one turn lose the game.',
 ].join(' ');
 
+/**
+ * A tool answer: a board, a move result or { error }. The server owns its shape.
+ * @typedef {Record<string, any>} ToolAnswer
+ */
+
+/**
+ * @typedef {object} RunOptions
+ * @property {string} via
+ * @property {string} server
+ * @property {string | undefined} model
+ * @property {string} name
+ * @property {string} baseUrl
+ * @property {string} apiKey
+ * @property {string} color
+ * @property {string} level
+ * @property {number} minutes
+ * @property {number} increment
+ * @property {string} invite
+ */
+
 /** A minimal MCP Streamable HTTP client for the server's JSON answers. */
 export class McpClient {
+  /**
+   * @param {string} url
+   * @param {typeof fetch} [fetcher]
+   */
   constructor(url, fetcher = fetch) {
     this.url = url;
     this.fetcher = fetcher;
+    /** @type {string | null} */
     this.session = null;
     this.nextId = 0;
   }
 
+  /**
+   * @param {string} method
+   * @param {object} [params]
+   * @returns {Promise<any>}
+   */
   async rpc(method, params = {}) {
+    /** @type {Record<string, string>} */
     const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
     if (this.session) headers['mcp-session-id'] = this.session;
     const response = await this.fetcher(this.url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: ++this.nextId, method, params }) });
@@ -63,7 +95,12 @@ export class McpClient {
     await this.rpc('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'kamkm-runner', version: '1' } });
   }
 
-  /** Calls a tool; a tool error is returned as { error }. */
+  /**
+   * Calls a tool; a tool error is returned as { error }.
+   * @param {string} name
+   * @param {object} [args]
+   * @returns {Promise<ToolAnswer>}
+   */
   async call(name, args = {}) {
     const result = await this.rpc('tools/call', { name, arguments: args });
     if (result.isError) return { error: result.content?.[0]?.text ?? 'tool error' };
@@ -71,7 +108,11 @@ export class McpClient {
   }
 }
 
-/** Reads a {move, plan} answer, tolerating a fenced block or prose around it. */
+/**
+ * Reads a {move, plan} answer, tolerating a fenced block or prose around it.
+ * @param {string | null | undefined} text
+ * @returns {{ move: string, plan: string } | null}
+ */
 export function parseAnswer(text) {
   const match = /\{[\s\S]*\}/.exec(text ?? '');
   if (!match) return null;
@@ -83,6 +124,12 @@ export function parseAnswer(text) {
   }
 }
 
+/**
+ * @param {{ baseUrl: string, apiKey: string, model?: string | undefined }} options
+ * @param {{ role: string, content: string }[]} messages
+ * @param {typeof fetch} [fetcher]
+ * @returns {Promise<string>}
+ */
 async function chat({ baseUrl, apiKey, model }, messages, fetcher = fetch) {
   const response = await fetcher(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
@@ -94,7 +141,14 @@ async function chat({ baseUrl, apiKey, model }, messages, fetcher = fetch) {
   return body.choices?.[0]?.message?.content ?? '';
 }
 
-/** Plays one game with the runner choosing nothing: the model sees only the turn input. */
+/**
+ * Plays one game with the runner choosing nothing: the model sees only the turn input.
+ * @param {McpClient} client
+ * @param {Omit<RunOptions, 'via' | 'server'>} options
+ * @param {(line: string) => void} log
+ * @param {typeof fetch} [fetcher]
+ * @returns {Promise<ToolAnswer>}
+ */
 export async function playApiGame(client, options, log, fetcher = fetch) {
   let board = await client.call('start_game', startArgs(options, 'api'));
   if (board.error) throw new Error(board.error);
@@ -137,6 +191,10 @@ export async function playApiGame(client, options, log, fetcher = fetch) {
   return board;
 }
 
+/**
+ * @param {Pick<RunOptions, 'name' | 'color' | 'level' | 'minutes' | 'increment' | 'invite'>} options
+ * @param {string} route
+ */
 function startArgs(options, route) {
   return {
     model_name: options.name,
@@ -149,6 +207,7 @@ function startArgs(options, route) {
   };
 }
 
+/** @param {string} token */
 function cliPrompt(token) {
   return [
     'Play one game of chess with the kamkm-chess tools. Your game already exists:',
@@ -158,6 +217,12 @@ function cliPrompt(token) {
   ].join(' ');
 }
 
+/**
+ * @param {string} command
+ * @param {string[]} args
+ * @param {(line: string) => void} log
+ * @returns {Promise<number | null>}
+ */
 function run(command, args, log) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -168,7 +233,13 @@ function run(command, args, log) {
   });
 }
 
-/** Starts the game itself, then lets a locked-down CLI agent play it. */
+/**
+ * Starts the game itself, then lets a locked-down CLI agent play it.
+ * @param {McpClient} client
+ * @param {RunOptions} options
+ * @param {(line: string) => void} log
+ * @returns {Promise<ToolAnswer>}
+ */
 export async function playCliGame(client, options, log) {
   const started = await client.call('start_game', startArgs(options, options.via));
   if (started.error) throw new Error(started.error);
@@ -225,8 +296,9 @@ async function main() {
     process.stdout.write(`${usage()}\n`);
     process.exit(values.help ? 0 : 2);
   }
+  /** @type {RunOptions} */
   const options = {
-    via: values.via, server: values.server, model: values.model, baseUrl: values['base-url'],
+    via: values.via ?? '', server: values.server, model: values.model, baseUrl: values['base-url'],
     color: values.color, level: values.level, minutes: Number(values.minutes), increment: Number(values.increment),
     invite: values.invite ?? process.env.KAMKM_INVITE_CODE ?? '',
     name: values.name ?? values.model ?? (values.via === 'codex' ? 'Codex' : 'Claude'),
@@ -237,6 +309,7 @@ async function main() {
     process.exit(2);
   }
   if (options.invite && !VERIFIED_ROUTES.has(options.via)) process.stderr.write('codex games are not locked down, so they go on the community board; the invite code is not used.\n');
+  /** @param {string} line */
   const log = (line) => process.stderr.write(`${line}\n`);
   for (let game = 0; game < Number(values.games); game++) {
     const client = new McpClient(options.server);
