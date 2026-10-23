@@ -373,6 +373,7 @@ body { margin: 0; }
 }
 @media (max-width: 480px) {
   .boards-games { display: none; }
+}
 
 /* Play with your agent: choices, a client tab row and copy-ready steps. */
 .page-sections .agents-section { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.618fr); gap: calc(var(--space-6) * var(--golden-ratio)); align-items: start; padding-block: var(--space-15); }
