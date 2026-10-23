@@ -1,6 +1,6 @@
 import { useId, useSyncExternalStore } from 'react';
 import {
-  Icon, Book, Bot, ChessKnight, Code, Home, Information, Settings, UserAvatar,
+  Icon, Book, Bot, ChessKnight, Code, Home, Information, Link, List, Play, Settings, UserAvatar,
 } from '../components/quartz/icon';
 import { Button } from '../components/quartz/ui/button';
 import type { AccountControlsState } from '../accounts/account-controls';
@@ -40,6 +40,15 @@ export function GameNavigation({ onOptions, onNavigate, onAppearance, account, o
       <nav className="game-navigation" aria-label="Chess navigation">
         <a className="sidebar-row" href="#home" aria-current={section === '#home' ? 'location' : undefined} onClick={onNavigate}>
           <Icon icon={Home} size={20} /><span>Home</span>
+        </a>
+        <a className="sidebar-row" href="/play" onClick={onNavigate}>
+          <Icon icon={Play} size={24} /><span>Play</span>
+        </a>
+        <a className="sidebar-row" href="/play?online=new" onClick={onNavigate}>
+          <Icon icon={Link} size={24} /><span>Play online</span>
+        </a>
+        <a className="sidebar-row" href="/play?online=profile" onClick={onNavigate}>
+          <Icon icon={List} size={24} /><span>Profile &amp; history</span>
         </a>
         <a className="sidebar-row" href="#opening-preview" aria-current={section === '#opening-preview' ? 'location' : undefined} onClick={onNavigate}>
           <Icon icon={ChessKnight} size={20} /><span>Watch a game</span>

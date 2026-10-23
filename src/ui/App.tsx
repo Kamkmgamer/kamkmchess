@@ -153,6 +153,8 @@ function agentGameView(snapshot: ControllerSnapshotV1): AgentGameView {
 }
 
 export function App({ composition, initialSession, initialSnapshot, onOpenAccount, online, onOpenProfile, onlineResolveNamespace, onlineConnectionStore, accountIdentity }: AppProps) {
+  const onlineRoute = new URLSearchParams(window.location.search).get('online');
+  const routedOnlineTab = onlineRoute === 'profile' ? 'profile' : onlineRoute === 'new' ? 'new' : 'games';
   const [session, setSession] = useState(initialSession);
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [orientation, setOrientation] = useState<'white' | 'black'>(() =>
@@ -163,7 +165,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [coordinateError, setCoordinateError] = useState('');
   const [feedback, setFeedback] = useState('');
   const [promotion, setPromotion] = useState<PromotionMove | null>(null);
-  const [setupOpen, setSetupOpen] = useState(() => new URLSearchParams(window.location.search).get('setup') === 'new' || !readSidebarPreferences().collapsed);
+  const [setupOpen, setSetupOpen] = useState(() => !onlineRoute && (new URLSearchParams(window.location.search).get('setup') === 'new' || !readSidebarPreferences().collapsed));
   const [setupRequest, setSetupRequest] = useState(0);
   const [setupStartingFen, setSetupStartingFen] = useState<string | undefined>();
   const [setupFocus, setSetupFocus] = useState<'opponent' | 'time' | 'position' | null>(null);
@@ -183,9 +185,9 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [generationJournal, setGenerationJournal] = useState<GenerationJournalV1 | null>(null);
   const [journalRefresh, setJournalRefresh] = useState(0);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
-  const [onlineOpen, setOnlineOpen] = useState(false);
+  const [onlineOpen, setOnlineOpen] = useState(() => onlineRoute === 'new' || onlineRoute === 'profile');
   const [menuOpen, setMenuOpen] = useState(false);
-  const [onlineInitialTab, setOnlineInitialTab] = useState<'games' | 'new' | 'profile'>('games');
+  const [onlineInitialTab, setOnlineInitialTab] = useState<'games' | 'new' | 'profile'>(routedOnlineTab);
   /** The online game the owner is looking at. */
   const focusedMatchId = online?.workspace.focusedMatchId ?? null;
   /** The generation of the identity of the composition. */
@@ -1147,10 +1149,12 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         {!setupOpen && <IconButton icon="settings" label="Settings" onClick={() => openTool('settings')} />}
         <button className="button primary" type="button" onClick={() => openSetup()} aria-label="New game">New</button></div>
     </header>}
-    {onlineVisible && online && <OnlineWorkspace composition={online} onClose={closeOnline} initialTab={onlineInitialTab}
-      agentLabel={online.agent?.label ?? null}
-      checkAgent={checkOnlineAgent}
-      {...(onOpenProfile ? { onOpenProfile } : {})} />}
+    {onlineVisible && online && <div className="online-overlay" role="dialog" aria-modal="true" aria-label="Online play" tabIndex={-1}>
+      <OnlineWorkspace composition={online} onClose={closeOnline} initialTab={onlineInitialTab}
+        agentLabel={online.agent?.label ?? null}
+        checkAgent={checkOnlineAgent}
+        {...(onOpenProfile ? { onOpenProfile } : {})} />
+    </div>}
     {tool && <section className="focus-page" aria-label={tool === 'agents' ? 'Your agents' : 'Match tools'}>
       <div className="panel-heading"><h2>{tool === 'move' ? 'Move' : tool === 'agents' ? 'Your agents' : tool.charAt(0).toUpperCase() + tool.slice(1)}</h2><IconButton icon="close" label="Close" onClick={() => setTool(null)} /></div>
       {tool === 'settings' && <div className="connection-form">
