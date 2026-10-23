@@ -23,6 +23,7 @@ configuration.
 | `ONLINE_FRIEND_ENABLED` | API server | `false` | Friend invitation creation, acceptance and friend play are served. |
 | `ONLINE_QUEUE_ENABLED` | API server | `false` | Public queue entry, allocation and fallback are served. |
 | `ONLINE_SERVER_ENGINE_ENABLED` | API server | `false` | The server plays its own native Stockfish seat in matches created against it. Needs `ONLINE_SERVER_ENGINE_PATH`. See `docs/implementation/server-engine.md`. |
+| `ONLINE_MCP_ENABLED` | API server | `false` | The anonymous remote MCP endpoint `/v1/mcp` is mounted, where an agent plays the server engine. Needs the server engine. See `docs/implementation/remote-mcp.md`. |
 | `ONLINE_FRIEND_COHORT` | API server | empty | Optional comma-separated account identifiers allowed to use friend play. Empty means every signed-in account. |
 | `ONLINE_QUEUE_COHORT` | API server | empty | Optional comma-separated account identifiers allowed to use the public queue. Empty means every signed-in account. |
 

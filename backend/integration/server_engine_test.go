@@ -12,12 +12,15 @@ import (
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
 	"github.com/Kamkmgamer/kamkmchess/backend/rulesworker"
 	"github.com/Kamkmgamer/kamkmchess/backend/serverengine"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type serverEngineFixture struct {
-	service *online.Service
-	driver  *serverengine.Service
-	options serverengine.Options
+	service    *online.Service
+	driver     *serverengine.Service
+	options    serverengine.Options
+	authorizer *onlineauth.Service
+	pool       *pgxpool.Pool
 }
 
 // newServerEngineFixture composes the online service with the real rules
@@ -71,7 +74,7 @@ func newServerEngineFixture(t *testing.T) serverEngineFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return serverEngineFixture{service: service, driver: driver, options: options}
+	return serverEngineFixture{service: service, driver: driver, options: options, authorizer: authorizer, pool: pool}
 }
 
 // sweepUntil sweeps until the match reaches the wanted number of moves or
