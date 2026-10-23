@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { composePlayers } from './match-modes.js';
 import { createEngineSelection } from '../engines/local.js';
+import { createAgentSelection } from '../agents/seat.js';
 import type { ModelSelection } from '../controller/index.js';
 
 const engine = createEngineSelection({ engineId: 'stockfish-lite', hashMb: 32, moveTimeMs: 1000 });
@@ -24,5 +25,13 @@ describe('match modes', () => {
     expect(() => composePlayers('engine-ai', 'white', 'white', { white: ai, black: engine })).toThrow();
     expect(() => composePlayers('ai-ai', 'white', 'white', { white: ai, black: null })).toThrow();
     expect(() => composePlayers('ai', 'white', 'white', { white: null, black: { ...ai, diagnostic: 'unknown' } })).toThrow();
+  });
+  it('seats an agent beside the existing modes without needing a checked selection', () => {
+    const agent = createAgentSelection();
+    expect(composePlayers('human-agent', 'white', 'white', { white: null, black: null })).toEqual({ white: { kind: 'human' }, black: agent });
+    expect(composePlayers('agent-engine', 'white', 'black', { white: engine, black: null })).toEqual({ white: engine, black: agent });
+    expect(composePlayers('agent-ai', 'white', 'white', { white: null, black: ai })).toEqual({ white: agent, black: ai });
+    expect(() => composePlayers('agent-engine', 'white', 'white', { white: null, black: ai })).toThrow();
+    expect(() => composePlayers('ai', 'white', 'white', { white: null, black: agent })).toThrow();
   });
 });
