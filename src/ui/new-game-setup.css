@@ -90,3 +90,4 @@
   .sidebar-game-setup .editor-castling-rights label { min-height: 44px; }
   .sidebar-game-setup .editor-piece-choice { height: auto; min-height: 44px; aspect-ratio: 1; }
 }
+.sidebar-game-setup .agent-seat-note p, .quartz .sidebar-game-setup .agent-seat-note p { margin: 0; color: var(--t3-text-muted, var(--t3-text)); }

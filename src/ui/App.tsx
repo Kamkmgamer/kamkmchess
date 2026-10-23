@@ -55,7 +55,10 @@ import { useTheme } from '../use-theme.js';
 import { OpponentPanel } from './OpponentPanel.js';
 import { OpponentBadge } from './OpponentBadge.js';
 import { EnginePanel } from './EnginePanel.js';
-import { isEngineSelection, runEngineTurn } from '../engines/local.js';
+import { createEngineSelection, isEngineSelection, recommendEngine, runEngineTurn } from '../engines/local.js';
+import { AGENT_TIME_CONTROL, agentBridge, createAgentSelection, isAgentSelection, registerAgentTools, runAgentTurn } from '../agents/index.js';
+import type { AgentGameView, AgentStartOptions } from '../agents/index.js';
+import type { PlayerSelectionV1 } from '../storage/index.js';
 import { BROWSER_ENGINES, stopBrowserEngines, stopUnusedBrowserEngines } from '../engines/browser.js';
 import { engineSettings } from '../engines/local.js';
 import { IconButton } from './Icon.js';
@@ -128,6 +131,24 @@ function statusLabel(snapshot: ControllerSnapshotV1): string {
   }
   if (snapshot.checkpoint.result.kind === 'pending-adjudication') return 'Position check pending';
   return (snapshot.position.sideToMove === 'w' ? 'White' : 'Black') + ' to move';
+}
+
+/** What agent tools may see of the open game: the committed position, never a draft or premove. */
+function agentGameView(snapshot: ControllerSnapshotV1): AgentGameView {
+  const players = snapshot.checkpoint.selections.players;
+  const result = snapshot.checkpoint.result;
+  const reading = snapshot.clockReading;
+  return {
+    gameId: snapshot.checkpoint.gameId,
+    agentSides: (['white', 'black'] as const).filter(side => isAgentSelection(players[side])),
+    sideToMove: snapshot.position.sideToMove === 'w' ? 'white' : 'black',
+    fen: snapshot.checkpoint.rules.currentFen,
+    moves: snapshot.checkpoint.rules.moves.map(move => move.san).join(' '),
+    status: result.kind === 'final' ? 'finished' : snapshot.readiness === 'ready' && reading?.status === 'running' ? 'active' : 'waiting',
+    result: result.kind === 'final' ? `${statusLabel(snapshot)} (${result.reason})` : null,
+    clock: reading?.status === 'running' ? { whiteMs: Math.round(reading.remaining.whiteMs), blackMs: Math.round(reading.remaining.blackMs),
+      incrementMs: snapshot.checkpoint.clocks.timeControl.incrementMs } : null,
+  };
 }
 
 export function App({ composition, initialSession, initialSnapshot, onOpenAccount, online, onOpenProfile, onlineResolveNamespace, onlineConnectionStore, accountIdentity }: AppProps) {
@@ -599,6 +620,27 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         let service: Awaited<typeof composition.opponentService> | null = null;
         let continueAutomatically = false;
         try {
+          if (isAgentSelection(queuedSelection)) {
+            setGenerationDetail('Waiting for agent…');
+            const turn = await runAgentTurn(session.controller, agentBridge, abort!.signal);
+            if (sessionRef.current.gameId !== session.gameId) return;
+            setJournalRefresh(revision => revision + 1);
+            const outcome = turn.kind === 'settled' ? turn.outcome : null;
+            if (outcome?.kind === 'illegal' && !outcome.lost || outcome?.kind === 'format' && !outcome.paused) {
+              // Same automatic recovery as an API model: the next turn carries the correction.
+              continueAutomatically = true;
+              setGenerationState('idle');
+              setGenerationDetail(outcome.message);
+            } else if (outcome?.kind === 'format') {
+              setGenerationState('failed');
+              setGenerationDetail(outcome.message);
+              setAutoGeneration(false);
+            } else {
+              setGenerationState(outcome !== null && outcome.kind !== 'not-accepted' ? 'idle' : 'failed');
+              setGenerationDetail(outcome?.kind === 'accepted' ? 'Move saved.' : outcome?.kind === 'not-accepted' ? outcome.message : 'Agent move unavailable. Retry.');
+            }
+            return;
+          }
           if (isEngineSelection(queuedSelection)) {
             setGenerationDetail('Thinking…');
             const accepted = await runEngineTurn(session.controller, abort!.signal);
@@ -993,6 +1035,10 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const allowPremove = premoveColor !== null && isModelTurn && !working;
   const playerLabel = (side: 'white' | 'black') => {
     const player = snapshot.checkpoint.selections.players[side];
+    if (isAgentSelection(player)) {
+      const name = agentBridge.reportedName(snapshot.checkpoint.gameId);
+      return name === null ? player.modelRoutingId : `${name} (self-reported)`;
+    }
     return isEngineSelection(player) ? BROWSER_ENGINES[engineSettings(player).engineId].name
       : player.kind === 'model' ? player.modelRoutingId : side === 'white' ? 'White' : 'Black';
   };
@@ -1022,6 +1068,33 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     setRecoveryOpen(false);
     setFeedback('New game saved.');
   };
+  const startAgentGame = async ({ color, opponent, engineThinkMs }: AgentStartOptions): Promise<string> => {
+    const side = color === 'random' ? Math.random() < 0.5 ? 'white' : 'black' : color;
+    const other = side === 'white' ? 'black' : 'white';
+    const engine = opponent === 'engine' ? createEngineSelection({ ...recommendEngine({ logicalCores: navigator.hardwareConcurrency,
+      memoryGb: (navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? null }), moveTimeMs: engineThinkMs }) : null;
+    const players = { [side]: createAgentSelection(), [other]: engine ?? { kind: 'human' } } as Record<'white' | 'black', PlayerSelectionV1>;
+    const nextSession = await composition.startNewLocalGame({ players,
+      startingTimeMinutes: AGENT_TIME_CONTROL.minutes, incrementSeconds: AGENT_TIME_CONTROL.incrementSeconds });
+    const started = await startClassifiedLocalGame(nextSession.controller, nextSession.controller.snapshot());
+    acceptSidebarGame({ session: nextSession, snapshot: started, identities: [], draft: {
+      mode: engine ? 'agent-engine' : 'human-agent', minutes: AGENT_TIME_CONTROL.minutes, increment: AGENT_TIME_CONTROL.incrementSeconds,
+      engineSide: side, humanSide: other, engineSeats: { white: null, black: null, ...(engine ? { [other]: engine } : {}) },
+      aiSeats: { white: null, black: null }, modelSelection: null, opponentIdentity: null } });
+    // Tools read the new game before React re-renders this page.
+    agentHost.current = { ...agentHost.current, snapshot: started };
+    return nextSession.gameId;
+  };
+  const agentHost = useRef({ snapshot, start: startAgentGame });
+  useEffect(() => { agentHost.current = { snapshot, start: startAgentGame }; });
+  useEffect(() => {
+    const detach = agentBridge.attachHost({ view: () => agentGameView(agentHost.current.snapshot), startGame: options => agentHost.current.start(options) });
+    const unregister = registerAgentTools(agentBridge);
+    return () => { unregister(); detach(); };
+  }, []);
+  useEffect(() => { agentBridge.notify(); }, [snapshot]);
+  const [, setAgentRevision] = useState(0);
+  useEffect(() => agentBridge.subscribe(() => setAgentRevision(revision => revision + 1)), []);
   return <>
     <RightGameSidebar open={setupOpen} onOpenChange={setSetupOpen} showReopenButton={false}>
       {close => <>
@@ -1122,7 +1195,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
               <IconButton icon="play" label={snapshot.modelHandoff.queued?.state === "failed" ? "Retry queued model" : isEngineSelection(activePlayer) ? "Retry engine turn" : "Retry model request"} onClick={() => { if (snapshot.modelHandoff.queued?.state === 'failed') void recoverQueuedModel('retry'); else retryModelTurn(); }} />
               {snapshot.modelHandoff.queued?.state === 'failed' && <IconButton icon="undo" label="Resume previous model" onClick={() => void recoverQueuedModel('resume')} />}
             </>}
-            {!final && Object.values(players).some(player => player.kind === 'model') && <IconButton icon="change" label={isEngineSelection(recoverySelection) ? "Choose another engine" : "Choose another model"} onClick={() => setRecoveryOpen(true)} />}
+            {!final && Object.values(players).some(player => player.kind === 'model') && !isAgentSelection(recoverySelection) && <IconButton icon="change" label={isEngineSelection(recoverySelection) ? "Choose another engine" : "Choose another model"} onClick={() => setRecoveryOpen(true)} />}
             {snapshot.modelHandoff.queued && <IconButton icon="close" label="Cancel queued model" onClick={() => void cancelQueuedModel()} />}
             {final && snapshot.checkpoint.result.kind === 'final' && snapshot.checkpoint.result.winner !== 'draw' && !spectator && !Object.values(players).some(isEngineSelection) && Object.values(players).some(player => player.kind === 'model') && <IconButton icon="play" label="Start practice from this position" disabled={working} onClick={() => void beginPractice()} />}
           </div>
