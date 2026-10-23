@@ -4,6 +4,11 @@
 .account-panel h2 { font-size: 18px; margin-block: 8px; }
 .account-panel h3 { font-size: 16px; }
 .account-panel-actions, .account-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-block: 12px; }
+.owner-switches { display: grid; gap: 8px; margin: 16px 0 12px; padding: 12px 14px; border: 1px solid var(--edge); border-radius: 8px; }
+.owner-switches legend { padding-inline: 4px; font-weight: 600; }
+.owner-switch { display: flex; align-items: center; gap: 10px; min-height: 36px; cursor: pointer; }
+.owner-switch input { width: 18px; height: 18px; accent-color: var(--green); }
+.owner-switch small { margin-left: auto; color: var(--muted, inherit); opacity: .75; }
 .guest-import-preview label { display: flex; gap: 8px; align-items: start; margin-block: 8px; overflow-wrap: anywhere; }
 .account-games ul { list-style: none; padding: 0; }
 .account-games li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-block: 10px; border-top: 1px solid var(--rule); }

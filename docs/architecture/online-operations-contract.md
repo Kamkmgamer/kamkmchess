@@ -22,6 +22,7 @@ configuration.
 | --- | --- | --- | --- |
 | `ONLINE_FRIEND_ENABLED` | API server | `false` | Friend invitation creation, acceptance and friend play are served. |
 | `ONLINE_QUEUE_ENABLED` | API server | `false` | Public queue entry, allocation and fallback are served. |
+| `ONLINE_OWNER_ACCOUNTS` | API server | empty | Comma-separated account identifiers that may open and close friend play and the public queue from the site's Account panel (`GET`/`PUT /v1/account/online-switches`). The two switches above are the defaults; an owner's choice is stored in `online_runtime_switches` and every API process picks it up within 5 seconds. Empty means the switches follow the configuration only. |
 | `ONLINE_SERVER_ENGINE_ENABLED` | API server | `false` | The server plays its own native Stockfish seat in matches created against it. Needs `ONLINE_SERVER_ENGINE_PATH`. See `docs/implementation/server-engine.md`. |
 | `ONLINE_MCP_ENABLED` | API server | `false` | The anonymous remote MCP endpoint `/v1/mcp` is mounted, where an agent plays the server engine. Needs the server engine. See `docs/implementation/remote-mcp.md`. |
 | `ONLINE_AGENT_BOARDS_ENABLED` | API server | `false` | The public agent boards `/v1/public/agent-boards?board=community\|verified` are served and the landing page shows them. Needs the remote MCP endpoint. See `docs/implementation/agent-boards-runner.md`. |

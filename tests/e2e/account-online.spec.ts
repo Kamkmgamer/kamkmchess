@@ -111,7 +111,7 @@ async function firstAccount(): Promise<string> {
 
 /** Opens the online screen of a signed-in browser. */
 async function openOnline(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'Online play' }).click();
+  await page.getByRole('button', { name: 'Play online' }).click();
   await page.getByRole('button', { name: 'New play' }).click();
 }
 

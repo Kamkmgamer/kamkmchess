@@ -316,7 +316,8 @@ function protocolForSelection(profile: ConnectionProfile, selected: string): Pro
   }
 }
 
-function persistedBudgets(snapshot: ControllerSnapshotV1, side: 'white' | 'black'): TurnBudgetsV1 {
+/** Remaining recovery budgets of the side to move, restored from the durable checkpoint. */
+export function persistedBudgets(snapshot: ControllerSnapshotV1, side: 'white' | 'black'): TurnBudgetsV1 {
   const checkpoint = snapshot.checkpoint;
   const producing = snapshot.modelHandoff.producing;
   const committed = checkpoint.selections.players[side];

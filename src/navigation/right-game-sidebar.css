@@ -21,3 +21,6 @@
   .right-game-sidebar { transition: translate 180ms cubic-bezier(.16, 1, .3, 1); }
   .right-game-sidebar:is([data-starting-style], [data-ending-style]) { translate: 100% 0; }
 }
+.right-game-sidebar .game-options-heading { padding-bottom: 16px; margin-bottom: 20px; border-bottom: 1px solid var(--t3-border); }
+.right-game-sidebar .game-options-heading .icon-button { width: 36px; height: 36px; border-color: transparent; background: transparent; }
+.right-game-sidebar .game-options-heading .icon-button:hover { background: var(--panel, var(--t3-surface)); }

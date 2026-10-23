@@ -18,6 +18,7 @@ import (
 	"github.com/Kamkmgamer/kamkmchess/backend/mcpserver"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/Kamkmgamer/kamkmchess/backend/onlineswitch"
 	"github.com/Kamkmgamer/kamkmchess/backend/privacy"
 	"github.com/Kamkmgamer/kamkmchess/backend/profile"
 	"github.com/Kamkmgamer/kamkmchess/backend/queue"
@@ -81,6 +82,11 @@ type OnlineConfig struct {
 	// guest has to be able to create a friend link and to accept an
 	// invitation that was issued while friend play was enabled.
 	FriendCohort cohort.Cohort
+	// OwnerAccounts are the account identifiers that may open and close the
+	// friend and queue surfaces from the site. FriendEnabled and
+	// QueueEnabled stay the defaults until an owner changes them. Empty
+	// means no one can, and the surfaces follow the configuration only.
+	OwnerAccounts []string
 	// QueueCohort narrows the accounts that may use the public queue.
 	//
 	// It is an allowlist of account identifiers and it is empty by default,
@@ -166,6 +172,7 @@ func Load(getenv func(string) string) (Config, error) {
 			QueueEnabled:              flag(getenv, "ONLINE_QUEUE_ENABLED"),
 			FriendCohort:              cohort.Parse(getenv("ONLINE_FRIEND_COHORT")),
 			QueueCohort:               cohort.Parse(getenv("ONLINE_QUEUE_COHORT")),
+			OwnerAccounts:             cohort.Parse(getenv("ONLINE_OWNER_ACCOUNTS")).Accounts(),
 			QueueSweepInterval:        duration(getenv, "ONLINE_QUEUE_SWEEP_INTERVAL", DefaultQueueSweepInterval),
 			QueueSweepBatch:           positiveInt(getenv, "ONLINE_QUEUE_SWEEP_BATCH", DefaultQueueSweepBatch),
 			HistoryPublishInterval:    duration(getenv, "ONLINE_HISTORY_PUBLISH_INTERVAL", history.DefaultPublishInterval),
@@ -347,12 +354,17 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// state is always mounted: the browser asks it before it shows
 	// anything, and a configured service origin is not an enablement
 	// signal.
+	// The configured switches are the defaults; the site owner can override
+	// them at runtime, so every switch below reads the live state.
+	switches, err := onlineswitch.Open(ctx, pool, onlineswitch.State{Friends: cfg.Online.FriendEnabled, Queue: cfg.Online.QueueEnabled})
+	if err != nil {
+		return nil, nil, errors.New("online switch initialization failed")
+	}
+	ownerSwitchable := len(cfg.Online.OwnerAccounts) > 0
 	surface := http.NewServeMux()
-	surface.Handle("/v1/online/features", httpapi.NewFeatures(httpapi.OnlineFeatures{
-		Friends: cfg.Online.FriendEnabled,
-		Queue:   cfg.Online.QueueEnabled,
-		MCP:     cfg.Online.MCPEnabled,
-		Boards:  cfg.Online.AgentBoardsEnabled,
+	surface.Handle("/v1/online/features", httpapi.NewLiveFeatures(func(ctx context.Context) httpapi.OnlineFeatures {
+		state := switches.State(ctx)
+		return httpapi.OnlineFeatures{Friends: state.Friends, Queue: state.Queue, MCP: cfg.Online.MCPEnabled, Boards: cfg.Online.AgentBoardsEnabled}
 	}))
 	surface.Handle("/", httpapi.NewOnlineWithPublicReplay(onlineService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}, historyService))
 	// The friend surface stays mounted even when the switch is off. The
@@ -364,7 +376,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	friendService, err := invite.Open(ctx, pool, onlineService, onlineService, onlineauth.NewAllocator(authorizer), invite.Options{
 		GuestCredentialTTL: cfg.Online.GuestCredentialTTL,
 		InvitationTTL:      invite.InvitationTTL,
-		Gate:               invite.StaticGate(cfg.Online.FriendEnabled),
+		Gate:               switches,
 	})
 	if err != nil {
 		return nil, nil, errors.New("friend invitation initialization failed")
@@ -383,10 +395,10 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	surface.Handle("/v1/online/rematches/", friendHandler)
 	surface.Handle("GET /v1/online/matches/{matchID}/rematch", friendHandler)
 	root.Handle("/v1/online/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders, surface))
-	// The public queue is mounted only when its switch is on. A closed
-	// surface is not mounted at all, so its routes answer 404.
+	// The public queue is mounted only when it can be open: when its switch
+	// is on, or when an owner can turn it on. A closed surface answers 404.
 	var queueService *queue.Service
-	if cfg.Online.QueueEnabled {
+	if cfg.Online.QueueEnabled || ownerSwitchable {
 		// The queue allocates matches through the shared writer. The writer
 		// owns the trusted allocation seam, so the queue never writes a
 		// match row itself.
@@ -403,13 +415,13 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 			return nil, nil, errors.New("public queue initialization failed")
 		}
 		root.Handle("/v1/online/queue/", httpapi.CORSWithHeaders(cfg.Clerk.AllowedOrigins, httpapi.OnlineRequestHeaders,
-			httpapi.NewQueue(queueService, authorizer, httpapi.QueueOptions{
+			whenOpen(switches.QueueEnabled, httpapi.NewQueue(queueService, authorizer, httpapi.QueueOptions{
 				AllowedOrigins: cfg.Clerk.AllowedOrigins,
 				// The cohort narrows the accounts that may enter the
 				// public queue. It is an allowlist, so an empty cohort
 				// admits every signed-in account.
 				Cohort: cfg.Online.QueueCohort,
-			})))
+			}))))
 	}
 	// The server engine plays its own seats in the matches created against
 	// it. It is started only when its switch is on.
@@ -454,6 +466,10 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// The public profile API is mounted under its own prefixes so it never
 	// widens the private single-owner sync API.
 	profileHandler := httpapi.CORSWithMethods(cfg.Clerk.AllowedOrigins, httpapi.ProfileRequestHeaders, "GET, POST, PUT, OPTIONS", httpapi.NewProfile(profileService, guestProofIssuer{allocator: onlineauth.NewAllocator(authorizer)}, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}))
+	if ownerSwitchable {
+		root.Handle("/v1/account/online-switches", httpapi.CORSWithMethods(cfg.Clerk.AllowedOrigins, httpapi.ProfileRequestHeaders, "GET, PUT, OPTIONS",
+			httpapi.NewOwnerSwitches(switches, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}, cfg.Online.OwnerAccounts)))
+	}
 	root.Handle("/v1/profiles/", profileHandler)
 	root.Handle("/v1/account/", profileHandler)
 	root.Handle("/v1/guest-seats/", profileHandler)
@@ -584,4 +600,16 @@ func duration(getenv func(string) string, key string, fallback time.Duration) ti
 		return fallback
 	}
 	return parsed
+}
+
+// whenOpen answers 404 while open reports the surface closed, exactly like a
+// surface that is not mounted.
+func whenOpen(open func() bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !open() {
+			http.NotFound(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
