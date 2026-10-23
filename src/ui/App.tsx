@@ -1056,10 +1056,12 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         {!setupOpen && <IconButton icon="settings" label="Settings" onClick={() => openTool('settings')} />}
         <button className="button primary" type="button" onClick={() => openSetup()} aria-label="New game">New</button></div>
     </header>}
-    {onlineVisible && online && <OnlineWorkspace composition={online} onClose={closeOnline} initialTab={onlineInitialTab}
-      agentLabel={online.agent?.label ?? null}
-      checkAgent={checkOnlineAgent}
-      {...(onOpenProfile ? { onOpenProfile } : {})} />}
+    {onlineVisible && online && <div className="online-overlay">
+      <OnlineWorkspace composition={online} onClose={closeOnline} initialTab={onlineInitialTab}
+        agentLabel={online.agent?.label ?? null}
+        checkAgent={checkOnlineAgent}
+        {...(onOpenProfile ? { onOpenProfile } : {})} />
+    </div>}
     {tool && <section className="focus-page" aria-label={tool === 'agents' ? 'Your agents' : 'Match tools'}>
       <div className="panel-heading"><h2>{tool === 'move' ? 'Move' : tool === 'agents' ? 'Your agents' : tool.charAt(0).toUpperCase() + tool.slice(1)}</h2><IconButton icon="close" label="Close" onClick={() => setTool(null)} /></div>
       {tool === 'settings' && <div className="connection-form">

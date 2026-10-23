@@ -1754,7 +1754,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     </nav>
     <OnlineFailureNotice failure={failure || queueFailure} />
 
-    {tab === 'new' && <section className="online-panel" aria-label="New play">
+    {tab === 'new' && <section className="online-panel online-new-panel" aria-label="New play">
       <div className="online-clock" role="group" aria-label="Clock">
         {CLOCK_CHOICES.map((choice, index) => <button
           key={`${choice.minutes}-${choice.increment}`}
@@ -1790,7 +1790,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       </ul>}
 
       <h3>Friend</h3>
-      <section className="online-panel" aria-label="Invite a friend">
+      <section className="online-panel online-friend-panel" aria-label="Invite a friend">
         <div className="button-row" role="group" aria-label="Invitation kind">
           <button className={`button ${friendKind === 'link' ? 'primary' : 'quiet'}`} type="button" aria-pressed={friendKind === 'link'} onClick={() => setFriendKind('link')}>Link</button>
           <button className={`button ${friendKind === 'challenge' ? 'primary' : 'quiet'}`} type="button" aria-pressed={friendKind === 'challenge'} disabled={!composition.accountSignedIn} onClick={() => setFriendKind('challenge')}>Challenge</button>
@@ -1826,7 +1826,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
           </li>)}
         </ul>}
       </section>
-      <section className="online-panel" aria-label="Join a friend">
+      <section className="online-panel online-friend-panel" aria-label="Join a friend">
         <label className="online-field">Code
           <input value={invitationCode} aria-label="Invitation code" onChange={event => setInvitationCode(event.target.value)} />
         </label>
