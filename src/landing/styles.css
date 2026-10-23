@@ -160,7 +160,7 @@ body { margin: 0; }
 .hero-dither-pattern { position: absolute; inset: 0; }
 .hero-dither-pattern-secondary { opacity: 0; }
 .quartz .mobile-menu-trigger { display: none; position: fixed; inset-block-start: var(--space-6); inset-inline-start: var(--space-6); z-index: var(--z-raised); }
-.hero-introduction { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: var(--space-6); padding-block: var(--space-20); color: #fff; }
+.hero-introduction { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; gap: var(--space-6); padding-block: var(--space-20); padding-inline-end: var(--game-options-inset, 0px); color: #fff; transition: padding-inline-end var(--dur-slow) var(--ease-step); }
 .hero h1 { max-width: var(--page-header-max); }
 .hero-introduction > p { max-width: var(--overlay-lg); }
 .hero-introduction > [data-slot='button'] { margin-top: var(--space-2); }
