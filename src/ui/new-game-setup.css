@@ -90,7 +90,6 @@
   .sidebar-game-setup .editor-castling-rights label { min-height: 44px; }
   .sidebar-game-setup .editor-piece-choice { height: auto; min-height: 44px; aspect-ratio: 1; }
 }
-
 /* Grouped sections: muted labels, small section headings and hairline dividers. */
 .right-game-sidebar .sidebar-game-setup label { color: var(--t3-text-muted, var(--t3-text)); }
 .sidebar-game-setup > .game-opponent-options, .sidebar-game-setup > .game-start-form { padding-top: 24px; border-top: 1px solid var(--t3-border); }
@@ -107,3 +106,4 @@
 .sidebar-game-setup .connection-form .button-row > .button.primary { flex: 1; }
 .sidebar-game-setup .button.primary:disabled { opacity: 1; background: color-mix(in srgb, var(--t3-accent) 16%, transparent); border-color: color-mix(in srgb, var(--t3-accent) 28%, transparent); color: color-mix(in srgb, var(--t3-accent) 70%, var(--t3-text-muted, var(--t3-text))); }
 .sidebar-game-setup .game-position-heading .button { min-height: 36px; padding-block: 4px; }
+.sidebar-game-setup .agent-seat-note p, .quartz .sidebar-game-setup .agent-seat-note p { margin: 0; color: var(--t3-text-muted, var(--t3-text)); }

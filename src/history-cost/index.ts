@@ -7,7 +7,7 @@ export {
   type MoveClockSnapshotV1,
   type MoveTurnSnapshotV1,
 } from './history';
-export { createThinkingRecord, latestThinking, type ModelThinkingV1 } from './thinking';
+export { createAnswerThinkingRecord, createThinkingRecord, latestThinking, type ModelThinkingV1 } from './thinking';
 export {
   accountUsage,
   totalUsage,

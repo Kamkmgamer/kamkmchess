@@ -67,6 +67,9 @@ textarea:focus-visible, summary:focus-visible {
 }
 .wordmark { color: var(--ink); font-weight: 650; text-decoration: none; letter-spacing: -.02em; }
 .topbar h1 { font-size: 18px; font-weight: 600; margin: 0; letter-spacing: -.02em; }
+.topbar-destinations { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.topbar-destination { min-height: 38px; padding-inline: 10px; white-space: nowrap; }
+.topbar-destination svg { width: 18px; height: 18px; }
 .topbar-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .compact-control { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12px; }
 .compact-control select {
@@ -507,7 +510,10 @@ input, textarea { caret-color: var(--green); }
 
 @media (max-width: 760px) {
   .minimal-workspace .match-layout { grid-template-columns: minmax(0, 1fr); max-width: 640px; gap: 16px; }
-  .minimal-workspace .topbar { max-width: 640px; }
+  .minimal-workspace .topbar { max-width: 640px; flex-wrap: wrap; }
+  .minimal-workspace .topbar-destinations { order: 3; width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; scrollbar-width: none; }
+  .minimal-workspace .topbar-destinations::-webkit-scrollbar { display: none; }
+  .minimal-workspace .topbar-destination { min-height: 42px; }
   .moves-sidebar { height: 260px; margin-top: 0; }
 }
 

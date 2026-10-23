@@ -6,7 +6,8 @@
  */
 .online-workspace { display: grid; gap: 14px; align-content: start; }
 .online-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
-.online-tabs .icon-button[aria-pressed='true'] { background: var(--soft); color: var(--ink); }
+.online-tab { min-height: 42px; }
+.online-tab[aria-pressed='true'] { background: var(--soft); color: var(--ink); border-color: var(--rule); }
 .online-panel { display: grid; gap: 12px; justify-items: start; }
 .online-clock { display: flex; gap: 8px; flex-wrap: wrap; }
 .online-games { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; width: 100%; }
