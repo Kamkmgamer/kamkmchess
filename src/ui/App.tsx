@@ -131,6 +131,8 @@ function statusLabel(snapshot: ControllerSnapshotV1): string {
 }
 
 export function App({ composition, initialSession, initialSnapshot, onOpenAccount, online, onOpenProfile, onlineResolveNamespace, onlineConnectionStore, accountIdentity }: AppProps) {
+  const onlineRoute = new URLSearchParams(window.location.search).get('online');
+  const routedOnlineTab = onlineRoute === 'profile' ? 'profile' : onlineRoute === 'new' ? 'new' : 'games';
   const [session, setSession] = useState(initialSession);
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [orientation, setOrientation] = useState<'white' | 'black'>(() =>
@@ -161,8 +163,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [generationJournal, setGenerationJournal] = useState<GenerationJournalV1 | null>(null);
   const [journalRefresh, setJournalRefresh] = useState(0);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
-  const [onlineOpen, setOnlineOpen] = useState(false);
-  const [onlineInitialTab, setOnlineInitialTab] = useState<'games' | 'new' | 'profile'>('games');
+  const [onlineOpen, setOnlineOpen] = useState(() => onlineRoute === 'new' || onlineRoute === 'profile');
+  const [onlineInitialTab, setOnlineInitialTab] = useState<'games' | 'new' | 'profile'>(routedOnlineTab);
   /** The online game the owner is looking at. */
   const focusedMatchId = online?.workspace.focusedMatchId ?? null;
   /** The generation of the identity of the composition. */

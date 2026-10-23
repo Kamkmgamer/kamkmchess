@@ -9,6 +9,11 @@ describe('landing integration with the playable workspace', () => {
   it('links the primary play action to the existing game', () => {
     const markup = renderToStaticMarkup(<GameNavigation onOptions={() => {}} onNavigate={() => {}} onAppearance={() => {}} account={{ status: 'disabled', user: null, busy: false, message: '' }} onAccount={() => {}} />);
     expect(markup).toMatch(/<button[^>]*>[\s\S]*?AI opponent/);
+    expect(markup).toContain('href="/play"');
+    expect(markup).toContain('href="/play?online=new"');
+    expect(markup).toContain('href="/play?online=profile"');
+    expect(markup).toContain('Play online');
+    expect(markup).toContain('Profile &amp; history');
     expect(markup).not.toContain('Opponent label');
     expect(markup).not.toContain('Preview options');
   });
