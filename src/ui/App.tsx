@@ -58,7 +58,7 @@ import { EnginePanel } from './EnginePanel.js';
 import { isEngineSelection, runEngineTurn } from '../engines/local.js';
 import { BROWSER_ENGINES, stopBrowserEngines, stopUnusedBrowserEngines } from '../engines/browser.js';
 import { engineSettings } from '../engines/local.js';
-import { IconButton } from './Icon.js';
+import { Icon, IconButton } from './Icon.js';
 import { pieceImage } from './piece-image.js';
 import { PieceStyleOptions } from './PieceStyleOptions.js';
 import { usePieceStyle } from './use-piece-style.js';
@@ -162,6 +162,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [journalRefresh, setJournalRefresh] = useState(0);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [onlineOpen, setOnlineOpen] = useState(false);
+  const [onlineInitialTab, setOnlineInitialTab] = useState<'games' | 'new' | 'profile'>('games');
   /** The online game the owner is looking at. */
   const focusedMatchId = online?.workspace.focusedMatchId ?? null;
   /** The generation of the identity of the composition. */
@@ -182,6 +183,10 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   function closeOnline(): void {
     setOnlineOpen(false);
     if (pendingInvitation) setDismissedInvitation(pendingInvitation);
+  }
+  function openOnline(tab: 'games' | 'new' | 'profile' = 'games'): void {
+    setOnlineInitialTab(tab);
+    setOnlineOpen(true);
   }
   // The private model catalog of the owner. Every entry is a connected model
   // of the browser owned connection store. The identity of an entry is its own
@@ -1032,14 +1037,24 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     <main className="workspace minimal-workspace" id="main">
     {!focusPage && <header className="topbar">
       <a className="wordmark" href="/" aria-label="Kamkm Chess home">kamkm chess</a>
+      <nav className="topbar-destinations" aria-label="Game destinations">
+        {online && <button className="button secondary topbar-destination" type="button" onClick={() => openOnline('new')}>
+          <Icon name="link" /><span>Play online</span>
+        </button>}
+        {online && <button className="button secondary topbar-destination" type="button" onClick={() => openOnline('profile')}>
+          <Icon name="moves" /><span>Game history</span>
+        </button>}
+        {onOpenProfile && <button className="button secondary topbar-destination" type="button" onClick={onOpenProfile}>
+          <Icon name="account" /><span>Public profile</span>
+        </button>}
+      </nav>
       <div className="topbar-actions">
         {onOpenAccount && <IconButton icon="account" label="Account and saved games" onClick={onOpenAccount} />}
-        {online && <IconButton icon="link" label="Online play" onClick={() => setOnlineOpen(true)} />}
         {online && <IconButton icon="change" label="Your agents" onClick={() => { setCatalogRefresh(value => value + 1); openTool('agents'); }} />}
         {!setupOpen && <IconButton icon="settings" label="Settings" onClick={() => openTool('settings')} />}
         <button className="button primary" type="button" onClick={() => openSetup()} aria-label="New game">New</button></div>
     </header>}
-    {onlineVisible && online && <OnlineWorkspace composition={online} onClose={closeOnline}
+    {onlineVisible && online && <OnlineWorkspace composition={online} onClose={closeOnline} initialTab={onlineInitialTab}
       agentLabel={online.agent?.label ?? null}
       checkAgent={checkOnlineAgent}
       {...(onOpenProfile ? { onOpenProfile } : {})} />}
