@@ -322,6 +322,7 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 			EngineThinkMs: int(engine.ClampThink(think).Milliseconds()), Runner: clip(cleanName(runner), 40),
 		}, code)
 		if err != nil {
+			s.cleanupFailedStart(sess)
 			return nil, errTool("the game was created but could not be recorded: start another game")
 		}
 	}
@@ -337,6 +338,22 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		board["board"] = map[bool]string{true: "verified", false: "community"}[verified]
 	}
 	return board, nil
+}
+
+// cleanupFailedStart releases a match that was created but could not finish
+// initialization. This uses a bounded, independent context so a canceled
+// request cannot leave an active match consuming the server's capacity.
+func (s *Server) cleanupFailedStart(sess *session) {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	match, err := s.options.Matches.GetMatch(cleanupCtx, sess.matchID)
+	if err == nil && match.Status == online.MatchActive {
+		principalCtx := onlineauth.WithPrincipal(cleanupCtx, sess.principal)
+		if lease, leaseErr := s.lease(principalCtx, sess, match); leaseErr == nil {
+			_, _ = s.options.Matches.Execute(principalCtx, sess.principal.Participant, s.command(sess, match, lease, online.Action{Kind: online.ActionResign}))
+		}
+	}
+	sess.detach()
 }
 
 func (s *Server) resumeGame(ctx context.Context, sess *session, args map[string]any) (any, error) {
