@@ -6,6 +6,14 @@
 # code: it is never part of the public browser distribution in dist/.
 FROM node:24.22.0-alpine
 RUN apk add --no-cache ca-certificates curl
+# The native Stockfish of the optional server engine seat. It is left out
+# unless the image is built with --build-arg WITH_SERVER_ENGINE=1, so the
+# default image is unchanged. Alpine ships Stockfish only in its edge
+# repository.
+ARG WITH_SERVER_ENGINE=0
+RUN if [ "$WITH_SERVER_ENGINE" = "1" ]; then \
+      apk add --no-cache stockfish --repository=https://dl-cdn.alpinelinux.org/alpine/edge/community --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing; \
+    fi
 COPY bin/kamkmchess-api /usr/local/bin/kamkmchess-api
 COPY rules-worker/worker.mjs /opt/kamkmchess/rules-worker/worker.mjs
 COPY rules-worker/LICENSE.txt /opt/kamkmchess/rules-worker/LICENSE.txt

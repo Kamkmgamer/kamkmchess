@@ -106,6 +106,18 @@ type OnlineConfig struct {
 	// service that never observes the fence serves a restored copy whose
 	// removal ledger was never replayed.
 	RestoreFencePath string
+	// ServerEngineEnabled lets the server play its own native Stockfish seat.
+	// It is off by default. The seat only plays in matches that were created
+	// against it, so the switch opens no surface by itself.
+	ServerEngineEnabled bool
+	// ServerEnginePath is the native UCI engine executable. It is required
+	// when the server engine is enabled.
+	ServerEnginePath string
+	// ServerEngineSlots bounds the concurrent searches.
+	ServerEngineSlots int
+	// ServerEngineSweepInterval is how often the server looks for engine
+	// seats that are to move.
+	ServerEngineSweepInterval time.Duration
 }
 
 // flag reads an optional boolean setting. A missing or malformed value keeps
@@ -126,22 +138,26 @@ func Load(getenv func(string) string) (Config, error) {
 			AllowedOrigins:    csv(getenv("APP_ALLOWED_ORIGINS")),
 		},
 		Online: OnlineConfig{
-			GuestCredentialTTL:     duration(getenv, "ONLINE_GUEST_CREDENTIAL_TTL", onlineauth.DefaultGuestCredentialTTL),
-			OwnershipProofTTL:      duration(getenv, "ONLINE_OWNERSHIP_PROOF_TTL", onlineauth.DefaultOwnershipProofTTL),
-			StreamMaxDuration:      duration(getenv, "ONLINE_STREAM_MAX_DURATION", onlineauth.DefaultStreamMaxDuration),
-			RulesWorkerEntry:       strings.TrimSpace(getenv("ONLINE_RULES_WORKER_ENTRY")),
-			DeadlineSweepInterval:  duration(getenv, "ONLINE_DEADLINE_SWEEP_INTERVAL", DefaultDeadlineSweepInterval),
-			DeadlineSweepBatch:     positiveInt(getenv, "ONLINE_DEADLINE_SWEEP_BATCH", DefaultDeadlineSweepBatch),
-			HealthCheckInterval:    duration(getenv, "ONLINE_HEALTH_CHECK_INTERVAL", DefaultHealthCheckInterval),
-			FriendEnabled:          flag(getenv, "ONLINE_FRIEND_ENABLED"),
-			QueueEnabled:           flag(getenv, "ONLINE_QUEUE_ENABLED"),
-			FriendCohort:           cohort.Parse(getenv("ONLINE_FRIEND_COHORT")),
-			QueueCohort:            cohort.Parse(getenv("ONLINE_QUEUE_COHORT")),
-			QueueSweepInterval:     duration(getenv, "ONLINE_QUEUE_SWEEP_INTERVAL", DefaultQueueSweepInterval),
-			QueueSweepBatch:        positiveInt(getenv, "ONLINE_QUEUE_SWEEP_BATCH", DefaultQueueSweepBatch),
-			HistoryPublishInterval: duration(getenv, "ONLINE_HISTORY_PUBLISH_INTERVAL", history.DefaultPublishInterval),
-			HistoryPublishBatch:    positiveInt(getenv, "ONLINE_HISTORY_PUBLISH_BATCH", history.DefaultPublishBatch),
-			RestoreFencePath:       strings.TrimSpace(getenv("ONLINE_RESTORE_FENCE_PATH")),
+			GuestCredentialTTL:        duration(getenv, "ONLINE_GUEST_CREDENTIAL_TTL", onlineauth.DefaultGuestCredentialTTL),
+			OwnershipProofTTL:         duration(getenv, "ONLINE_OWNERSHIP_PROOF_TTL", onlineauth.DefaultOwnershipProofTTL),
+			StreamMaxDuration:         duration(getenv, "ONLINE_STREAM_MAX_DURATION", onlineauth.DefaultStreamMaxDuration),
+			RulesWorkerEntry:          strings.TrimSpace(getenv("ONLINE_RULES_WORKER_ENTRY")),
+			DeadlineSweepInterval:     duration(getenv, "ONLINE_DEADLINE_SWEEP_INTERVAL", DefaultDeadlineSweepInterval),
+			DeadlineSweepBatch:        positiveInt(getenv, "ONLINE_DEADLINE_SWEEP_BATCH", DefaultDeadlineSweepBatch),
+			HealthCheckInterval:       duration(getenv, "ONLINE_HEALTH_CHECK_INTERVAL", DefaultHealthCheckInterval),
+			FriendEnabled:             flag(getenv, "ONLINE_FRIEND_ENABLED"),
+			QueueEnabled:              flag(getenv, "ONLINE_QUEUE_ENABLED"),
+			FriendCohort:              cohort.Parse(getenv("ONLINE_FRIEND_COHORT")),
+			QueueCohort:               cohort.Parse(getenv("ONLINE_QUEUE_COHORT")),
+			QueueSweepInterval:        duration(getenv, "ONLINE_QUEUE_SWEEP_INTERVAL", DefaultQueueSweepInterval),
+			QueueSweepBatch:           positiveInt(getenv, "ONLINE_QUEUE_SWEEP_BATCH", DefaultQueueSweepBatch),
+			HistoryPublishInterval:    duration(getenv, "ONLINE_HISTORY_PUBLISH_INTERVAL", history.DefaultPublishInterval),
+			HistoryPublishBatch:       positiveInt(getenv, "ONLINE_HISTORY_PUBLISH_BATCH", history.DefaultPublishBatch),
+			RestoreFencePath:          strings.TrimSpace(getenv("ONLINE_RESTORE_FENCE_PATH")),
+			ServerEngineEnabled:       flag(getenv, "ONLINE_SERVER_ENGINE_ENABLED"),
+			ServerEnginePath:          strings.TrimSpace(getenv("ONLINE_SERVER_ENGINE_PATH")),
+			ServerEngineSlots:         positiveInt(getenv, "ONLINE_SERVER_ENGINE_SLOTS", DefaultServerEngineSlots),
+			ServerEngineSweepInterval: duration(getenv, "ONLINE_SERVER_ENGINE_SWEEP_INTERVAL", DefaultServerEngineSweepInterval),
 		},
 	}
 	if cfg.DatabaseURL == "" || len(cfg.Clerk.AllowedOrigins) == 0 {
@@ -156,6 +172,9 @@ func Load(getenv func(string) string) (Config, error) {
 	// material and it does not belong in a log line or in a report.
 	if cfg.Online.RestoreFencePath == "" {
 		return Config{}, errors.New("the durable restore fence path is not configured")
+	}
+	if cfg.Online.ServerEngineEnabled && cfg.Online.ServerEnginePath == "" {
+		return Config{}, errors.New("the server engine is enabled without an engine path")
 	}
 	if _, err := auth.NewVerifier(cfg.Clerk); err != nil {
 		return Config{}, errors.New("invalid Clerk verifier configuration")
@@ -361,6 +380,15 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 				// admits every signed-in account.
 				Cohort: cfg.Online.QueueCohort,
 			})))
+	}
+	// The server engine plays its own seats in the matches created against
+	// it. It is started only when its switch is on.
+	if cfg.Online.ServerEngineEnabled {
+		stopServerEngine, err := openServerEngine(ctx, cfg.Online, pool, onlineService, onlineauth.NewAllocator(authorizer))
+		if err != nil {
+			return nil, nil, err
+		}
+		owned.own(stopServerEngine)
 	}
 	// The public history API is mounted under its own prefix. Its reads need
 	// no credential at all.

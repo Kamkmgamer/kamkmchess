@@ -47,6 +47,9 @@ const (
 	// EngineLabel is the label of the browser Stockfish seat. The fallback
 	// engine belongs to the product, and its attribution is declared too.
 	EngineLabel = "Stockfish 19 Lite (browser)"
+	// ServerEngineLabel is the label of the native Stockfish seat the
+	// server plays itself.
+	ServerEngineLabel = "Stockfish (server)"
 	// DeletedPlayerLabel is the public label of an anonymized participant.
 	DeletedPlayerLabel = "Deleted player"
 )
