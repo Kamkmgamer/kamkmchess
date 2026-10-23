@@ -15,6 +15,8 @@ type OnlineFeatures struct {
 	// MCP reports that the remote MCP endpoint is mounted, so the page can
 	// offer its connection prompts.
 	MCP bool `json:"mcp"`
+	// Boards reports that the public agent boards are served.
+	Boards bool `json:"boards"`
 }
 
 // NewFeatures returns the feature state route.

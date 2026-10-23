@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/agentboards"
 	"github.com/Kamkmgamer/kamkmchess/backend/auth"
 	"github.com/Kamkmgamer/kamkmchess/backend/cohort"
 	"github.com/Kamkmgamer/kamkmchess/backend/history"
@@ -130,6 +131,10 @@ type OnlineConfig struct {
 	// MCPTrustProxy reads the client address from X-Forwarded-For. Set it
 	// only behind a proxy that overwrites the header.
 	MCPTrustProxy bool
+	// AgentBoardsEnabled mounts the public community and verified agent
+	// boards at /v1/public/agent-boards. It is off by default and needs the
+	// remote MCP endpoint, which records the games.
+	AgentBoardsEnabled bool
 }
 
 // flag reads an optional boolean setting. A missing or malformed value keeps
@@ -174,6 +179,7 @@ func Load(getenv func(string) string) (Config, error) {
 			MCPMaxActiveGames:         positiveInt(getenv, "ONLINE_MCP_MAX_ACTIVE_GAMES", DefaultMCPMaxActiveGames),
 			MCPStartsPerHour:          positiveInt(getenv, "ONLINE_MCP_STARTS_PER_HOUR", DefaultMCPStartsPerHour),
 			MCPTrustProxy:             flag(getenv, "ONLINE_MCP_TRUST_PROXY"),
+			AgentBoardsEnabled:        flag(getenv, "ONLINE_AGENT_BOARDS_ENABLED"),
 		},
 	}
 	if cfg.DatabaseURL == "" || len(cfg.Clerk.AllowedOrigins) == 0 {
@@ -194,6 +200,9 @@ func Load(getenv func(string) string) (Config, error) {
 	}
 	if cfg.Online.MCPEnabled && !cfg.Online.ServerEngineEnabled {
 		return Config{}, errors.New("the remote MCP endpoint needs the server engine")
+	}
+	if cfg.Online.AgentBoardsEnabled && !cfg.Online.MCPEnabled {
+		return Config{}, errors.New("the agent boards need the remote MCP endpoint")
 	}
 	if _, err := auth.NewVerifier(cfg.Clerk); err != nil {
 		return Config{}, errors.New("invalid Clerk verifier configuration")
@@ -343,6 +352,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		Friends: cfg.Online.FriendEnabled,
 		Queue:   cfg.Online.QueueEnabled,
 		MCP:     cfg.Online.MCPEnabled,
+		Boards:  cfg.Online.AgentBoardsEnabled,
 	}))
 	surface.Handle("/", httpapi.NewOnlineWithPublicReplay(onlineService, authorizer, httpapi.OnlineOptions{AllowedOrigins: cfg.Clerk.AllowedOrigins}, historyService))
 	// The friend surface stays mounted even when the switch is off. The
@@ -412,7 +422,9 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 		// The remote MCP endpoint is mounted only when its switch is on. A
 		// closed endpoint is not mounted at all, so it answers 404.
 		if cfg.Online.MCPEnabled {
+			agentGames := agentboards.New(pool)
 			endpoint, err := mcpserver.New(mcpserver.Options{
+				Records:        agentGames,
 				Matches:        onlineService,
 				Engine:         engineSeats,
 				Credentials:    onlineauth.NewAllocator(authorizer),
@@ -427,6 +439,9 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 				return nil, nil, errors.New("remote MCP initialization failed")
 			}
 			root.Handle("/v1/mcp", endpoint)
+			if cfg.Online.AgentBoardsEnabled {
+				root.Handle("/v1/public/agent-boards", httpapi.CORS(cfg.Clerk.AllowedOrigins, agentboards.Handler(agentGames, 30*time.Second)))
+			}
 		}
 	}
 	// The public history API is mounted under its own prefix. Its reads need

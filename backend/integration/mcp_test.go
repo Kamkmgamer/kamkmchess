@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/agentboards"
 	"github.com/Kamkmgamer/kamkmchess/backend/mcpserver"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
 )
@@ -69,6 +70,7 @@ func newMCPEndpoint(t *testing.T) (serverEngineFixture, *mcpClient) {
 	endpoint, err := mcpserver.New(mcpserver.Options{
 		Matches: f.service, Engine: f.driver, Credentials: onlineauth.NewAllocator(f.authorizer), Authenticator: f.authorizer,
 		ActiveGames: mcpserver.PostgresActiveGames(f.pool), AllowedOrigins: []string{"https://app.example"},
+		Records: agentboards.New(f.pool),
 		MoveWait: 10 * time.Second, Poll: 50 * time.Millisecond,
 	})
 	if err != nil {
@@ -196,5 +198,65 @@ func TestMCPRefusesForeignOrigins(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != http.StatusForbidden {
 		t.Fatalf("a foreign origin = %d", res.StatusCode)
+	}
+}
+
+// A game started with an invite code lands on the verified board; every
+// other game is a community result. Aborted games are not scored, and a
+// spent code stops verifying.
+func TestMCPGamesFeedTheBoards(t *testing.T) {
+	f, c := newMCPEndpoint(t)
+	ctx := context.Background()
+	store := agentboards.New(f.pool)
+	_, code, err := store.IssueInvite(ctx, "runner test", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, errText := c.tool("start_game", map[string]any{"model_name": "Model", "invite_code": "kinv_forged"}); !strings.Contains(errText, "not valid") {
+		t.Fatalf("a forged code = %q", errText)
+	}
+	verified, errText := c.tool("start_game", map[string]any{"model_name": "Verified Model", "engine_think_ms": 100, "invite_code": code, "runner": "kamkm-runner/api"})
+	if errText != "" || verified["board"] != "verified" {
+		t.Fatalf("an invited game = %v, %q", verified, errText)
+	}
+	if _, errText = c.tool("resign", nil); errText != "" {
+		t.Fatal(errText)
+	}
+	// The code had one use.
+	if _, errText = c.tool("start_game", map[string]any{"model_name": "Verified Model", "invite_code": code}); !strings.Contains(errText, "not valid") {
+		t.Fatalf("a spent code = %q", errText)
+	}
+	community, errText := c.tool("start_game", map[string]any{"model_name": "Community Model", "engine_think_ms": 5000})
+	if errText != "" || community["board"] != "community" {
+		t.Fatalf("a community game = %v, %q", community, errText)
+	}
+	if _, errText = c.tool("resign", nil); errText != "" {
+		t.Fatal(errText)
+	}
+	verifiedBoard, err := store.Read(ctx, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(verifiedBoard.Rows) != 1 || verifiedBoard.Rows[0] != (agentboards.Row{Model: "Verified Model", Level: "casual", Games: 1, Losses: 1}) {
+		t.Fatalf("verified board = %+v", verifiedBoard.Rows)
+	}
+	communityBoard, err := store.Read(ctx, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(communityBoard.Rows) != 1 || communityBoard.Rows[0].Model != "Community Model" || communityBoard.Rows[0].Level != "strong" || communityBoard.Rows[0].Losses != 1 {
+		t.Fatalf("community board = %+v", communityBoard.Rows)
+	}
+	// The public route serves the same rows.
+	server := httptest.NewServer(agentboards.Handler(store, time.Second))
+	defer server.Close()
+	res, err := http.Get(server.URL + "?board=verified")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var served agentboards.Board
+	if err = json.NewDecoder(res.Body).Decode(&served); err != nil || served.Board != "verified" || len(served.Rows) != 1 {
+		t.Fatalf("served board = %+v, %v", served, err)
 	}
 }

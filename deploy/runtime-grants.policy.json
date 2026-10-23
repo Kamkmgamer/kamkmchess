@@ -21,6 +21,8 @@
     "operations": ["SELECT", "INSERT", "UPDATE"],
     "deletion_tombstones": ["SELECT", "INSERT"],
     "online_matches": ["SELECT", "INSERT", "UPDATE"],
+    "online_agent_games": ["SELECT", "INSERT"],
+    "online_agent_invites": ["SELECT", "INSERT", "UPDATE"],
     "online_seats": ["SELECT", "INSERT", "UPDATE"],
     "online_clocks": ["SELECT", "INSERT", "UPDATE"],
     "online_moves": ["SELECT", "INSERT"],
