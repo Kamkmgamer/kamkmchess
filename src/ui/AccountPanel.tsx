@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import type { AccountSession } from '../accounts';
 import { importGuestGames, previewGuestImport } from '../accounts';
 import type { GuestImportPort, GuestImportPreview } from '../accounts';
+import type { OwnerSwitches } from '../online/owner-switches.js';
+import { OwnerSwitchesPanel } from './OwnerSwitchesPanel.js';
 
 export interface AccountPanelProps {
   readonly session: AccountSession;
@@ -10,10 +12,12 @@ export interface AccountPanelProps {
   readonly onIdentityChanged?: () => void;
   readonly onOpenGames?: () => void;
   readonly onOpenProfile?: (() => void) | undefined;
+  /** The site owner's online switches; the panel shows them only to an owner. */
+  readonly ownerSwitches?: OwnerSwitches | null | undefined;
 }
 
 /** Optional account controls. The parent decides where to mount this panel. */
-export function AccountPanel({ session, guestImport, onIdentityChanged, onOpenGames, onOpenProfile }: AccountPanelProps) {
+export function AccountPanel({ session, guestImport, onIdentityChanged, onOpenGames, onOpenProfile, ownerSwitches }: AccountPanelProps) {
   const [identity, setIdentity] = useState(session.identity);
   const [preview, setPreview] = useState<GuestImportPreview | null>(null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set());
@@ -99,6 +103,7 @@ export function AccountPanel({ session, guestImport, onIdentityChanged, onOpenGa
         {guestImport && <button onClick={() => { setPage(0); void beginImport(); }} disabled={busy}>Import</button>}
         <button onClick={() => void signOut()} disabled={busy}>Sign out</button>
       </div>}
+      {identity && ownerSwitches && <OwnerSwitchesPanel key={identity.accountId} switches={ownerSwitches} />}
     </>}
     {message && <p role="status">{message.startsWith('Selected guest games') ? 'Imported.' : 'Try again.'}</p>}
     <a className="account-privacy-link" href="/privacy.html" target="_blank" rel="noreferrer">Privacy policy</a>

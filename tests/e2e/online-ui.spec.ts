@@ -54,7 +54,7 @@ test('a guest opens the published invitation link and previews the exact invitat
   // The inviter creates a link.
   const inviter = await page.context().newPage();
   await inviter.goto('/play?online=1');
-  await inviter.getByRole('button', { name: 'Online play' }).click();
+  await inviter.getByRole('button', { name: 'Play online' }).click();
   await inviter.getByRole('button', { name: 'New play' }).click();
   await inviter.getByRole('button', { name: 'Invite a friend' }).click();
   const link = await inviter.getByLabel('Invitation link').inputValue();
@@ -79,7 +79,7 @@ test('a guest creates a friend link and the other guest joins the game', async (
   const inviteePage = await invitee.newPage();
   try {
     await inviterPage.goto('/play?online=1');
-    await inviterPage.getByRole('button', { name: 'Online play' }).click();
+    await inviterPage.getByRole('button', { name: 'Play online' }).click();
     await inviterPage.getByRole('button', { name: 'New play' }).click();
     await inviterPage.getByRole('button', { name: 'Invite a friend' }).click();
     const link = await inviterPage.getByLabel('Invitation link').inputValue();
@@ -89,7 +89,7 @@ test('a guest creates a friend link and the other guest joins the game', async (
 
     // The preview shows the inviter and the setup of the invitation.
     await inviteePage.goto('/play?online=1');
-    await inviteePage.getByRole('button', { name: 'Online play' }).click();
+    await inviteePage.getByRole('button', { name: 'Play online' }).click();
     await inviteePage.getByRole('button', { name: 'New play' }).click();
     await inviteePage.getByLabel('Invitation code').fill(invitationId);
     await inviteePage.getByRole('button', { name: 'Preview' }).click();
@@ -151,7 +151,7 @@ test('the review cursor holds an earlier position while the live game moves on',
   const inviteePage = await invitee.newPage();
   try {
     await inviterPage.goto('/play?online=1');
-    await inviterPage.getByRole('button', { name: 'Online play' }).click();
+    await inviterPage.getByRole('button', { name: 'Play online' }).click();
     await inviterPage.getByRole('button', { name: 'New play' }).click();
     await inviterPage.getByRole('button', { name: 'Invite a friend' }).click();
     const link = await inviterPage.getByLabel('Invitation link').inputValue();
@@ -159,7 +159,7 @@ test('the review cursor holds an earlier position while the live game moves on',
     await inviterPage.getByRole('region', { name: 'Online play' }).getByRole('button', { name: 'Games', exact: true }).click();
 
     await inviteePage.goto('/play?online=1');
-    await inviteePage.getByRole('button', { name: 'Online play' }).click();
+    await inviteePage.getByRole('button', { name: 'Play online' }).click();
     await inviteePage.getByRole('button', { name: 'New play' }).click();
     await inviteePage.getByLabel('Invitation code').fill(invitationId);
     await inviteePage.getByRole('button', { name: 'Preview' }).click();
@@ -201,7 +201,7 @@ test('the first move and the opening reply are playable in the real service', as
   const inviteePage = await invitee.newPage();
   try {
     await inviterPage.goto('/play?online=1');
-    await inviterPage.getByRole('button', { name: 'Online play' }).click();
+    await inviterPage.getByRole('button', { name: 'Play online' }).click();
     await inviterPage.getByRole('button', { name: 'New play' }).click();
     await inviterPage.getByRole('button', { name: 'Invite a friend' }).click();
     const link = await inviterPage.getByLabel('Invitation link').inputValue();
@@ -211,7 +211,7 @@ test('the first move and the opening reply are playable in the real service', as
     await inviterPage.getByRole('region', { name: 'Online play' }).getByRole('button', { name: 'Games', exact: true }).click();
 
     await inviteePage.goto('/play?online=1');
-    await inviteePage.getByRole('button', { name: 'Online play' }).click();
+    await inviteePage.getByRole('button', { name: 'Play online' }).click();
     await inviteePage.getByRole('button', { name: 'New play' }).click();
     await inviteePage.getByLabel('Invitation code').fill(invitationId);
     await inviteePage.getByRole('button', { name: 'Preview' }).click();
@@ -244,7 +244,7 @@ test('the first move and the opening reply are playable in the real service', as
 test('the queue asks a signed-out browser to sign in and keeps friend play', async ({ page }) => {
   expect(descriptor).not.toBeNull();
   await page.goto('/play?online=1');
-  await page.getByRole('button', { name: 'Online play' }).click();
+  await page.getByRole('button', { name: 'Play online' }).click();
   await page.getByRole('button', { name: 'New play' }).click();
   // The public queue is an account surface. A signed-out browser is told so
   // instead of reaching the service with a guest credential.

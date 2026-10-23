@@ -1,6 +1,9 @@
 package httpapi
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+)
 
 // OnlineFeatures is the rollout state of the two online surfaces.
 //
@@ -24,9 +27,15 @@ type OnlineFeatures struct {
 // the two independent play switches and whether the remote MCP endpoint is
 // mounted.
 func NewFeatures(features OnlineFeatures) http.Handler {
+	return NewLiveFeatures(func(context.Context) OnlineFeatures { return features })
+}
+
+// NewLiveFeatures is NewFeatures for switches that can change while the
+// process runs: every answer reads the current state.
+func NewLiveFeatures(current func(context.Context) OnlineFeatures) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/online/features", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, features)
+		writeJSON(w, http.StatusOK, current(r.Context()))
 	})
 	return mux
 }

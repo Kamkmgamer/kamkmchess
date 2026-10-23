@@ -5,6 +5,7 @@ import { Icon, Bot, Close, ChessKnight, SidePanelOpen } from '../components/quar
 import { useQuartzPortal } from '../lib/quartz/portal';
 import { OpeningPreview } from './OpeningPreview';
 import { Questions } from './Questions';
+import { AgentConnect } from './AgentConnect';
 import { HeroDither } from './HeroDither';
 import { resolveHeroDitherVariant } from './hero-dither';
 import { GameNavigation, type OptionsFocus } from './GameNavigation';
@@ -134,6 +135,8 @@ export function App() {
           <div className="preview-focus-target" tabIndex={-1} aria-label="Board preview">
             <OpeningPreview setup={defaultSetup} onOptions={() => openGameOptions('fen')} />
           </div>
+
+          <AgentConnect />
 
           <Questions />
           <footer className="site-footer">
