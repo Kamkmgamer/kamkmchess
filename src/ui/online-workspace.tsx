@@ -42,7 +42,7 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { createRequestOwner } from './request-owner.js';
 import { createGuestCredential } from '../online/auth.js';
-import { IconButton } from './Icon.js';
+import { Icon, IconButton } from './Icon.js';
 import { ChessBoard } from './ChessBoard.js';
 import { MoveList } from './MoveList.js';
 import { FriendInvitationPreview } from './friend-preview.js';
@@ -1742,9 +1742,15 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       <IconButton icon="close" label="Close online play" onClick={onClose} />
     </div>
     <nav className="online-tabs" aria-label="Online sections">
-      <IconButton icon="plus" label="New play" aria-pressed={tab === 'new'} onClick={() => setTab('new')} />
-      <IconButton icon="moves" label="Games" aria-pressed={tab === 'games'} onClick={() => setTab('games')} />
-      <IconButton icon="account" label="Profile and history" aria-pressed={tab === 'profile'} onClick={() => setTab('profile')} />
+      <button className="button secondary online-tab" type="button" aria-label="New play" aria-pressed={tab === 'new'} onClick={() => setTab('new')}>
+        <Icon name="plus" /><span>New game</span>
+      </button>
+      <button className="button secondary online-tab" type="button" aria-label="Games" aria-pressed={tab === 'games'} onClick={() => setTab('games')}>
+        <Icon name="moves" /><span>Games</span>
+      </button>
+      <button className="button secondary online-tab" type="button" aria-label="Profile and history" aria-pressed={tab === 'profile'} onClick={() => setTab('profile')}>
+        <Icon name="account" /><span>Profile &amp; history</span>
+      </button>
     </nav>
     <OnlineFailureNotice failure={failure || queueFailure} />
 
@@ -1853,9 +1859,9 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
 
     {tab === 'profile' && <section className="online-panel" aria-label="Profile and history">
       <p>{games.length} online game{games.length === 1 ? '' : 's'}.</p>
-      {onOpenProfile && <IconButton icon="moves" label="Profile and history" onClick={onOpenProfile} />}
-      <label className="online-field">Profile id
-        <input value={historyProfile} aria-label="Profile id" onChange={event => setHistoryProfile(event.target.value)} />
+      {onOpenProfile && <button className="button secondary" type="button" onClick={onOpenProfile}><Icon name="account" /><span>Public profile</span></button>}
+      <label className="online-field">ID
+        <input value={historyProfile} aria-label="Public profile ID" placeholder="ID" onChange={event => setHistoryProfile(event.target.value)} />
       </label>
       <div className="button-row">
         <button className="button quiet" type="button" disabled={busy} onClick={() => void readHistory()}>Public history</button>
