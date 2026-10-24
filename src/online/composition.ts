@@ -70,8 +70,8 @@ import type { AuthorizedRequester } from './request';
 import { createGuestCredential, describeCredential } from './auth';
 import type { GuestOnlineCredential, OnlineCredential } from './auth';
 import { combineOnlineFeatureFlags, parseOnlineFeatureFlags, readLocalOptIn } from './features';
-import { ONLINE_FEATURES_DISABLED, ONLINE_FEATURES_PATH } from './features';
-import type { OnlineFeatureFlags } from './features';
+import { ONLINE_FEATURES_DISABLED, ONLINE_FEATURES_PATH, ONLINE_FEATURES_STATUS_UNKNOWN } from './features';
+import type { OnlineFeatureFlags, OnlineFeaturesStatus } from './features';
 import { parseOnlineMatchView } from './updates';
 import { onlineSideToMove } from './turn';
 import { ONLINE_CONTRACTS_SCHEMA_VERSION } from './contracts';
@@ -308,6 +308,12 @@ export type AgentDecisionOutcome =
 export interface OnlineComposition {
   /** The open online surfaces. */
   readonly features: OnlineFeatureFlags;
+  /**
+   * How the feature answer was last obtained. A closed surface and an
+   * unreachable service both close every flag; the status says which one the
+   * browser is looking at.
+   */
+  readonly featuresStatus: OnlineFeaturesStatus;
   /** The concurrent game workspace. */
   readonly workspace: OnlineWorkspace;
   /** The queue flow of this browser. */
@@ -1182,6 +1188,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
   /** The version the engine seat already played. */
   const engineTurns = new Map<string, number>();
   let features: OnlineFeatureFlags = options.features ?? ONLINE_FEATURES_DISABLED;
+  let featuresStatus: OnlineFeaturesStatus = ONLINE_FEATURES_STATUS_UNKNOWN;
   let agent: OnlineAgent | null = null;
   /** The generation of the identity. It moves on every identity change. */
   let identityGeneration = 0;
@@ -4189,6 +4196,9 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     get features() {
       return features;
     },
+    get featuresStatus() {
+      return featuresStatus;
+    },
     workspace,
     queue,
     get queueEntries() {
@@ -4511,6 +4521,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     },
     async loadFeatures() {
       let service: OnlineFeatureFlags = ONLINE_FEATURES_DISABLED;
+      let nextStatus: OnlineFeaturesStatus = 'answered';
       try {
         // The feature answer is public. It carries no participant credential.
         const response = await (fetcher ?? globalThis.fetch)(`${baseUrl}${ONLINE_FEATURES_PATH}`, {
@@ -4520,10 +4531,14 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
         });
         if (response.ok) service = parseOnlineFeatureFlags(await response.json());
       } catch {
-        // A service that cannot answer leaves every surface closed.
+        // A service that cannot answer leaves every surface closed, and the
+        // status says why the buttons are closed instead of leaving the
+        // refusal unexplained.
+        nextStatus = 'unreachable';
       }
       const local = readLocalOptIn(options.search ?? (typeof window === 'undefined' ? '' : window.location.search));
       features = combineOnlineFeatureFlags(service, local);
+      featuresStatus = nextStatus;
       notify();
       return features;
     },

@@ -44,10 +44,11 @@ export function ProfilePanel({ client, guestSeat = null }: ProfilePanelProps) {
 
   return <section className="profile-panel" aria-labelledby="profile-panel-title">
     <h2 id="profile-panel-title">Public profile</h2>
+    <p className="muted">Your public name is filled in from your account. Change it here any time.</p>
     <div className="profile-identity">
       <ProfileAvatar kind={state.profile?.avatar.kind ?? 'generated'} value={state.profile?.avatar.value ?? ''} profileId={state.profile?.profileId ?? ''} />
       <div className="profile-identity-text">
-        <p className="profile-name">{state.profile?.username ?? 'Unnamed'}</p>
+        <p className="profile-name">{state.profile?.username ?? 'Player'}</p>
       </div>
     </div>
 

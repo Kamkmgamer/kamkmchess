@@ -29,6 +29,7 @@
  */
 import {
   PROFILE_AVATAR_CHOICES,
+  createProfileSeedBody,
   createProfileUpdateBody,
   parseGuestLink,
   parseGuestOwnershipProof,
@@ -70,6 +71,11 @@ export interface ProfileClient {
   readOwnProfile(): Promise<OwnProfile>;
   /** Applies an ownership-checked change to the signed-in account's profile. */
   updateOwnProfile(update: ProfileUpdate): Promise<PublicProfile>;
+  /**
+   * Seeds the signed-in account's default public name from its own sign-in
+   * fields. The service only writes a profile that still has no name.
+   */
+  seedOwnProfileName(candidates: readonly string[]): Promise<PublicProfile>;
   /** Mints a guest ownership proof from the guest seat credential. */
   mintOwnershipProof(): Promise<GuestOwnershipProof>;
   /** Binds a guest seat to the signed-in account with a fresh ownership proof. */
@@ -320,6 +326,14 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
       if (result.status === 401) throw new ProfileRequestError('Sign in to edit your profile.', 401, 'not_signed_in');
       if (result.status === 409) throw new ProfileRequestError('That name is already taken.', 409, errorCode(result.data));
       if (result.status === 400) throw new ProfileRequestError('That name or avatar is not allowed.', 400, errorCode(result.data));
+      if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
+      return parsePublicProfile(result.data);
+    },
+    async seedOwnProfileName(candidates) {
+      const result = await accountRequest('/v1/account/profile/seed', { method: 'POST', body: createProfileSeedBody(candidates) });
+      assertLive();
+      if (result.status === 401) throw new ProfileRequestError('Sign in to edit your profile.', 401, 'not_signed_in');
+      if (result.status === 400) throw new ProfileRequestError('The seed request was refused.', 400, errorCode(result.data));
       if (result.status !== 200) throw new ProfileRequestError('The profile service is unavailable.', result.status, errorCode(result.data));
       return parsePublicProfile(result.data);
     },

@@ -24,10 +24,15 @@ contracts both reject an unknown field, so a private value cannot appear in a
 public response even by accident.
 
 The profile is created on first use, so an account never completes a setup
-step before it has a public identity. The username starts empty: the owner
-chooses it deliberately, and the service publishes no name until they do. The
-avatar starts generated; the generated avatar is derived from the public
-profile identifier, so it is stable for a person and stores nothing.
+step before it has a public identity. The public name starts as the account's
+own name: the browser proposes the account's sign-in fields once, and the
+service derives the stored name under its own rules (see the seed route
+below), so an account has a public name the moment it signs in. The seed only
+ever names a profile that has no name, so a deliberate choice of the owner is
+never overwritten. A name another profile already owns is retried with a
+numbered variant of the same text, and the unique index arbitrates every
+attempt. The avatar starts generated; the generated avatar is derived from the
+public profile identifier, so it is stable for a person and stores nothing.
 
 A guest has no profile. A guest is labelled `Guest`, and separate guests are
 never merged because they share that label.
@@ -43,6 +48,7 @@ the private single-owner sync API.
 | `GET /v1/profiles/username/{username}` | Public | The same payload, found by name |
 | `GET /v1/account/profile` | Account | The account's own profile and its linked guest seats |
 | `PUT /v1/account/profile` | Account | Ownership-checked update of the name and the avatar |
+| `POST /v1/account/profile/seed` | Account | Seeds the default public name from the account's own candidate texts |
 | `GET /v1/account/profile/guest-links` | Account | The linked guest seats |
 | `POST /v1/account/profile/guest-links` | Account | Explicit guest link |
 | `POST /v1/guest-seats/ownership-proof` | Guest | A short-lived ownership proof for the guest's own seat |

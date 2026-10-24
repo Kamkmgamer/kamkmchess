@@ -237,6 +237,31 @@ export function createProfileUpdateBody(update: ProfileUpdate): Record<string, u
 }
 
 /**
+ * Builds the request body of a default-name seed.
+ *
+ * The candidates are the account's own sign-in fields, in the order the account
+ * presents them. The body names no profile, no account, and no owner: the
+ * service takes the account from the verified session, and it derives every
+ * candidate again under its own rules, so the texts are proposals and never a
+ * chosen name.
+ *
+ * The list is trimmed, emptied of blanks, and bounded, so a caller cannot turn
+ * the seed into a name-probing search.
+ */
+export function createProfileSeedBody(candidates: readonly string[]): Record<string, unknown> {
+  const trimmed: string[] = [];
+  for (const candidate of candidates) {
+    const value = candidate.trim();
+    if (value.length > 0) trimmed.push(value);
+    if (trimmed.length >= PROFILE_SEED_CANDIDATE_LIMIT) break;
+  }
+  return { candidates: trimmed };
+}
+
+/** How many candidate texts one seed request may carry. */
+export const PROFILE_SEED_CANDIDATE_LIMIT = 6;
+
+/**
  * Public names that would impersonate a participant label, an account role,
  * or a system identity.
  *

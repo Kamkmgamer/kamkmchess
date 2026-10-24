@@ -1769,6 +1769,8 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
         <IconButton icon="plus" label="Another entry" disabled={busy || !composition.features.queue || !composition.accountSignedIn} onClick={() => void enterExplicitEntry('human')} />
         <IconButton icon="moves" label="Another agent entry" disabled={busy || !composition.features.queue || !composition.accountSignedIn || !ownAgentLabel} onClick={() => void enterExplicitEntry('agent')} />
       </div>
+      {composition.featuresStatus === 'unreachable' && <p role="status">Online play cannot reach the server right now. Check the connection and reopen this panel.</p>}
+      {composition.featuresStatus === 'answered' && !composition.features.queue && !composition.features.friends && <p role="status">Online play is switched off on the server right now.</p>}
       {composition.features.queue && !composition.accountSignedIn && <p role="status">Sign in to join the queue. Friend games work without an account.</p>}
       {queue.detail && queue.detail !== queueFailure && <p role="status">{queue.detail}</p>}
       {queue.options.length > 0 && <div className="button-row">
