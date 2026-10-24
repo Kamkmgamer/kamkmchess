@@ -128,7 +128,7 @@ test('a final AI result closes an open declaration and focuses the result', asyn
   await expect(page.getByRole('alertdialog')).toBeVisible();
   release?.();
   await expect(page.getByRole('alertdialog')).toHaveCount(0);
-  await expect(page.getByRole('heading', { name: 'White wins', exact: true })).toBeFocused();
+  await expect(page.getByRole('heading', { name: 'White won', exact: true })).toBeFocused();
   await expect(movesOnBoard(page)).toHaveCount(1);
 });
 
@@ -151,7 +151,7 @@ for (const action of ['draw', 'resignation'] as const) {
     await page.getByRole('alertdialog').getByRole('button', { name: action === 'draw' ? 'Draw' : 'Resign', exact: true }).click();
     release?.();
     await delivery;
-    const finalStatus = action === 'draw' ? 'Draw agreed' : 'Black wins';
+    const finalStatus = action === 'draw' ? 'Draw' : 'Black won';
     await expect(page.locator('.status-heading')).toHaveText(finalStatus);
     await expect(page.getByRole('heading', { name: finalStatus, exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: /Stop generation|Retry model request|Resume model turn/ })).toHaveCount(0);

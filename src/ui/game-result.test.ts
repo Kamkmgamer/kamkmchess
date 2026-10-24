@@ -24,6 +24,8 @@ describe('describeResult', () => {
     }
     const stalemate: GameResultV1 = { kind: 'final', winner: 'draw', reason: 'stalemate', eventId: 'e1', decidedAtMs: 1 };
     expect(describeFor(stalemate)).toMatchObject({ headline: 'Draw', detail: 'by stalemate' });
+    const agreed: GameResultV1 = { kind: 'final', winner: 'draw', reason: 'draw-agreement', eventId: 'e1', decidedAtMs: 1 };
+    expect(describeFor(agreed)).toMatchObject({ headline: 'Draw', detail: 'by agreement' });
   });
 
   it('derives tone from the viewer', () => {
