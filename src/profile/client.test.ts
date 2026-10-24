@@ -131,6 +131,29 @@ describe('profile client', () => {
     expect(calls.at(0)?.body).not.toContain('jwt-1');
   });
 
+  it('seeds the default public name on the account route with the trimmed candidates', async () => {
+    const { calls, fetcher } = recordingFetch(() => json(publicProfile));
+    const { binding } = bindingFor(account('acct_alpha', async () => 'jwt-1'));
+    const client = createProfileClient({ baseUrl: 'https://service.example', identity: binding, fetch: fetcher });
+
+    await client.seedOwnProfileName(['  kamkmgamer  ', 'Khalil Mageed', '   ']);
+
+    expect(calls.at(0)?.method).toBe('POST');
+    expect(calls.at(0)?.url).toBe('https://service.example/v1/account/profile/seed');
+    expect(calls.at(0)?.headers.Authorization).toBe('Bearer jwt-1');
+    expect(calls.at(0)?.body).toBe('{"candidates":["kamkmgamer","Khalil Mageed"]}');
+  });
+
+  it('reports a refused seed with the service code', async () => {
+    const { fetcher } = recordingFetch(() => json({ error: 'invalid_request' }, 400));
+    const { binding } = bindingFor(account('acct_alpha'));
+    const client = createProfileClient({ baseUrl: 'https://service.example', identity: binding, fetch: fetcher });
+
+    const failure = await client.seedOwnProfileName(['guest']).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(ProfileRequestError);
+    expect((failure as ProfileRequestError).status).toBe(400);
+  });
+
   it('reports a name that another profile already owns with the service code', async () => {
     const { fetcher } = recordingFetch(() => json({ error: 'username_taken' }, 409));
     const { binding } = bindingFor(account('acct_alpha'));

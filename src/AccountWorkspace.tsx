@@ -12,6 +12,7 @@ import { ProfilePanel } from './ui/ProfilePanel.js';
 import { MatchComposition } from './ui/match-composition.js';
 import type { LocalGameSession } from './ui/match-composition.js';
 import { createProfileClient } from './profile/client.js';
+import { seedDefaultPublicName } from './profile/seed.js';
 import { createOwnerSwitches } from './online/owner-switches.js';
 import type { GuestSeatBinding } from './profile/client.js';
 import { createProfileIdentityTracker } from './profile/identity.js';
@@ -292,6 +293,21 @@ export function AccountWorkspace(initialView: WorkspaceView) {
     if (!publicConfig.apiBaseUrl || !profileIdentity?.account) return null;
     return createProfileClient({ baseUrl: publicConfig.apiBaseUrl, identity: profileIdentity });
   }, [profileIdentity]);
+
+  // The public name starts from the account itself, so a profile never asks
+  // for a setup step before it has a name anybody can see. The seed runs once
+  // per signed-in identity and stays quiet: a failure changes nothing, and the
+  // next sign-in tries again.
+  const seededIdentities = useRef(new Set<string>());
+  useEffect(() => {
+    if (!profileClient || !identity) return;
+    const user = session?.client?.user;
+    if (!user || user.id !== identity.accountId) return;
+    const key = `${identity.accountId}:${profileIdentity?.generation ?? 0}`;
+    if (seededIdentities.current.has(key)) return;
+    seededIdentities.current.add(key);
+    void seedDefaultPublicName(profileClient, user).catch(() => undefined);
+  }, [profileClient, identity, session, profileIdentity]);
 
   // The site owner's online switches. The service refuses every account that
   // is not an owner, and the panel then shows nothing.

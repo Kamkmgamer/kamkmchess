@@ -1176,6 +1176,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     {onlineVisible && online && <div className="online-overlay" role="dialog" aria-modal="true" aria-label="Online play" tabIndex={-1}>
       <OnlineWorkspace composition={online} onClose={closeOnline} initialTab={onlineInitialTab}
         agentLabel={online.agent?.label ?? null}
+        onConfigureAgent={() => { closeOnline(); openSetup(undefined, 'opponent'); }}
         checkAgent={checkOnlineAgent}
         {...(onOpenProfile ? { onOpenProfile } : {})} />
     </div>}

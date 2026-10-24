@@ -161,6 +161,9 @@ type Update struct {
 // or a digit, so a name never ends in a dangling separator.
 var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{1,22}[A-Za-z0-9]$`)
 
+// maxUsernameLength is the longest public name the shape allows.
+const maxUsernameLength = 24
+
 // NormalizeUsername validates a chosen public name.
 //
 // It returns the display form the owner typed and the comparison key used for
