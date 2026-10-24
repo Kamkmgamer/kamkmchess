@@ -136,6 +136,8 @@ export interface OnlineWorkspaceProps {
   readonly onClose: () => void;
   /** Opens the account profile and history of the owner. */
   readonly onOpenProfile?: () => void;
+  /** Opens the browser-owned AI connection setup before queueing an agent. */
+  readonly onConfigureAgent?: () => void;
   /** The public label of the owner's own agent, when one is selected. */
   readonly agentLabel?: string | null;
   /** The section the screen opens on. */
@@ -586,7 +588,7 @@ export function OnlinePublicHistory({ history }: { readonly history: OnlineProfi
  * The screen owns no service state. It renders the composition and asks it to
  * act.
  */
-export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabel, initialTab, checkAgent }: OnlineWorkspaceProps) {
+export function OnlineWorkspace({ composition, onClose, onOpenProfile, onConfigureAgent, agentLabel, initialTab, checkAgent }: OnlineWorkspaceProps) {
   const [tab, setTab] = useState<OnlineTab>(initialTab ?? 'games');
   const [clockIndex, setClockIndex] = useState(1);
   const [now, setNow] = useState(() => Date.now());
@@ -1249,6 +1251,11 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
   }
 
   async function enterQueue(control: SeatControl, intent: 'reuse' | 'new' = 'reuse'): Promise<void> {
+    // Queueing is a waiting destination, not a side effect hidden inside the
+    // setup form. Move the owner to Games before the request starts so the
+    // next screen explains what is happening and where the match will open.
+    setTab('games');
+    setMessage(control.kind === 'agent' ? 'Your agent is checking in. The queue will open the game here.' : 'You are in the queue. The game will open here when an opponent is found.');
     const key = requestOwner.begin();
     if (!key) return;
     try {
@@ -1276,6 +1283,8 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
    * browser, so this path never replaces the entry the owner waits with.
    */
   async function enterExplicitEntry(seat: 'human' | 'agent'): Promise<void> {
+    setTab('games');
+    setMessage('Your additional queue entry is being created. Track it here.');
     const key = requestOwner.begin();
     if (!key) return;
     try {
@@ -1755,44 +1764,69 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
     <OnlineFailureNotice failure={failure || queueFailure} />
 
     {tab === 'new' && <section className="online-panel online-new-panel" aria-label="New play">
-      <div className="online-clock" role="group" aria-label="Clock">
-        {CLOCK_CHOICES.map((choice, index) => <button
-          key={`${choice.minutes}-${choice.increment}`}
-          type="button"
-          className={`button ${clockIndex === index ? 'primary' : 'quiet'}`}
-          aria-pressed={clockIndex === index}
-          onClick={() => setClockIndex(index)}>{choice.minutes}+{choice.increment}</button>)}
+      <div className="online-new-heading">
+        <div>
+          <h3 className="online-route-heading" aria-label="Choose a route" />
+          <p className="online-route-note" aria-label="Pick one way to start. Your game opens in Games." />
+        </div>
+        <div className="online-clock" role="group" aria-label="Clock">
+          {CLOCK_CHOICES.map((choice, index) => <button
+            key={`${choice.minutes}-${choice.increment}`}
+            type="button"
+            className={`button ${clockIndex === index ? 'primary' : 'quiet'}`}
+            aria-pressed={clockIndex === index}
+            onClick={() => setClockIndex(index)}>{choice.minutes}+{choice.increment}</button>)}
+        </div>
       </div>
-      <div className="button-row">
-        <IconButton icon="play" label="Play yourself" variant="primary" disabled={busy || !composition.features.queue || !composition.accountSignedIn} onClick={() => void enterQueue({ kind: 'human' })} />
-        <IconButton icon="moves" label="Watch agent" disabled={busy || !composition.features.queue || !composition.accountSignedIn || !ownAgentLabel} onClick={() => void enterQueue({ kind: 'agent', modelLabel: ownAgentLabel ?? 'Agent' })} />
-        <IconButton icon="plus" label="Another entry" disabled={busy || !composition.features.queue || !composition.accountSignedIn} onClick={() => void enterExplicitEntry('human')} />
-        <IconButton icon="moves" label="Another agent entry" disabled={busy || !composition.features.queue || !composition.accountSignedIn || !ownAgentLabel} onClick={() => void enterExplicitEntry('agent')} />
-      </div>
-      {composition.featuresStatus === 'unreachable' && <p role="status">Online play cannot reach the server right now. Check the connection and reopen this panel.</p>}
-      {composition.featuresStatus === 'answered' && !composition.features.queue && !composition.features.friends && <p role="status">Online play is switched off on the server right now.</p>}
-      {composition.features.queue && !composition.accountSignedIn && <p role="status">Sign in to join the queue. Friend games work without an account.</p>}
-      {queue.detail && queue.detail !== queueFailure && <p role="status">{queue.detail}</p>}
-      {queue.options.length > 0 && <div className="button-row">
-        {queue.options.includes('retry') && <button className="button" type="button" onClick={() => queueOption('retry')}>Retry</button>}
-        {queue.options.includes('play-yourself') && <IconButton icon="play" label="Play yourself" variant="default" onClick={() => queueOption('play-yourself')} />}
-        {queue.options.includes('keep-searching') && <button className="button" type="button" onClick={() => queueOption('keep-searching')}>Keep searching</button>}
-        {queue.options.includes('rejoin') && <button className="button" type="button" onClick={() => queueOption('rejoin')}>Rejoin</button>}
-        {queue.options.includes('cancel') && <IconButton icon="close" label="Cancel" onClick={() => queueOption('cancel')} />}
-      </div>}
-      {queue.assignment && <p role="status">Matched. {queue.assignment.opponentLabel}</p>}
 
-      {composition.queueEntries.length > 0 && <ul className="online-entries" aria-label="Queue entries">
-        {composition.queueEntries.map(entry => <li key={entry.id}>
-          <span className="online-entry-context">{queueEntryContext(entry)}</span>
-          <span className="online-entry-state">{entry.state.detail || entry.state.phase}</span>
-          <IconButton icon="moves" label={queueEntryControlLabel(entry, 'show')} onClick={() => entry.focus()} />
-          <IconButton icon="close" label={queueEntryControlLabel(entry, 'cancel')} disabled={busy} onClick={() => void entry.cancel()} />
-        </li>)}
-      </ul>}
+      <section className="online-path online-queue-path" aria-label="Queue for a match">
+        <div className="online-path-heading">
+          <div>
+            <h3 className="online-path-title" aria-label="Queue" />
+            <p className="online-path-note" aria-label="Find a casual opponent." />
+          </div>
+          <span className={`online-path-badge${composition.accountSignedIn ? ' is-ready' : ''}`} data-label={composition.accountSignedIn ? 'Account' : 'Sign in required'} aria-label={composition.accountSignedIn ? 'Account' : 'Sign in required'} />
+        </div>
+        <div className="button-row">
+          <IconButton icon="play" label="Play yourself" variant="primary" disabled={busy || !composition.features.queue || !composition.accountSignedIn} onClick={() => void enterQueue({ kind: 'human' })} />
+          <IconButton icon="moves" label="Watch agent" disabled={busy || !composition.features.queue || !composition.accountSignedIn || !ownAgentLabel} onClick={() => void enterQueue({ kind: 'agent', modelLabel: ownAgentLabel ?? 'Agent' })} />
+          <IconButton icon="plus" label="Another entry" disabled={busy || !composition.features.queue || !composition.accountSignedIn} onClick={() => void enterExplicitEntry('human')} />
+          <IconButton icon="moves" label="Another agent entry" disabled={busy || !composition.features.queue || !composition.accountSignedIn || !ownAgentLabel} onClick={() => void enterExplicitEntry('agent')} />
+        </div>
+        {onConfigureAgent && !ownAgentLabel && <button className="button quiet online-connect-agent" type="button" onClick={onConfigureAgent}>Connect an AI</button>}
+        {ownAgentLabel && <p className="online-agent-ready" role="status">Agent ready: {ownAgentLabel}</p>}
+        {composition.featuresStatus === 'unreachable' && <p role="status">Online play cannot reach the server right now. Check the connection and reopen this panel.</p>}
+        {composition.featuresStatus === 'answered' && !composition.features.queue && !composition.features.friends && <p role="status">Online play is switched off on the server right now.</p>}
+        {composition.features.queue && !composition.accountSignedIn && <p role="status">Sign in to join the queue. Friend games work without an account.</p>}
+        {queue.detail && queue.detail !== queueFailure && <p role="status">{queue.detail}</p>}
+        {queue.options.length > 0 && <div className="button-row">
+          {queue.options.includes('retry') && <button className="button" type="button" onClick={() => queueOption('retry')}>Retry</button>}
+          {queue.options.includes('play-yourself') && <IconButton icon="play" label="Play yourself" variant="default" onClick={() => queueOption('play-yourself')} />}
+          {queue.options.includes('keep-searching') && <button className="button" type="button" onClick={() => queueOption('keep-searching')}>Keep searching</button>}
+          {queue.options.includes('rejoin') && <button className="button" type="button" onClick={() => queueOption('rejoin')}>Rejoin</button>}
+          {queue.options.includes('cancel') && <IconButton icon="close" label="Cancel" onClick={() => queueOption('cancel')} />}
+        </div>}
+        {queue.assignment && <p role="status">Matched. {queue.assignment.opponentLabel}</p>}
 
-      <h3>Friend</h3>
-      <section className="online-panel online-friend-panel" aria-label="Invite a friend">
+        {composition.queueEntries.length > 0 && <ul className="online-entries" aria-label="Queue entries">
+          {composition.queueEntries.map(entry => <li key={entry.id}>
+            <span className="online-entry-context">{queueEntryContext(entry)}</span>
+            <span className="online-entry-state">{entry.state.detail || entry.state.phase}</span>
+            <IconButton icon="moves" label={queueEntryControlLabel(entry, 'show')} onClick={() => entry.focus()} />
+            <IconButton icon="close" label={queueEntryControlLabel(entry, 'cancel')} disabled={busy} onClick={() => void entry.cancel()} />
+          </li>)}
+        </ul>}
+      </section>
+
+      <section className="online-path online-friend-path" aria-label="Play with a friend">
+        <div className="online-path-heading">
+          <div>
+            <h3>Friend</h3>
+            <p className="online-path-note" aria-label="Use a link or a code." />
+          </div>
+        </div>
+        <div className="online-friend-grid">
+        <section className="online-panel online-friend-panel" aria-label="Invite a friend">
         <div className="button-row" role="group" aria-label="Invitation kind">
           <button className={`button ${friendKind === 'link' ? 'primary' : 'quiet'}`} type="button" aria-pressed={friendKind === 'link'} onClick={() => setFriendKind('link')}>Link</button>
           <button className={`button ${friendKind === 'challenge' ? 'primary' : 'quiet'}`} type="button" aria-pressed={friendKind === 'challenge'} disabled={!composition.accountSignedIn} onClick={() => setFriendKind('challenge')}>Challenge</button>
@@ -1812,7 +1846,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
         <label className="online-field">Position
           <input value={friendFen} aria-label="Starting position" placeholder="Standard" onChange={event => setFriendFen(event.target.value)} />
         </label>
-        <div className="button-row">
+        <div className="button-row online-friend-actions">
           <IconButton icon="link" label="Invite a friend" variant="default" disabled={busy || !composition.features.friends} onClick={() => void createInvitation()} />
           <IconButton icon="close" label="Cancel invitation" disabled={busy || !cancelTargetId} onClick={() => void cancelInvitation()} />
         </div>
@@ -1828,7 +1862,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
           </li>)}
         </ul>}
       </section>
-      <section className="online-panel online-friend-panel" aria-label="Join a friend">
+        <section className="online-panel online-friend-panel" aria-label="Join a friend">
         <label className="online-field">Code
           <input value={invitationCode} aria-label="Invitation code" onChange={event => setInvitationCode(event.target.value)} />
         </label>
@@ -1836,16 +1870,39 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
           <button className={`button ${joinControl === 'human' ? 'primary' : 'quiet'}`} type="button" aria-pressed={joinControl === 'human'} onClick={() => setJoinControl('human')}>Human</button>
           <button className={`button ${joinControl === 'agent' ? 'primary' : 'quiet'}`} type="button" aria-pressed={joinControl === 'agent'} disabled={!ownAgent} onClick={() => setJoinControl('agent')}>Agent</button>
         </div>
-        <div className="button-row">
+        <div className="button-row online-friend-actions">
           <button className="button quiet" type="button" disabled={busy || !composition.features.friends} onClick={() => void previewInvitation()}>Preview</button>
           <IconButton icon="check" label="Accept" variant="default" disabled={busy || !ownedInvitationAcceptable(invitation, id => composition.ownsInvitation(id))} onClick={() => void acceptInvitation()} />
         </div>
         {invitation && <FriendInvitationPreview invitation={invitation} />}
       </section>
+        </div>
+      </section>
     </section>}
 
     {tab === 'games' && <section className="online-panel" aria-label="Concurrent games">
-      {games.length === 0 && <p>No online games yet.</p>}
+      <div className="online-destination-heading">
+        <div>
+          <h3>Your games</h3>
+          <p>Waiting matches and active boards live here.</p>
+        </div>
+        <IconButton icon="plus" label="New game" onClick={() => { setTab('new'); setMessage('Choose a clock and enter the queue for another game.'); }} />
+      </div>
+      {queue.phase !== 'idle' && queue.phase !== 'cancelled' && <section className={`online-queue-status online-queue-status-${queue.phase}`} aria-label="Queue status">
+        <div className="online-queue-status-copy">
+          <span className="online-queue-live-dot" aria-hidden="true" />
+          <div>
+            <h3>{queue.phase === 'matched' || queue.phase === 'assigned' ? 'Match found' : queue.phase === 'expired' ? 'Queue paused' : queue.phase === 'checking-agent' ? 'Checking your setup' : 'Searching for an opponent'}</h3>
+            <p>{queue.detail || 'Your game will appear here when the queue finds a match.'}</p>
+          </div>
+        </div>
+        <div className="button-row">
+          {queue.assignment && <button className="button primary" type="button" onClick={() => openGame(queue.assignment?.matchId ?? focusedId ?? '')}>Open game</button>}
+          {queue.options.includes('cancel') && <button className="button quiet" type="button" onClick={() => queueOption('cancel')}>Leave queue</button>}
+          {queue.options.includes('rejoin') && <button className="button primary" type="button" onClick={() => queueOption('rejoin')}>Rejoin queue</button>}
+        </div>
+      </section>}
+      {games.length === 0 && (queue.phase === 'idle' || queue.phase === 'cancelled') && <p>No online games yet.</p>}
       <ul className="online-games">
         {games.map(game => <li key={game.matchId}>
           <button className="button quiet" type="button" onClick={() => openGame(game.matchId)} aria-current={game.matchId === focusedId ? 'true' : undefined}>
@@ -1854,9 +1911,6 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
           <span className="online-game-status">{game.status === 'live' ? '' : onlineConnectionText(game.status)}</span>
         </li>)}
       </ul>
-      <div className="button-row">
-        <IconButton icon="plus" label="New game" onClick={() => { setTab('new'); setMessage('Choose a clock and enter the queue for another game.'); }} />
-      </div>
     </section>}
 
     {tab === 'profile' && <section className="online-panel" aria-label="Profile and history">
