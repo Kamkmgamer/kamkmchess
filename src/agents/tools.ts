@@ -33,7 +33,12 @@ function board(bridge: AgentBridge, view: AgentGameView | null = bridge.view()) 
     : view.status === 'finished' ? 'finished' : turn ? 'your-turn' : 'opponent-turn';
   return {
     status, gameId: view.gameId, yourSide: view.agentSides.length === 1 ? view.agentSides[0] : view.agentSides,
-    agentName: bridge.reportedName(view.gameId), fen: view.fen, moves: view.moves, sideToMove: view.sideToMove,
+    agentName: bridge.reportedName(view.gameId), fen: view.fen,
+    // The full SAN history is already in `input` on the agent's turn. Keep a
+    // count in the outer board envelope so every tool result does not repeat
+    // the same history alongside that input.
+    moveCount: view.moves.trim() === '' ? 0 : view.moves.trim().split(/\s+/).length,
+    sideToMove: view.sideToMove,
     clock: view.clock, result: view.result,
     ...(turn ? { input: turn.input } : {}),
     ...(status === 'no-agent-seat' ? { hint: 'The open game has no agent seat. Call start_game for a new one.' } : {}),

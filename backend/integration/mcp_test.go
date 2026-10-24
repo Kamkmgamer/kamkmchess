@@ -115,8 +115,11 @@ func TestMCPAgentPlaysTheServerEngine(t *testing.T) {
 		t.Fatal(errText)
 	}
 	after := played["board"].(map[string]any)
-	if played["result"] != "accepted" || after["status"] != "your-turn" || len(after["moves"].([]any)) != 2 {
+	if played["result"] != "accepted" || after["status"] != "your-turn" || after["moveCount"] != float64(2) {
 		t.Fatalf("make_move = %v", played)
+	}
+	if moves := after["input"].(map[string]any)["moves"]; moves != "e4 e5" {
+		t.Fatalf("compact move history = %v", moves)
 	}
 	if plan := after["input"].(map[string]any)["previousThinking"].(map[string]any)["plan"]; plan != "Take the centre." {
 		t.Fatalf("the plan did not come back: %v", plan)
@@ -165,7 +168,7 @@ func TestMCPResumeAndBlack(t *testing.T) {
 	if errText != "" {
 		t.Fatal(errText)
 	}
-	if board["yourSide"] != "black" || board["status"] != "your-turn" || len(board["moves"].([]any)) != 1 {
+	if board["yourSide"] != "black" || board["status"] != "your-turn" || board["moveCount"] != float64(1) {
 		t.Fatalf("a black start = %v", board)
 	}
 	token := board["resume_token"].(string)

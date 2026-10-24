@@ -1,9 +1,34 @@
 package mcpserver
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestToolResultTextCompactsBoardResults(t *testing.T) {
+	result := map[string]any{
+		"result":  "accepted",
+		"message": "Played e2e4.",
+		"board": map[string]any{
+			"status": "opponent-turn",
+			"fen":    "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+			"input":  map[string]any{"moves": "e4 e5"},
+		},
+	}
+	wrapper := toolResult(result, nil)
+	content := wrapper["content"].([]map[string]any)
+	text, ok := content[0]["text"].(string)
+	if !ok {
+		t.Fatal("tool result text was not a string")
+	}
+	if strings.Contains(text, "e4 e5") || strings.Contains(text, "current-match-input") {
+		t.Fatalf("board history leaked into the text fallback: %s", text)
+	}
+	if wrapper["structuredContent"] == nil {
+		t.Fatal("structured board content was dropped")
+	}
+}
 
 func TestCleanNameKeepsSelfReportedNamesPublishable(t *testing.T) {
 	for in, want := range map[string]string{

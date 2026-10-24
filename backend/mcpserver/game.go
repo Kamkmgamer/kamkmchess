@@ -551,7 +551,7 @@ func (s *Server) board(ctx context.Context, sess *session) (map[string]any, erro
 	}
 	board := map[string]any{
 		"status": status, "gameId": match.MatchID, "yourSide": string(sess.seat), "agentName": sess.agentName + " (self-reported)",
-		"opponent": serverengine.Label, "fen": match.PositionFEN, "moves": san, "sideToMove": string(side),
+		"opponent": serverengine.Label, "fen": match.PositionFEN, "moveCount": len(san), "sideToMove": string(side),
 		"clock": s.clock(match), "result": resultView(match, sess.seat),
 	}
 	if status == "your-turn" {
@@ -564,16 +564,17 @@ func (s *Server) board(ctx context.Context, sess *session) (map[string]any, erro
 // model: the position, the moves so far, the clocks, the illegal move
 // budget and the plan the agent left last turn.
 func (s *Server) input(match online.Match, sess *session) map[string]any {
-	history := make([]map[string]any, 0, len(match.Moves))
-	for index, move := range match.Moves {
-		history = append(history, map[string]any{"ply": index + 1, "san": move.SAN, "uci": move.UCI})
+	san := make([]string, 0, len(match.Moves))
+	for _, move := range match.Moves {
+		san = append(san, move.SAN)
 	}
 	spent := 0
 	if seat, ok := match.Seat(sess.seat); ok {
 		spent = seat.IllegalAttemptsSpent
 	}
 	input := map[string]any{
-		"kind": "current-match-input", "side": string(sess.seat), "fen": match.PositionFEN, "moveHistory": history,
+		"kind": "current-match-input", "side": string(sess.seat), "fen": match.PositionFEN,
+		"startingFen": match.StartingFEN, "moves": strings.Join(san, " "),
 		"clock": s.clock(match), "illegalAttemptsRemaining": online.MaxIllegalMoveAttempts - spent,
 		"previousThinking": nil,
 	}

@@ -57,10 +57,10 @@ async function fixture(options: { capacityBytes?: number; staleEffect?: boolean;
     if (intent.kind === 'model-turn-effect' && (stopped || options.staleEffect)) return { kind: 'rejected', reason: 'not-actionable', snapshot } as never;
     return { kind: 'accepted', snapshot } as never;
   });
-  const archive = vi.fn(async () => fence);
+  const archive = vi.fn(async (...args: unknown[]) => { void args; return fence; });
   const controller = { snapshot: () => snapshot, dispatch, appendModelTurnArchive: archive } as unknown as GameController;
   return {
-    profile, connections, controller, dispatch,
+    profile, connections, controller, dispatch, archive,
     options: {
       controller, connections: connections as ConnectionStore, namespace, expectedProfileConfigRevision: profile.configRevision, instructions: 'Play one legal move.',
       generation: { maxOutputTokens: 100 }, capacity: { maxRequestBytes: options.capacityBytes ?? 10_000, maxOutputTokens: 100 },
@@ -111,6 +111,11 @@ describe('generation composition runner', () => {
         expect.objectContaining({ role: 'assistant', content: expect.stringContaining('opaque-provider-record') }),
       ]),
     }), expect.anything());
+    const terminalEntry = f.archive.mock.calls
+      .map((call) => call[1] as { kind?: string; details?: { protocolResult?: { raw?: unknown } } } | undefined)
+      .find((entry) => entry?.kind === 'terminal');
+    expect(terminalEntry?.details?.protocolResult?.raw).toEqual({ chunkCount: expect.any(Number), eventCount: expect.any(Number) });
+    expect(JSON.stringify(terminalEntry)).not.toContain('rawBytes');
   });
 
   it('sends current-turn recovery feedback and resets it for the first request to a different model', async () => {

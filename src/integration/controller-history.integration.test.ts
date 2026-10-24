@@ -371,6 +371,7 @@ describe('controller and retained history integration seams', () => {
       expect(stored?.checkpoint.history.messages.map((message) => message.content)).toContain('partial reasoning');
       const journal = getGenerationJournal(stored!);
       expect(journal.retainedEvents.filter((event) => event.kind === 'model-request-persisted')).toHaveLength(3);
+      expect(journal.retainedMessages.every((message) => !message.content.includes('opaque-provider-record'))).toBe(true);
       const terminalUsage = journal.retainedEvents.filter((event) => event.kind === 'model-turn-transcript-finalized');
       expect(JSON.stringify(terminalUsage)).toContain('input_tokens');
       expect(afterBlack.checkpoint.history.messages.some((message) => message.content === 'first plan')).toBe(true);
