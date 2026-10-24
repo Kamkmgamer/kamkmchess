@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Chess } from 'chess.js';
 import type { HistoryCheckpointV1, HistoryMessageV1, RulesCheckpointV1 } from '../storage';
 import type { ProtocolStreamResult } from '../providers/protocols';
-import { createThinkingRecord, latestThinking } from './thinking';
+import { createThinkingRecord, latestThinking, MAX_CARRIED_REASONING_CHARS } from './thinking';
 
 const initialFen = new Chess().fen();
 const sourceInput = JSON.stringify({ kind: 'current-match-input', fen: initialFen, sideToMove: 'white' });
@@ -55,6 +55,13 @@ describe('rolling model thinking', () => {
     expect(latestThinking(history(messages), rules())).toMatchObject({ plan: 'Develop the kingside and castle.' });
     older.disposition = 'discarded';
     expect(latestThinking(history(messages), rules())).toBeUndefined();
+  });
+
+  it('bounds carried reasoning without changing the archived thinking record', () => {
+    const longReasoning = 'r'.repeat(MAX_CARRIED_REASONING_CHARS + 100);
+    const record = createThinkingRecord(sourceInput, result({ reasoningText: longReasoning }))!;
+    expect(record).toContain(longReasoning);
+    expect(latestThinking(history([message(record)]), rules())?.reasoning).toHaveLength(MAX_CARRIED_REASONING_CHARS);
   });
 
   it('does not replace a usable plan with failed, partial, aborted or thought-free output', () => {

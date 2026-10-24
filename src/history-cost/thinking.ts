@@ -10,6 +10,14 @@ export interface ModelThinkingV1 {
   reasoning?: string;
 }
 
+/** Maximum reasoning text carried into the next provider request. */
+export const MAX_CARRIED_REASONING_CHARS = 4_000;
+
+function carriedThinking(thinking: ModelThinkingV1): ModelThinkingV1 {
+  if (thinking.reasoning === undefined || thinking.reasoning.length <= MAX_CARRIED_REASONING_CHARS) return thinking;
+  return { ...thinking, reasoning: thinking.reasoning.slice(0, MAX_CARRIED_REASONING_CHARS) };
+}
+
 function objectFromText(text: string): Record<string, unknown> | undefined {
   // Raw stream records can be large. Never parse them to recover chess memory.
   if (!/^\s*\{/.test(text)) return undefined;
@@ -71,8 +79,8 @@ export function latestThinking(history: HistoryCheckpointV1, rules: RulesCheckpo
         const plan = joinedText(data.plan);
         const reasoning = joinedText(data.reasoning);
         if (plan !== undefined || reasoning !== undefined) {
-          return { fen: data.fen, ...(typeof data.move === 'string' ? { move: data.move } : {}),
-            ...(plan === undefined ? {} : { plan }), ...(reasoning === undefined ? {} : { reasoning }) };
+          return carriedThinking({ fen: data.fen, ...(typeof data.move === 'string' ? { move: data.move } : {}),
+            ...(plan === undefined ? {} : { plan }), ...(reasoning === undefined ? {} : { reasoning }) });
         }
       } else legacyReplies.unshift(message.content);
     } else if (message.role === 'user' && data?.kind === 'current-match-input') {
@@ -80,7 +88,7 @@ export function latestThinking(history: HistoryCheckpointV1, rules: RulesCheckpo
       if (data.sideToMove === rules.sideToMove && typeof data.fen === 'string' && legacyReplies.length > 0) {
         const thinking = thinkingFromAnswer(data.fen, legacyReplies[0]!, legacyReplies.slice(1).join('\n\n'), '');
         if (thinking?.move !== undefined && rules.moves.some((move) =>
-          move.fenBefore === thinking.fen && move.from + move.to + (move.promotion ?? '') === thinking.move)) return thinking;
+          move.fenBefore === thinking.fen && move.from + move.to + (move.promotion ?? '') === thinking.move)) return carriedThinking(thinking);
       }
       legacyReplies = [];
     }
