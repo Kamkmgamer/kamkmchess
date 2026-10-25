@@ -7,6 +7,12 @@
   --panel-raised: var(--soft);
   --edge: color-mix(in srgb, var(--ink) 16%, var(--paper));
   --edge-strong: color-mix(in srgb, var(--ink) 34%, var(--paper));
+  /* Board palette defaults; applyBoardStyle writes the saved board style over these. */
   --board-light: #ebecd0;
   --board-dark: #779556;
+  --board-last-move: rgb(255 255 51 / 50%);
+  --board-selected: rgb(255 255 51 / 60%);
+  --board-dest: rgb(20 20 20 / 16%);
+  --board-dest-ring: rgb(20 20 20 / 18%);
+  --board-dest-hover: rgb(255 255 51 / 35%);
 }

@@ -13,6 +13,7 @@ import { GameNavigation, type OptionsFocus } from './GameNavigation';
 import { defaultSetup } from './game-setup';
 import { useTheme } from '../use-theme';
 import { ThemeOptions } from './ThemeOptions';
+import { useBoardStyle } from '../ui/use-board-style';
 import { RightGameSidebar } from '../navigation/RightGameSidebar';
 import { HomeGameSetup } from './HomeGameSetup';
 import { readSidebarPreferences } from '../navigation/sidebar-preferences';
@@ -32,6 +33,7 @@ function Wordmark() {
 
 export function App() {
   const theme = useTheme();
+  useBoardStyle();
   const [accountControls] = useState(() => createAccountControls(publicConfig.accountsEnabled ? publicConfig.clerkPublishableKey : null));
   const account = useSyncExternalStore(accountControls.subscribe, accountControls.getSnapshot, accountControls.getSnapshot);
   const pendingAccountSettings = useRef(false);

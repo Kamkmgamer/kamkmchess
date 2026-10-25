@@ -1,6 +1,7 @@
 import { T3_PALETTES } from '../ui/t3-palettes.js';
 import type { useTheme } from '../use-theme.js';
 import { PieceStyleOptions } from '../ui/PieceStyleOptions.js';
+import { BoardStyleOptions } from '../ui/BoardStyleOptions.js';
 
 export function ThemeOptions({ theme, appearance, setTheme, setAppearance }: ReturnType<typeof useTheme>) {
   return (
@@ -18,6 +19,7 @@ export function ThemeOptions({ theme, appearance, setTheme, setAppearance }: Ret
         </select>
       </label>
       <PieceStyleOptions />
+      <BoardStyleOptions />
     </div>
   );
 }

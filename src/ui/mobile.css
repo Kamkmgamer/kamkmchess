@@ -20,7 +20,10 @@
   .minimal-workspace .topbar-actions { gap: 4px; }
   .minimal-workspace .topbar .button { min-height: 44px; }
   .minimal-workspace .match-layout { grid-template-columns: minmax(0, 1fr); max-width: 640px; gap: 12px; }
-  .minimal-workspace .player-row { height: 44px; padding: 4px 0; gap: 8px; }
+  .minimal-workspace .player-row { height: 44px; padding: 4px 8px; gap: 8px; }
+  .minimal-workspace .captured-pieces { margin-left: 8px; }
+  .minimal-workspace .captured-pieces img { width: 16px; height: 16px; margin-right: -4px; }
+  .minimal-workspace .captured-pieces .material-advantage { font-size: 12px; }
   .minimal-workspace .clock { min-width: 76px; padding: 6px 8px; font-size: 23px; }
   .minimal-workspace .playing-board.with-evaluation { grid-template-columns: 22px minmax(0, 1fr); gap: 4px; }
   .minimal-workspace .board-tools {
@@ -38,8 +41,7 @@
   .mobile-history-tools { display: contents; }
   .mobile-board-return { display: flex; }
   .minimal-workspace .icon-button { width: 44px; height: 44px; flex-basis: 44px; touch-action: manipulation; }
-  .minimal-workspace .match-status { min-height: 48px; padding: 0 4px; gap: 8px; flex-wrap: wrap; }
-  .minimal-workspace .match-status[data-tone] { min-height: 60px; padding: 6px 4px 6px 14px; }
+  .minimal-workspace .match-status { min-height: 52px; padding: 6px 8px 6px 14px; gap: 8px; flex-wrap: wrap; }
   .minimal-workspace .status-heading { min-width: 0; overflow-wrap: anywhere; }
   .minimal-workspace .match-status .button-row { gap: 0; margin-left: auto; }
   .minimal-workspace .moves-sidebar {
@@ -78,9 +80,9 @@
   .minimal-workspace .match-layout { grid-template-columns: minmax(0, var(--board-size)) minmax(0, 296px); max-width: calc(var(--board-size) + 320px); gap: 24px; }
   .minimal-workspace .player-row { height: 36px; }
   .minimal-workspace .player-badge, .minimal-workspace .opponent-logo { width: 26px; height: 26px; }
+  .minimal-workspace .captured-pieces img { width: 14px; height: 14px; }
   .minimal-workspace .clock { padding-block: 4px; font-size: 20px; }
   .minimal-workspace .match-status { min-height: 44px; }
-  .minimal-workspace .match-status[data-tone] { min-height: 60px; }
   .minimal-workspace .moves-sidebar { height: calc(100dvh - 132px - env(safe-area-inset-top) - env(safe-area-inset-bottom)); min-height: 140px; }
   .minimal-workspace .board-tools {
     left: auto;

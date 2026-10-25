@@ -150,6 +150,33 @@ test('mobile appearance follows the system and synchronizes changes from another
   await other.close();
 });
 
+test('board and piece styles follow the saved choice onto every surface', async ({ page }, testInfo) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Appearance', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Board style', exact: true }).selectOption('walnut');
+  await expect(page.locator('html')).toHaveAttribute('data-board-style', 'walnut');
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--board-dark').trim())).toBe('#b58863');
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-board-style', 'walnut');
+  await page.goto('/play');
+  await expect(page.locator('html')).toHaveAttribute('data-board-style', 'walnut');
+  // The board squares and the move highlights pick the palette up.
+  const board = page.locator('.board-host cg-board');
+  await expect(board).toBeAttached();
+  await expect.poll(() => board.evaluate(element => getComputedStyle(element).backgroundImage)).toContain('rgb(181, 136, 99)');
+  // Settings offers the Kamkm set; picking it swaps the artwork on the match board. Small SVGs
+  // are inlined as data URLs by the production build, so the Kamkm outline colour is the marker.
+  const kamkmArtwork = /(%23262019|\/pieces\/kamkm\/)/;
+  await page.getByRole('button', { name: 'New game', exact: true }).click();
+  await page.locator('.right-game-sidebar').getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('combobox', { name: 'Piece style', exact: true }).selectOption('kamkm');
+  await expect(page.locator('.board-host')).toHaveAttribute('style', expect.stringMatching(kamkmArtwork));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-board-style', 'walnut');
+  expect(await page.locator('.board-host').getAttribute('style')).toMatch(kamkmArtwork);
+  await page.screenshot({ path: testInfo.outputPath('kamkm-walnut-game.png'), fullPage: true });
+});
+
 test('unavailable storage does not prevent changing the landing theme', async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Storage disabled', 'SecurityError'); } });

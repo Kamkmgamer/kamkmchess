@@ -1,6 +1,6 @@
 # Chess piece styles
 
-Users can choose Merida, Cburnett, Firi or Kaneo in Appearance on the landing page or Settings in a match. Merida is the default. The choice is saved in browser storage and shared by the match board, promotion picker, position editor and landing preview.
+Users can choose Merida, Cburnett, Firi, Kaneo or Kamkm in Appearance on the landing page or Settings in a match. Merida is the default. The choice is saved in browser storage and shared by the match board, promotion picker, position editor and landing preview.
 
 | Style | Local directory | Artist | License |
 | --- | --- | --- | --- |
@@ -8,6 +8,9 @@ Users can choose Merida, Cburnett, Firi or Kaneo in Appearance on the landing pa
 | Cburnett | `cburnett/` | Colin M. L. Burnett | [GPL-2.0-or-later](../../../docs/licenses/Cburnett-GPL-2.0-or-later.txt) |
 | Firi | `firi/` | James Faure | [CC BY 4.0](../../../docs/licenses/Firi-CC-BY-4.0.txt) |
 | Kaneo | `kaneo/` | Kadagaden | [CC BY 4.0](../../../docs/licenses/Kaneo-CC-BY-4.0.txt) |
+| Kamkm | `kamkm/` | The kamkm chess project | Same as the project ([GPL-3.0-or-later](../../../package.json)) |
+
+Kamkm is the project's own flat set, drawn for this app: every major piece stands on the same two-step plinth, white pieces are warm off-white with charcoal outlines, black pieces are charcoal with cream details so they stay readable on dark boards.
 
 Merida, Cburnett and Firi are copied from Lichess revision `3caccefdb06f4df57b207db8ea771e75698e6217`:
 

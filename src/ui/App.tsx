@@ -48,7 +48,7 @@ import type { ControllerSnapshotV1 } from '../controller/index.js';
 import type { GameResultDeclarationV1, ModelSelection } from '../controller/index.js';
 import { legalMoves } from '../rules/index.js';
 import type { CoordinateMove, Promotion } from '../rules/index.js';
-import { isLocalBoardInputDisabled, parseCoordinateMove, startClassifiedLocalGame, submitBoardMove } from './board-input.js';
+import { checkedColor, isLocalBoardInputDisabled, parseCoordinateMove, startClassifiedLocalGame, submitBoardMove } from './board-input.js';
 import type { LocalGameSession, MatchComposition } from './match-composition.js';
 import { T3_PALETTES } from './t3-palettes.js';
 import { useTheme } from '../use-theme.js';
@@ -68,8 +68,12 @@ import type { ResultTone } from './game-result.js';
 import { isSoundEnabled, playResultSound, setSoundEnabled } from './sounds.js';
 import type { SoundCue } from './sounds.js';
 import { pieceImage } from './piece-image.js';
+import { CapturedPieces } from './CapturedPieces.js';
+import { capturedSummary } from './captured-material.js';
 import { PieceStyleOptions } from './PieceStyleOptions.js';
 import { usePieceStyle } from './use-piece-style.js';
+import { BoardStyleOptions } from './BoardStyleOptions.js';
+import { useBoardStyle } from './use-board-style.js';
 import { conciseError, conciseTurnError } from './concise-error.js';
 import { controllerRevisionForConfig, matchesOpponentSelection } from './opponent-selection.js';
 import { getGenerationJournal } from '../integration/generation-runner.js';
@@ -144,7 +148,8 @@ function statusLabel(snapshot: ControllerSnapshotV1): string {
     return (result.winner === 'white' ? 'White' : 'Black') + ' wins';
   }
   if (snapshot.checkpoint.result.kind === 'pending-adjudication') return 'Position check pending';
-  return (snapshot.position.sideToMove === 'w' ? 'White' : 'Black') + ' to move';
+  const turn = (snapshot.position.sideToMove === 'w' ? 'White' : 'Black') + ' to move';
+  return checkedColor(snapshot.position) === undefined ? turn : `Check — ${turn}`;
 }
 
 /** What agent tools may see of the open game: the committed position, never a draft or premove. */
@@ -174,6 +179,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     initialSnapshot.checkpoint.selections.players.white.kind === 'model' && initialSnapshot.checkpoint.selections.players.black.kind === 'human' ? 'black' : 'white');
   const { theme, setTheme, appearance, setAppearance } = useTheme();
   const pieceStyle = usePieceStyle();
+  useBoardStyle();
   const [coordinate, setCoordinate] = useState('');
   const [coordinateError, setCoordinateError] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -514,6 +520,13 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     }
   }
   const history = useBoardHistory(snapshot, !setupOpen && !promotion && !recoveryOpen && !tool && resultPrompt === null);
+  // The trays follow the reviewed ply, so stepping back also steps the captures back.
+  const captures = useMemo(() => capturedSummary(
+    snapshot.checkpoint.rules.startingFen,
+    history.position,
+    snapshot.checkpoint.rules.moves.slice(0, history.ply),
+  ), [snapshot.checkpoint.rules.startingFen, snapshot.checkpoint.rules.moves, history.position, history.ply]);
+  const checkColor = useMemo(() => checkedColor(snapshot.position), [snapshot.position]);
   const generationController = useRef<AbortController | null>(null);
   const practiceController = useRef<AbortController | null>(null);
   const generationFenceKey = useRef('');
@@ -1226,6 +1239,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         <label>Theme<select value={theme} onChange={event => setTheme(event.target.value)}>{T3_PALETTES.map(palette => <option key={palette.id} value={palette.id}>{palette.label}</option>)}</select></label>
         <label>Appearance<select value={appearance} onChange={event => setAppearance(event.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
         <PieceStyleOptions />
+        <BoardStyleOptions />
         <label>Sound<select value={sound ? 'on' : 'off'} onChange={event => { const enabled = event.target.value === 'on'; setSound(enabled); setSoundEnabled(enabled); }}><option value="on">On</option><option value="off">Off</option></select></label>
         <div className="button-row"><IconButton icon="board" label="Position" onClick={() => openTool('position')} /><IconButton icon="archive" label="Conversation and archive" onClick={() => openTool('archive')} /><IconButton icon="download" label="Download game (JSON)" onClick={downloadArchive} /></div>
         <div className="settings-links"><a href="/#questions">Help</a><a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">Project</a></div>
@@ -1260,6 +1274,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       <section className="board-column" id="board" ref={boardPanel} tabIndex={-1} aria-label="Chess match board">
         {(['black', 'white'] as const).map(side => <div key={side} className={`player-row ${side} ${side === orientation ? 'near-player' : 'far-player'} ${activeSide === side ? 'active' : ''}`}>
           <OpponentBadge player={players[side]} side={side} /><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
+          <CapturedPieces pieces={side === 'white' ? captures.capturedByWhite : captures.capturedByBlack} capturedColor={side === 'white' ? 'b' : 'w'}
+            advantage={side === 'white' ? (captures.advantage > 0 ? captures.advantage : null) : captures.advantage < 0 ? -captures.advantage : null} />
           {clockHeld && activeSide === side && <span className="clock-held" title="Clock held after a failed model turn">held</span>}
           <time className={`clock ${activeSide === side ? 'running' : ''} ${clockHeld && activeSide === side ? 'held' : ''}`} data-low={clocks[`${side}Ms`] < 20_000 || undefined} aria-label={`${side} clock ${formatClock(clocks[`${side}Ms`])}${clockHeld && activeSide === side ? ', held' : ''}`}>{formatClock(clocks[`${side}Ms`])}</time>
           {canAddClockTime && <IconButton icon="plus" label={`Add 1 minute to ${side === 'white' ? 'White' : 'Black'}`} disabled={working} onClick={() => void addClockTime(side, 60_000)} />}
@@ -1291,7 +1307,10 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
             <IconButton icon="moves" label="Show moves" aria-controls="moves-panel" onClick={() => { movesPanel.current?.focus({ preventScroll: true }); movesPanel.current?.scrollIntoView({ block: 'start' }); }} />
           </div>
         </nav>
-        <div className="match-status" data-tone={finalResult?.tone} role="status" aria-description={final ? undefined : generationDetail || feedback}>
+        <div className="match-status" data-tone={finalResult?.tone} data-generation={generationState}
+          data-turn={!final && !history.reviewing ? snapshot.position.sideToMove : undefined}
+          data-check={!final && !history.reviewing && checkColor !== undefined ? 'true' : undefined}
+          role="status" aria-description={final ? undefined : generationDetail || feedback}>
           {/* One heading element in every state, so focus sent to it survives the switch to a final result. */}
           <div className="status-result"><h2 ref={resultStatus} tabIndex={-1} className="status-heading" aria-label={!final && generationState === 'producing' ? isEngineSelection(activePlayer) ? 'Engine is choosing a move' : 'AI is choosing a move' : undefined}>{history.reviewing ? `${history.ply}/${history.count}` : finalResult ? finalResult.headline : generationState === 'stopped' ? 'Paused' : generationState === 'failed' ? conciseTurnError(new Error(generationDetail)) : generationState === 'producing' ? generationDetail === 'Checking connection…' ? 'Checking…' : 'Thinking…' : statusLabel(snapshot)}</h2>
             {finalResult?.detail && !history.reviewing && <p className="status-detail">{finalResult.detail}</p>}</div>
