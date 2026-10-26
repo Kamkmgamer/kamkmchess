@@ -45,6 +45,7 @@ import { createGuestCredential } from '../online/auth.js';
 import { Icon, IconButton } from './Icon.js';
 import { ChessBoard } from './ChessBoard.js';
 import { MoveList } from './MoveList.js';
+import { OpponentPanel } from './OpponentPanel.js';
 import { FriendInvitationPreview } from './friend-preview.js';
 import { friendInvitationRequest } from './friend-setup.js';
 import {
@@ -67,6 +68,8 @@ import { rematchAction } from '../online/friends.js';
 import type { OnlineGameKind, OnlineHistoryEntry, OnlineOutcome, OnlineProfileHistory } from '../online/history.js';
 import type { OnlineAgentCheck } from '../online/readiness.js';
 import type { ModelSelection } from '../controller/index.js';
+import type { ConnectionNamespace, ConnectionStore } from '../providers/connections/index.js';
+import type { OpponentService } from '../opponents/index.js';
 import type { OnlineOfferView, OnlineMatchView } from '../online/updates.js';
 import {
   acceptOnlineDraw,
@@ -148,6 +151,12 @@ export interface OnlineWorkspaceProps {
    * never given a human seat instead of the model it chose.
    */
   readonly checkAgent?: (selection: ModelSelection) => Promise<OnlineAgentCheck>;
+  /** The local connection picker dependencies, supplied by the app shell. */
+  readonly agentService?: Promise<OpponentService>;
+  readonly agentConnectionStore?: Promise<ConnectionStore>;
+  readonly agentNamespace?: ConnectionNamespace;
+  /** Refreshes the shell's private agent catalog after a connection is saved. */
+  readonly onAgentConnected?: () => void;
 }
 
 const CLOCK_CHOICES: readonly { readonly minutes: number; readonly increment: number }[] = [
@@ -586,7 +595,8 @@ export function OnlinePublicHistory({ history }: { readonly history: OnlineProfi
  * The screen owns no service state. It renders the composition and asks it to
  * act.
  */
-export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabel, initialTab, checkAgent }: OnlineWorkspaceProps) {
+export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabel, initialTab, checkAgent,
+  agentService, agentConnectionStore, agentNamespace, onAgentConnected }: OnlineWorkspaceProps) {
   const [tab, setTab] = useState<OnlineTab>(initialTab ?? 'games');
   const [clockIndex, setClockIndex] = useState(1);
   const [now, setNow] = useState(() => Date.now());
@@ -635,6 +645,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
   const [friendControl, setFriendControl] = useState<'human' | 'agent'>('human');
   const [friendRecipient, setFriendRecipient] = useState('');
   const [friendFen, setFriendFen] = useState('');
+  const [connectAgentOpen, setConnectAgentOpen] = useState(false);
   // The seat of the browser that accepts an invitation. The acceptor chooses
   // it before the acceptance, so the seat of the created match keeps it.
   const [joinControl, setJoinControl] = useState<'human' | 'agent'>('human');
@@ -1753,6 +1764,35 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, agentLabe
       </button>
     </nav>
     <OnlineFailureNotice failure={failure || queueFailure} />
+
+    {agentService && agentConnectionStore && <section className="online-agent-panel" aria-label="Your online agent">
+      <div className="online-agent-heading">
+        <div>
+          <h3>Your agent</h3>
+          <p>{ownAgentLabel ? `${ownAgentLabel} is ready.` : 'Connect a model to play online.'}</p>
+        </div>
+        <IconButton
+          icon={connectAgentOpen ? 'close' : 'link'}
+          label={connectAgentOpen ? 'Close agent connection' : 'Connect an agent'}
+          variant={connectAgentOpen ? 'default' : 'primary'}
+          onClick={() => setConnectAgentOpen(value => !value)}
+        />
+      </div>
+      {connectAgentOpen && <OpponentPanel
+        service={agentService}
+        connectionStore={agentConnectionStore}
+        namespace={agentNamespace ?? { kind: 'guest' }}
+        idPrefix="online-agent"
+        selected={ownAgent?.selection ?? null}
+        onSelectionInvalidated={() => composition.setAgent(null)}
+        onSelect={(selection, identity) => {
+          composition.setAgent({ label: identity.modelId, selection });
+          setConnectAgentOpen(false);
+          setMessage(`${identity.modelId} is ready for online play.`);
+          onAgentConnected?.();
+        }}
+      />}
+    </section>}
 
     {tab === 'new' && <section className="online-panel online-new-panel" aria-label="New play">
       <div className="online-clock" role="group" aria-label="Clock">

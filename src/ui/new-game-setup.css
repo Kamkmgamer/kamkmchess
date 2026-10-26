@@ -1,5 +1,5 @@
 .sidebar-game-setup { --editor-ink: var(--t3-text); --editor-dim: var(--t3-text); --editor-surface: var(--panel, var(--t3-surface)); --editor-input: var(--panel, var(--t3-surface)); --editor-rule: var(--edge-strong, var(--t3-border)); --editor-accent: var(--t3-accent); --editor-accent-ink: var(--t3-accent-foreground); display: grid; gap: 24px; min-width: 0; padding: 0 0 24px; color: var(--t3-text); font: 400 14px/1.5 'Inter Tight', system-ui, sans-serif; }
-.game-mode-options { display: grid; gap: 16px; }
+.game-mode-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .game-opponent-options { display: grid; gap: 12px; min-width: 0; }
 .game-time-options { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-width: 0; padding: 0; margin: 0; border: 0; }
 .game-time-options legend { padding: 0; margin-bottom: 12px; font-weight: 600; }
@@ -85,6 +85,7 @@
 }
 @media (max-width: 760px), (max-width: 1000px) and (max-height: 500px) {
   .sidebar-game-setup { gap: 20px; padding-bottom: 12px; }
+  .game-mode-options { grid-template-columns: 1fr; }
   .sidebar-game-setup .editor-grid { width: 100%; max-width: 420px; }
   .right-game-sidebar .sidebar-game-setup .editor-fen-row textarea { font-size: 16px; }
   .sidebar-game-setup .editor-castling-rights label { min-height: 44px; }

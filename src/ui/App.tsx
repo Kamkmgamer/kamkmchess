@@ -320,6 +320,16 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       namespace,
     })(selection);
   }, [composition, onlineConnectionStore, onlineResolveNamespace]);
+  // The online connection picker must use the same identity namespace as the
+  // readiness check. Reusing the local game's opponent service can silently
+  // point an account game at guest connections.
+  const onlineAgentNamespace = useMemo(() => onlineResolveNamespace?.() ?? composition.namespace,
+    [onlineResolveNamespace, composition.namespace]);
+  const onlineAgentService = useMemo(() => (onlineConnectionStore ?? composition.connectionStore).then(connections => new OpponentService({
+    connections,
+    namespace: onlineAgentNamespace,
+    fetch: fetchProvider,
+  })), [composition.connectionStore, onlineConnectionStore, onlineAgentNamespace]);
   // The chosen agent follows the catalog: the model of the current game when
   // it is connected, and otherwise the first connected model. The choice of
   // the owner wins over both.
@@ -1092,9 +1102,10 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       startingTimeMinutes: AGENT_TIME_CONTROL.minutes, incrementSeconds: AGENT_TIME_CONTROL.incrementSeconds });
     const started = await startClassifiedLocalGame(nextSession.controller, nextSession.controller.snapshot());
     acceptSidebarGame({ session: nextSession, snapshot: started, identities: [], draft: {
-      mode: engine ? 'agent-engine' : 'human-agent', minutes: AGENT_TIME_CONTROL.minutes, increment: AGENT_TIME_CONTROL.incrementSeconds,
-      engineSide: side, humanSide: other, engineSeats: { white: null, black: null, ...(engine ? { [other]: engine } : {}) },
-      aiSeats: { white: null, black: null }, modelSelection: null, opponentIdentity: null } });
+      sideKinds: { white: side === 'white' ? 'agent' : engine ? 'engine' : 'human', black: side === 'black' ? 'agent' : engine ? 'engine' : 'human' },
+      minutes: AGENT_TIME_CONTROL.minutes, increment: AGENT_TIME_CONTROL.incrementSeconds,
+      engineSeats: { white: null, black: null, ...(engine ? { [other]: engine } : {}) },
+      aiSeats: { white: null, black: null } } });
     // Tools read the new game before React re-renders this page.
     agentHost.current = { ...agentHost.current, snapshot: started };
     return nextSession.gameId;
@@ -1153,6 +1164,10 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       <OnlineWorkspace composition={online} onClose={closeOnline} initialTab={onlineInitialTab}
         agentLabel={online.agent?.label ?? null}
         checkAgent={checkOnlineAgent}
+        agentService={onlineAgentService}
+        agentConnectionStore={onlineConnectionStore ?? composition.connectionStore}
+        agentNamespace={onlineAgentNamespace}
+        onAgentConnected={() => setCatalogRefresh(value => value + 1)}
         {...(onOpenProfile ? { onOpenProfile } : {})} />
     </div>}
     {tool && <section className="focus-page" aria-label={tool === 'agents' ? 'Your agents' : 'Match tools'}>

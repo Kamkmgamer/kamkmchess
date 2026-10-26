@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { composePlayers } from './match-modes.js';
+import { composePlayers, composePlayersBySide } from './match-modes.js';
 import { createEngineSelection } from '../engines/local.js';
 import { createAgentSelection } from '../agents/seat.js';
 import type { ModelSelection } from '../controller/index.js';
@@ -10,6 +10,24 @@ const ai: ModelSelection = { kind: 'model', providerId: 'fixture', connectionId:
 const otherAi = { ...ai, connectionId: 'black-model', modelRoutingId: 'black-model' };
 
 describe('match modes', () => {
+  it('composes each side from its own independent selector', () => {
+    expect(composePlayersBySide(
+      { white: 'human', black: 'engine' },
+      { white: null, black: engine },
+    )).toEqual({ white: { kind: 'human' }, black: engine });
+    expect(composePlayersBySide(
+      { white: 'ai', black: 'agent' },
+      { white: ai, black: null },
+    )).toEqual({ white: ai, black: createAgentSelection() });
+  });
+
+  it('rejects a selection that does not match its side kind', () => {
+    expect(() => composePlayersBySide(
+      { white: 'engine', black: 'human' },
+      { white: ai, black: null },
+    )).toThrow('White engine');
+  });
+
   it('assigns separate opponents in all four new modes', () => {
     expect(composePlayers('human-engine', 'black', 'white', { white: null, black: engine })).toEqual({ white: engine, black: { kind: 'human' } });
     expect(composePlayers('engine-engine', 'white', 'white', { white: engine, black: engine })).toEqual({ white: engine, black: engine });
