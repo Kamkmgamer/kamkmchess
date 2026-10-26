@@ -43,14 +43,15 @@ test('a draw needs confirmation, survives reload, and cannot be undone', async (
   const dialog = page.getByRole('alertdialog');
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: 'Draw', exact: true }).click();
-  await expect(page.locator('.status-heading')).toHaveText('Draw agreed');
-  await expect(page.getByRole('heading', { name: 'Draw agreed', exact: true })).toBeFocused();
+  await expect(page.locator('.status-heading')).toHaveText('Draw');
+  await expect(page.getByRole('heading', { name: 'Draw', exact: true })).toBeFocused();
+  await expect(page.locator('.status-detail')).toHaveText('by agreement');
   await expect(draw).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Resign game', exact: true })).toBeDisabled();
   await expect(undo).toBeDisabled();
 
   await page.reload();
-  await expect(page.locator('.status-heading')).toHaveText('Draw agreed');
+  await expect(page.locator('.status-heading')).toHaveText('Draw');
   await expect(page.getByRole('button', { name: 'Agree a draw', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Resign game', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
@@ -65,12 +66,13 @@ test('a resignation names the side and records the opposing win after reload', a
   await expect(dialog.getByRole('button', { name: 'Keep playing' })).toBeFocused();
 
   await dialog.getByRole('button', { name: 'Resign', exact: true }).click();
-  await expect(page.locator('.status-heading')).toHaveText('Black wins');
-  await expect(page.getByRole('heading', { name: 'Black wins', exact: true })).toBeFocused();
+  await expect(page.locator('.status-heading')).toHaveText('Black won');
+  await expect(page.getByRole('heading', { name: 'Black won', exact: true })).toBeFocused();
+  await expect(page.locator('.status-detail')).toHaveText('White resigned');
   await expect(page.getByRole('button', { name: 'Undo', exact: true })).toBeDisabled();
 
   await page.reload();
-  await expect(page.locator('.status-heading')).toHaveText('Black wins');
+  await expect(page.locator('.status-heading')).toHaveText('Black won');
   await expect(page.getByRole('button', { name: 'Agree a draw', exact: true })).toBeDisabled();
 });
 

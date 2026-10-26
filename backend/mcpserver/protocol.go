@@ -11,6 +11,7 @@ package mcpserver
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"slices"
@@ -157,9 +158,32 @@ func toolResult(result any, err error) map[string]any {
 		return map[string]any{"content": []map[string]any{{"type": "text", "text": "internal error"}}, "isError": true}
 	}
 	return map[string]any{
-		"content":           []map[string]any{{"type": "text", "text": string(text)}},
+		// Structured content carries the complete machine-readable answer. The
+		// text fallback stays short for board results so MCP hosts that retain
+		// both representations do not duplicate the full position history.
+		"content":           []map[string]any{{"type": "text", "text": toolResultText(result, string(text))}},
 		"structuredContent": result,
 	}
+}
+
+func toolResultText(result any, fallback string) string {
+	record, ok := result.(map[string]any)
+	if !ok {
+		return fallback
+	}
+	if message, ok := record["message"].(string); ok {
+		if outcome, ok := record["result"].(string); ok {
+			return fmt.Sprintf("%s: %s", outcome, message)
+		}
+		return message
+	}
+	if status, ok := record["status"].(string); ok {
+		if fen, ok := record["fen"].(string); ok {
+			return fmt.Sprintf("status=%s fen=%s", status, fen)
+		}
+		return "status=" + status
+	}
+	return fallback
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

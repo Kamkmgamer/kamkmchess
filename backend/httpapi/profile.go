@@ -28,6 +28,7 @@ var ProfileRequestHeaders = []string{GuestCredentialHeader, GuestOwnershipProofH
 type ProfileService interface {
 	EnsureProfile(ctx context.Context, account onlineauth.Principal, origin string) (profile.Profile, error)
 	UpdateProfile(ctx context.Context, account onlineauth.Principal, update profile.Update, origin string) (profile.Profile, error)
+	SeedUsername(ctx context.Context, account onlineauth.Principal, candidates []string, origin string) (profile.Profile, error)
 	PublicProfile(ctx context.Context, profileID string) (profile.Profile, error)
 	ProfileByUsername(ctx context.Context, username string) (profile.Profile, error)
 	LinkGuestSeat(ctx context.Context, account onlineauth.Principal, request profile.LinkRequest) (profile.GuestLink, error)
@@ -56,6 +57,7 @@ type profileAPI struct {
 //	GET  /v1/profiles/username/{username}        public name lookup
 //	GET  /v1/account/profile                     the signed-in account's profile
 //	PUT  /v1/account/profile                     ownership-checked profile update
+//	POST /v1/account/profile/seed                seed the default public name
 //	GET  /v1/account/profile/guest-links         the linked guest seats
 //	POST /v1/account/profile/guest-links         explicit guest link
 //	POST /v1/guest-seats/ownership-proof         guest ownership proof
@@ -70,6 +72,7 @@ func NewProfile(profiles ProfileService, issuer GuestProofIssuer, authenticator 
 	mux.HandleFunc("GET /v1/profiles/username/{username}", api.publicUsername)
 	mux.HandleFunc("GET /v1/account/profile", api.ownProfile)
 	mux.HandleFunc("PUT /v1/account/profile", api.updateProfile)
+	mux.HandleFunc("POST /v1/account/profile/seed", api.seedProfile)
 	mux.HandleFunc("GET /v1/account/profile/guest-links", api.guestLinks)
 	mux.HandleFunc("POST /v1/account/profile/guest-links", api.linkGuestSeat)
 	mux.HandleFunc("POST /v1/guest-seats/ownership-proof", api.ownershipProof)
@@ -164,6 +167,46 @@ func (a *profileAPI) updateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, toPublicProfile(record))
 }
+
+// seedProfile seeds the default public name of the signed-in account.
+//
+// The account is the verified principal, never a value from the body. The body
+// carries the account's own sign-in fields as candidate texts, because the
+// browser holds them and the verified session token does not; the service
+// derives every candidate again under its own rules, and only a profile that
+// still has no name is written. A profile that already has a name is answered
+// unchanged, so the seed can never overwrite a deliberate choice.
+func (a *profileAPI) seedProfile(w http.ResponseWriter, r *http.Request) {
+	principal, ok := a.auth.account(w, r, true)
+	if !ok {
+		return
+	}
+	origin, ok := a.auth.origin(r, true)
+	if !ok {
+		writeError(w, http.StatusForbidden, "origin_required")
+		return
+	}
+	var body struct {
+		Candidates []string `json:"candidates"`
+	}
+	if !decodeBody(w, r, &body) {
+		return
+	}
+	if len(body.Candidates) > maxSeedRequestCandidates {
+		writeError(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	record, err := a.profiles.SeedUsername(r.Context(), principal, body.Candidates, origin)
+	if err != nil {
+		writeProfileError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, toPublicProfile(record))
+}
+
+// maxSeedRequestCandidates bounds the candidate texts one seed request may
+// carry, so a request cannot turn the seed into a name-probing search.
+const maxSeedRequestCandidates = 6
 
 // guestLinks lists the guest seats bound to the account.
 func (a *profileAPI) guestLinks(w http.ResponseWriter, r *http.Request) {

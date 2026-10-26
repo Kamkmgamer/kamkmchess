@@ -62,6 +62,11 @@ import type { PlayerSelectionV1 } from '../storage/index.js';
 import { BROWSER_ENGINES, stopBrowserEngines, stopUnusedBrowserEngines } from '../engines/browser.js';
 import { engineSettings } from '../engines/local.js';
 import { Icon, IconButton } from './Icon.js';
+import { GameResultCard } from './GameResultCard.js';
+import { describeResult } from './game-result.js';
+import type { ResultTone } from './game-result.js';
+import { isSoundEnabled, playResultSound, setSoundEnabled } from './sounds.js';
+import type { SoundCue } from './sounds.js';
 import { pieceImage } from './piece-image.js';
 import { PieceStyleOptions } from './PieceStyleOptions.js';
 import { usePieceStyle } from './use-piece-style.js';
@@ -121,6 +126,14 @@ function formatClock(milliseconds: number): string {
   const total = Math.max(0, Math.ceil(milliseconds / 1_000));
   return Math.floor(total / 60) + ':' + (total % 60).toString().padStart(2, '0');
 }
+const RESULT_CUES: Record<ResultTone, SoundCue> = { win: 'win', loss: 'loss', draw: 'draw', neutral: 'draw' };
+/** Final results that leave the human ahead and the game worth continuing as practice. */
+const PRACTICE_REASONS = new Set<string>(['resignation', 'illegal-move', 'timeout']);
+const PROJECT_URL = 'https://github.com/Kamkmgamer/kamkmchess';
+
+function finalEventId(snapshot: ControllerSnapshotV1): string | null {
+  return snapshot.checkpoint.result.kind === 'final' ? snapshot.checkpoint.result.eventId : null;
+}
 function statusLabel(snapshot: ControllerSnapshotV1): string {
   if (snapshot.readiness === 'restore-recovery-pending') return 'Restoring saved game';
   if (snapshot.readiness === 'expiry-persistence-pending') return 'Saving clock result';
@@ -164,6 +177,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [coordinate, setCoordinate] = useState('');
   const [coordinateError, setCoordinateError] = useState('');
   const [feedback, setFeedback] = useState('');
+  const [sound, setSound] = useState(isSoundEnabled);
   const [promotion, setPromotion] = useState<PromotionMove | null>(null);
   const [setupOpen, setSetupOpen] = useState(() => !onlineRoute && (new URLSearchParams(window.location.search).get('setup') === 'new' || !readSidebarPreferences().collapsed));
   const [setupRequest, setSetupRequest] = useState(0);
@@ -171,7 +185,6 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [setupFocus, setSetupFocus] = useState<'opponent' | 'time' | 'position' | null>(null);
   const [setupDraft, setSetupDraft] = useState<NewGameDraft | undefined>();
   const [tool, setTool] = useState<'settings' | 'position' | 'archive' | 'move' | 'agents' | null>(null);
-  const [toolPage, setToolPage] = useState(0);
   const [resultPrompt, setResultPrompt] = useState<ResultDeclarationChoice | null>(null);
   const [working, setWorking] = useState(false);
   const checkedIdentities = useRef(new Map<string, OpponentIdentityV1>());
@@ -505,6 +518,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const practiceController = useRef<AbortController | null>(null);
   const generationFenceKey = useRef('');
   const sessionRef = useRef(session);
+  // A restored game already announced its result; only a result reached on this page plays a sound.
+  const announcedResult = useRef(finalEventId(initialSnapshot));
   const movesPanel = useRef<HTMLElement>(null);
   const boardPanel = useRef<HTMLElement>(null);
   const keepPlaying = useRef<HTMLButtonElement>(null);
@@ -1064,12 +1079,21 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     return isEngineSelection(player) ? BROWSER_ENGINES[engineSettings(player).engineId].name
       : player.kind === 'model' ? player.modelRoutingId : side === 'white' ? 'White' : 'Black';
   };
+  const finalResult = final ? describeResult(snapshot.checkpoint.result, { label: playerLabel, viewer: humanColor }) : null;
+  const finalEvent = finalEventId(snapshot);
+  const finalTone = finalResult?.tone;
+  useEffect(() => {
+    if (finalEvent === null || finalTone === undefined || finalEvent === announcedResult.current) return;
+    announcedResult.current = finalEvent;
+    playResultSound(RESULT_CUES[finalTone]);
+  }, [finalEvent, finalTone]);
+  const result = snapshot.checkpoint.result;
+  const practiceOffered = result.kind === 'final' && PRACTICE_REASONS.has(result.reason) && result.winner === humanColor;
   const archiveText = [
     ...(generationJournal?.retainedMessages.map(message => `${message.role}: ${message.content}`) ?? []),
     ...(generationJournal?.discardedMessages.map(message => `Undone ${message.role}: ${message.content}`) ?? []),
   ].join('\n\n');
-  const archiveWords = archiveText.split(/\s+/).filter(Boolean);
-  const openTool = (next: typeof tool) => { setTool(next); setToolPage(0); setFeedback(''); setCoordinateError(''); };
+  const openTool = (next: typeof tool) => { setTool(next); setFeedback(''); setCoordinateError(''); };
   const focusPage = tool !== null || recoveryOpen;
   const downloadArchive = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify({ checkpoint: snapshot.checkpoint, conversation: generationJournal }, null, 2)], { type: 'application/json' }));
@@ -1166,6 +1190,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     {onlineVisible && online && <div className="online-overlay" role="dialog" aria-modal="true" aria-label="Online play" tabIndex={-1}>
       <OnlineWorkspace composition={online} onClose={closeOnline} initialTab={onlineInitialTab}
         agentLabel={online.agent?.label ?? null}
+        onConfigureAgent={() => { closeOnline(); openSetup(undefined, 'opponent'); }}
         checkAgent={checkOnlineAgent}
         agentService={onlineAgentService}
         agentConnectionStore={onlineConnectionStore ?? composition.connectionStore}
@@ -1179,11 +1204,13 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         <label>Theme<select value={theme} onChange={event => setTheme(event.target.value)}>{T3_PALETTES.map(palette => <option key={palette.id} value={palette.id}>{palette.label}</option>)}</select></label>
         <label>Appearance<select value={appearance} onChange={event => setAppearance(event.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
         <PieceStyleOptions />
-        <div className="button-row"><IconButton icon="board" label="Position" onClick={() => openTool('position')} /><IconButton icon="archive" label="Conversation and archive" onClick={() => openTool('archive')} /><IconButton icon="download" label="Download match archive" onClick={downloadArchive} /></div>
+        <label>Sound<select value={sound ? 'on' : 'off'} onChange={event => { const enabled = event.target.value === 'on'; setSound(enabled); setSoundEnabled(enabled); }}><option value="on">On</option><option value="off">Off</option></select></label>
+        <div className="button-row"><IconButton icon="board" label="Position" onClick={() => openTool('position')} /><IconButton icon="archive" label="Conversation and archive" onClick={() => openTool('archive')} /><IconButton icon="download" label="Download game (JSON)" onClick={downloadArchive} /></div>
+        <div className="settings-links"><a href="/#questions">Help</a><a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">Project</a></div>
       </div>}
       {tool === 'move' && <form className="coordinate-form" onSubmit={submitCoordinate}><label className="sr-label" htmlFor="coordinate-move">Enter a move by coordinates</label><input id="coordinate-move" aria-label="Enter a move by coordinates" value={coordinate} onChange={event => { setCoordinate(event.target.value); setCoordinateError(''); }} placeholder="e2e4" autoComplete="off" autoCapitalize="none" spellCheck={false} enterKeyHint="go" /><button className="button primary" type="submit" aria-label="Play move" disabled={disabled}>Play</button>{coordinateError && <p role="alert">{coordinateError}</p>}</form>}
-      {tool === 'position' && <><p className="fen-value">{history.position.fen}</p><IconButton icon="board" label="Edit starting position" onClick={() => openSetup(history.position.fen)} /></>}
-      {tool === 'archive' && <><pre className="archive-page">{archiveWords.length ? archiveWords.slice(toolPage * 8, (toolPage + 1) * 8).join(' ') : 'No conversation yet.'}</pre><div className="button-row"><IconButton icon="back" label="Previous page" disabled={toolPage === 0} onClick={() => setToolPage(page => page - 1)} /><IconButton icon="next" label="Next page" disabled={(toolPage + 1) * 8 >= archiveWords.length} onClick={() => setToolPage(page => page + 1)} /></div></>}
+      {tool === 'position' && <><p className="fen-value">{history.position.fen}</p><IconButton icon="board" label="New game from here" onClick={() => openSetup(history.position.fen)} /></>}
+      {tool === 'archive' && <pre className="archive-page">{archiveText || 'No conversation yet.'}</pre>}
       {tool === 'agents' && <div className="connection-form">
         <p>{agentCatalog.length} connected model{agentCatalog.length === 1 ? '' : 's'}.</p>
         {agentCatalog.map(entry => <div key={entry.id} className="button-row">
@@ -1211,7 +1238,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       <section className="board-column" id="board" ref={boardPanel} tabIndex={-1} aria-label="Chess match board">
         {(['black', 'white'] as const).map(side => <div key={side} className={`player-row ${side} ${side === orientation ? 'near-player' : 'far-player'} ${activeSide === side ? 'active' : ''}`}>
           <OpponentBadge player={players[side]} side={side} /><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
-          <time className={`clock ${activeSide === side ? 'running' : ''}`} aria-label={`${side} clock ${formatClock(clocks[`${side}Ms`])}`}>{formatClock(clocks[`${side}Ms`])}</time>
+          <time className={`clock ${activeSide === side ? 'running' : ''}`} data-low={clocks[`${side}Ms`] < 20_000 || undefined} aria-label={`${side} clock ${formatClock(clocks[`${side}Ms`])}`}>{formatClock(clocks[`${side}Ms`])}</time>
         </div>)}
         <div className={`playing-board${showEvaluation ? ' with-evaluation' : ''}`}>
           {showEvaluation && <EvaluationBar key={session.gameId} orientation={orientation} startingFen={snapshot.checkpoint.rules.startingFen}
@@ -1240,8 +1267,10 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
             <IconButton icon="moves" label="Show moves" aria-controls="moves-panel" onClick={() => { movesPanel.current?.focus({ preventScroll: true }); movesPanel.current?.scrollIntoView({ block: 'start' }); }} />
           </div>
         </nav>
-        <div className="match-status" role="status" aria-description={final ? undefined : generationDetail || feedback}>
-          <h2 ref={resultStatus} tabIndex={-1} className="status-heading" aria-label={!final && generationState === 'producing' ? isEngineSelection(activePlayer) ? 'Engine is choosing a move' : 'AI is choosing a move' : undefined}>{history.reviewing ? `${history.ply}/${history.count}` : final ? statusLabel(snapshot) : generationState === 'stopped' ? 'Paused' : generationState === 'failed' ? conciseTurnError(new Error(generationDetail)) : generationState === 'producing' ? generationDetail === 'Checking connection…' ? 'Checking…' : 'Thinking…' : statusLabel(snapshot)}</h2>
+        <div className="match-status" data-tone={finalResult?.tone} role="status" aria-description={final ? undefined : generationDetail || feedback}>
+          {/* One heading element in every state, so focus sent to it survives the switch to a final result. */}
+          <div className="status-result"><h2 ref={resultStatus} tabIndex={-1} className="status-heading" aria-label={!final && generationState === 'producing' ? isEngineSelection(activePlayer) ? 'Engine is choosing a move' : 'AI is choosing a move' : undefined}>{history.reviewing ? `${history.ply}/${history.count}` : finalResult ? finalResult.headline : generationState === 'stopped' ? 'Paused' : generationState === 'failed' ? conciseTurnError(new Error(generationDetail)) : generationState === 'producing' ? generationDetail === 'Checking connection…' ? 'Checking…' : 'Thinking…' : statusLabel(snapshot)}</h2>
+            {finalResult?.detail && !history.reviewing && <p className="status-detail">{finalResult.detail}</p>}</div>
           <div className="button-row">
             {!final && generationState === 'producing' && <IconButton icon="stop" label="Stop generation" onClick={() => void stopModelTurn()} />}
             {isModelTurn && !autoGeneration && !final && generationState === 'idle' && <IconButton icon="play" label={isEngineSelection(activePlayer) ? "Resume engine turn" : "Resume model turn"} onClick={retryModelTurn} />}
@@ -1251,11 +1280,12 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
             </>}
             {!final && Object.values(players).some(player => player.kind === 'model') && !isAgentSelection(recoverySelection) && <IconButton icon="change" label={isEngineSelection(recoverySelection) ? "Choose another engine" : "Choose another model"} onClick={() => setRecoveryOpen(true)} />}
             {snapshot.modelHandoff.queued && <IconButton icon="close" label="Cancel queued model" onClick={() => void cancelQueuedModel()} />}
-            {final && snapshot.checkpoint.result.kind === 'final' && snapshot.checkpoint.result.winner !== 'draw' && !spectator && !Object.values(players).some(isEngineSelection) && Object.values(players).some(player => player.kind === 'model') && <IconButton icon="play" label="Start practice from this position" disabled={working} onClick={() => void beginPractice()} />}
+            {practiceOffered && !spectator && !Object.values(players).some(isEngineSelection) && Object.values(players).some(player => player.kind === 'model') && <IconButton icon="play" label="Start practice from this position" disabled={working} onClick={() => void beginPractice()} />}
           </div>
         </div>
       </section>
       <aside className="moves-sidebar" id="moves-panel" ref={movesPanel} tabIndex={-1} aria-labelledby="moves-title">
+        {finalResult && <GameResultCard result={finalResult} onNewGame={() => openSetup()} />}
         <div className="moves-heading"><h2 id="moves-title">Moves</h2><span className="count" aria-label={`Move ${history.ply} of ${history.count}`}>{history.ply}/{history.count}</span>
           <span className="mobile-board-return"><IconButton icon="board" label="Show board" aria-controls="board" onClick={() => { boardPanel.current?.focus({ preventScroll: true }); boardPanel.current?.scrollIntoView({ block: 'start' }); }} /></span>
         </div>

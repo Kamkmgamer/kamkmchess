@@ -107,6 +107,31 @@ describe('the online workspace screen (UX-03, UX-04)', () => {
     composition.dispose();
   });
 
+  it('says when the service answered with every surface closed', async () => {
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: (async () => new Response('{"friends":false,"queue":false}', {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as unknown as typeof fetch,
+    });
+    await composition.loadFeatures();
+    const markup = renderToStaticMarkup(<OnlineWorkspace composition={composition} onClose={() => {}} initialTab="new" />);
+    expect(markup).toContain('Online play is switched off on the server right now.');
+    composition.dispose();
+  });
+
+  it('says when the service cannot be reached', async () => {
+    const composition = createOnlineComposition({
+      baseUrl: 'https://api.example.test',
+      fetch: (async () => { throw new TypeError('network down'); }) as unknown as typeof fetch,
+    });
+    await composition.loadFeatures();
+    const markup = renderToStaticMarkup(<OnlineWorkspace composition={composition} onClose={() => {}} initialTab="new" />);
+    expect(markup).toContain('Online play cannot reach the server right now.');
+    composition.dispose();
+  });
+
   it('offers the queue entry actions when the service opened the surface', () => {
     const composition = createOnlineComposition({
       baseUrl: 'https://api.example.test',

@@ -32,6 +32,19 @@ export interface OnlineFeatureFlags {
 /** Both surfaces are closed by default. */
 export const ONLINE_FEATURES_DISABLED: OnlineFeatureFlags = { friends: false, queue: false };
 
+/**
+ * How the feature answer of the service was last obtained.
+ *
+ * The flags alone cannot tell a closed surface from an unreachable one: both
+ * leave every surface closed. The status records which of the two the browser
+ * is looking at, so the interface can say what happened instead of disabling
+ * its buttons without a word.
+ */
+export type OnlineFeaturesStatus = 'unknown' | 'answered' | 'unreachable';
+
+/** The status before the first answer. */
+export const ONLINE_FEATURES_STATUS_UNKNOWN: OnlineFeaturesStatus = 'unknown';
+
 /** The route the service answers with the open surfaces. */
 export const ONLINE_FEATURES_PATH = '/v1/online/features';
 

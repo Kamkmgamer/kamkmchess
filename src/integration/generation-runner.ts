@@ -383,9 +383,31 @@ async function persistTerminal(
     result?.protocol ?? 'chat-completions', result?.usage ?? null, Date.now());
   return controller.appendModelTurnArchive(fence, {
     kind: 'terminal', requestId, outcome,
-    details: { usage: requestUsage, protocolResult: result },
+    details: { usage: requestUsage, protocolResult: result === null ? null : archiveProtocolResult(result) },
     messages: result === null ? (currentInput.length > 0 ? [{ role: 'user' as const, content: currentInput }] : []) : messagesFromResult(instructions, result, currentInput),
   }, credentials);
+}
+
+/**
+ * Keeps terminal metadata useful without copying the streamed response bytes.
+ *
+ * The exact request and response bytes already live in archive chunks. Keeping
+ * Uint8Array values inside the parsed terminal result serializes every byte as
+ * a numeric JSON property and can make a small response many times larger.
+ */
+function archiveProtocolResult(result: ProtocolStreamResult): Record<string, unknown> {
+  const { raw, unknownEvents, ...metadata } = result;
+  return {
+    ...metadata,
+    unknownEvents: unknownEvents.map(({ event, frameTerminated, id, retry, parseError }) => ({
+      event,
+      frameTerminated,
+      ...(id === undefined ? {} : { id }),
+      ...(retry === undefined ? {} : { retry }),
+      ...(parseError === undefined ? {} : { parseError }),
+    })),
+    raw: { chunkCount: raw.chunks.length, eventCount: raw.events.length },
+  };
 }
 
 function messagesFromResult(_instructions: string, result: ProtocolStreamResult, currentInput: string): HistoryMessageV1[] {
@@ -404,9 +426,10 @@ function messagesFromResult(_instructions: string, result: ProtocolStreamResult,
     toolRecords: result.toolRecords,
     errors: result.errors,
     incompleteDetails: result.incompleteDetails,
-    raw: result.raw,
+    raw: { chunkCount: result.raw.chunks.length, eventCount: result.raw.events.length },
   };
-  if (JSON.stringify(opaque) !== JSON.stringify({ protocol: result.protocol, unknownEvents: [], otherChoices: [], toolRecords: [], errors: [], incompleteDetails: [], raw: { chunks: [], events: [] } })) {
+  if (result.unknownEvents.length > 0 || result.otherChoices.length > 0 || result.toolRecords.length > 0 ||
+      result.errors.length > 0 || result.incompleteDetails.length > 0 || result.raw.chunks.length > 0 || result.raw.events.length > 0) {
     messages.push({ role: 'assistant', content: JSON.stringify({ kind: 'opaque-provider-record', ...opaque }) } as HistoryMessageV1);
   }
   return messages;
@@ -434,8 +457,10 @@ export function getGenerationJournal(snapshot: StoredGameV1): GenerationJournalV
   const events = new Map(snapshot.events.map((event) => [event.eventId, event]));
   const currentIds = new Set(snapshot.checkpoint.archive.currentLine.eventIds);
   const discardedIds = new Set(snapshot.checkpoint.archive.discardedLines.flatMap((line) => line.eventIds));
-  const retainedMessages = snapshot.checkpoint.history.messages.filter((message) => message.disposition === 'retained');
-  const discardedMessages = snapshot.checkpoint.history.messages.filter((message) => message.disposition === 'discarded');
+  const visibleMessages = snapshot.checkpoint.history.messages.filter((message) =>
+    !/^\s*\{\s*"kind"\s*:\s*"opaque-provider-record"/.test(message.content));
+  const retainedMessages = visibleMessages.filter((message) => message.disposition === 'retained');
+  const discardedMessages = visibleMessages.filter((message) => message.disposition === 'discarded');
   return {
     retainedEvents: [...currentIds].map((id) => events.get(id)).filter((event): event is ArchiveEventV1 => event !== undefined),
     discardedEvents: [...discardedIds].map((id) => events.get(id)).filter((event): event is ArchiveEventV1 => event !== undefined),

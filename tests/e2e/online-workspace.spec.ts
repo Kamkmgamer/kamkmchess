@@ -40,7 +40,9 @@ test('the offline game never shows the online entry without the deliberate switc
 test('the online workspace fits a phone viewport', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/play?online=1');
-  await page.getByRole('button', { name: 'Play online' }).click();
+  // On a phone the destinations live in the menu drawer, not the topbar.
+  await page.getByRole('button', { name: 'Menu', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name: 'Play online' }).click();
   await expect(page.getByRole('region', { name: 'Online play' })).toBeVisible();
   await expectNoOverflow(page);
   await page.getByRole('button', { name: 'Close online play' }).click();
