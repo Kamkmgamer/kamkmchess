@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { createConnectionProfile, getConnectionEndpoints, hasCurrentDisclosureConsent, reviseConnectionProfile } from '../providers/connections/index.js';
+import { createConnectionProfile, getConnectionEndpoints, hasCurrentDisclosureConsent, isImageGenerationModel, reviseConnectionProfile } from '../providers/connections/index.js';
 import type { ConnectionAuth, ConnectionProfile, ConnectionProvider, ConnectionProtocol, ConnectionStore, ConnectionNamespace, CreateConnectionProfileInput } from '../providers/connections/index.js';
 import type { OpponentIdentityV1, OpponentService } from '../opponents/index.js';
 import type { ModelSelection } from '../controller/index.js';
@@ -42,6 +42,7 @@ export function OpponentPanel({ service, connectionStore, onSelect, selected, id
   const [apiKey, setApiKey] = useState('');
   const [entries, setEntries] = useState<Awaited<ReturnType<OpponentService['getCatalog']>>['entries']>([]);
   const [modelId, setModelId] = useState('');
+  const [modelSearch, setModelSearch] = useState('');
   const [page, setPage] = useState<'connection' | 'advanced' | 'models' | 'consent'>('connection');
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState('');
@@ -78,20 +79,20 @@ export function OpponentPanel({ service, connectionStore, onSelect, selected, id
     return controller;
   }
   function active(controller: AbortController) { return mounted.current && !controller.signal.aborted && operation.current === controller; }
-  function invalidate() { onSelectionInvalidated?.(); setModelId(''); setEntries([]); setMessage(''); }
+  function invalidate() { onSelectionInvalidated?.(); setModelId(''); setModelSearch(''); setEntries([]); setMessage(''); }
   async function catalog(current: ConnectionProfile, controller: AbortController) {
     const next = await (await service).refreshCatalog(current.id, controller.signal);
     if (!active(controller)) return;
     // Removed and stale entries are never offered as currently available models.
-    const available = next.entries.filter(entry => entry.state === 'advertised');
-    setEntries(available); setModelId(''); setPage('models');
+    const available = next.entries.filter(entry => entry.state === 'advertised' && !isImageGenerationModel(entry));
+    setEntries(available); setModelId(''); setModelSearch(''); setPage('models');
     if (next.error) setMessage(available.length ? 'Some models unavailable.' : conciseError(new Error(next.error.message)));
     else if (!available.length) setMessage('No models available.');
   }
   async function loadProfile(current: ConnectionProfile, controller = begin()) {
     setProfile(current); setProvider(current.provider); setName(current.name); setBaseUrl(current.baseUrl);
     setProtocol(current.protocol); setAuthMode(current.auth.kind); setCatalogUrl(current.catalogUrl ?? ''); setApiKey('');
-    setBusy(true); setPage('connection'); setMessage(''); setEntries([]); setModelId('');
+    setBusy(true); setPage('connection'); setMessage(''); setEntries([]); setModelId(''); setModelSearch('');
     try {
       const credentials = await (await connectionStore).resolveCredentials(namespace, current);
       if (!active(controller)) return;
@@ -158,6 +159,12 @@ export function OpponentPanel({ service, connectionStore, onSelect, selected, id
     } catch (error) { if (active(controller)) setMessage(conciseError(error)); }
     finally { if (active(controller)) setBusy(false); }
   }
+  const visibleEntries = useMemo(() => {
+    const query = modelSearch.trim().toLowerCase();
+    if (!query) return entries;
+    // Keep the chosen model listed so the select never shows a hidden value.
+    return entries.filter(entry => entry.id === modelId || `${entry.displayName ?? ''} ${entry.id}`.toLowerCase().includes(query));
+  }, [entries, modelSearch, modelId]);
   return <section className="opponent-panel" aria-label="AI model" aria-busy={busy}>
     <div className="panel-heading"><h2 id={`${idPrefix}-setup-title`}>{page === 'models' ? 'Model' : page === 'consent' ? 'Allow connection?' : page === 'advanced' ? 'Settings' : 'Connect'}</h2>
       <div className="button-row">{page !== 'connection' && <IconButton icon="back" label="Connection" disabled={busy} onClick={() => { setPage('connection'); setMessage(''); }} />}{onClose && <IconButton icon="close" label="Close" onClick={onClose} />}</div></div>
@@ -165,9 +172,11 @@ export function OpponentPanel({ service, connectionStore, onSelect, selected, id
       <p>Send moves to <code>{profile && getConnectionEndpoints(profile).generationUrl}</code>?</p><p>{relayed ? 'Requests and keys pass through this site.' : 'Provider charges may apply.'}</p>
       <div className="button-row"><button className="button primary" disabled={busy} onClick={() => void allow()}>Allow</button><button className="button secondary" disabled={busy} onClick={() => { setPage('models'); setModelId(''); }}>Cancel</button></div>
     </div> : page === 'models' ? <div className="connection-form">
-      <label className="sr-label">Available models<select aria-label="Available models" disabled={busy || !entries.length} value={modelId} onChange={event => void choose(event.target.value)}>
-        <option value="">Choose model</option>{entries.map(entry => <option key={entry.id} value={entry.id}>{entry.displayName ?? entry.id}</option>)}
+      <label>Search models<input aria-label="Search available models" type="search" autoComplete="off" placeholder="Search by name or ID" value={modelSearch} onChange={event => setModelSearch(event.target.value)} /></label>
+      <label className="sr-label">Available models<select aria-label="Available models" disabled={busy || !visibleEntries.length} value={modelId} onChange={event => void choose(event.target.value)}>
+        <option value="">Choose model</option>{visibleEntries.map(entry => <option key={entry.id} value={entry.id}>{entry.displayName ?? entry.id}</option>)}
       </select></label>
+      {!!entries.length && <p className="model-search-results" role="status" aria-live="polite">{visibleEntries.length} of {entries.length} models shown.</p>}
       {message !== 'Ready' && !busy && modelId && <button className="button secondary" onClick={() => void choose(modelId)}>Try again</button>}
       {message !== 'Ready' && !busy && !modelId && !entries.length && <button className="button secondary" onClick={() => { if (profile) void loadProfile(profile); }}>Try again</button>}
     </div> : <form className="connection-form" onSubmit={event => void connect(event)}>

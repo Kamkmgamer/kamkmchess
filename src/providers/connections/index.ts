@@ -6,6 +6,8 @@ export { classifyConnectionRoute } from './route-scope';
 export type { ConnectionRouteEvidence, ConnectionRouteKind, ConnectionRouteScope } from './route-scope';
 export { checkConnection } from './catalog';
 export type { CatalogCheckResult, CatalogModel, CheckConnectionOptions } from './catalog';
+export { isImageGenerationModel } from './model-filter';
+export type { ModelCatalogMetadata } from './model-filter';
 export { updateCatalogSnapshot } from './catalog-cache';
 export { createFirstRequestDisclosure, hasCurrentDisclosureConsent, recordDisclosureChoice } from './disclosure';
 export type { DisclosureChoice, DisclosureLink, FirstRequestDisclosure } from './disclosure';

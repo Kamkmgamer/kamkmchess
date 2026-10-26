@@ -5,6 +5,7 @@ import {
   classifyConnectionRoute,
   createManualModelReference,
   hasCurrentDisclosureConsent,
+  isImageGenerationModel,
   prepareGenerationRequest,
 } from '../providers/connections/index.js';
 import type {
@@ -379,9 +380,10 @@ export class OpponentService {
     const state: CachedCatalogState = snapshot?.state ?? 'unavailable';
     const error = snapshot?.error ?? (fallbackError ? { code: 'credential-required' as const, message: fallbackError } : undefined);
     const cooldownUntilMs = error?.retryAfterMs === undefined ? null : (snapshot?.checkedAtMs ?? this.now()) + error.retryAfterMs;
-    const catalogIds = new Set(snapshot?.entries.map((entry) => entry.id) ?? []);
+    const entries = snapshot?.entries.filter((entry) => !isImageGenerationModel(entry)) ?? [];
+    const catalogIds = new Set(entries.map((entry) => entry.id));
     return {
-      profileId: profile.id, state, entries: snapshot?.entries ?? [],
+      profileId: profile.id, state, entries,
       checkedAtMs: snapshot?.checkedAtMs ?? null, lastSuccessfulAtMs: snapshot?.lastSuccessfulAtMs ?? null,
       ...(snapshot?.nextUrl === undefined ? {} : { nextUrl: snapshot.nextUrl }), ...(error === undefined ? {} : { error }),
       cooldownUntilMs, manualIds: [...(this.manualIds.get(profile.id) ?? [])].filter((id) => !catalogIds.has(id)), capabilityClaims: [],

@@ -296,4 +296,18 @@ describe('OpponentService', () => {
     await service.refreshCatalog(profile.id);
     expect(calls).toBe(3);
   });
+
+  it('removes image-generation models from the catalog view while keeping chat models', async () => {
+    const { service, profile } = await setup(async () => Response.json({
+      data: [
+        { id: 'google/imagen-4.0-generate-preview' },
+        { id: 'openai/gpt-4.1' },
+        { id: 'nano-banana-pro' },
+      ],
+    }));
+
+    const catalog = await service.refreshCatalog(profile.id);
+
+    expect(catalog.entries.map(entry => entry.id)).toEqual(['openai/gpt-4.1']);
+  });
 });
