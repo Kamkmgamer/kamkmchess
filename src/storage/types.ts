@@ -107,6 +107,8 @@ export type PlayerSelectionV1 =
       configurationRevision: number;
       modelRoutingId: string;
       protocol: 'chat-completions' | 'responses' | 'messages' | 'custom';
+      /** Optional provider reasoning level; omitted for legacy selections. */
+      reasoningEffort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
       diagnostic: 'not-run' | 'passed-current-session' | 'failed' | 'unknown';
     };
 

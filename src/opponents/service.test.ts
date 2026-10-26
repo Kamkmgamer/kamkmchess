@@ -83,7 +83,7 @@ describe('OpponentService', () => {
     expect(result.evidence.state).toBe('temporary-failure');
     expect(result.evidence.detail).toContain('credit');
     expect(diagnosticLogs()).toEqual(expect.arrayContaining([
-      expect.objectContaining({ event: 'request', diagnosticId: 'diag-1', provider: 'openrouter', modelId: 'minimax/model:free', maxOutputTokens: 256 }),
+      expect.objectContaining({ event: 'request', diagnosticId: 'diag-1', provider: 'openrouter', modelId: 'minimax/model:free', maxOutputTokens: 4096 }),
       expect.objectContaining({ event: 'response', diagnosticId: 'diag-1', httpStatus: 402, requestId: 'request-402', retryAfter: '30' }),
       expect.objectContaining({ event: 'result', diagnosticId: 'diag-1', failureKind: 'credits', providerErrors: [expect.objectContaining({ code: 402, message: expect.stringContaining('[redacted]'), provider: 'MiniMax' })] }),
     ]));

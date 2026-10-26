@@ -1,3 +1,5 @@
+import type { ModelReasoningEffort } from '../model-turn-config.js';
+
 export type ProviderProtocol =
   | 'chat-completions'
   | 'responses'
@@ -98,6 +100,8 @@ export interface ProtocolCacheOptions {
 export interface ProtocolGenerationConfig {
   model: string;
   maxOutputTokens: number;
+  /** Optional provider-specific reasoning mode for compatible chat proxies. */
+  reasoningEffort?: ModelReasoningEffort;
   temperature?: number;
   topP?: number;
   cache?: ProtocolCacheOptions;

@@ -24,6 +24,8 @@ import {
   encodeResponsesRequest,
 } from '../providers/protocols/index.js';
 import type { ProtocolGenerationConfig, ProtocolHistory, ProtocolStreamDecoder, ProtocolStreamResult, ProviderProtocol } from '../providers/protocols/index.js';
+import { outputTokensForModel, reasoningEffortForModel } from '../providers/model-turn-config.js';
+import type { ModelReasoningEffort } from '../providers/model-turn-config.js';
 import { createDiagnosticLog, summarizeDiagnosticStream } from './diagnostic-log.js';
 import type { DiagnosticLog } from './diagnostic-log.js';
 
@@ -91,6 +93,8 @@ export interface OpponentIdentityV1 {
 export interface OpponentSelectionInputV1 {
   readonly profileId: string;
   readonly modelId: string;
+  /** Optional normalized reasoning setting shared across provider protocols. */
+  readonly reasoningEffort?: Exclude<ModelReasoningEffort, 'none'>;
 }
 
 export interface OpponentCandidateV1 {
@@ -192,7 +196,7 @@ export class OpponentService {
     const log = createDiagnosticLog(profile, modelId, diagnosticId, this.now);
     log.write('started');
     try {
-      const result = await this.performCompatibilityDiagnostic(profile, modelId, diagnosticId, log, signal);
+      const result = await this.performCompatibilityDiagnostic(profile, modelId, diagnosticId, log, signal, input.reasoningEffort);
       log.write('completed', { state: result.evidence.state, requestCount: result.evidence.requestCount }, result.evidence.state !== 'passed-current-session');
       return result;
     } catch (error) {
@@ -201,7 +205,14 @@ export class OpponentService {
     }
   }
 
-  private async performCompatibilityDiagnostic(profile: ConnectionProfile, modelId: string, diagnosticId: string, log: DiagnosticLog, signal?: AbortSignal): Promise<DiagnosticResultV1> {
+  private async performCompatibilityDiagnostic(
+    profile: ConnectionProfile,
+    modelId: string,
+    diagnosticId: string,
+    log: DiagnosticLog,
+    signal?: AbortSignal,
+    requestedReasoningEffort?: Exclude<ModelReasoningEffort, 'none'>,
+  ): Promise<DiagnosticResultV1> {
     const planToken = `KAMKM-PRIOR-PLAN-${this.idFactory()}`;
     const marker = `KAMKM-COMPAT-${this.idFactory()}`;
     let credentials: Awaited<ReturnType<ConnectionStore['resolveCredentials']>>;
@@ -223,7 +234,15 @@ export class OpponentService {
     if (!hasCurrentDisclosureConsent(profile, disclosure)) throw new OpponentServiceError('disclosure', 'Accept the current connection disclosure before running this generation diagnostic.');
 
     const protocol = protocolFor(profile.protocol);
-    const config: ProtocolGenerationConfig = { model: modelId, maxOutputTokens: DIAGNOSTIC_MAX_OUTPUT_TOKENS, temperature: 0 };
+    const reasoningEffort = reasoningEffortForModel(profile.provider, profile.protocol, modelId, requestedReasoningEffort);
+    const config: ProtocolGenerationConfig = {
+      model: modelId,
+      maxOutputTokens: reasoningEffort === undefined
+        ? DIAGNOSTIC_MAX_OUTPUT_TOKENS
+        : outputTokensForModel(profile.provider, profile.protocol, modelId),
+      temperature: 0,
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    };
     const history: ProtocolHistory = {
       instructions: DIAGNOSTIC_SYSTEM,
       records: [

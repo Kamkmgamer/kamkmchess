@@ -118,19 +118,25 @@ const model: ModelSelection = {
 describe('model configuration identity', () => {
   it('preserves exact routing identity without including diagnostic state', () => {
     expect(modelConfigurationIdentity(model)).toBe(
-      '["openrouter","connection-primary",7,"My/Model:latest","chat-completions"]',
+      '["openrouter","connection-primary",7,"My/Model:latest","chat-completions","low"]',
     );
     expect(modelConfigurationIdentity({ ...model, diagnostic: 'failed' })).toBe(
-      '["openrouter","connection-primary",7,"My/Model:latest","chat-completions"]',
+      '["openrouter","connection-primary",7,"My/Model:latest","chat-completions","low"]',
     );
   });
 
   it('changes identity when the selected model configuration changes', () => {
     expect(modelConfigurationIdentity({ ...model, configurationRevision: 8 })).not.toBe(
-      '["openrouter","connection-primary",7,"My/Model:latest","chat-completions"]',
+      '["openrouter","connection-primary",7,"My/Model:latest","chat-completions","low"]',
     );
     expect(modelConfigurationIdentity({ ...model, modelRoutingId: 'my/model:latest' })).not.toBe(
-      '["openrouter","connection-primary",7,"My/Model:latest","chat-completions"]',
+      '["openrouter","connection-primary",7,"My/Model:latest","chat-completions","low"]',
+    );
+  });
+
+  it('changes identity when the reasoning level changes', () => {
+    expect(modelConfigurationIdentity({ ...model, reasoningEffort: 'high' })).not.toBe(
+      '["openrouter","connection-primary",7,"My/Model:latest","chat-completions","low"]',
     );
   });
 

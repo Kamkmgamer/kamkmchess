@@ -32,6 +32,7 @@ import { readBoundCredentialValues } from '../providers/connections/credential-b
 import type { ConnectionNamespace, ConnectionStore } from '../providers/connections/index.js';
 import type { ConnectionProtocol } from '../providers/connections/types.js';
 import type { ProviderProtocol } from '../providers/protocols/types.js';
+import { outputTokensForModel, reasoningEffortForModel } from '../providers/model-turn-config.js';
 import type { ModelSelection } from '../controller/index.js';
 import { onlineSideToMove } from './turn';
 import type { Seat } from './contracts';
@@ -102,12 +103,17 @@ export function createAgentProviderPort(options: OnlineAgentProviderOptions): Pr
         const named = 'value' in header ? header.value : values.headers?.[header.name];
         if (typeof named === 'string') headers[header.name.toLowerCase()] = named;
       }
+      const reasoningEffort = reasoningEffortForModel(profile.provider, profile.protocol, options.selection.modelRoutingId, options.selection.reasoningEffort);
       return {
         protocol: toProviderProtocol(profile.protocol),
         model: options.selection.modelRoutingId,
         url: endpoints.generationUrl,
         headers,
-        generation: { maxOutputTokens: 512, temperature: 0.2 },
+        generation: {
+          maxOutputTokens: outputTokensForModel(profile.provider, profile.protocol, options.selection.modelRoutingId),
+          temperature: 0.2,
+          ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+        },
       };
     },
   });

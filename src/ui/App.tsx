@@ -604,7 +604,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const queuedGenerationSelection = snapshot.modelHandoff.queued?.selection;
   const queuedGenerationIdentity = queuedGenerationSelection
     ? [queuedGenerationSelection.connectionId, queuedGenerationSelection.configurationRevision,
-      queuedGenerationSelection.modelRoutingId, queuedGenerationSelection.protocol].join('/')
+      queuedGenerationSelection.modelRoutingId, queuedGenerationSelection.protocol,
+      queuedGenerationSelection.reasoningEffort ?? 'low'].join('/')
     : '';
   const generationResultKind = snapshot.checkpoint.result.kind;
   const generationReadiness = snapshot.readiness;
@@ -614,6 +615,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     snapshot.fence.modelConfigurationIdentity ?? '',
     generationSelection.kind === 'model' ? generationSelection.connectionId : '',
     generationSelection.kind === 'model' ? generationSelection.modelRoutingId : '',
+    generationSelection.kind === 'model' ? generationSelection.reasoningEffort ?? 'low' : '',
     queuedGenerationIdentity].join('/');
   useEffect(() => {
     if (!autoGeneration || generationController.current !== null || generationSelection.kind !== 'model' ||
@@ -679,7 +681,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           if (!identity || identity.configRevision !== profile.configRevision || identity.protocol !== profile.protocol ||
               credentials.status !== 'bound' || identity.credentialRevision !== credentials.credentials.credentialRevision) {
             setGenerationDetail('Checking connection…');
-            const result = await service.runCompatibilityDiagnostic({ profileId: profile.id, modelId: queuedSelection.modelRoutingId }, abort!.signal);
+            const result = await service.runCompatibilityDiagnostic({ profileId: profile.id, modelId: queuedSelection.modelRoutingId, ...(queuedSelection.reasoningEffort === undefined ? {} : { reasoningEffort: queuedSelection.reasoningEffort }) }, abort!.signal);
             if (abort!.signal.aborted || sessionRef.current.gameId !== session.gameId) return;
             if (result.evidence.state !== 'passed-current-session') throw new Error(result.evidence.detail);
             const prepared = await service.prepareSelection({ profileId: profile.id, modelId: queuedSelection.modelRoutingId });
@@ -755,7 +757,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
             const latestQueued = latest.modelHandoff.queued?.selection;
             const latestQueuedIdentity = latestQueued
               ? [latestQueued.connectionId, latestQueued.configurationRevision,
-                latestQueued.modelRoutingId, latestQueued.protocol].join('/')
+                latestQueued.modelRoutingId, latestQueued.protocol,
+                latestQueued.reasoningEffort ?? 'low'].join('/')
               : '';
             if (continueAutomatically && !abort?.signal.aborted) {
               generationFenceKey.current = '';
@@ -906,7 +909,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         credentials.status === 'bound' && candidate.credentialRevision === credentials.credentials.credentialRevision);
       const service = await composition.opponentService;
       if (!identity) {
-        const result = await service.runCompatibilityDiagnostic({ profileId: profile.id, modelId: savedModel.modelRoutingId }, abort.signal);
+        const result = await service.runCompatibilityDiagnostic({ profileId: profile.id, modelId: savedModel.modelRoutingId, ...(savedModel.reasoningEffort === undefined ? {} : { reasoningEffort: savedModel.reasoningEffort }) }, abort.signal);
         if (abort.signal.aborted || sessionRef.current.gameId !== session.gameId) return;
         if (result.evidence.state !== 'passed-current-session') throw new Error(result.evidence.detail);
         const prepared = await service.prepareSelection({ profileId: profile.id, modelId: savedModel.modelRoutingId });

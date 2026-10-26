@@ -391,6 +391,18 @@ describe('Chat Completions protocol decoder', () => {
     expect(request.body).not.toHaveProperty('previous_response_id');
   });
 
+  it('[CST-01] forwards all reasoning levels for Chat Completions providers', () => {
+    for (const reasoningEffort of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+      const request = encodeChatCompletionsRequest(
+        { instructions: 'Choose a move.', records: [] },
+        { model: 'claude-opus-5-5', maxOutputTokens: 128_000, temperature: 0.2, reasoningEffort },
+      );
+
+      expect(request.body).toHaveProperty('reasoning_effort', reasoningEffort);
+      expect(request.body).not.toHaveProperty('temperature');
+    }
+  });
+
   it('[CST-01] keeps OpenAI prompt caching and OpenRouter session affinity on separate routes', () => {
     const history = { instructions: 'Rules', records: [] };
     const config = { model: 'selected-model', maxOutputTokens: 20 };

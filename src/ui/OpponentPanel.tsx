@@ -8,6 +8,9 @@ import { controllerRevisionForConfig } from './opponent-selection.js';
 import { IconButton } from './Icon.js';
 import { conciseError } from './concise-error.js';
 import { usesProviderRelay } from '../providers/transport.js';
+import type { ModelReasoningEffort } from '../providers/model-turn-config.js';
+import { readReasoningLevel, saveReasoningLevel } from '../providers/reasoning-preferences.js';
+import type { ReasoningLevel } from '../providers/reasoning-preferences.js';
 
 interface Props {
   readonly service: Promise<OpponentService>;
@@ -43,6 +46,12 @@ export function OpponentPanel({ service, connectionStore, onSelect, selected, id
   const [entries, setEntries] = useState<Awaited<ReturnType<OpponentService['getCatalog']>>['entries']>([]);
   const [modelId, setModelId] = useState('');
   const [modelSearch, setModelSearch] = useState('');
+  const [reasoningLevel, setReasoningLevel] = useState<ReasoningLevel>(() => {
+    const effort = selected?.reasoningEffort;
+    if (effort === 'xhigh') return 'x-high';
+    if (effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'max') return effort;
+    return readReasoningLevel();
+  });
   const [page, setPage] = useState<'connection' | 'advanced' | 'models' | 'consent'>('connection');
   const [busy, setBusy] = useState(true);
   const [message, setMessage] = useState('');
@@ -127,25 +136,26 @@ export function OpponentPanel({ service, connectionStore, onSelect, selected, id
     } catch (error) { if (active(controller)) setMessage(conciseError(error)); }
     finally { if (active(controller)) setBusy(false); }
   }
-  async function check(current: ConnectionProfile, id: string, controller: AbortController) {
+  async function check(current: ConnectionProfile, id: string, controller: AbortController, selectedLevel = reasoningLevel) {
     const opponents = await service;
-    const result = await opponents.runCompatibilityDiagnostic({ profileId: current.id, modelId: id }, controller.signal);
+    const reasoningEffort: Exclude<ModelReasoningEffort, 'none'> = selectedLevel === 'x-high' ? 'xhigh' : selectedLevel;
+    const result = await opponents.runCompatibilityDiagnostic({ profileId: current.id, modelId: id, reasoningEffort }, controller.signal);
     if (!active(controller)) return;
     if (result.evidence.state !== 'passed-current-session') throw new Error(result.evidence.detail);
     const handoff = await opponents.prepareSelection({ profileId: current.id, modelId: id });
     if (!active(controller)) return;
     const identity = handoff.queued?.identity ?? handoff.committed;
     if (!identity || identity.profileId !== current.id || identity.modelId !== id || identity.configRevision !== current.configRevision || identity.credentialRevision !== result.evidence.credentialRevision) throw new Error('Connection changed');
-    onSelect({ kind: 'model', providerId: current.provider, connectionId: current.id, configurationRevision: controllerRevisionForConfig(current.configRevision), modelRoutingId: id, protocol: current.protocol, diagnostic: 'passed-current-session' }, identity);
+    onSelect({ kind: 'model', providerId: current.provider, connectionId: current.id, configurationRevision: controllerRevisionForConfig(current.configRevision), modelRoutingId: id, protocol: current.protocol, reasoningEffort: selectedLevel === 'x-high' ? 'xhigh' : selectedLevel, diagnostic: 'passed-current-session' }, identity);
     setMessage('Ready');
   }
-  async function choose(id: string) {
+  async function choose(id: string, selectedLevel = reasoningLevel) {
     if (!profile || !entries.some(entry => entry.id === id)) return;
     onSelectionInvalidated?.(); setModelId(id); const controller = begin();
     try {
       const store = await connectionStore;
       if (!hasCurrentDisclosureConsent(profile, await store.getDisclosureChoice(namespace, profile))) { if (active(controller)) setPage('consent'); return; }
-      await check(profile, id, controller);
+      await check(profile, id, controller, selectedLevel);
     } catch (error) { if (active(controller)) setMessage(conciseError(error)); }
     finally { if (active(controller)) setBusy(false); }
   }
@@ -175,6 +185,13 @@ export function OpponentPanel({ service, connectionStore, onSelect, selected, id
       <label>Search models<input aria-label="Search available models" type="search" autoComplete="off" placeholder="Search by name or ID" value={modelSearch} onChange={event => setModelSearch(event.target.value)} /></label>
       <label className="sr-label">Available models<select aria-label="Available models" disabled={busy || !visibleEntries.length} value={modelId} onChange={event => void choose(event.target.value)}>
         <option value="">Choose model</option>{visibleEntries.map(entry => <option key={entry.id} value={entry.id}>{entry.displayName ?? entry.id}</option>)}
+      </select></label>
+      <label>Reasoning level<select aria-label="Reasoning level" disabled={busy} value={reasoningLevel} onChange={event => {
+        const next = event.target.value as ReasoningLevel;
+        setReasoningLevel(next); saveReasoningLevel(next);
+        if (modelId) void choose(modelId, next);
+      }}>
+        <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="x-high">X-high</option><option value="max">Max</option>
       </select></label>
       {!!entries.length && <p className="model-search-results" role="status" aria-live="polite">{visibleEntries.length} of {entries.length} models shown.</p>}
       {message !== 'Ready' && !busy && modelId && <button className="button secondary" onClick={() => void choose(modelId)}>Try again</button>}

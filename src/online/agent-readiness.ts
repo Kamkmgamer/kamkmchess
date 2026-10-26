@@ -59,6 +59,7 @@ export function createAgentReadinessCheck(options: OnlineAgentReadinessOptions):
       const result = await service.runCompatibilityDiagnostic({
         profileId: profile.id,
         modelId: selection.modelRoutingId,
+        ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
       });
       if (result.evidence.state !== 'passed-current-session') {
         return { ready: false, detail: result.evidence.detail || 'The model check did not pass.' };
