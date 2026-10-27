@@ -759,7 +759,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         } catch (error) {
           if (sessionRef.current.gameId === session.gameId) {
             setGenerationState('failed');
-            setGenerationDetail(error instanceof Error ? error.message : 'The model request failed. The clock continued.');
+            setGenerationDetail(error instanceof Error ? error.message : 'The model request failed. The clock is held until you retry.');
           }
         } finally {
           service?.producingReplySettled();
@@ -968,6 +968,22 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     setGenerationAttempt((value) => value + 1);
   };
 
+  const addClockTime = async (side: 'white' | 'black', amountMs: number) => {
+    setWorking(true);
+    try {
+      const result = await session.controller.addClockTime(session.controller.snapshot().fence, side, amountMs);
+      refresh(result.snapshot);
+      setJournalRefresh((revision) => revision + 1);
+      if (result.kind === 'accepted') setFeedback(`Added ${amountMs / 1_000} seconds to ${side === 'white' ? 'White' : 'Black'}.`);
+      else if (result.kind === 'rejected') setFeedback('Time can be added once the model stops thinking.');
+      else if (result.kind === 'clock-reconciliation-required') setFeedback('Checking clock…');
+    } catch (error) {
+      setFeedback(conciseError(error));
+    } finally {
+      setWorking(false);
+    }
+  };
+
   const recoverQueuedModel = async (action: 'retry' | 'resume') => {
     setWorking(true);
     try {
@@ -1024,6 +1040,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     blackMs: snapshot.checkpoint.clocks.banksAtAnchor.blackMs,
   };
   const activeSide = snapshot.checkpoint.clocks.activeSide;
+  const clockHeld = snapshot.checkpoint.clocks.paused === true;
   const final = snapshot.checkpoint.result.kind === 'final';
   const sideKey = snapshot.position.sideToMove === 'w' ? 'white' : 'black';
   // The board drops queued input when the game or its line changes. The
@@ -1034,6 +1051,11 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const disabled = setupOpen || history.reviewing || promotion !== null || resultPrompt !== null || isLocalBoardInputDisabled(snapshot, working || isModelTurn || generationState === 'producing');
   const players = snapshot.checkpoint.selections.players;
   const spectator = players.white.kind === 'model' && players.black.kind === 'model';
+  // Local games let either clock be topped up while the game runs and no request is mid-flight.
+  const canAddClockTime = !final && !history.reviewing && snapshot.checkpoint.result.kind === 'unresolved' &&
+    snapshot.checkpoint.clocks.activeSide !== null && snapshot.readiness === 'ready' &&
+    snapshot.clockReading !== null && snapshot.clockReading.status !== 'reconciliation-required' &&
+    generationState !== 'producing';
   const resultActions = resultDeclarationAvailability(players, sideKey);
   const resultPromptCopy = resultPrompt !== null && resultActions.resigningSide !== null
     ? resultDeclarationCopy(resultPrompt, resultActions.resigningSide) : null;
@@ -1238,7 +1260,9 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       <section className="board-column" id="board" ref={boardPanel} tabIndex={-1} aria-label="Chess match board">
         {(['black', 'white'] as const).map(side => <div key={side} className={`player-row ${side} ${side === orientation ? 'near-player' : 'far-player'} ${activeSide === side ? 'active' : ''}`}>
           <OpponentBadge player={players[side]} side={side} /><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
-          <time className={`clock ${activeSide === side ? 'running' : ''}`} data-low={clocks[`${side}Ms`] < 20_000 || undefined} aria-label={`${side} clock ${formatClock(clocks[`${side}Ms`])}`}>{formatClock(clocks[`${side}Ms`])}</time>
+          {clockHeld && activeSide === side && <span className="clock-held" title="Clock held after a failed model turn">held</span>}
+          <time className={`clock ${activeSide === side ? 'running' : ''} ${clockHeld && activeSide === side ? 'held' : ''}`} data-low={clocks[`${side}Ms`] < 20_000 || undefined} aria-label={`${side} clock ${formatClock(clocks[`${side}Ms`])}${clockHeld && activeSide === side ? ', held' : ''}`}>{formatClock(clocks[`${side}Ms`])}</time>
+          {canAddClockTime && <IconButton icon="plus" label={`Add 1 minute to ${side === 'white' ? 'White' : 'Black'}`} disabled={working} onClick={() => void addClockTime(side, 60_000)} />}
         </div>)}
         <div className={`playing-board${showEvaluation ? ' with-evaluation' : ''}`}>
           {showEvaluation && <EvaluationBar key={session.gameId} orientation={orientation} startingFen={snapshot.checkpoint.rules.startingFen}

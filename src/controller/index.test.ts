@@ -1812,6 +1812,91 @@ describe('game controller setup', () => {
     }
   });
 
+  it('holds the model clock after a failed turn until the turn is retried', async () => {
+    const testId = 'controller-model-turn-held-clock';
+    let decisionTimeMs = 4_000;
+    let monotonicMs = 8_000;
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
+    let generatedId = 0;
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
+      gameId: testId,
+      store,
+      timeSource: { sample: (atDecisionTimeMs) => ({ monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs }) },
+      clockPolicy: { maxReferenceDivergenceMs: 0 },
+      idFactory: () => `${testId}-id-${++generatedId}`,
+    });
+    const advance = (ms: number) => { decisionTimeMs += ms; monotonicMs += ms; };
+
+    try {
+      const initial = await initializePlayable(controller, {
+        humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+        timeControl: { startingTimeMs: 60_000, incrementMs: 500 },
+      });
+      const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: initial.fence });
+      if (started.kind !== 'model-turn-started') throw new Error('Expected a model request.');
+      advance(1_000);
+      const failed = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-interrupted', fence: started.request.fence, reason: 'failed' });
+      expect(failed.kind).toBe('accepted');
+      expect(failed.snapshot.checkpoint.clocks).toMatchObject({ paused: true, activeSide: 'white', banksAtAnchor: { whiteMs: 59_000 } });
+
+      // A long wait while held charges nothing, and survives a reload of the saved game.
+      advance(600_000);
+      expect(controller.snapshot().clockReading).toMatchObject({ status: 'running', remaining: { whiteMs: 59_000 } });
+      expect((await store.readGame(testId))?.checkpoint.clocks.paused).toBe(true);
+
+      const retried = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: controller.snapshot().fence });
+      if (retried.kind !== 'model-turn-started') throw new Error('Expected the retry to start.');
+      expect(retried.snapshot.checkpoint.clocks.paused).toBeUndefined();
+      advance(2_000);
+      expect(controller.snapshot().clockReading).toMatchObject({ status: 'running', remaining: { whiteMs: 57_000 } });
+
+      const archive = await store.exportGameArchive(testId, []);
+      await expect(validateGameArchive(JSON.parse(JSON.stringify(archive)))).resolves.toBeDefined();
+    } finally {
+      store.close();
+    }
+  });
+
+  it('adds clock time to either side and rejects it while a model request is in flight', async () => {
+    const testId = 'controller-add-clock-time';
+    let decisionTimeMs = 4_000;
+    let monotonicMs = 8_000;
+    const store = await openGameStore({ databaseName: testId, factory: new IDBFactory(), now: () => decisionTimeMs });
+    let generatedId = 0;
+    const controller = getOrCreateGameController({ positionChecks: 'legacy-proof',
+      gameId: testId,
+      store,
+      timeSource: { sample: (atDecisionTimeMs) => ({ monotonicMs, wallTimeMs: atDecisionTimeMs ?? decisionTimeMs }) },
+      clockPolicy: { maxReferenceDivergenceMs: 0 },
+      idFactory: () => `${testId}-id-${++generatedId}`,
+    });
+
+    try {
+      const initial = await initializePlayable(controller, {
+        humanSide: 'black', modelSelection: model, namespace: { kind: 'guest' }, ownershipEpoch: 0,
+        timeControl: { startingTimeMs: 60_000, incrementMs: 500 },
+      });
+      decisionTimeMs += 4_000;
+      monotonicMs += 4_000;
+      const added = await controller.addClockTime(initial.fence, 'white', 30_000);
+      expect(added.kind).toBe('accepted');
+      expect(added.snapshot.clockReading).toMatchObject({ status: 'running', remaining: { whiteMs: 86_000, blackMs: 60_000 } });
+      const idle = await controller.addClockTime(added.snapshot.fence, 'black', 15_000);
+      expect(idle.snapshot.clockReading).toMatchObject({ remaining: { whiteMs: 86_000, blackMs: 75_000 } });
+      expect((await store.readGame(testId))?.events.filter((event) => event.kind === 'clock-time-added')).toHaveLength(2);
+
+      await expect(controller.addClockTime(idle.snapshot.fence, 'white', 0)).rejects.toThrow();
+      await expect(controller.addClockTime(idle.snapshot.fence, 'white', 2 * 60 * 60 * 1_000)).rejects.toThrow();
+
+      const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: idle.snapshot.fence });
+      if (started.kind !== 'model-turn-started') throw new Error('Expected a model request.');
+      const midFlight = await controller.addClockTime(started.snapshot.fence, 'white', 30_000);
+      expect(midFlight).toMatchObject({ kind: 'rejected', reason: 'not-actionable' });
+    } finally {
+      store.close();
+    }
+  });
+
   it('settles an expired model request through timeout adjudication without recording interruption', async () => {
     const testId = 'controller-model-turn-interrupted-expiry';
     let decisionTimeMs = 5_000;

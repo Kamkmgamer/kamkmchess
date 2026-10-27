@@ -48,6 +48,36 @@ func TestCurrentBrowserCheckpointExtensions(t *testing.T) {
 	}
 }
 
+func TestHeldClockValidation(t *testing.T) {
+	raw, err := os.ReadFile("testdata/browser-checkpoint.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var checkpoint map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &checkpoint); err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		clocks string
+		valid  bool
+	}{
+		"held active clock":       {`{"schemaVersion":1,"timeControl":{"startingTimeMs":900000,"incrementMs":10000},"banksAtAnchor":{"whiteMs":900000,"blackMs":900000},"activeSide":"white","anchor":{"monotonicMs":1763,"wallTimeMs":1792345539108},"lastReconciledAtMs":1792345539108,"paused":true}`, true},
+		"paused not true":         {`{"schemaVersion":1,"timeControl":{"startingTimeMs":900000,"incrementMs":10000},"banksAtAnchor":{"whiteMs":900000,"blackMs":900000},"activeSide":"white","anchor":{"monotonicMs":1763,"wallTimeMs":1792345539108},"lastReconciledAtMs":1792345539108,"paused":false}`, false},
+		"held without activeSide": {`{"schemaVersion":1,"timeControl":{"startingTimeMs":900000,"incrementMs":10000},"banksAtAnchor":{"whiteMs":900000,"blackMs":900000},"activeSide":null,"anchor":null,"lastReconciledAtMs":1792345539108,"paused":true}`, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			checkpoint["clocks"] = json.RawMessage(tc.clocks)
+			data, err := json.Marshal(checkpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if valid := validateCheckpoint(data, "browser-game", "user_fixture") == nil; valid != tc.valid {
+				t.Fatalf("accepted=%v, want %v", valid, tc.valid)
+			}
+		})
+	}
+}
+
 func TestHistoryBindingIsCompleteOrLocal(t *testing.T) {
 	for _, tc := range []struct {
 		binding string

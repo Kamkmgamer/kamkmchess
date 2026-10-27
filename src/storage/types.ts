@@ -90,6 +90,8 @@ export interface ClockCheckpointV1 {
   activeSide: ChessSideV1 | null;
   anchor: ClockAnchorCheckpointV1 | null;
   lastReconciledAtMs: number;
+  /** Present only while the active side's clock is held awaiting a model retry. */
+  paused?: true;
 }
 
 export interface BudgetCheckpointV1 {

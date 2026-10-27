@@ -1,9 +1,12 @@
 import {
+  addClockTime,
   calculateMoveClockCandidate,
   calculateUndoClockCandidate,
   DEFAULT_TIME_CONTROL,
+  pauseClock,
   readClockAt,
   recoverClockAfterAbsence,
+  resumeClock,
   startClock,
 } from '../clocks/index.js';
 import type {
@@ -54,6 +57,8 @@ type ClockDiscrepancyReading = Extract<ClockReading, { status: 'reconciliation-r
 const INITIAL_POSITION = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const MOVE_ATTEMPTS_EXTENSION = 'move-attempts';
 const MODEL_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+/** The most clock time one add-time action may credit. */
+const MAX_ADDED_CLOCK_TIME_MS = 60 * 60 * 1_000;
 const GAME_CONTROLLER_INTENT_KINDS: ReadonlySet<string> = new Set([
   'begin-model-turn',
   'queue-model-selection',
@@ -62,6 +67,7 @@ const GAME_CONTROLLER_INTENT_KINDS: ReadonlySet<string> = new Set([
   'retry-model-selection',
   'stop-model-turn',
   'model-turn-interrupted',
+  'add-clock-time',
   'human-move',
   'model-move',
   'model-turn-effect',
@@ -160,6 +166,7 @@ export type GameControllerIntentV1 =
   | { schemaVersion: 1; kind: 'cancel-model-selection' | 'resume-prior-model' | 'retry-model-selection'; fence: ControllerFenceV1 }
   | { schemaVersion: 1; kind: 'stop-model-turn'; fence: ControllerFenceV1 }
   | { schemaVersion: 1; kind: 'model-turn-interrupted'; fence: ControllerFenceV1; reason: ModelTurnInterruptionReasonV1 }
+  | { schemaVersion: 1; kind: 'add-clock-time'; fence: ControllerFenceV1; side: ClockSide; amountMs: number }
   | { schemaVersion: 1; kind: 'declare-result'; fence: ControllerFenceV1; declaration: GameResultDeclarationV1 }
   | ControllerMoveEventV1
   | { schemaVersion: 1; kind: 'model-turn-effect'; fence: ControllerFenceV1; effect: ModelTurnDecision };
@@ -200,6 +207,8 @@ export interface GameController {
   takeback(fence: ControllerFenceV1): Promise<ControllerSnapshotV1>;
   /** Records an explicit local draw or resignation as the game's final result. */
   declareResult(fence: ControllerFenceV1, declaration: GameResultDeclarationV1): Promise<GameControllerIntentResultV1>;
+  /** Credits extra time to one side's clock in a local game. Rejected while a model request is in flight. */
+  addClockTime(fence: ControllerFenceV1, side: ClockSide, amountMs: number): Promise<GameControllerIntentResultV1>;
   startPractice(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1>;
   beginPractice(fence: ControllerFenceV1, modelSelection: ModelSelection): Promise<ControllerSnapshotV1>;
   queueModelSelection(fence: ControllerFenceV1, candidate: ModelSelection): Promise<ControllerSnapshotV1>;
@@ -392,6 +401,7 @@ function createClockState(checkpoint: GameCheckpointV1): ClockState | null {
           wallTimeMs: clocks.anchor.wallTimeMs,
           hostOffsetMs: clocks.anchor.hostOffsetMs,
         },
+    ...(clocks.paused === true ? { paused: true } : {}),
   };
 }
 
@@ -425,6 +435,7 @@ function checkpointClock(state: ClockState, lastReconciledAtMs: number): GameChe
           hostOffsetMs: state.anchor.hostOffsetMs,
         },
     lastReconciledAtMs,
+    ...(state.paused === true ? { paused: true as const } : {}),
   };
 }
 
@@ -2003,6 +2014,7 @@ class IndexedGameController implements GameController {
       }
       return this.interruptModelTurn(intent.fence, intent.reason);
     }
+    if (intent.kind === 'add-clock-time') return this.addClockTimeImplementation(intent.fence, intent.side, intent.amountMs);
     if (intent.kind === 'model-turn-effect') return this.applyModelTurnEffect(intent);
     if (intent.kind === 'declare-result') return this.declareResultImplementation(intent.fence, intent.declaration);
     if (intent.kind === 'human-move' || intent.kind === 'model-move') return this.acceptMove(intent);
@@ -2055,6 +2067,11 @@ class IndexedGameController implements GameController {
       committed.value.kind === 'clock-reconciliation-required' ? { kind: 'clock-reconciliation-required', snapshot: committed.snapshot } :
       committed.value.kind === 'rejected' ? { kind: 'rejected', reason: committed.value.reason, snapshot: committed.snapshot } :
       { kind: 'accepted', snapshot: committed.snapshot };
+  }
+
+  /** Credit extra time to one side's clock in a local game. */
+  addClockTime(fence: ControllerFenceV1, side: ClockSide, amountMs: number): Promise<GameControllerIntentResultV1> {
+    return this.dispatch({ schemaVersion: 1, kind: 'add-clock-time', fence, side, amountMs });
   }
 
   queueModelSelection(fence: ControllerFenceV1, candidate: ModelSelection): Promise<ControllerSnapshotV1> {
@@ -2233,17 +2250,20 @@ class IndexedGameController implements GameController {
         kind: 'final', winner: side === 'white' ? 'black' : 'white', reason: effect.kind === 'model-resignation' ? 'resignation' : 'illegal-move',
         eventId: event.eventId, decidedAtMs: context.decisionTimeMs,
       };
+      // Exhausted format corrections wait for a manual retry, so the model's clock is held.
+      const held = !terminal && effect.kind === 'format-correction' && !effect.automatic
+        ? pauseClock(clockState, reading.remaining, context.at) : null;
       const finalCheckpoint = {
         ...nextCheckpoint,
         history,
         result,
         clocks: terminal
           ? pausedClockCheckpoint(clockState.timeControl, reading.remaining, context.decisionTimeMs, clockState.schemaVersion)
-          : context.checkpoint.clocks,
+          : held !== null ? checkpointClock(held, context.decisionTimeMs) : context.checkpoint.clocks,
         archive: { ...nextCheckpoint.archive, currentLine: { ...nextCheckpoint.archive.currentLine,
           eventIds: [...nextCheckpoint.archive.currentLine.eventIds, event.eventId] } },
       };
-      return { checkpoint: finalCheckpoint, position: context.position, clockState: terminal ? null : clockState,
+      return { checkpoint: finalCheckpoint, position: context.position, clockState: terminal ? null : held ?? clockState,
         value: { kind: 'accepted' as const } };
     });
     this.activeRequest = null;
@@ -2420,10 +2440,13 @@ class IndexedGameController implements GameController {
     }
 
     const committed = await this.commitMutation<IntentMutationValue>(fence, (context) => {
-      const clockState = context.clockState;
-      if (clockState === null) {
+      const heldClock = context.clockState;
+      if (heldClock === null) {
         return this.noClockCandidate(context, fence);
       }
+      // Retrying or restarting a held turn restarts the model's clock from now.
+      const resumed = heldClock.paused === true;
+      const clockState = resumed ? resumeClock(heldClock, context.at) : heldClock;
       const reading = readClockAt(clockState, context.at, this.clockPolicy);
       if (reading.status === 'expired') return this.expiryCandidate(context, fence, reading);
       if (reading.status === 'reconciliation-required') {
@@ -2432,6 +2455,7 @@ class IndexedGameController implements GameController {
 
       const requestCheckpoint = {
         ...context.checkpoint,
+        ...(resumed ? { clocks: checkpointClock(clockState, context.decisionTimeMs) } : {}),
         revision: context.checkpoint.revision + 1,
         requestGeneration: context.checkpoint.requestGeneration + 1,
         analysisGeneration: context.checkpoint.analysisGeneration + 1,
@@ -2569,6 +2593,44 @@ class IndexedGameController implements GameController {
     return { kind: 'accepted', snapshot: committed.snapshot };
   }
 
+  private async addClockTimeImplementation(
+    fence: ControllerFenceV1,
+    side: ClockSide,
+    amountMs: number,
+  ): Promise<GameControllerIntentResultV1> {
+    if ((side !== 'white' && side !== 'black') || !Number.isSafeInteger(amountMs) || amountMs <= 0 ||
+      amountMs > MAX_ADDED_CLOCK_TIME_MS) {
+      throw new GameControllerError('invalid-intent', 'The clock time to add is invalid.');
+    }
+    // Adding time revises the checkpoint, which would fence out an in-flight model reply.
+    if (this.activeRequest !== null) {
+      return { kind: 'rejected', reason: 'not-actionable', snapshot: this.snapshot() };
+    }
+    const committed = await this.commitMutation<IntentMutationValue>(fence, (context) => {
+      const clockState = context.clockState;
+      if (clockState === null) return this.noClockCandidate(context, fence);
+      const reading = readClockAt(clockState, context.at, this.clockPolicy);
+      if (reading.status === 'expired') return this.expiryCandidate(context, fence, reading);
+      if (reading.status === 'reconciliation-required') return this.clockDiscrepancyCandidate(context, fence, reading);
+      const credited = addClockTime(clockState, reading.remaining, side, amountMs, context.at);
+      const event = context.createEvent('clock-time-added', context.decisionTimeMs, fence, { side, amountMs });
+      const next = { ...context.checkpoint, revision: context.checkpoint.revision + 1,
+        clocks: checkpointClock(credited, context.decisionTimeMs),
+        archive: { ...context.checkpoint.archive, currentLine: { ...context.checkpoint.archive.currentLine,
+          eventIds: [...context.checkpoint.archive.currentLine.eventIds, event.eventId] } } };
+      return { checkpoint: next, position: context.position, clockState: credited, value: { kind: 'accepted' as const } };
+    });
+    if (committed.value.kind === 'clock-reconciliation-required') {
+      this.clockReconciliationRequired = true;
+      return { kind: 'clock-reconciliation-required', snapshot: committed.snapshot };
+    }
+    if (committed.value.kind === 'expired') return { kind: 'expired', snapshot: committed.snapshot };
+    if (committed.value.kind === 'rejected') {
+      return { kind: 'rejected', reason: committed.value.reason, snapshot: committed.snapshot };
+    }
+    return { kind: 'accepted', snapshot: committed.snapshot };
+  }
+
   private async stopModelTurn(fence: ControllerFenceV1): Promise<GameControllerIntentResultV1> {
     const checkpoint = this.checkpoint;
     if (checkpoint === null) {
@@ -2607,8 +2669,11 @@ class IndexedGameController implements GameController {
       const stoppedCandidate = handoff.queued?.state === 'awaiting-first-reply' && handoff.producing !== null &&
         modelConfigurationIdentity(handoff.producing) !== modelConfigurationIdentity(committedSelection) &&
         modelConfigurationIdentity(handoff.queued.selection) === modelConfigurationIdentity(handoff.producing);
+      // A stopped turn holds the model's clock until the turn is restarted.
+      const held = pauseClock(clockState, reading.remaining, context.at);
       const stoppedCheckpoint = {
         ...nextCheckpoint,
+        clocks: checkpointClock(held, context.decisionTimeMs),
         extensions: withHandoff(context.checkpoint, { producing: null, queued: stoppedCandidate
           ? { ...handoff.queued!, state: 'failed', failure: 'The candidate request was stopped. Retry, replace, or resume the prior model.' }
           : handoff.queued }),
@@ -2625,7 +2690,7 @@ class IndexedGameController implements GameController {
           },
         },
         position: context.position,
-        clockState,
+        clockState: held,
         value: { kind: 'accepted' },
       };
     });
@@ -2682,8 +2747,11 @@ class IndexedGameController implements GameController {
       const failedCandidate = handoff.queued?.state === 'awaiting-first-reply' && handoff.producing !== null &&
         modelConfigurationIdentity(handoff.producing) !== modelConfigurationIdentity(committedSelection) &&
         modelConfigurationIdentity(handoff.queued.selection) === modelConfigurationIdentity(handoff.producing);
+      // A failed turn holds the model's clock until the turn is retried or restarted.
+      const held = pauseClock(clockState, reading.remaining, context.at);
       const interruptedCheckpoint = {
         ...nextCheckpoint,
+        clocks: checkpointClock(held, context.decisionTimeMs),
         extensions: withHandoff(context.checkpoint, { producing: null, queued: failedCandidate
           ? { ...handoff.queued!, state: 'failed', failure: `The candidate turn ${reason}; retry, replace, or resume the prior model.` }
           : handoff.queued }),
@@ -2700,7 +2768,7 @@ class IndexedGameController implements GameController {
           },
         },
         position: context.position,
-        clockState,
+        clockState: held,
         value: { kind: 'accepted' },
       };
     });
