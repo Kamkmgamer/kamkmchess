@@ -89,22 +89,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 }
 .board-column { min-width: 0; }
 .player-row {
-  position: relative; height: 48px; display: flex; align-items: center; gap: 10px; padding: 4px 8px; margin-inline: -8px;
-  background: transparent; border: 0; border-radius: 8px;
+  height: 48px; display: flex; align-items: center; gap: 10px; padding: 4px 0;
+  background: transparent; border: 0;
 }
-/* The side to move carries the accent: a bar, a breathing dot after the name and the live clock. */
-.player-row.active { background: color-mix(in srgb, var(--green) 13%, transparent); }
-.player-row.active::before {
-  content: ''; position: absolute; left: 0; top: 50%; translate: 0 -50%; height: 58%; width: 3px;
-  border-radius: 2px; background: var(--green);
-}
-.player-row.active .player-name strong { display: inline-flex; align-items: center; gap: 6px; }
-.player-row.active .player-name strong::after {
-  content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--green);
-  animation: turn-pulse 1.6s ease-in-out infinite;
-}
-@keyframes turn-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
-.player-row.active .clock:not(.running) { color: var(--ink); }
+/* Name and the captured tray stack under each other, the running clock alone marks the turn. */
+.player-meta { display: grid; min-width: 0; gap: 2px; }
 .player-badge {
   width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center;
   border: 1px solid var(--edge-strong); flex: 0 0 auto; font-size: 12px; font-weight: 700;
@@ -120,7 +109,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .light-piece { background: #f9f9f9; color: #333; border: 1px solid #333; }
 .player-name { display: grid; min-width: 0; line-height: 1.25; }
 .player-name span { color: var(--dim); font-size: 12px; margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.captured-pieces { display: flex; align-items: center; min-width: 0; margin-left: 12px; padding-right: 6px; overflow: hidden; }
+.captured-pieces { display: flex; align-items: center; min-width: 0; min-height: 20px; padding-right: 6px; overflow: hidden; }
 .captured-pieces img { display: block; width: 20px; height: 20px; flex: 0 0 auto; margin-right: -5px; }
 .captured-pieces img:last-of-type { margin-right: 0; }
 .captured-pieces .material-advantage {
@@ -128,14 +117,20 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
 .clock {
-  margin-left: auto; flex-shrink: 0; min-width: 104px; text-align: right; font-size: 26px; font-weight: 650; line-height: 1.1;
-  font-variant-numeric: tabular-nums; letter-spacing: -.04em; padding: 6px 12px;
-  border-radius: 6px; background: var(--panel); color: var(--dim); border: 1px solid var(--edge);
+  margin-left: auto; flex-shrink: 0; display: flex; align-items: center; justify-content: flex-end;
+  min-width: 128px; height: 44px; padding: 0 12px; border: 0; border-radius: 3px;
+  background: var(--panel); color: var(--dim);
+  font-size: 26px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; letter-spacing: -.04em;
 }
-.clock.running { background: var(--green); border-color: var(--green); color: var(--t3-accent-foreground, var(--paper)); }
-.clock[data-low="true"] { color: var(--error); border-color: var(--error); }
-.clock.running[data-low="true"] { background: var(--error-bg); color: var(--error); border-color: var(--error); }
-.clock.running.held { background: var(--panel); border-color: var(--edge); color: var(--dim); border-style: dashed; }
+/* The clock face follows the pieces: light for White, dark for Black, like chess.com. */
+.player-row.white .clock { background: color-mix(in srgb, #fff 58%, var(--page)); color: #4b4847; }
+.player-row.white .clock.running { background: #fff; color: #262421; box-shadow: inset 0 0 0 1px var(--edge); }
+.player-row.black .clock { background: color-mix(in srgb, #262421 55%, var(--page)); color: color-mix(in srgb, #fff 55%, var(--page)); }
+.player-row.black .clock.running { background: #262421; color: #fff; }
+.player-row .clock[data-low="true"]:not(.running) { color: var(--error); }
+.player-row .clock.running[data-low="true"] { background: #c03a2b; color: #fff; }
+/* A held clock (after a failed model turn) stops reading as live. */
+.player-row .clock.running.held { background: var(--panel); color: var(--dim); box-shadow: none; outline: 1px dashed var(--edge-strong); outline-offset: -1px; }
 .clock-held { margin-left: auto; align-self: center; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); }
 .clock-held + .clock { margin-left: 8px; }
 .board-frame { padding: 3px 0; }
@@ -235,10 +230,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .move-list tbody th { padding: 0 6px 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 12px; font-weight: 400; text-align: left; }
 .move-list td { padding: 0; }
 .move-list tbody tr:nth-child(odd) { background: color-mix(in srgb, var(--ink) 5%, var(--panel)); }
-.move-list button { display: block; width: 100%; min-height: 40px; border: 0; border-radius: 3px; padding: 8px 10px; background: transparent; color: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.move-list button { display: block; width: 100%; min-height: 30px; border: 0; border-radius: 3px; padding: 4px 10px; background: transparent; color: inherit; font-size: 14px; font-weight: 600; text-align: left; cursor: pointer; }
 .move-list button:hover { background: color-mix(in srgb, var(--ink) 12%, var(--panel)); }
 .move-list button:focus-visible { outline-offset: -3px; }
-.move-list button[aria-current="step"] { background: var(--green); color: var(--t3-accent-foreground, var(--paper)); font-weight: 700; }
+.move-list button[aria-current="step"] {
+  background: color-mix(in srgb, var(--ink) 16%, transparent); color: var(--ink); font-weight: 700;
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--ink) 45%, transparent);
+}
 .moves-sidebar .history-controls { padding: 6px 8px; border-top: 1px solid var(--edge); }
 .history-controls { padding-top: 8px; }
 .history-controls p { margin: 4px 0 0; }
@@ -348,23 +346,23 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 
 /* Focused screens share the board's existing palette and controls. */
 [hidden] { display: none !important; }
-/* --board-chrome is the vertical budget the rows, tools, status strip and page padding need below
-   the board; what is left of the viewport becomes board. The topbar variant spends more. */
+/* --board-chrome is the vertical budget the player rows and page padding need beyond the board;
+   what is left of the viewport becomes board. The topbar variant spends more. */
 .minimal-workspace {
-  --board-chrome: 330px; --rail-offset: 0px;
-  --board-size: min(800px, max(320px, calc(100dvh - var(--board-chrome))), calc(100vw - 360px - var(--rail-offset)));
+  --board-chrome: 230px; --rail-offset: 0px;
+  --board-size: min(800px, max(320px, calc(100dvh - var(--board-chrome))), calc(100vw - 440px - var(--rail-offset)));
   max-width: 1100px; padding-inline: 24px;
 }
 /* The left rail is fixed from 1001px up; the workspace sits in the space to its right and the topbar content moves into the rail. */
 @media (min-width: 1001px) {
-  :root { --rail: 256px; }
-  .minimal-workspace { --rail-offset: var(--rail); --board-chrome: 260px; margin-left: var(--rail); max-width: none; }
+  :root { --rail: 216px; }
+  .minimal-workspace { --rail-offset: var(--rail); --board-chrome: 140px; margin-left: var(--rail); max-width: none; }
   .minimal-workspace .topbar { display: none; }
 }
 /* The workspace is a column flex box so leftover height can be shared (see below). Auto inline
    margins on flex items disable stretching, so these children pin their width explicitly. */
-.minimal-workspace .topbar { border: 0; width: min(100%, calc(var(--board-size) + 304px)); margin: 0 auto 6px; }
-.minimal-workspace .match-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 24px; width: min(100%, calc(var(--board-size) + 304px)); margin-inline: auto; }
+.minimal-workspace .topbar { border: 0; width: min(100%, calc(var(--board-size) + 384px)); margin: 0 auto 6px; }
+.minimal-workspace .match-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 24px; width: min(100%, calc(var(--board-size) + 384px)); margin-inline: auto; }
 /* When the window is taller than the board needs, the leftover height is shared above and below
    the match instead of pooling as dead space under the status strip. */
 .workspace { display: flex; flex-direction: column; }
@@ -373,11 +371,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .minimal-workspace .player-row.far-player { order: 0; }
 .minimal-workspace .playing-board { order: 1; }
 .minimal-workspace .player-row.near-player { order: 2; }
-.minimal-workspace .board-tools { order: 3; display: flex; justify-content: center; gap: 8px; margin-top: 8px; padding: 0; }
-.minimal-workspace .match-status { order: 4; }
-.minimal-workspace .error-message, .minimal-workspace .promotion-panel { order: 5; }
+/* The online board still carries its tools and status inside the column: they sort last. */
+.minimal-workspace .board-column > .board-tools { order: 3; display: flex; justify-content: center; gap: 8px; margin-top: 8px; padding: 0; }
+.minimal-workspace .board-column > .match-status { order: 4; }
 .minimal-workspace .player-name { overflow: hidden; }
-.minimal-workspace .player-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.minimal-workspace .player-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 700; }
 .icon-button { width: 42px; height: 42px; flex: 0 0 42px; display: inline-grid; place-items: center; padding: 0; border: 1px solid transparent; border-radius: 8px; }
 .icon-button:hover:not(:disabled) { background: var(--panel-raised); border-color: var(--edge); }
 .icon-button svg { display: block; }
@@ -387,6 +385,33 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .playing-board .promotion-options { flex-wrap: nowrap; justify-content: center; align-items: center; gap: 4px; margin: 0; }
 .playing-board .promotion-options > .button { display: grid; place-items: center; width: 44px; height: 48px; min-width: 0; padding: 4px; }
 .minimal-workspace .history-controls .button-row { width: 100%; display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; }
+/* Roomy screens carry the game chrome in the right panel, chess.com-style: it stretches the full
+   column height and hosts the status strip, board tools and history arrows under the move list.
+   Scoped to the complement of the mobile query so the phone toolbar rules keep winning. */
+@media (min-width: 761px) and (min-height: 501px), (min-width: 1001px) {
+  /* Size containment keeps a long move list from growing the grid row; the scroll area scrolls instead. */
+  .minimal-workspace .moves-sidebar { align-self: stretch; height: auto; margin-top: 0; border-radius: 6px; contain: size; }
+  .minimal-workspace .moves-heading {
+    position: relative; justify-content: center; min-height: 48px; padding: 0 14px;
+    background: color-mix(in srgb, #000 18%, var(--panel));
+  }
+  .minimal-workspace .moves-heading h2 { font-size: 13px; }
+  .minimal-workspace .moves-heading .count { position: absolute; right: 14px; }
+  .minimal-workspace .moves-sidebar .match-status {
+    margin: 0; padding: 10px 14px 10px 17px;
+    border: 0; border-top: 1px solid var(--edge); border-radius: 0;
+  }
+  .minimal-workspace .moves-sidebar .board-tools {
+    justify-content: center; gap: 4px; margin: 0; padding: 6px 8px;
+    border-top: 1px solid var(--edge);
+  }
+  .minimal-workspace .moves-sidebar .board-tools .icon-button { color: var(--dim); }
+  .minimal-workspace .moves-sidebar .board-tools .icon-button:hover:not(:disabled) { color: var(--ink); }
+  .minimal-workspace .moves-sidebar .history-controls { padding: 8px; }
+  .minimal-workspace .moves-sidebar .history-controls .button-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+  .minimal-workspace .moves-sidebar .history-controls .icon-button { width: 100%; height: 40px; background: var(--panel-raised); border-radius: 4px; }
+  .minimal-workspace .player-row .player-badge, .minimal-workspace .player-row .opponent-logo { width: 40px; height: 40px; }
+}
 /* The strip under the board is always a banner: state bar, turn glyph, heading and row of actions. */
 .match-status {
   position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 52px; gap: 12px;
@@ -435,7 +460,6 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 @keyframes result-enter { from { opacity: 0; transform: translateY(-6px) scale(.985); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
   .game-result-card { animation: none; }
-  .player-row.active .player-name strong::after,
   .match-status[data-generation='producing']::before { animation: none; }
 }
 .focus-page { width: min(100%, 420px); margin: clamp(16px, 8dvh, 80px) auto 32px; padding: 0; border: 0; background: transparent; }

@@ -217,13 +217,13 @@ test('two LLMs alternate with separate routing IDs and side-specific plans', asy
     image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true);
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.locator('.right-game-sidebar').getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('light');
+  await page.getByRole('radiogroup', { name: 'Appearance' }).getByRole('radio', { name: 'Light', exact: true }).locator('..').click();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.screenshot({ path: testInfo.outputPath('opponent-logos-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.locator('.right-game-sidebar').getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('dark');
+  await page.getByRole('radiogroup', { name: 'Appearance' }).getByRole('radio', { name: 'Dark', exact: true }).locator('..').click();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: testInfo.outputPath('opponent-logos-mobile-dark.png'), fullPage: true });

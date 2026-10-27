@@ -50,7 +50,6 @@ import { legalMoves } from '../rules/index.js';
 import type { CoordinateMove, Promotion } from '../rules/index.js';
 import { checkedColor, isLocalBoardInputDisabled, parseCoordinateMove, startClassifiedLocalGame, submitBoardMove } from './board-input.js';
 import type { LocalGameSession, MatchComposition } from './match-composition.js';
-import { T3_PALETTES } from './t3-palettes.js';
 import { useTheme } from '../use-theme.js';
 import { OpponentPanel } from './OpponentPanel.js';
 import { OpponentBadge } from './OpponentBadge.js';
@@ -70,10 +69,9 @@ import type { SoundCue } from './sounds.js';
 import { pieceImage } from './piece-image.js';
 import { CapturedPieces } from './CapturedPieces.js';
 import { capturedSummary } from './captured-material.js';
-import { PieceStyleOptions } from './PieceStyleOptions.js';
 import { usePieceStyle } from './use-piece-style.js';
-import { BoardStyleOptions } from './BoardStyleOptions.js';
 import { useBoardStyle } from './use-board-style.js';
+import { SettingsPage } from './SettingsPage.js';
 import { conciseError, conciseTurnError } from './concise-error.js';
 import { controllerRevisionForConfig, matchesOpponentSelection } from './opponent-selection.js';
 import { getGenerationJournal } from '../integration/generation-runner.js';
@@ -1233,17 +1231,13 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         onAgentConnected={() => setCatalogRefresh(value => value + 1)}
         {...(onOpenProfile ? { onOpenProfile } : {})} />
     </div>}
-    {tool && <section className="focus-page" aria-label={tool === 'agents' ? 'Your agents' : 'Match tools'}>
+    {tool && <section className={tool === 'settings' ? 'focus-page settings-page' : 'focus-page'} aria-label={tool === 'agents' ? 'Your agents' : 'Match tools'}>
       <div className="panel-heading"><h2>{tool === 'move' ? 'Move' : tool === 'agents' ? 'Your agents' : tool.charAt(0).toUpperCase() + tool.slice(1)}</h2><IconButton icon="close" label="Close" onClick={() => setTool(null)} /></div>
-      {tool === 'settings' && <div className="connection-form">
-        <label>Theme<select value={theme} onChange={event => setTheme(event.target.value)}>{T3_PALETTES.map(palette => <option key={palette.id} value={palette.id}>{palette.label}</option>)}</select></label>
-        <label>Appearance<select value={appearance} onChange={event => setAppearance(event.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
-        <PieceStyleOptions />
-        <BoardStyleOptions />
-        <label>Sound<select value={sound ? 'on' : 'off'} onChange={event => { const enabled = event.target.value === 'on'; setSound(enabled); setSoundEnabled(enabled); }}><option value="on">On</option><option value="off">Off</option></select></label>
-        <div className="button-row"><IconButton icon="board" label="Position" onClick={() => openTool('position')} /><IconButton icon="archive" label="Conversation and archive" onClick={() => openTool('archive')} /><IconButton icon="download" label="Download game (JSON)" onClick={downloadArchive} /></div>
+      {tool === 'settings' && <>
+        <SettingsPage theme={theme} appearance={appearance} sound={sound} onTheme={setTheme} onAppearance={setAppearance} onSound={enabled => { setSound(enabled); setSoundEnabled(enabled); }}
+          game={{ onPosition: () => openTool('position'), onArchive: () => openTool('archive'), onDownload: downloadArchive }} />
         <div className="settings-links"><a href="/#questions">Help</a><a href={PROJECT_URL} target="_blank" rel="noopener noreferrer">Project</a></div>
-      </div>}
+      </>}
       {tool === 'move' && <form className="coordinate-form" onSubmit={submitCoordinate}><label className="sr-label" htmlFor="coordinate-move">Enter a move by coordinates</label><input id="coordinate-move" aria-label="Enter a move by coordinates" value={coordinate} onChange={event => { setCoordinate(event.target.value); setCoordinateError(''); }} placeholder="e2e4" autoComplete="off" autoCapitalize="none" spellCheck={false} enterKeyHint="go" /><button className="button primary" type="submit" aria-label="Play move" disabled={disabled}>Play</button>{coordinateError && <p role="alert">{coordinateError}</p>}</form>}
       {tool === 'position' && <><p className="fen-value">{history.position.fen}</p><IconButton icon="board" label="New game from here" onClick={() => openSetup(history.position.fen)} /></>}
       {tool === 'archive' && <pre className="archive-page">{archiveText || 'No conversation yet.'}</pre>}
@@ -1273,9 +1267,9 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     <div className="match-layout" hidden={focusPage} data-practice={snapshot.checkpoint.practice.mode} data-committed-model={snapshot.modelHandoff.committed?.modelRoutingId} data-queued-model={snapshot.modelHandoff.queued?.selection.modelRoutingId}>
       <section className="board-column" id="board" ref={boardPanel} tabIndex={-1} aria-label="Chess match board">
         {(['black', 'white'] as const).map(side => <div key={side} className={`player-row ${side} ${side === orientation ? 'near-player' : 'far-player'} ${activeSide === side ? 'active' : ''}`}>
-          <OpponentBadge player={players[side]} side={side} /><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
+          <OpponentBadge player={players[side]} side={side} /><div className="player-meta"><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
           <CapturedPieces pieces={side === 'white' ? captures.capturedByWhite : captures.capturedByBlack} capturedColor={side === 'white' ? 'b' : 'w'}
-            advantage={side === 'white' ? (captures.advantage > 0 ? captures.advantage : null) : captures.advantage < 0 ? -captures.advantage : null} />
+            advantage={side === 'white' ? (captures.advantage > 0 ? captures.advantage : null) : captures.advantage < 0 ? -captures.advantage : null} /></div>
           {clockHeld && activeSide === side && <span className="clock-held" title="Clock held after a failed model turn">held</span>}
           <time className={`clock ${activeSide === side ? 'running' : ''} ${clockHeld && activeSide === side ? 'held' : ''}`} data-low={clocks[`${side}Ms`] < 20_000 || undefined} aria-label={`${side} clock ${formatClock(clocks[`${side}Ms`])}${clockHeld && activeSide === side ? ', held' : ''}`}>{formatClock(clocks[`${side}Ms`])}</time>
           {canAddClockTime && <IconButton icon="plus" label={`Add 1 minute to ${side === 'white' ? 'White' : 'Black'}`} disabled={working} onClick={() => void addClockTime(side, 60_000)} />}
@@ -1285,6 +1279,32 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
             moves={snapshot.checkpoint.rules.moves.slice(0, history.ply).map(move => `${move.from}${move.to}${move.promotion ?? ''}`).join(' ')} />}
           <ChessBoard orientation={orientation} model={{ position: snapshot.position, identity: boardIdentity }} disabled={disabled} visible={!focusPage} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} />
           {promotion && <section className="promotion-panel" aria-label="Promotion"><div className="promotion-options">{PROMOTIONS.map(piece => <button className="button quiet" type="button" key={piece.value} aria-label={piece.label} autoFocus={piece.value === 'q'} onClick={() => selectPromotion(piece.value)}><img alt="" width="36" height="36" src={pieceImage(snapshot.position.sideToMove, piece.value, pieceStyle)} /></button>)}<IconButton icon="close" label="Cancel promotion" onClick={() => setPromotion(null)} /></div></section>}
+        </div>
+      </section>
+      <aside className="moves-sidebar" id="moves-panel" ref={movesPanel} tabIndex={-1} aria-labelledby="moves-title">
+        {finalResult && <GameResultCard result={finalResult} onNewGame={() => openSetup()} />}
+        <div className="moves-heading"><h2 id="moves-title">Moves</h2><span className="count" aria-label={`Move ${history.ply} of ${history.count}`}>{history.ply}/{history.count}</span>
+          <span className="mobile-board-return"><IconButton icon="board" label="Show board" aria-controls="board" onClick={() => { boardPanel.current?.focus({ preventScroll: true }); boardPanel.current?.scrollIntoView({ block: 'start' }); }} /></span>
+        </div>
+        <MoveList moves={snapshot.checkpoint.rules.moves} selectedPly={history.ply} visible={!focusPage} onSelect={history.select} />
+        <div className="match-status" data-tone={finalResult?.tone} data-generation={generationState}
+          data-turn={!final && !history.reviewing ? snapshot.position.sideToMove : undefined}
+          data-check={!final && !history.reviewing && checkColor !== undefined ? 'true' : undefined}
+          role="status" aria-description={final ? undefined : generationDetail || feedback}>
+          {/* One heading element in every state, so focus sent to it survives the switch to a final result. */}
+          <div className="status-result"><h2 ref={resultStatus} tabIndex={-1} className="status-heading" aria-label={!final && generationState === 'producing' ? isEngineSelection(activePlayer) ? 'Engine is choosing a move' : 'AI is choosing a move' : undefined}>{history.reviewing ? `${history.ply}/${history.count}` : finalResult ? finalResult.headline : generationState === 'stopped' ? 'Paused' : generationState === 'failed' ? conciseTurnError(new Error(generationDetail)) : generationState === 'producing' ? generationDetail === 'Checking connection…' ? 'Checking…' : 'Thinking…' : statusLabel(snapshot)}</h2>
+            {finalResult?.detail && !history.reviewing && <p className="status-detail">{finalResult.detail}</p>}</div>
+          <div className="button-row">
+            {!final && generationState === 'producing' && <IconButton icon="stop" label="Stop generation" onClick={() => void stopModelTurn()} />}
+            {isModelTurn && !autoGeneration && !final && generationState === 'idle' && <IconButton icon="play" label={isEngineSelection(activePlayer) ? "Resume engine turn" : "Resume model turn"} onClick={retryModelTurn} />}
+            {!final && (generationState === 'failed' || generationState === 'stopped') && isModelTurn && <>
+              <IconButton icon="play" label={snapshot.modelHandoff.queued?.state === "failed" ? "Retry queued model" : isEngineSelection(activePlayer) ? "Retry engine turn" : "Retry model request"} onClick={() => { if (snapshot.modelHandoff.queued?.state === 'failed') void recoverQueuedModel('retry'); else retryModelTurn(); }} />
+              {snapshot.modelHandoff.queued?.state === 'failed' && <IconButton icon="undo" label="Resume previous model" onClick={() => void recoverQueuedModel('resume')} />}
+            </>}
+            {!final && Object.values(players).some(player => player.kind === 'model') && !isAgentSelection(recoverySelection) && <IconButton icon="change" label={isEngineSelection(recoverySelection) ? "Choose another engine" : "Choose another model"} onClick={() => setRecoveryOpen(true)} />}
+            {snapshot.modelHandoff.queued && <IconButton icon="close" label="Cancel queued model" onClick={() => void cancelQueuedModel()} />}
+            {practiceOffered && !spectator && !Object.values(players).some(isEngineSelection) && Object.values(players).some(player => player.kind === 'model') && <IconButton icon="play" label="Start practice from this position" disabled={working} onClick={() => void beginPractice()} />}
+          </div>
         </div>
         <nav hidden={setupOpen} className="board-tools" aria-label="Board tools"><IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />
           <IconButton icon="undo" label="Undo" onClick={() => void undo()} disabled={working || snapshot.readiness !== 'ready' || !snapshot.checkpoint.rules.moves.length || snapshot.checkpoint.result.kind !== 'unresolved'} />
@@ -1307,32 +1327,6 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
             <IconButton icon="moves" label="Show moves" aria-controls="moves-panel" onClick={() => { movesPanel.current?.focus({ preventScroll: true }); movesPanel.current?.scrollIntoView({ block: 'start' }); }} />
           </div>
         </nav>
-        <div className="match-status" data-tone={finalResult?.tone} data-generation={generationState}
-          data-turn={!final && !history.reviewing ? snapshot.position.sideToMove : undefined}
-          data-check={!final && !history.reviewing && checkColor !== undefined ? 'true' : undefined}
-          role="status" aria-description={final ? undefined : generationDetail || feedback}>
-          {/* One heading element in every state, so focus sent to it survives the switch to a final result. */}
-          <div className="status-result"><h2 ref={resultStatus} tabIndex={-1} className="status-heading" aria-label={!final && generationState === 'producing' ? isEngineSelection(activePlayer) ? 'Engine is choosing a move' : 'AI is choosing a move' : undefined}>{history.reviewing ? `${history.ply}/${history.count}` : finalResult ? finalResult.headline : generationState === 'stopped' ? 'Paused' : generationState === 'failed' ? conciseTurnError(new Error(generationDetail)) : generationState === 'producing' ? generationDetail === 'Checking connection…' ? 'Checking…' : 'Thinking…' : statusLabel(snapshot)}</h2>
-            {finalResult?.detail && !history.reviewing && <p className="status-detail">{finalResult.detail}</p>}</div>
-          <div className="button-row">
-            {!final && generationState === 'producing' && <IconButton icon="stop" label="Stop generation" onClick={() => void stopModelTurn()} />}
-            {isModelTurn && !autoGeneration && !final && generationState === 'idle' && <IconButton icon="play" label={isEngineSelection(activePlayer) ? "Resume engine turn" : "Resume model turn"} onClick={retryModelTurn} />}
-            {!final && (generationState === 'failed' || generationState === 'stopped') && isModelTurn && <>
-              <IconButton icon="play" label={snapshot.modelHandoff.queued?.state === "failed" ? "Retry queued model" : isEngineSelection(activePlayer) ? "Retry engine turn" : "Retry model request"} onClick={() => { if (snapshot.modelHandoff.queued?.state === 'failed') void recoverQueuedModel('retry'); else retryModelTurn(); }} />
-              {snapshot.modelHandoff.queued?.state === 'failed' && <IconButton icon="undo" label="Resume previous model" onClick={() => void recoverQueuedModel('resume')} />}
-            </>}
-            {!final && Object.values(players).some(player => player.kind === 'model') && !isAgentSelection(recoverySelection) && <IconButton icon="change" label={isEngineSelection(recoverySelection) ? "Choose another engine" : "Choose another model"} onClick={() => setRecoveryOpen(true)} />}
-            {snapshot.modelHandoff.queued && <IconButton icon="close" label="Cancel queued model" onClick={() => void cancelQueuedModel()} />}
-            {practiceOffered && !spectator && !Object.values(players).some(isEngineSelection) && Object.values(players).some(player => player.kind === 'model') && <IconButton icon="play" label="Start practice from this position" disabled={working} onClick={() => void beginPractice()} />}
-          </div>
-        </div>
-      </section>
-      <aside className="moves-sidebar" id="moves-panel" ref={movesPanel} tabIndex={-1} aria-labelledby="moves-title">
-        {finalResult && <GameResultCard result={finalResult} onNewGame={() => openSetup()} />}
-        <div className="moves-heading"><h2 id="moves-title">Moves</h2><span className="count" aria-label={`Move ${history.ply} of ${history.count}`}>{history.ply}/{history.count}</span>
-          <span className="mobile-board-return"><IconButton icon="board" label="Show board" aria-controls="board" onClick={() => { boardPanel.current?.focus({ preventScroll: true }); boardPanel.current?.scrollIntoView({ block: 'start' }); }} /></span>
-        </div>
-        <MoveList moves={snapshot.checkpoint.rules.moves} selectedPly={history.ply} visible={!focusPage} onSelect={history.select} />
         <nav hidden={setupOpen} className="history-controls" aria-label="Move history"><div className="button-row">
           <IconButton icon="first" label="First" onClick={() => history.select(0)} disabled={history.ply === 0} aria-keyshortcuts="Home" />
           <IconButton icon="back" label="Previous" onClick={() => history.select(history.ply - 1)} disabled={history.ply === 0} aria-keyshortcuts="ArrowLeft" />

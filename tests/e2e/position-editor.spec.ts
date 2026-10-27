@@ -119,7 +119,7 @@ for (const appearance of ['light', 'dark'] as const) {
     await page.goto('/play');
     await page.getByRole('button', { name: 'New game', exact: true }).click();
     await page.locator('.right-game-sidebar').getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('combobox', { name: /Appearance/ }).selectOption(appearance);
+    await page.getByRole('radiogroup', { name: 'Appearance' }).getByRole('radio', { name: appearance === 'light' ? 'Light' : 'Dark', exact: true }).locator('..').click();
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     await page.getByRole('button', { name: 'New game', exact: true }).click();
     await page.getByLabel('Game mode').selectOption('local');
