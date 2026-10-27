@@ -373,7 +373,13 @@ func validateCheckpointShape(v map[string]json.RawMessage) bool {
 	for raw, dst := range map[string]*map[string]json.RawMessage{"rules": &rules, "history": &history, "clocks": &clocks, "budgets": &budgets, "selections": &selections, "archive": &archive} {
 		_ = json.Unmarshal(v[raw], dst)
 	}
-	if !keys(v["rules"], []string{"variant", "startingFen", "currentFen", "sideToMove", "castlingRights", "enPassantSquare", "halfmoveClock", "fullmoveNumber", "repetitionLedger", "moves"}) || !keys(v["history"], []string{"currentSegmentId", "segments", "messages"}) || !keys(v["clocks"], []string{"schemaVersion", "timeControl", "banksAtAnchor", "activeSide", "anchor", "lastReconciledAtMs"}) || !keys(v["budgets"], []string{"formattingCorrectionsRemaining", "illegalMoveAttemptsRemaining", "manualRetriesBySide"}) || !keys(v["selections"], []string{"players"}) {
+	clockKeys := []string{"schemaVersion", "timeControl", "banksAtAnchor", "activeSide", "anchor", "lastReconciledAtMs"}
+	// A held clock records "paused": true while a failed model turn waits to be retried.
+	_, clockPaused := clocks["paused"]
+	if clockPaused {
+		clockKeys = append(clockKeys, "paused")
+	}
+	if !keys(v["rules"], []string{"variant", "startingFen", "currentFen", "sideToMove", "castlingRights", "enPassantSquare", "halfmoveClock", "fullmoveNumber", "repetitionLedger", "moves"}) || !keys(v["history"], []string{"currentSegmentId", "segments", "messages"}) || !keys(v["clocks"], clockKeys) || !keys(v["budgets"], []string{"formattingCorrectionsRemaining", "illegalMoveAttemptsRemaining", "manualRetriesBySide"}) || !keys(v["selections"], []string{"players"}) {
 		return false
 	}
 	if !jsonArray(rules["moves"]) || !jsonArray(history["segments"]) || !jsonArray(history["messages"]) || !jsonArray(archive["discardedLines"]) {
@@ -454,6 +460,9 @@ func validateCheckpointShape(v map[string]json.RawMessage) bool {
 		return false
 	}
 	if !validNullableSide(clocks["activeSide"]) || !validAnchor(clocks["anchor"]) {
+		return false
+	}
+	if clockPaused && (!bytes.Equal(bytes.TrimSpace(clocks["paused"]), []byte("true")) || isNullJSON(clocks["activeSide"])) {
 		return false
 	}
 	for _, side := range []string{"white", "black"} {

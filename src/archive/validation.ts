@@ -292,7 +292,9 @@ function readHistory(value: unknown): HistoryCheckpointV1 {
 
 function readClock(value: unknown): ClockCheckpointV1 {
   const clock = readRecord(value, 'checkpoint.clocks');
-  exactKeys(clock, ['schemaVersion', 'timeControl', 'banksAtAnchor', 'activeSide', 'anchor', 'lastReconciledAtMs'], 'checkpoint.clocks');
+  const clockKeys = ['schemaVersion', 'timeControl', 'banksAtAnchor', 'activeSide', 'anchor', 'lastReconciledAtMs'];
+  if (Object.hasOwn(clock, 'paused')) clockKeys.push('paused');
+  exactKeys(clock, clockKeys, 'checkpoint.clocks');
   if (clock.schemaVersion !== 1) fail('checkpoint.clocks.schemaVersion is unsupported.');
   const timeControl = readRecord(clock.timeControl, 'checkpoint.clocks.timeControl');
   exactKeys(timeControl, ['startingTimeMs', 'incrementMs'], 'checkpoint.clocks.timeControl');
@@ -319,6 +321,10 @@ function readClock(value: unknown): ClockCheckpointV1 {
   if ((activeSide === null) !== (anchor === null)) {
     fail('checkpoint.clocks.activeSide and anchor must both be null while paused.');
   }
+  const held = Object.hasOwn(clock, 'paused');
+  if (held && (clock.paused !== true || activeSide === null)) {
+    fail('checkpoint.clocks.paused must be true and only hold an active clock.');
+  }
   return {
     schemaVersion: 1,
     timeControl: {
@@ -332,6 +338,7 @@ function readClock(value: unknown): ClockCheckpointV1 {
     activeSide,
     anchor,
     lastReconciledAtMs: numberValue(clock.lastReconciledAtMs, 'checkpoint.clocks.lastReconciledAtMs'),
+    ...(held ? { paused: true as const } : {}),
   };
 }
 

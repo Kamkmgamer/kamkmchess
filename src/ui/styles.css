@@ -111,6 +111,9 @@ textarea:focus-visible, summary:focus-visible {
 .clock.running { background: var(--green); border-color: var(--green); color: var(--t3-accent-foreground, var(--paper)); }
 .clock[data-low="true"] { color: var(--error); border-color: var(--error); }
 .clock.running[data-low="true"] { background: var(--error-bg); color: var(--error); border-color: var(--error); }
+.clock.running.held { background: var(--panel); border-color: var(--edge); color: var(--dim); border-style: dashed; }
+.clock-held { margin-left: auto; align-self: center; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); }
+.clock-held + .clock { margin-left: 8px; }
 .board-frame { padding: 3px 0; }
 .playing-board.with-evaluation { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
 .evaluation-bar { position: relative; align-self: stretch; margin-block: 3px; padding: 0; border: 1px solid var(--edge); border-radius: 4px; overflow: hidden; background: #333; cursor: default; }

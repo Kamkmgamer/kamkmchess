@@ -24,6 +24,11 @@ export interface ClockState {
   readonly banksAtAnchor: ClockBanks;
   readonly activeSide: ClockSide;
   readonly anchor: TimeSample;
+  /**
+   * True while the active side's clock is held, for example while a failed model turn
+   * waits to be retried. A held clock charges no time; its banks stay at banksAtAnchor.
+   */
+  readonly paused?: boolean;
 }
 
 export interface ClockComparisonPolicy {
@@ -139,8 +144,19 @@ export function readClockAt(
   assertPolicy(policy);
 
   const evidence = compareReferences(state.anchor, at, 'monotonic');
-  const reason = timingIssue(evidence, policy);
   const deadline = getClockDeadline(state);
+  if (state.paused === true) {
+    // A held clock measures no time, so reference drift cannot change what it reads.
+    return {
+      status: getBank(state.banksAtAnchor, state.activeSide) <= 0 ? 'expired' : 'running',
+      activeSide: state.activeSide,
+      remaining: { ...state.banksAtAnchor },
+      elapsedMs: 0,
+      deadline,
+      evidence,
+    };
+  }
+  const reason = timingIssue(evidence, policy);
   if (reason !== undefined) {
     return {
       status: 'reconciliation-required',
@@ -200,8 +216,19 @@ export function recoverClockAfterAbsence(
   assertPolicy(policy);
 
   const evidence = compareReferences(state.anchor, resumedAt, 'wall-clock');
-  const reason = timingIssue(evidence, policy);
   const deadline = absenceDeadline(state);
+  if (state.paused === true) {
+    // A held clock charges nothing for the absence and stays held after it.
+    return {
+      status: 'recovered',
+      clock: { ...state, anchor: copySample(resumedAt) },
+      remaining: { ...state.banksAtAnchor },
+      elapsedChargedMs: 0,
+      deadline,
+      evidence,
+    };
+  }
+  const reason = timingIssue(evidence, policy);
   if (reason !== undefined) {
     return {
       status: 'reconciliation-required',
@@ -271,7 +298,7 @@ export function calculateMoveClockCandidate(
   return {
     status: 'candidate',
     clock: {
-      ...state,
+      ...withoutPause(state),
       banksAtAnchor: banksAfterIncrement,
       activeSide: oppositeSide(movingSide),
       anchor: copySample(decisionAt),
@@ -332,7 +359,7 @@ export function calculateUndoClockCandidate(
   return {
     status: 'candidate',
     clock: {
-      ...state,
+      ...withoutPause(state),
       banksAtAnchor: banksAfterRemoval,
       activeSide: input.resumedSide,
       anchor: copySample(decisionAt),
@@ -340,6 +367,55 @@ export function calculateUndoClockCandidate(
     elapsedChargedMs: reading.elapsedMs,
     incrementCreditsRemoved: { ...input.incrementCreditsToRemove },
     reading,
+  };
+}
+
+/**
+ * Hold the active side's clock at `remaining`, the banks already charged up to `at`.
+ * A held clock charges no time until resumeClock restarts it.
+ */
+export function pauseClock(state: ClockState, remaining: ClockBanks, at: TimeSample): ClockState {
+  assertClockState(state);
+  assertBanks(remaining, 'remaining');
+  assertSample(at, 'at');
+  return { ...state, banksAtAnchor: { ...remaining }, anchor: copySample(at), paused: true };
+}
+
+/** Restart a held clock from `at`, without charging the interval it was held. */
+export function resumeClock(state: ClockState, at: TimeSample): ClockState {
+  assertClockState(state);
+  assertSample(at, 'at');
+  return { ...withoutPause(state), anchor: copySample(at) };
+}
+
+/**
+ * Credit `amountMs` to one side's bank. `remaining` is the banks already charged up to
+ * `at`; the clock keeps its active side and stays running or held as it was.
+ */
+export function addClockTime(
+  state: ClockState,
+  remaining: ClockBanks,
+  side: ClockSide,
+  amountMs: number,
+  at: TimeSample,
+): ClockState {
+  assertClockState(state);
+  assertBanks(remaining, 'remaining');
+  assertSide(side, 'side');
+  assertSample(at, 'at');
+  assertFinite(amountMs, 'amountMs');
+  if (amountMs <= 0) throw new RangeError('amountMs must be positive.');
+  return { ...state, banksAtAnchor: addToBank(remaining, side, amountMs), anchor: copySample(at) };
+}
+
+function withoutPause(state: ClockState): ClockState {
+  if (state.paused === undefined) return state;
+  return {
+    schemaVersion: state.schemaVersion,
+    timeControl: state.timeControl,
+    banksAtAnchor: state.banksAtAnchor,
+    activeSide: state.activeSide,
+    anchor: state.anchor,
   };
 }
 
@@ -448,6 +524,9 @@ function assertClockState(state: ClockState): void {
   assertBanks(state.banksAtAnchor, 'banksAtAnchor');
   assertSide(state.activeSide, 'activeSide');
   assertSample(state.anchor, 'anchor');
+  if (state.paused !== undefined && typeof state.paused !== 'boolean') {
+    throw new RangeError('paused must be a boolean.');
+  }
 }
 
 function assertTimeControl(timeControl: TimeControl): void {
