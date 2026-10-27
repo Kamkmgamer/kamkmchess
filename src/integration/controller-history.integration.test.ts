@@ -357,7 +357,7 @@ describe('controller and retained history integration seams', () => {
       const second = await run();
       expect(second).toMatchObject({ kind: 'completed', dispatch: 'accepted' });
       expect(requestBodies[2]).toContain('first plan');
-      expect(requestBodies[2]).toContain('first reasoning');
+      expect(requestBodies[2]).not.toContain('first reasoning');
       expect(requestBodies[2]).not.toContain('partial reasoning');
       expect(requestBodies[2]).not.toContain('opaque-provider-record');
       expect(requestBodies[2]).toContain('e4 e5');
@@ -381,7 +381,9 @@ describe('controller and retained history integration seams', () => {
         const restored = await restoredStore.readGame(gameId);
         expect(restored?.checkpoint.history.messages.find((message) => message.content === 'first plan')?.disposition).toBe('retained');
         expect(latestThinking(restored!.checkpoint.history, { ...restored!.checkpoint.rules, sideToMove: 'white' }))
-          .toMatchObject({ plan: 'second plan', reasoning: 'second reasoning', move: 'g1f3' });
+          .toEqual(expect.objectContaining({ plan: 'second plan', move: 'g1f3' }));
+        expect(latestThinking(restored!.checkpoint.history, { ...restored!.checkpoint.rules, sideToMove: 'white' }))
+          .not.toHaveProperty('reasoning');
         expect(getGenerationJournal(restored!).retainedEvents.filter((event) => event.kind === 'model-request-persisted')).toHaveLength(3);
         expect(restored?.checkpoint.archive.egressStatus).toBe('credential-echo-quarantined');
       } finally {

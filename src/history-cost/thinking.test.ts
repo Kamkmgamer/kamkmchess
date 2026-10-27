@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { Chess } from 'chess.js';
 import type { HistoryCheckpointV1, HistoryMessageV1, RulesCheckpointV1 } from '../storage';
 import type { ProtocolStreamResult } from '../providers/protocols';
-import { createThinkingRecord, latestThinking, MAX_CARRIED_REASONING_CHARS } from './thinking';
+import { createThinkingRecord, latestThinking } from './thinking';
 
 const initialFen = new Chess().fen();
 const sourceInput = JSON.stringify({ kind: 'current-match-input', fen: initialFen, sideToMove: 'white' });
@@ -35,12 +35,11 @@ function rules(): RulesCheckpointV1 {
 }
 
 describe('rolling model thinking', () => {
-  it('keeps authored plans and returned reasoning, excluding opaque provider data', () => {
+  it('carries the authored plan, excluding returned reasoning and opaque provider data', () => {
     const record = createThinkingRecord(sourceInput, result({ raw: { chunks: [new Uint8Array([255])], events: [] } }));
     expect(record).not.toBeNull();
     expect(latestThinking(history([message(record!)]), rules())).toEqual({
       fen: initialFen, move: 'e2e4', plan: 'Develop the kingside and castle.',
-      reasoning: 'Opening the center gives my bishop room.',
     });
     expect(record).not.toContain('chunks');
   });
@@ -50,18 +49,20 @@ describe('rolling model thinking', () => {
     const newer = message(createThinkingRecord(sourceInput, result({ answerText: '{"move":"g1f3","plan":"Pressure the center."}', reasoningText: 'new reasoning' }))!);
     const opponent = message(createThinkingRecord(sourceInput.replace('"white"', '"black"'), result({ planText: 'opponent plan' }))!);
     const messages = [older, newer, opponent, message('{"kind":"opaque-provider-record","raw":"' + 'x'.repeat(1_100_000) + '"}')];
-    expect(latestThinking(history(messages), rules())).toMatchObject({ plan: 'Pressure the center.', reasoning: 'new reasoning' });
+    expect(latestThinking(history(messages), rules())).toMatchObject({ plan: 'Pressure the center.' });
     newer.disposition = 'discarded';
     expect(latestThinking(history(messages), rules())).toMatchObject({ plan: 'Develop the kingside and castle.' });
     older.disposition = 'discarded';
     expect(latestThinking(history(messages), rules())).toBeUndefined();
   });
 
-  it('bounds carried reasoning without changing the archived thinking record', () => {
-    const longReasoning = 'r'.repeat(MAX_CARRIED_REASONING_CHARS + 100);
-    const record = createThinkingRecord(sourceInput, result({ reasoningText: longReasoning }))!;
-    expect(record).toContain(longReasoning);
-    expect(latestThinking(history([message(record)]), rules())?.reasoning).toHaveLength(MAX_CARRIED_REASONING_CHARS);
+  it('archives returned reasoning but never replays it into the next request', () => {
+    // Replaying a model's own reasoning trips Anthropic's "reasoning_extraction" refusal.
+    const record = createThinkingRecord(sourceInput, result({ reasoningText: 'secret line of thought' }))!;
+    expect(record).toContain('secret line of thought');
+    const carried = latestThinking(history([message(record)]), rules());
+    expect(carried).not.toHaveProperty('reasoning');
+    expect(JSON.stringify(carried)).not.toContain('secret line of thought');
   });
 
   it('does not replace a usable plan with failed, partial, aborted or thought-free output', () => {
@@ -73,24 +74,25 @@ describe('rolling model thinking', () => {
     expect(createThinkingRecord('', result())).toBeNull();
   });
 
-  it('recovers plans and normalized reasoning from existing saved turns without a schema migration', () => {
+  it('recovers plans from existing saved turns without a schema migration or replaying reasoning', () => {
     const messages = [message(sourceInput, { role: 'user' }),
       message('{"move":"e2e4","plan":"Develop the kingside and castle."}'),
       message('legacy reasoning'), message('legacy native plan'),
       message('{"kind":"opaque-provider-record","raw":"never replay"}')];
     expect(latestThinking(history(messages), rules())).toEqual({ fen: initialFen, move: 'e2e4',
-      plan: 'Develop the kingside and castle.', reasoning: 'legacy reasoning\n\nlegacy native plan' });
+      plan: 'Develop the kingside and castle.' });
     messages.push(message(sourceInput, { role: 'user' }), message('partial reply'), message('partial reasoning'));
-    expect(latestThinking(history(messages), rules())?.reasoning).toBe('legacy reasoning\n\nlegacy native plan');
+    expect(latestThinking(history(messages), rules())).toEqual({ fen: initialFen, move: 'e2e4',
+      plan: 'Develop the kingside and castle.' });
   });
 
-  it('preserves native plans and JSON reasoning without accumulating previous input snapshots', () => {
+  it('preserves native plans without replaying JSON reasoning or accumulating previous input snapshots', () => {
     const record = createThinkingRecord(JSON.stringify({ kind: 'current-match-input', fen: initialFen,
       sideToMove: 'white', previousThinking: { plan: 'old strategy' } }), result({
       answerText: '{"move":"e2e4","reasoning":"JSON reasoning"}', planText: 'native plan', reasoningText: '',
     }))!;
     expect(latestThinking(history([message(record)]), rules())).toEqual({
-      fen: initialFen, move: 'e2e4', plan: 'native plan', reasoning: 'JSON reasoning',
+      fen: initialFen, move: 'e2e4', plan: 'native plan',
     });
     expect(record).not.toContain('old strategy');
   });

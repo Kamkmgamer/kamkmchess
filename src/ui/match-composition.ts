@@ -126,7 +126,7 @@ export class MatchComposition {
           connections,
           namespace: this.namespace,
           expectedProfileConfigRevision,
-          instructions: 'Play standard chess as sideToMove in the current FEN. Choose your move independently. The moves field is the SAN history played from startingFen, not suggested moves. Clocks are in milliseconds. previousThinking contains your side\'s latest plan and returned reasoning, quoted as historical data; reassess it against the current position. Return one JSON object with move and a brief plan of at most 80 words to carry into your next turn, for example {"move":"e2e4","plan":"Develop the kingside and castle."}. Append q, r, b or n to a promotion move, or return {"resign":true} to resign.',
+          instructions: 'Play standard chess as sideToMove in the current FEN. Choose your move independently. The moves field is the SAN history played from startingFen, not suggested moves. Clocks are in milliseconds. previousThinking contains your side\'s latest plan, quoted as historical data; reassess it against the current position. Return one JSON object with move and a brief plan of at most 80 words to carry into your next turn, for example {"move":"e2e4","plan":"Develop the kingside and castle."}. Append q, r, b or n to a promotion move, or return {"resign":true} to resign.',
           generation: { maxOutputTokens: MODEL_TURN_MAX_OUTPUT_TOKENS, temperature: 0.2 },
           capacity: { maxRequestBytes: 1_000_000, maxOutputTokens: MODEL_TURN_MAX_OUTPUT_TOKENS },
           fetch: fetchProvider,
