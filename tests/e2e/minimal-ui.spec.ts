@@ -35,7 +35,9 @@ async function budget(page: Page, limit = 20) {
 }
 async function newMode(page: Page, mode: string) {
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByLabel('Game mode').selectOption(mode);
+  // Seat selects replaced the old Game mode list: 'ai' is Human versus browser AI, 'human-engine' Human versus engine.
+  const seats: Record<string, [string, string][]> = { 'local': [], 'ai': [['Black', 'ai']], 'human-engine': [['Black', 'engine']] };
+  for (const [side, kind] of seats[mode] ?? []) await page.getByLabel(side, { exact: true }).selectOption(kind);
   await budget(page, mode.includes('engine') ? 10 : 20);
 }
 async function move(page: Page, coordinate: string) {
@@ -99,10 +101,10 @@ test('discovers models, validates selection once, and revalidates automatically 
   await expect(page.getByRole('textbox', { name: /model.*id/i })).toHaveCount(0);
   await page.getByLabel('API key', { exact: true }).fill('offline-key'); await budget(page);
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await expect(page.getByLabel('Available models')).toBeEnabled();
+  await expect(page.getByLabel('Available models', { exact: true })).toBeEnabled();
   expect(provider.calls).toHaveLength(0);
   await budget(page);
-  await page.getByLabel('Available models').selectOption('beta');
+  await page.getByLabel('Available models', { exact: true }).selectOption('beta');
   await expect(page.getByRole('button', { name: 'Allow', exact: true })).toBeVisible();
   expect(provider.calls).toHaveLength(0); await budget(page);
   await page.getByRole('button', { name: 'Allow', exact: true }).click();
@@ -125,7 +127,7 @@ test('blocks failed models and does not enable starting a game or make a game re
   await page.goto('/play'); await newMode(page, 'ai');
   await page.getByLabel('API key', { exact: true }).fill('bad-key');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await page.getByLabel('Available models').selectOption('alpha');
+  await page.getByLabel('Available models', { exact: true }).selectOption('alpha');
   await page.getByRole('button', { name: 'Allow', exact: true }).click();
   await expect(page.getByText('Check API key.', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Start game', exact: true })).toBeDisabled();

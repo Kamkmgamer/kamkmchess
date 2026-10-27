@@ -5,7 +5,6 @@ async function startLocal(page: Page) {
   await page.goto('/play');
   await page.bringToFront();
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByLabel('Game mode').selectOption('local');
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
   // The setup drawer restores focus after it closes. Let that finish before opening a dialog.

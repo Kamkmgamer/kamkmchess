@@ -4,7 +4,6 @@ import type { Page } from '@playwright/test';
 async function openEditor(page: Page) {
   await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByLabel('Game mode').selectOption('local');
   await page.getByRole('button', { name: 'Custom starting position', exact: true }).click();
 }
 
@@ -122,7 +121,6 @@ for (const appearance of ['light', 'dark'] as const) {
     await page.getByRole('radiogroup', { name: 'Appearance' }).getByRole('radio', { name: appearance === 'light' ? 'Light' : 'Dark', exact: true }).locator('..').click();
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     await page.getByRole('button', { name: 'New game', exact: true }).click();
-    await page.getByLabel('Game mode').selectOption('local');
     await page.getByRole('button', { name: 'Custom starting position', exact: true }).click();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     const board = await page.locator('.editor-grid').boundingBox();
