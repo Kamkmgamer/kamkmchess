@@ -6,12 +6,14 @@ import { createGuestOnlineComposition, publishGuestAgentCatalog } from './ui/onl
 import { MatchComposition } from './ui/match-composition.js';
 import { createAgentReadinessCheck } from './online/agent-readiness.js';
 import { createBrowserEnginePreparation } from './online/engine-preparation.js';
+import { applyBoardStyle, getBoardStyle } from './ui/board-style.js';
 import './ui/styles.css';
 import './ui/mobile.css';
 import { publicConfig } from './public-config.js';
 
 const root = document.getElementById('root');
 if (!root) throw new Error('The application root is missing.');
+applyBoardStyle(getBoardStyle());
 
 const composition = new MatchComposition();
 // The online composition exists when a service origin is configured. A test

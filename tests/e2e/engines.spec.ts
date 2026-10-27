@@ -8,7 +8,15 @@ const moves = (page: Page) => page.getByRole('table', { name: 'Committed moves' 
 async function openMode(page: Page, mode: string) {
   await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByLabel('Game mode').selectOption(mode);
+  // The per-side seat selects replaced the Game mode list; each pair is [select label, seat kind].
+  const seats: Record<string, [string, string][]> = {
+    'local': [],
+    'human-engine': [['Black', 'engine']],
+    'engine-engine': [['White', 'engine'], ['Black', 'engine']],
+    'engine-ai': [['White', 'ai'], ['Black', 'engine']],
+    'ai-ai': [['White', 'ai'], ['Black', 'ai']],
+  };
+  for (const [side, kind] of seats[mode] ?? []) await page.getByLabel(side, { exact: true }).selectOption(kind);
 }
 
 async function prepareEngine(panel: Locator, engine = 'stockfish-lite', workers?: Set<Worker>) {
@@ -25,9 +33,9 @@ async function prepareAi(page: Page, side: 'White' | 'Black', modelId = `${side.
     await panel.getByLabel('API key', { exact: true }).fill('offline-test-key');
     await panel.getByRole('button', { name: 'Connect', exact: true }).click();
   }
-  await panel.getByLabel('Available models').selectOption(modelId);
+  await panel.getByLabel('Available models', { exact: true }).selectOption(modelId);
   const consent = panel.getByRole('button', { name: 'Allow', exact: true });
-  await expect(panel.getByLabel('Available models').or(consent)).toBeVisible();
+  await expect(panel.getByLabel('Available models', { exact: true }).or(consent)).toBeVisible();
   if (await consent.isVisible()) await consent.click();
   await expect(panel.getByText('Ready', { exact: true })).toBeVisible();
 }
@@ -64,7 +72,7 @@ test('downloads Stockfish in the browser under production CSP and resumes from c
     await route.fulfill({ response, headers: { ...response.headers(), 'Content-Security-Policy': csp } });
   });
   await openMode(page, 'human-engine');
-  const panel = page.getByRole('region', { name: 'Your engine opponent', exact: true });
+  const panel = page.getByRole('region', { name: 'Black engine', exact: true });
   await expect(panel.getByRole('option', { name: /Leela.*Coming soon/ })).toHaveCount(0);
   await expect(panel.getByRole('option', { name: /AlphaZero|Torch/ })).toHaveCount(0);
   await prepareEngine(panel);
@@ -144,7 +152,6 @@ test('two browser engines use Lite evaluation, release workers after setup and S
   await expect.poll(() => workers.size).toBe(1);
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await expect.poll(() => workers.size).toBe(0);
-  await page.getByLabel('Game mode').selectOption('local');
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(page.locator('.evaluation-bar')).toHaveCount(0);
   await expect.poll(() => workers.size).toBe(0);
@@ -181,7 +188,6 @@ test('a finished engine match releases its opponent workers and keeps the board 
 test('a browser engine plays an LLM with either seat independently configured', async ({ page }) => {
   const turns = await aiFixture(page);
   await openMode(page, 'engine-ai');
-  await page.getByLabel('Engine plays').selectOption('black');
   await prepareAi(page, 'White');
   await prepareEngine(page.getByRole('region', { name: 'Black engine', exact: true }));
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
@@ -217,13 +223,13 @@ test('two LLMs alternate with separate routing IDs and side-specific plans', asy
     image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true);
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.locator('.right-game-sidebar').getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('light');
+  await page.getByRole('radiogroup', { name: 'Appearance' }).getByRole('radio', { name: 'Light', exact: true }).locator('..').click();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.screenshot({ path: testInfo.outputPath('opponent-logos-desktop.png'), fullPage: true });
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await page.locator('.right-game-sidebar').getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Appearance', exact: true }).selectOption('dark');
+  await page.getByRole('radiogroup', { name: 'Appearance' }).getByRole('radio', { name: 'Dark', exact: true }).locator('..').click();
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: testInfo.outputPath('opponent-logos-mobile-dark.png'), fullPage: true });

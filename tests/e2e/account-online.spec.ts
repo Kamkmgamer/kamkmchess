@@ -255,7 +255,7 @@ async function connectLocalModel(page: Page, baseUrl: string, model: string, pro
   await page.getByRole('button', { name: 'Close account' }).click();
   // The setup panel of the account game is opened from the top bar.
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByLabel('Game mode').selectOption('ai');
+  await page.getByLabel('Black', { exact: true }).selectOption('ai');
   await page.getByLabel('Provider').selectOption('custom');
   await page.getByLabel('Base URL', { exact: true }).fill(baseUrl);
   // The authentication is chosen first: choosing it clears the credential
@@ -284,7 +284,7 @@ async function connectLocalModel(page: Page, baseUrl: string, model: string, pro
     authorized: request.authorization !== null,
   }))));
   console.log('the message of the setup panel:', (await panel.textContent())?.replace(/\s+/g, ' ').slice(0, 240));
-  await panel.getByLabel('Available models').selectOption(model);
+  await panel.getByLabel('Available models', { exact: true }).selectOption(model);
   // The owner consents to the connection before it may be used.
   const allow = page.getByRole('button', { name: 'Allow', exact: true });
   await expect(allow).toBeVisible({ timeout: 15_000 });

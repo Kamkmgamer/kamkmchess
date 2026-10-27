@@ -9,8 +9,14 @@ function isReasoningLevel(value: unknown): value is ReasoningLevel {
   return typeof value === 'string' && (REASONING_LEVELS as readonly string[]).includes(value);
 }
 
+/** The getter itself can throw in contexts where storage is denied, so resolve it lazily. */
+function defaultStorage(): Storage | null {
+  try { return typeof window === 'undefined' ? null : window.localStorage; }
+  catch { return null; }
+}
+
 /** Read the user's preferred reasoning level, falling back safely outside a browser. */
-export function readReasoningLevel(storage: Storage | null = typeof window === 'undefined' ? null : window.localStorage): ReasoningLevel {
+export function readReasoningLevel(storage: Storage | null = defaultStorage()): ReasoningLevel {
   if (storage === null) return DEFAULT_REASONING_LEVEL;
   try {
     const value = storage.getItem(REASONING_LEVEL_STORAGE_KEY);
@@ -21,7 +27,7 @@ export function readReasoningLevel(storage: Storage | null = typeof window === '
 }
 
 /** Persist a validated reasoning level for subsequent model turns. */
-export function saveReasoningLevel(level: ReasoningLevel, storage: Storage | null = typeof window === 'undefined' ? null : window.localStorage): void {
+export function saveReasoningLevel(level: ReasoningLevel, storage: Storage | null = defaultStorage()): void {
   if (storage === null) return;
   try { storage.setItem(REASONING_LEVEL_STORAGE_KEY, level); } catch { /* Storage can be unavailable in private contexts. */ }
 }

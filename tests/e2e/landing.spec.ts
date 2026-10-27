@@ -28,7 +28,7 @@ for (const [device, viewport] of [
     await page.locator('.hero-introduction [data-slot="button"]').click();
     await expect(page.locator('.right-game-sidebar')).toBeVisible();
     await expect(page).toHaveURL(/\/$/);
-    await page.getByLabel('Game mode').selectOption('local');
+    await page.getByLabel('Black', { exact: true }).selectOption('human');
     await page.getByRole('button', { name: 'Start game', exact: true }).click();
     await expect(page).toHaveURL(/\/play$/);
     await expect(page.locator('body')).not.toHaveClass(/quartz/);
@@ -75,7 +75,7 @@ test('the mobile demo autoplays locally and navigation opens real game options',
   expect(providerCalls).toEqual([]);
   await page.getByRole('button', { name: 'Open navigation', exact: true }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'AI opponent', exact: true }).click();
-  await page.getByLabel('Game mode').selectOption('local');
+  await page.getByLabel('Black', { exact: true }).selectOption('human');
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(page).toHaveURL(/\/play$/);
   await expect(page.getByRole('button', { name: 'New game', exact: true })).toBeVisible();

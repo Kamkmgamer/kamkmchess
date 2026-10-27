@@ -57,16 +57,15 @@ async function typeMove(page: Page, uci: string) {
 
 test('agent modes sit beside the existing ones and default to the long clock', async ({ page }) => {
   await page.goto('/play?setup=new');
-  const mode = page.getByLabel('Game mode');
-  await expect(mode.locator('option')).toHaveText(['Human versus human', 'Human versus AI', 'Human versus engine', 'Engine versus engine',
-    'Engine versus AI', 'AI versus AI', 'Human versus agent', 'Agent versus engine', 'Agent versus AI']);
-  await mode.selectOption('human-agent');
-  await expect(page.getByRole('region', { name: 'Agent opponent' })).toBeVisible();
+  const black = page.getByLabel('Black', { exact: true });
+  await expect(black.locator('option')).toHaveText(['Human', 'Engine', 'Browser AI', 'Agent']);
+  await black.selectOption('agent');
+  await expect(page.getByRole('region', { name: 'Black agent' })).toBeVisible();
   await expect(page.getByLabel('Starting minutes')).toHaveValue('180');
   await expect(page.getByLabel('Increment seconds')).toHaveValue('60');
-  await mode.selectOption('local');
+  await black.selectOption('human');
   await expect(page.getByLabel('Starting minutes')).toHaveValue('15');
-  await mode.selectOption('human-agent');
+  await black.selectOption('agent');
   await page.getByRole('button', { name: 'Start game' }).click();
 
   const joined = await call(page, 'join_seat', { model_name: 'Fixture Agent 2' });
