@@ -10,12 +10,12 @@ export interface ModelThinkingV1 {
   reasoning?: string;
 }
 
-/** Maximum reasoning text carried into the next provider request. */
-export const MAX_CARRIED_REASONING_CHARS = 4_000;
-
 function carriedThinking(thinking: ModelThinkingV1): ModelThinkingV1 {
-  if (thinking.reasoning === undefined || thinking.reasoning.length <= MAX_CARRIED_REASONING_CHARS) return thinking;
-  return { ...thinking, reasoning: thinking.reasoning.slice(0, MAX_CARRIED_REASONING_CHARS) };
+  // Never carry the model's own returned reasoning back into the next request: Anthropic's
+  // safety classifier flags a prompt that replays reasoning as "reasoning_extraction" and
+  // refuses the turn before the model moves. Only the authored plan is carried forward.
+  return { fen: thinking.fen, ...(thinking.move === undefined ? {} : { move: thinking.move }),
+    ...(thinking.plan === undefined ? {} : { plan: thinking.plan }) };
 }
 
 function objectFromText(text: string): Record<string, unknown> | undefined {
