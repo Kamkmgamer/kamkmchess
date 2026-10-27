@@ -369,8 +369,11 @@ function readPlayerSelection(value: unknown, path: string): PlayerSelectionV1 {
     exactKeys(player, ['kind'], path);
     return { kind };
   }
+  // `reasoningEffort` was added after the initial archive schema. Validate it
+  // when present while continuing to accept older selections that omit it.
+  const { reasoningEffort, ...requiredPlayer } = player;
   exactKeys(
-    player,
+    requiredPlayer,
     [
       'kind',
       'providerId',
@@ -393,6 +396,9 @@ function readPlayerSelection(value: unknown, path: string): PlayerSelectionV1 {
       ['chat-completions', 'responses', 'messages', 'custom'] as const,
       `${path}.protocol`,
     ),
+    ...(reasoningEffort === undefined ? {} : {
+      reasoningEffort: enumValue(reasoningEffort, ['low', 'medium', 'high', 'xhigh', 'max'] as const, `${path}.reasoningEffort`),
+    }),
     diagnostic: enumValue(
       player.diagnostic,
       ['not-run', 'passed-current-session', 'failed', 'unknown'] as const,

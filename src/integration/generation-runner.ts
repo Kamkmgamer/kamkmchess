@@ -17,6 +17,7 @@ import {
   encodeResponsesRequest,
 } from '../providers/protocols/index.js';
 import type { ProtocolGenerationConfig, ProtocolStreamDecoder, ProtocolStreamResult, ProviderProtocol } from '../providers/protocols/index.js';
+import { outputTokensForModel, reasoningEffortForModel } from '../providers/model-turn-config.js';
 import { classifyConnectionRoute, createManualModelReference, hasCurrentDisclosureConsent, prepareGenerationRequest } from '../providers/connections/index.js';
 import type { ConnectionNamespace, ConnectionProfile, ConnectionStore, ConnectionProtocol } from '../providers/connections/index.js';
 
@@ -112,7 +113,13 @@ export async function runGenerationTurn(options: GenerationRunnerOptions): Promi
         incrementMs: started.snapshot.checkpoint.clocks.timeControl.incrementMs,
       },
     });
-    const config: ProtocolGenerationConfig = { ...options.generation, model };
+    const reasoningEffort = reasoningEffortForModel(profile.provider, profile.protocol, model, selection.reasoningEffort);
+    const config: ProtocolGenerationConfig = {
+      ...options.generation,
+      model,
+      maxOutputTokens: outputTokensForModel(profile.provider, profile.protocol, model),
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    };
     const encoded = encode(protocol, replay.history, config);
     const capacity = checkReplayCapacity(encoded.body, { ...options.capacity, maxOutputTokens: config.maxOutputTokens });
     if (capacity.status === 'rejected') {

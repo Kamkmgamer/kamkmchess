@@ -1598,6 +1598,17 @@ describe('Responses protocol decoder', () => {
     expect(request.body).not.toHaveProperty('previous_response_id');
     expect(request.body).not.toHaveProperty('tools');
   });
+
+  it('[CST-01] forwards every selected reasoning effort on Responses requests', () => {
+    for (const reasoningEffort of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+      const request = encodeResponsesRequest(
+        { instructions: 'Choose a move.', records: [] },
+        { model: 'gpt-5', maxOutputTokens: 4096, temperature: 0.2, reasoningEffort },
+      );
+      expect(request.body).toMatchObject({ reasoning: { effort: reasoningEffort } });
+      expect(request.body).not.toHaveProperty('temperature');
+    }
+  });
 });
 
 function decodeResponses(stream: string) {

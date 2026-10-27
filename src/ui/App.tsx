@@ -333,6 +333,16 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       namespace,
     })(selection);
   }, [composition, onlineConnectionStore, onlineResolveNamespace]);
+  // The online connection picker must use the same identity namespace as the
+  // readiness check. Reusing the local game's opponent service can silently
+  // point an account game at guest connections.
+  const onlineAgentNamespace = useMemo(() => onlineResolveNamespace?.() ?? composition.namespace,
+    [onlineResolveNamespace, composition.namespace]);
+  const onlineAgentService = useMemo(() => (onlineConnectionStore ?? composition.connectionStore).then(connections => new OpponentService({
+    connections,
+    namespace: onlineAgentNamespace,
+    fetch: fetchProvider,
+  })), [composition.connectionStore, onlineConnectionStore, onlineAgentNamespace]);
   // The chosen agent follows the catalog: the model of the current game when
   // it is connected, and otherwise the first connected model. The choice of
   // the owner wins over both.
@@ -609,7 +619,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const queuedGenerationSelection = snapshot.modelHandoff.queued?.selection;
   const queuedGenerationIdentity = queuedGenerationSelection
     ? [queuedGenerationSelection.connectionId, queuedGenerationSelection.configurationRevision,
-      queuedGenerationSelection.modelRoutingId, queuedGenerationSelection.protocol].join('/')
+      queuedGenerationSelection.modelRoutingId, queuedGenerationSelection.protocol,
+      queuedGenerationSelection.reasoningEffort ?? 'low'].join('/')
     : '';
   const generationResultKind = snapshot.checkpoint.result.kind;
   const generationReadiness = snapshot.readiness;
@@ -619,6 +630,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     snapshot.fence.modelConfigurationIdentity ?? '',
     generationSelection.kind === 'model' ? generationSelection.connectionId : '',
     generationSelection.kind === 'model' ? generationSelection.modelRoutingId : '',
+    generationSelection.kind === 'model' ? generationSelection.reasoningEffort ?? 'low' : '',
     queuedGenerationIdentity].join('/');
   useEffect(() => {
     if (!autoGeneration || generationController.current !== null || generationSelection.kind !== 'model' ||
@@ -684,7 +696,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           if (!identity || identity.configRevision !== profile.configRevision || identity.protocol !== profile.protocol ||
               credentials.status !== 'bound' || identity.credentialRevision !== credentials.credentials.credentialRevision) {
             setGenerationDetail('Checking connection…');
-            const result = await service.runCompatibilityDiagnostic({ profileId: profile.id, modelId: queuedSelection.modelRoutingId }, abort!.signal);
+            const result = await service.runCompatibilityDiagnostic({ profileId: profile.id, modelId: queuedSelection.modelRoutingId, ...(queuedSelection.reasoningEffort === undefined ? {} : { reasoningEffort: queuedSelection.reasoningEffort }) }, abort!.signal);
             if (abort!.signal.aborted || sessionRef.current.gameId !== session.gameId) return;
             if (result.evidence.state !== 'passed-current-session') throw new Error(result.evidence.detail);
             const prepared = await service.prepareSelection({ profileId: profile.id, modelId: queuedSelection.modelRoutingId });
@@ -760,7 +772,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
             const latestQueued = latest.modelHandoff.queued?.selection;
             const latestQueuedIdentity = latestQueued
               ? [latestQueued.connectionId, latestQueued.configurationRevision,
-                latestQueued.modelRoutingId, latestQueued.protocol].join('/')
+                latestQueued.modelRoutingId, latestQueued.protocol,
+                latestQueued.reasoningEffort ?? 'low'].join('/')
               : '';
             if (continueAutomatically && !abort?.signal.aborted) {
               generationFenceKey.current = '';
@@ -911,7 +924,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         credentials.status === 'bound' && candidate.credentialRevision === credentials.credentials.credentialRevision);
       const service = await composition.opponentService;
       if (!identity) {
-        const result = await service.runCompatibilityDiagnostic({ profileId: profile.id, modelId: savedModel.modelRoutingId }, abort.signal);
+        const result = await service.runCompatibilityDiagnostic({ profileId: profile.id, modelId: savedModel.modelRoutingId, ...(savedModel.reasoningEffort === undefined ? {} : { reasoningEffort: savedModel.reasoningEffort }) }, abort.signal);
         if (abort.signal.aborted || sessionRef.current.gameId !== session.gameId) return;
         if (result.evidence.state !== 'passed-current-session') throw new Error(result.evidence.detail);
         const prepared = await service.prepareSelection({ profileId: profile.id, modelId: savedModel.modelRoutingId });
@@ -1116,9 +1129,10 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       startingTimeMinutes: AGENT_TIME_CONTROL.minutes, incrementSeconds: AGENT_TIME_CONTROL.incrementSeconds });
     const started = await startClassifiedLocalGame(nextSession.controller, nextSession.controller.snapshot());
     acceptSidebarGame({ session: nextSession, snapshot: started, identities: [], draft: {
-      mode: engine ? 'agent-engine' : 'human-agent', minutes: AGENT_TIME_CONTROL.minutes, increment: AGENT_TIME_CONTROL.incrementSeconds,
-      engineSide: side, humanSide: other, engineSeats: { white: null, black: null, ...(engine ? { [other]: engine } : {}) },
-      aiSeats: { white: null, black: null }, modelSelection: null, opponentIdentity: null } });
+      sideKinds: { white: side === 'white' ? 'agent' : engine ? 'engine' : 'human', black: side === 'black' ? 'agent' : engine ? 'engine' : 'human' },
+      minutes: AGENT_TIME_CONTROL.minutes, increment: AGENT_TIME_CONTROL.incrementSeconds,
+      engineSeats: { white: null, black: null, ...(engine ? { [other]: engine } : {}) },
+      aiSeats: { white: null, black: null } } });
     // Tools read the new game before React re-renders this page.
     agentHost.current = { ...agentHost.current, snapshot: started };
     return nextSession.gameId;
@@ -1178,6 +1192,10 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         agentLabel={online.agent?.label ?? null}
         onConfigureAgent={() => { closeOnline(); openSetup(undefined, 'opponent'); }}
         checkAgent={checkOnlineAgent}
+        agentService={onlineAgentService}
+        agentConnectionStore={onlineConnectionStore ?? composition.connectionStore}
+        agentNamespace={onlineAgentNamespace}
+        onAgentConnected={() => setCatalogRefresh(value => value + 1)}
         {...(onOpenProfile ? { onOpenProfile } : {})} />
     </div>}
     {tool && <section className="focus-page" aria-label={tool === 'agents' ? 'Your agents' : 'Match tools'}>

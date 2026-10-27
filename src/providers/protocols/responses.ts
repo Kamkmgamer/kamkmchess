@@ -102,11 +102,15 @@ export function encodeResponsesRequest(
     truncation: 'disabled',
     store: false,
   };
-  if (config.temperature !== undefined) {
-    body.temperature = config.temperature;
-  }
-  if (config.topP !== undefined) {
-    body.top_p = config.topP;
+  if (config.reasoningEffort !== undefined) {
+    body.reasoning = { effort: config.reasoningEffort };
+  } else {
+    if (config.temperature !== undefined) {
+      body.temperature = config.temperature;
+    }
+    if (config.topP !== undefined) {
+      body.top_p = config.topP;
+    }
   }
   if (config.cache?.promptCacheKey !== undefined) {
     body.prompt_cache_key = config.cache.promptCacheKey;

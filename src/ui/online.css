@@ -9,15 +9,16 @@
   inset: 0;
   z-index: 100;
   overflow: auto;
-  padding: clamp(24px, 5vw, 64px) clamp(16px, 4vw, 64px) 48px;
+  padding: clamp(18px, 2.5vw, 36px) clamp(16px, 3vw, 48px) 36px;
   background: var(--page);
 }
 .focus-page.online-workspace {
-  width: min(100%, 1180px);
+  width: 100%;
   max-width: none;
-  margin: 0 auto;
+  min-height: 100%;
+  margin: 0;
   display: grid;
-  gap: 24px;
+  gap: clamp(16px, 2vw, 28px);
   align-content: start;
 }
 .online-workspace > .panel-heading { border-bottom: 1px solid var(--edge); padding-bottom: 18px; }
@@ -38,6 +39,13 @@
 .online-new-panel > .online-friend-panel[aria-label="Invite a friend"] { grid-column: 1; }
 .online-new-panel > .online-friend-panel[aria-label="Join a friend"] { grid-column: 2; }
 .online-new-panel > .online-friend-panel::before { content: attr(aria-label); display: block; font-size: 16px; font-weight: 600; color: var(--ink); }
+.online-agent-panel { display: grid; gap: 14px; width: min(100%, 760px); padding: 16px 18px; border: 1px solid var(--edge); border-radius: 14px; background: var(--panel); }
+.online-agent-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; }
+.online-agent-heading h3 { margin: 0; font-size: 16px; }
+.online-agent-heading p { margin: 3px 0 0; color: var(--dim); }
+.online-agent-panel .opponent-panel { width: 100%; margin: 0; padding: 0; border: 0; background: transparent; }
+.online-agent-panel .opponent-panel > .panel-heading { display: none; }
+.online-agent-panel .connection-form { margin-top: 0; }
 .online-clock { display: flex; gap: 8px; flex-wrap: wrap; }
 .online-games { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; width: 100%; }
 .online-games li { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
@@ -48,6 +56,20 @@
 .online-result { margin: 0; font-weight: 600; }
 .online-match .player-control { color: var(--dim); font-size: 12px; }
 .online-match .player-name strong { max-width: 18ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The online match owns the viewport. The offline shell's board constraint is
+   intentionally overridden here so a live game is readable at a glance. */
+.online-workspace .online-match {
+  --online-board-size: min(78dvh, calc(100vw - 520px), 860px);
+  width: 100%;
+  max-width: none;
+  grid-template-columns: minmax(0, var(--online-board-size)) minmax(280px, 420px);
+  justify-content: center;
+  gap: clamp(24px, 3vw, 48px);
+}
+.online-workspace .online-match .moves-sidebar {
+  height: calc(var(--online-board-size) + 102px);
+  margin-top: 48px;
+}
 /* The failure of an action is shown, not only announced. */
 .online-error { margin: 0; padding: 8px 10px; color: var(--error); background: var(--error-bg); border-radius: 6px; overflow-wrap: anywhere; }
 .online-error:empty { display: none; }
@@ -63,6 +85,13 @@
   .online-new-panel > .online-friend-panel[aria-label="Invite a friend"],
   .online-new-panel > .online-friend-panel[aria-label="Join a friend"] { grid-column: 1; }
   .online-friend-panel { padding: 16px; }
+  .online-agent-panel { padding: 14px; }
+  .online-workspace .online-match {
+    --online-board-size: min(calc(100vw - 24px), 78dvh);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+  }
+  .online-workspace .online-match .moves-sidebar { height: 300px; margin-top: 0; }
 }
 
 /* Online play is an intent chooser first. The queue, friend invite and code

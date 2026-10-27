@@ -5,6 +5,9 @@ import { createAgentSelection, isAgentSelection } from '../agents/seat.js';
 
 export type MatchMode = 'local' | 'ai' | 'human-engine' | 'engine-engine' | 'engine-ai' | 'ai-ai' | 'human-agent' | 'agent-engine' | 'agent-ai';
 export type SeatKind = 'human' | 'engine' | 'ai' | 'agent';
+export type BoardSide = 'white' | 'black';
+export type SideKinds = Record<BoardSide, SeatKind>;
+export type SideSelections = Record<BoardSide, ModelSelection | null>;
 export const MATCH_MODES: { id: MatchMode; label: string }[] = [
   { id: 'local', label: 'Human versus human' },
   { id: 'ai', label: 'Human versus AI' },
@@ -25,6 +28,22 @@ export function isAgentMode(mode: MatchMode): boolean {
 /** The side the agent plays in modes where it faces another automated seat. */
 export function agentFacesSide(mode: MatchMode): boolean { return mode === 'agent-engine' || mode === 'agent-ai'; }
 
+/** Build the two player records from independent white and black seat choices. */
+export function composePlayersBySide(kinds: SideKinds, selections: SideSelections): Record<BoardSide, PlayerSelectionV1> {
+  const player = (side: BoardSide): PlayerSelectionV1 => {
+    const kind = kinds[side];
+    if (kind === 'human') return { kind: 'human' };
+    if (kind === 'agent') return createAgentSelection();
+    const selection = selections[side];
+    if (!selection || selection.diagnostic !== 'passed-current-session' || isAgentSelection(selection) ||
+        isEngineSelection(selection) !== (kind === 'engine')) {
+      throw new Error(`Choose and check the ${side === 'white' ? 'White' : 'Black'} ${kind === 'engine' ? 'engine' : 'browser AI'} before starting.`);
+    }
+    return structuredClone(selection);
+  };
+  return { white: player('white'), black: player('black') };
+}
+
 export function seatKinds(mode: MatchMode, humanSide: 'white' | 'black', engineSide: 'white' | 'black'): Record<'white' | 'black', SeatKind> {
   if (mode === 'local') return { white: 'human', black: 'human' };
   if (mode === 'engine-engine') return { white: 'engine', black: 'engine' };
@@ -41,16 +60,10 @@ export function composePlayers(mode: MatchMode, humanSide: HumanSideChoice, engi
   selections: Record<'white' | 'black', ModelSelection | null>, random: () => number = Math.random): Record<'white' | 'black', PlayerSelectionV1> {
   const side = humanSide === 'random' ? random() < 0.5 ? 'white' : 'black' : humanSide;
   const kinds = seatKinds(mode, side, engineSide);
-  const player = (color: 'white' | 'black'): PlayerSelectionV1 => {
-    if (kinds[color] === 'human') return { kind: 'human' };
-    if (kinds[color] === 'agent') return createAgentSelection();
-    // Human matches configure a single opponent independently of the eventual color.
-    const selection = mode === 'ai' || mode === 'human-engine' ? selections.black : selections[color];
-    if (!selection || selection.diagnostic !== 'passed-current-session' || isAgentSelection(selection) ||
-        isEngineSelection(selection) !== (kinds[color] === 'engine')) {
-      throw new Error(`Choose and check the ${color === 'white' ? 'White' : 'Black'} ${kinds[color] === 'engine' ? 'engine' : 'AI model'} before starting.`);
-    }
-    return structuredClone(selection);
-  };
-  return { white: player('white'), black: player('black') };
+  // Human matches historically stored their one opponent in the black slot;
+  // retain that mapping for callers using the legacy combined mode API.
+  const legacySelections = mode === 'ai' || mode === 'human-engine'
+    ? { white: selections.black, black: selections.black }
+    : selections;
+  return composePlayersBySide(kinds, legacySelections);
 }

@@ -442,6 +442,23 @@ describe('Anthropic Messages protocol decoder', () => {
     expect(request.body).not.toHaveProperty('x-api-key');
   });
 
+  it('[CST-01] translates every reasoning effort to Anthropic adaptive thinking', () => {
+    const expected: Record<'low' | 'medium' | 'high' | 'xhigh' | 'max', 'low' | 'medium' | 'high' | 'xhigh' | 'max'> = {
+      low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max',
+    };
+    for (const reasoningEffort of Object.keys(expected) as Array<keyof typeof expected>) {
+      const request = encodeAnthropicMessagesRequest(
+        { instructions: 'Choose a move.', records: [] },
+        { model: 'claude-sonnet-4-5', maxOutputTokens: 4096, temperature: 0.2, reasoningEffort },
+      );
+      expect(request.body).toMatchObject({
+        thinking: { type: 'adaptive' },
+        output_config: { effort: expected[reasoningEffort] },
+      });
+      expect(request.body).not.toHaveProperty('temperature');
+    }
+  });
+
   it('[CST-01] adds a cache breakpoint only when the stable prefix meets the selected model minimum', () => {
     const records = [
       { id: 'old-user', role: 'user' as const, text: 'Retained question' },

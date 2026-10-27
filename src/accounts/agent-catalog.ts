@@ -19,6 +19,7 @@
  *    published.
  */
 import type { ModelSelection } from '../controller/index.js';
+import { isImageGenerationModel } from '../providers/connections/index.js';
 import type { ConnectionNamespace, ConnectionStore } from '../providers/connections/index.js';
 import { controllerRevisionForConfig } from '../ui/opponent-selection.js';
 
@@ -138,7 +139,7 @@ export async function readPrivateAgentCatalog(options: PrivateAgentCatalogOption
     const snapshot = await store.getCatalogSnapshot(options.namespace, profile);
     if (!snapshot) continue;
     const advertised = snapshot.entries
-      .filter(entry => entry.state === 'advertised')
+      .filter(entry => entry.state === 'advertised' && !isImageGenerationModel(entry))
       .sort((left, right) => left.id.localeCompare(right.id));
     for (const entry of advertised) {
       candidates.push({

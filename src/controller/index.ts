@@ -53,6 +53,7 @@ type ClockDiscrepancyReading = Extract<ClockReading, { status: 'reconciliation-r
 
 const INITIAL_POSITION = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const MOVE_ATTEMPTS_EXTENSION = 'move-attempts';
+const MODEL_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const GAME_CONTROLLER_INTENT_KINDS: ReadonlySet<string> = new Set([
   'begin-model-turn',
   'queue-model-selection',
@@ -278,6 +279,7 @@ export function modelConfigurationIdentity(selection: ModelSelection): string {
     selection.configurationRevision < 0 ||
     selection.modelRoutingId.length === 0 ||
     selection.modelRoutingId.trim() !== selection.modelRoutingId
+    || (selection.reasoningEffort !== undefined && !MODEL_REASONING_EFFORTS.has(selection.reasoningEffort))
   ) {
     throw new RangeError('Model configuration identity fields are invalid.');
   }
@@ -288,6 +290,7 @@ export function modelConfigurationIdentity(selection: ModelSelection): string {
     selection.configurationRevision,
     selection.modelRoutingId,
     selection.protocol,
+    selection.reasoningEffort ?? 'low',
   ]);
 }
 
@@ -836,6 +839,7 @@ function freezeModelSelection(selection: ModelSelection): ModelSelection {
     configurationRevision: selection.configurationRevision,
     modelRoutingId: selection.modelRoutingId,
     protocol: selection.protocol,
+    ...(selection.reasoningEffort === undefined ? {} : { reasoningEffort: selection.reasoningEffort }),
     diagnostic: selection.diagnostic,
   };
 }
@@ -1616,7 +1620,8 @@ class IndexedGameController implements GameController {
         const details = modelSelection === undefined ? { players } : {
           modelSelection: { providerId: modelSelection.providerId, connectionId: modelSelection.connectionId,
             configurationRevision: modelSelection.configurationRevision, modelRoutingId: modelSelection.modelRoutingId,
-            protocol: modelSelection.protocol },
+            protocol: modelSelection.protocol,
+            ...(modelSelection.reasoningEffort === undefined ? {} : { reasoningEffort: modelSelection.reasoningEffort }) },
         };
         const event = context.createEvent('game-started-after-classification', context.decisionTimeMs, fence, details);
         return { checkpoint: { ...context.checkpoint, selections: { players }, history: { ...context.checkpoint.history, segments }, result: { kind: 'unresolved' },

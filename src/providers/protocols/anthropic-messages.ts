@@ -112,11 +112,19 @@ export function encodeAnthropicMessagesRequest(
       }));
     }
   }
-  if (config.temperature !== undefined) {
-    body.temperature = config.temperature;
-  }
-  if (config.topP !== undefined) {
-    body.top_p = config.topP;
+  if (config.reasoningEffort !== undefined && config.reasoningEffort !== 'none') {
+    // Anthropic's native Messages API uses adaptive thinking and a separate
+    // output_config effort field. Current Messages models accept the same
+    // low/medium/high/xhigh/max effort vocabulary as the shared selector.
+    body.thinking = { type: 'adaptive' };
+    body.output_config = { effort: config.reasoningEffort };
+  } else {
+    if (config.temperature !== undefined) {
+      body.temperature = config.temperature;
+    }
+    if (config.topP !== undefined) {
+      body.top_p = config.topP;
+    }
   }
 
   return {

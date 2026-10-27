@@ -51,7 +51,7 @@ export function RightGameSidebar({ open, onOpenChange, showReopenButton = true, 
     <Dialog.Portal>
       {mobile && <Dialog.Backdrop className="game-options-backdrop" />}
       <Dialog.Popup className="right-game-sidebar" aria-hidden={open ? undefined : true} inert={!open} style={{ '--game-options-width': `${width}px` } as CSSProperties}
-        initialFocus={() => document.getElementById('game-mode') ?? true} finalFocus={() => returnFocus.current?.isConnected ? returnFocus.current : false}>
+        initialFocus={() => document.getElementById('white-player') ?? true} finalFocus={() => returnFocus.current?.isConnected ? returnFocus.current : false}>
         <header className="game-options-heading"><Dialog.Title>New game</Dialog.Title><IconButton icon="close" label="Close" title="Collapse game settings" onClick={() => changeOpen(false)} /></header>
         <Dialog.Description className="game-options-sr-only">Configure the players, time control and starting position, then start a real match.</Dialog.Description>
         <div className="game-options-body">{children(() => changeOpen(false))}</div>
