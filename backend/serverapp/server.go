@@ -134,8 +134,8 @@ type OnlineConfig struct {
 	MCPMaxActiveGames int
 	// MCPStartsPerHour bounds the games one client address may start.
 	MCPStartsPerHour int
-	// MCPTrustProxy reads the client address from X-Forwarded-For. Set it
-	// only behind a proxy that overwrites the header.
+	// MCPTrustProxy reads the client address from the last X-Forwarded-For
+	// entry. Set it only behind exactly one proxy that appends to the header.
 	MCPTrustProxy bool
 	// AgentBoardsEnabled mounts the public community and verified agent
 	// boards at /v1/public/agent-boards. It is off by default and needs the

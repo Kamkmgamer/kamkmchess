@@ -193,13 +193,19 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// clientAddress names the caller for the rate limits. Behind the hosting
-// proxy the first forwarded address is the client.
+// clientAddress names the caller for the rate limits. The hosting proxy
+// appends the address it saw to X-Forwarded-For and keeps whatever the client
+// sent, so only the last entry is trustworthy.
 func clientAddress(r *http.Request, trustProxy bool) string {
 	if trustProxy {
-		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-			first, _, _ := strings.Cut(forwarded, ",")
-			return strings.TrimSpace(first)
+		if values := r.Header.Values("X-Forwarded-For"); len(values) > 0 {
+			last := values[len(values)-1]
+			if i := strings.LastIndex(last, ","); i >= 0 {
+				last = last[i+1:]
+			}
+			if last = strings.TrimSpace(last); last != "" {
+				return last
+			}
 		}
 	}
 	host := r.RemoteAddr

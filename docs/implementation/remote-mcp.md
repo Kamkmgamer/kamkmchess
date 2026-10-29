@@ -57,7 +57,10 @@ Waits stay under 25 seconds so common proxy timeouts never cut a call.
 - `ONLINE_MCP_MAX_ACTIVE_GAMES` unfinished agent games in total (default 50).
 - `ONLINE_MCP_STARTS_PER_HOUR` games per client address (default 20). Behind
   the hosting proxy, set `ONLINE_MCP_TRUST_PROXY=1` so the forwarded address
-  is used.
+  is used. The server reads the last `X-Forwarded-For` entry, the one the
+  proxy appended; earlier entries come from the client and are ignored. Do not
+  set it when the server is reachable without the proxy or sits behind more
+  than one proxy.
 - 500 connected sessions; an idle session expires after 2 hours.
 - One game per session at a time.
 
