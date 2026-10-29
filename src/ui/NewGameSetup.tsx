@@ -54,8 +54,8 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
   const [sideKinds, setSideKinds] = useState<SideKinds>(draft?.sideKinds ?? (focus === 'opponent' ? { white: 'human', black: 'ai' } : { white: 'human', black: 'human' }));
   const [engineSeats, setEngineSeats] = useState<Record<'white' | 'black', ModelSelection | null>>(draft?.engineSeats ?? { white: null, black: null });
   const [aiSeats, setAiSeats] = useState<Record<'white' | 'black', ModelSelection | null>>(draft?.aiSeats ?? { white: null, black: null });
-	const hasAgent = sideKinds.white === 'agent' || sideKinds.black === 'agent';
-	const [serverThink, setServerThink] = useState(1000);
+  const hasAgent = sideKinds.white === 'agent' || sideKinds.black === 'agent';
+  const [serverThink, setServerThink] = useState(1000);
   const checkedIdentities = useRef(new Map<string, OpponentIdentityV1>());
   const selectedIdentities = useRef(new Map<BoardSide, OpponentIdentityV1>());
   const seatSelection = (side: BoardSide) => sideKinds[side] === 'engine' ? engineSeats[side] : sideKinds[side] === 'ai' ? aiSeats[side] : null;
@@ -132,7 +132,6 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
 
   const seats: readonly BoardSide[] = ['white', 'black'];
   return <section className={`sidebar-game-setup${editorOpen ? ' position-editor-page' : ''}`} aria-label="Game settings">
-    <p>Playing with an agent? Use the <a href="/agents.md">MCP server</a> for moves. Start an Agent game below to get a live viewing link and separate seat invitations.</p>
     <div className="game-mode-options">
       {seats.map(side => <label key={side}>{side === 'white' ? 'White' : 'Black'}<select id={`${side}-player`} aria-label={side === 'white' ? 'White' : 'Black'} value={sideKinds[side]} onChange={event => changeSideKind(side, event.target.value as SeatKind)}>
         <option value="human">Human</option><option value="engine">Engine</option><option value="ai">Browser AI</option><option value="agent">Agent</option>
@@ -177,7 +176,7 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
 function AgentSeatNote({ side }: { readonly side: BoardSide }) {
   return <section className="game-opponent-options agent-seat-note" aria-label={`${side === 'white' ? 'White' : 'Black'} agent`}>
     <h3>{side === 'white' ? 'White' : 'Black'}: agent</h3>
-    <p>Start the game to get a {side} invitation URL and a prompt for your agent. It will join this side through MCP. You can watch every move through the viewing URL.</p>
+    <p>Start the game to get a {side} invitation and prompt for your agent.</p>
     <p>MCP endpoint: <code>{remoteEndpoint}</code></p>
   </section>;
 }

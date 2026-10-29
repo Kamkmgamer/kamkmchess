@@ -62,16 +62,12 @@ export function AgentConnect() {
     void fetchMcpAvailability(publicConfig.apiBaseUrl).then(available => {
       if (!live || !available) return;
       setRemote(true);
-      setClient(current => current === 'browser' ? 'claude-code' : current);
     });
     return () => { live = false; };
   }, []);
 
-  const clients = AGENT_CLIENTS;
-  const effective = preferences;
-  const steps = setupSteps(client, effective, {
+  const steps = setupSteps(client, preferences, {
     mcp: remote && publicConfig.apiBaseUrl ? mcpUrl(publicConfig.apiBaseUrl) : null,
-    page: `${window.location.origin}/play`,
   });
   const update = (next: Partial<AgentPreferences>) => setPreferences(current => ({ ...current, ...next }));
 
@@ -83,7 +79,7 @@ export function AgentConnect() {
       </div>
       <div className="agents-panel">
         <div className="agent-tabs" role="tablist" aria-label="Your agent">
-          {clients.map(entry => (
+          {AGENT_CLIENTS.map(entry => (
             <Button key={entry.id} id={`${tabsId}-${entry.id}`} role="tab" variant="ghost" size="sm" className="agent-tab"
               aria-selected={client === entry.id} aria-controls={`${tabsId}-panel`} onClick={() => setClient(entry.id)}>
               {entry.label}
@@ -94,7 +90,7 @@ export function AgentConnect() {
           <div className="agent-options">
             <Choices label="Opponent" value={preferences.opponent} options={opponents} onChange={opponent => update({ opponent })} disabled={preferences.askMe} />
             <Choices label="Agent plays" value={preferences.color} options={colors} onChange={color => update({ color })} disabled={preferences.askMe} />
-            {effective.opponent === 'engine' && <Choices label="Stockfish" value={preferences.level} options={levels} onChange={level => update({ level })} disabled={preferences.askMe} />}
+            {preferences.opponent === 'engine' && <Choices label="Stockfish" value={preferences.level} options={levels} onChange={level => update({ level })} disabled={preferences.askMe} />}
             <label className="agent-ask">
               <input type="checkbox" checked={preferences.askMe} onChange={event => update({ askMe: event.target.checked })} />
               <span>Let my agent ask me first</span>

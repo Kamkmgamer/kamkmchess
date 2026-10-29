@@ -29,12 +29,13 @@ func (s *Server) seatURL(matchID string, seat online.Seat, token string) string 
 	return s.watchURL(matchID) + "&side=" + string(seat) + "#seat=" + url.QueryEscape(token)
 }
 
-func (s *Server) playersReady(match online.Match) bool {
-	return s.PlayersReady(match)
-}
-
-// PlayersReady also gates the server engine until an invited agent connects.
+// PlayersReady gates the first move until both seats, or the invited agent
+// facing Stockfish, have joined. Readiness lives in MCP sessions, so once a
+// move is played the gate opens for good.
 func (s *Server) PlayersReady(match online.Match) bool {
+	if len(match.Moves) > 0 {
+		return true
+	}
 	hasEngine := false
 	for _, seat := range match.Seats {
 		if seat.Control.Kind == online.ControlEngine {
@@ -88,7 +89,7 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 		moves = append(moves, move.SAN)
 	}
 	status := string(match.Status)
-	if match.Status == online.MatchActive && !s.playersReady(match) {
+	if match.Status == online.MatchActive && !s.PlayersReady(match) {
 		status = "waiting-for-players"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"gameId": match.MatchID, "fen": match.PositionFEN, "status": status, "players": players, "moves": moves, "clock": s.clock(match), "result": match.Result, "watch_url": s.watchURL(match.MatchID)})

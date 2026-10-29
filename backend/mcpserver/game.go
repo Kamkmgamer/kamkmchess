@@ -315,7 +315,7 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		fen = serverengine.StandardStartingPosition
 	}
 	var match online.Match
-	var otherToken string
+	var otherID, otherToken string
 	opponent, _ := args["opponent"].(string)
 	if opponent != "" && opponent != "engine" && opponent != "agent" && opponent != "human" {
 		return nil, errTool("opponent must be engine, agent or human")
@@ -327,7 +327,8 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		if !ok {
 			return nil, errTool("shared games are unavailable")
 		}
-		otherID, idErr := randomID(AgentPrefix)
+		var idErr error
+		otherID, idErr = randomID(AgentPrefix)
 		if idErr != nil {
 			return nil, idErr
 		}
@@ -345,11 +346,6 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		if err != nil {
 			return nil, err
 		}
-		issued, issueErr := s.options.Credentials.IssueEngineSeatCredential(ctx, onlineauth.EngineSeatRequest{MatchID: match.MatchID, Seat: engineSeat, GuestID: otherID, Origin: credentialOrigin, TTL: credentialTTL})
-		if issueErr != nil || !issued.Issued {
-			return nil, errTool("could not issue the invited seat")
-		}
-		otherToken = issued.Credential.Secret
 	} else {
 		match, err = s.options.Engine.CreateMatch(ctx, serverengine.MatchRequest{
 			Actor:       agent.Participant,
@@ -370,6 +366,14 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		return nil, errTool("the game was created but your seat could not be claimed: start another game")
 	}
 	sess.attach(onlineauth.NewGuestPrincipal(outcome.Credential), name, outcome.Credential.Secret)
+	if opponent == "agent" || opponent == "human" {
+		issued, issueErr := s.options.Credentials.IssueEngineSeatCredential(ctx, onlineauth.EngineSeatRequest{MatchID: match.MatchID, Seat: engineSeat, GuestID: otherID, Origin: credentialOrigin, TTL: credentialTTL})
+		if issueErr != nil || !issued.Issued {
+			s.cleanupFailedStart(sess)
+			return nil, errTool("could not issue the invited seat")
+		}
+		otherToken = issued.Credential.Secret
+	}
 	deferred, _ := args["defer_join"].(bool)
 	if !deferred {
 		s.sessions.markReady(sess)
@@ -424,16 +428,16 @@ func (s *Server) cleanupFailedStart(sess *session) {
 }
 
 func (s *Server) resumeGame(ctx context.Context, sess *session, args map[string]any) (any, error) {
+	raw, _ := args["resume_token"].(string)
+	token := strings.TrimSpace(raw)
 	if sess.hasGame() {
 		if current, err := s.options.Matches.GetMatch(ctx, sess.matchID); err == nil && current.Status == online.MatchActive {
-			token, _ := args["resume_token"].(string)
 			if token != sess.resumeToken {
 				return nil, errTool("finish or resign your current game before joining another seat")
 			}
 		}
 	}
-	token, _ := args["resume_token"].(string)
-	principal, err := s.options.Authenticator.AuthenticateGuest(ctx, strings.TrimSpace(token), credentialOrigin)
+	principal, err := s.options.Authenticator.AuthenticateGuest(ctx, token, credentialOrigin)
 	if err != nil || !strings.HasPrefix(principal.Participant.ID, AgentPrefix) {
 		return nil, errTool("that resume_token is not valid any more: start a new game")
 	}
@@ -445,7 +449,7 @@ func (s *Server) resumeGame(ctx context.Context, sess *session, args map[string]
 	if seat, ok := match.Seat(principal.Seat); ok {
 		name = strings.TrimSuffix(seat.PublicLabel, " (self-reported)")
 	}
-	sess.attach(principal, name, strings.TrimSpace(token))
+	sess.attach(principal, name, token)
 	if reported, ok := args["model_name"].(string); ok && cleanName(reported) != "" {
 		sess.agentName = cleanName(reported)
 	}
@@ -463,7 +467,7 @@ func (s *Server) makeMove(ctx context.Context, sess *session, args map[string]an
 	if match.Status != online.MatchActive {
 		return s.board(ctx, sess)
 	}
-	if !s.playersReady(match) {
+	if !s.PlayersReady(match) {
 		return nil, errTool("waiting for the other player to join their invitation; call wait_for_turn")
 	}
 	if side, _ := sideToMove(match.PositionFEN); side != sess.seat {
@@ -597,7 +601,7 @@ func (s *Server) waitForTurn(ctx context.Context, sess *session, timeout time.Du
 		if err != nil {
 			return err
 		}
-		if side, _ := sideToMove(match.PositionFEN); match.Status != online.MatchActive || side == sess.seat && s.playersReady(match) {
+		if side, _ := sideToMove(match.PositionFEN); match.Status != online.MatchActive || side == sess.seat && s.PlayersReady(match) {
 			return nil
 		}
 		if !s.options.Now().Before(deadline) {
@@ -624,7 +628,7 @@ func (s *Server) board(ctx context.Context, sess *session) (map[string]any, erro
 	switch {
 	case match.Status != online.MatchActive:
 		status = "finished"
-	case !s.playersReady(match):
+	case !s.PlayersReady(match):
 		status = "waiting-for-players"
 	case side == sess.seat:
 		status = "your-turn"

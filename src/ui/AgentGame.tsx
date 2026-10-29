@@ -72,7 +72,7 @@ export function AgentGame() {
             } catch (cause) { setError(cause instanceof Error ? cause.message : 'Move failed.'); return false; }
             finally { setBusy(false); }
           }} />
-        {playing && <><p>You are playing {side}. Pawn promotions use a queen.</p><button className="button" disabled={busy || !!board.result} onClick={() => { setBusy(true); void client.call('resign').catch(cause => setError(String(cause))).finally(() => setBusy(false)); }}>Resign</button></>}
+        {playing && <><p>You are playing {side}. Pawn promotions use a queen.</p><button className="button" disabled={busy || !!board.result} onClick={() => { setBusy(true); void client.call('resign').catch((cause: unknown) => setError(cause instanceof Error ? cause.message : 'Could not resign.')).finally(() => setBusy(false)); }}>Resign</button></>}
         <p className="agent-game-moves" aria-label="Moves">{board.moves.map((move, i) => `${i % 2 === 0 ? `${Math.floor(i / 2) + 1}. ` : ''}${move}`).join(' ') || 'No moves yet.'}</p>
       </> : <p role="status">Connecting to the game...</p>}
     </section><aside aria-label="Agent invitations">
