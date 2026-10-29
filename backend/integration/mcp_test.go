@@ -70,12 +70,13 @@ func newMCPEndpoint(t *testing.T) (serverEngineFixture, *mcpClient) {
 	endpoint, err := mcpserver.New(mcpserver.Options{
 		Matches: f.service, Engine: f.driver, Credentials: onlineauth.NewAllocator(f.authorizer), Authenticator: f.authorizer,
 		ActiveGames: mcpserver.PostgresActiveGames(f.pool), AllowedOrigins: []string{"https://app.example"},
-		Records: agentboards.New(f.pool),
+		Records:  agentboards.New(f.pool),
 		MoveWait: 10 * time.Second, Poll: 50 * time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.driver.SetReadiness(endpoint.PlayersReady)
 	server := httptest.NewServer(endpoint)
 	t.Cleanup(server.Close)
 	client := &mcpClient{t: t, url: server.URL}
@@ -88,13 +89,13 @@ func newMCPEndpoint(t *testing.T) (serverEngineFixture, *mcpClient) {
 // An agent connects, plays Stockfish, gets its plan back, spends an illegal
 // move and resigns, all through the remote endpoint.
 func TestMCPAgentPlaysTheServerEngine(t *testing.T) {
-	_, c := newMCPEndpoint(t)
+	f, c := newMCPEndpoint(t)
 	_, listed := c.rpc("tools/list", map[string]any{})
 	names := []string{}
 	for _, tool := range listed["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, tool.(map[string]any)["name"].(string))
 	}
-	if strings.Join(names, ",") != "get_rules,start_game,resume_game,get_board,make_move,wait_for_turn,resign" {
+	if strings.Join(names, ",") != "join_seat,get_rules,start_game,resume_game,get_board,make_move,wait_for_turn,resign" {
 		t.Fatalf("tools = %v", names)
 	}
 	if _, errText := c.tool("make_move", map[string]any{"move": "e2e4"}); !strings.Contains(errText, "start_game") {
@@ -118,7 +119,11 @@ func TestMCPAgentPlaysTheServerEngine(t *testing.T) {
 	if played["result"] != "accepted" || after["status"] != "your-turn" || after["moveCount"] != float64(2) {
 		t.Fatalf("make_move = %v", played)
 	}
-	if moves := after["input"].(map[string]any)["moves"]; moves != "e4 e5" {
+	canonical, err := f.service.GetMatch(context.Background(), board["gameId"].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if moves := after["input"].(map[string]any)["moves"]; moves != "e4 "+canonical.Moves[1].SAN {
 		t.Fatalf("compact move history = %v", moves)
 	}
 	if plan := after["input"].(map[string]any)["previousThinking"].(map[string]any)["plan"]; plan != "Take the centre." {

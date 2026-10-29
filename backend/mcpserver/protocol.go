@@ -62,6 +62,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "origin not allowed", http.StatusForbidden)
 		return
 	}
+	if origin := r.Header.Get("Origin"); origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Vary", "Origin")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, MCP-Protocol-Version")
+		w.Header().Set("Access-Control-Expose-Headers", sessionHeader)
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+	}
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if r.Method == http.MethodGet && r.URL.Query().Has("watch") {
+		s.watch(w, r)
+		return
+	}
 	switch r.Method {
 	case http.MethodPost:
 	case http.MethodDelete:
@@ -171,6 +186,11 @@ func toolResultText(result any, fallback string) string {
 	if !ok {
 		return fallback
 	}
+	// Initial game results include private invitations and recovery tokens.
+	// Preserve them for MCP clients that consume only text content.
+	if record["resume_token"] != nil || record["opponent_url"] != nil {
+		return fallback
+	}
 	if message, ok := record["message"].(string); ok {
 		if outcome, ok := record["result"].(string); ok {
 			return fmt.Sprintf("%s: %s", outcome, message)
@@ -179,7 +199,7 @@ func toolResultText(result any, fallback string) string {
 	}
 	if status, ok := record["status"].(string); ok {
 		if fen, ok := record["fen"].(string); ok {
-			return fmt.Sprintf("status=%s fen=%s", status, fen)
+			return fmt.Sprintf("status=%s fen=%s watch_url=%v", status, fen, record["watch_url"])
 		}
 		return "status=" + status
 	}

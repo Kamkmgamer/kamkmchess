@@ -57,6 +57,7 @@ import { EnginePanel } from './EnginePanel.js';
 import { createEngineSelection, isEngineSelection, recommendEngine, runEngineTurn } from '../engines/local.js';
 import { AGENT_TIME_CONTROL, agentBridge, createAgentSelection, isAgentSelection, registerAgentTools, runAgentTurn } from '../agents/index.js';
 import type { AgentGameView, AgentStartOptions } from '../agents/index.js';
+import { remoteEndpoint } from '../agents/remote.js';
 import type { PlayerSelectionV1 } from '../storage/index.js';
 import { BROWSER_ENGINES, stopBrowserEngines, stopUnusedBrowserEngines } from '../engines/browser.js';
 import { engineSettings } from '../engines/local.js';
@@ -1174,7 +1175,13 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   useEffect(() => { agentHost.current = { snapshot, start: startAgentGame }; });
   useEffect(() => {
     const detach = agentBridge.attachHost({ view: () => agentGameView(agentHost.current.snapshot), startGame: options => agentHost.current.start(options) });
-    const unregister = registerAgentTools(agentBridge);
+    const unregister = registerAgentTools(agentBridge, [{
+      name: 'connect_chess_mcp',
+      description: 'Connect to the remote chess MCP server to play. All gameplay uses MCP. Share watch_url with the human. Do not use GUI or browser automation.',
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: true },
+      execute: async () => ({ endpoint: remoteEndpoint, transport: 'Streamable HTTP', instructionsUrl: `${window.location.origin}/agents.md`, instructions: 'Connect this MCP server. Call get_rules, then start_game or join_seat for an existing invitation. Immediately link watch_url for the human. Use MCP for every move; do not automate the board.' }),
+    }]);
     return () => { unregister(); detach(); };
   }, []);
   useEffect(() => { agentBridge.notify(); }, [snapshot]);

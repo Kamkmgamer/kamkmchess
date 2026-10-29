@@ -13,6 +13,7 @@ import { EnginePanel } from './EnginePanel.js';
 import { composePlayersBySide, type BoardSide, type SeatKind, type SideKinds } from './match-modes.js';
 import { AGENT_TIME_CONTROL } from '../agents/seat.js';
 import { conciseError } from './concise-error.js';
+import { ChessMcpClient, remoteEndpoint } from '../agents/remote.js';
 import './new-game-setup.css';
 
 export interface StartedSidebarGame {
@@ -53,12 +54,14 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
   const [sideKinds, setSideKinds] = useState<SideKinds>(draft?.sideKinds ?? (focus === 'opponent' ? { white: 'human', black: 'ai' } : { white: 'human', black: 'human' }));
   const [engineSeats, setEngineSeats] = useState<Record<'white' | 'black', ModelSelection | null>>(draft?.engineSeats ?? { white: null, black: null });
   const [aiSeats, setAiSeats] = useState<Record<'white' | 'black', ModelSelection | null>>(draft?.aiSeats ?? { white: null, black: null });
+	const hasAgent = sideKinds.white === 'agent' || sideKinds.black === 'agent';
+	const [serverThink, setServerThink] = useState(1000);
   const checkedIdentities = useRef(new Map<string, OpponentIdentityV1>());
   const selectedIdentities = useRef(new Map<BoardSide, OpponentIdentityV1>());
   const seatSelection = (side: BoardSide) => sideKinds[side] === 'engine' ? engineSeats[side] : sideKinds[side] === 'ai' ? aiSeats[side] : null;
   const setupSelections: Record<BoardSide, ModelSelection | null> = { white: seatSelection('white'), black: seatSelection('black') };
   // Human and agent seats need no checked selection; engines and AI models do.
-  const setupReady = (['white', 'black'] as const).every(side => sideKinds[side] === 'human' || sideKinds[side] === 'agent' || setupSelections[side] !== null);
+  const setupReady = hasAgent ? !Object.values(sideKinds).includes('ai') : (['white', 'black'] as const).every(side => sideKinds[side] === 'human' || sideKinds[side] === 'agent' || setupSelections[side] !== null);
   const changeSideKind = (side: BoardSide, kind: SeatKind) => {
     const hadAgent = sideKinds.white === 'agent' || sideKinds.black === 'agent';
     const hasAgent = kind === 'agent' || sideKinds[side === 'white' ? 'black' : 'white'] === 'agent';
@@ -71,6 +74,23 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
   const createNewGame = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setSetupError('');
+    if (hasAgent) {
+      setWorking(true);
+      try {
+        const agentSide = sideKinds.white === 'agent' ? 'white' : 'black';
+        const otherSide = agentSide === 'white' ? 'black' : 'white';
+        const opponent = sideKinds[otherSide];
+        if (opponent === 'ai') throw new Error('For a shared game, choose Human, Engine or Agent for the other side.');
+        const fen = parsePosition(setupFen.trim() || STANDARD_FEN).fen;
+        const board = await new ChessMcpClient().call('start_game', { model_name: `${agentSide} agent`, color: agentSide, opponent, defer_join: true, starting_fen: fen, minutes: setupMinutes, increment_seconds: setupIncrement, engine_think_ms: serverThink });
+        const invitations: Record<string, string> = { [agentSide]: String(board.seat_url) };
+        if (opponent === 'agent') invitations[otherSide] = String(board.opponent_url);
+        sessionStorage.setItem(`agent-game:${String(board.gameId)}`, JSON.stringify(invitations));
+        window.location.assign(String(opponent === 'human' ? board.opponent_url : board.watch_url));
+      } catch (error) { setSetupError(error instanceof Error ? error.message : 'The agent game could not be started.'); }
+      finally { setWorking(false); }
+      return;
+    }
     let configuredPlayers;
     try {
       configuredPlayers = composePlayersBySide(sideKinds, setupSelections);
@@ -112,12 +132,13 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
 
   const seats: readonly BoardSide[] = ['white', 'black'];
   return <section className={`sidebar-game-setup${editorOpen ? ' position-editor-page' : ''}`} aria-label="Game settings">
+    <p>Playing with an agent? Use the <a href="/agents.md">MCP server</a> for moves. Start an Agent game below to get a live viewing link and separate seat invitations.</p>
     <div className="game-mode-options">
       {seats.map(side => <label key={side}>{side === 'white' ? 'White' : 'Black'}<select id={`${side}-player`} aria-label={side === 'white' ? 'White' : 'Black'} value={sideKinds[side]} onChange={event => changeSideKind(side, event.target.value as SeatKind)}>
         <option value="human">Human</option><option value="engine">Engine</option><option value="ai">Browser AI</option><option value="agent">Agent</option>
       </select></label>)}
     </div>
-    {seats.map(side => sideKinds[side] === 'human' ? null : sideKinds[side] === 'agent' ? <AgentSeatNote key={`${side}-agent`} side={side} /> : <section className="game-opponent-options" aria-label={`${side === 'white' ? 'White' : 'Black'} opponent setup`} key={`${side}-${sideKinds[side]}`}>
+    {seats.map(side => sideKinds[side] === 'human' ? null : sideKinds[side] === 'agent' ? <AgentSeatNote key={`${side}-agent`} side={side} /> : hasAgent && sideKinds[side] === 'engine' ? <section className="game-opponent-options" key={side}><h3>{side === 'white' ? 'White' : 'Black'}: server Stockfish</h3><label>Thinking time<select value={serverThink} onChange={event => setServerThink(Number(event.target.value))}><option value={100}>Casual, 100 ms</option><option value={1000}>Club, 1 second</option><option value={5000}>Strong, 5 seconds</option></select></label></section> : <section className="game-opponent-options" aria-label={`${side === 'white' ? 'White' : 'Black'} opponent setup`} key={`${side}-${sideKinds[side]}`}>
       <h3>{side === 'white' ? 'White' : 'Black'} {sideKinds[side] === 'engine' ? 'engine' : 'browser AI'}</h3>
       {sideKinds[side] === 'engine'
         ? <EnginePanel label={`${side === 'white' ? 'White' : 'Black'} engine`} heading={`${side === 'white' ? 'White' : 'Black'} engine`} selected={engineSeats[side]} onSelect={selection => setEngineSeats(current => ({ ...current, [side]: selection }))} />
@@ -125,6 +146,7 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
           onSelectionInvalidated={() => { selectedIdentities.current.delete(side); setAiSeats(current => ({ ...current, [side]: null })); }}
           onSelect={(selection, identity) => { checkedIdentities.current.set(JSON.stringify(selection), identity); selectedIdentities.current.set(side, identity); setAiSeats(current => ({ ...current, [side]: selection })); }} />}
     </section>)}
+    {hasAgent && Object.values(sideKinds).includes('ai') && <p role="alert">Choose Agent for an external agent, Engine for server Stockfish, or Human for a person on the shared board.</p>}
     <form onSubmit={createNewGame} className="connection-form game-start-form">
       <fieldset className="game-time-options"><legend>Time control</legend>
         <label>Minutes<input id="starting-minutes" aria-label="Starting minutes" type="number" inputMode="numeric" min="1" max="180" required value={setupMinutes} onChange={event => setSetupMinutes(Number(event.target.value))} /></label>
@@ -152,10 +174,10 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
   </section>;
 }
 
-/** Agents play through the page's tools; there is nothing to connect here. */
 function AgentSeatNote({ side }: { readonly side: BoardSide }) {
   return <section className="game-opponent-options agent-seat-note" aria-label={`${side === 'white' ? 'White' : 'Black'} agent`}>
     <h3>{side === 'white' ? 'White' : 'Black'}: agent</h3>
-    <p>Your agent plays through this page's tools. Start, then ask it to join.</p>
+    <p>Start the game to get a {side} invitation URL and a prompt for your agent. It will join this side through MCP. You can watch every move through the viewing URL.</p>
+    <p>MCP endpoint: <code>{remoteEndpoint}</code></p>
   </section>;
 }

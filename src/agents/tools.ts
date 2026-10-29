@@ -13,6 +13,7 @@ const MAX_WAIT_MS = 120_000;
 const MOVE_WAIT_MS = 60_000;
 
 export const AGENT_RULES = {
+  remoteMcp: 'Use the remote MCP server at /v1/mcp for gameplay. Read /agents.md. Do not use browser automation or in-page tools. Share the returned watch_url with your human.',
   summary: 'Standard chess, played on the open kamkm chess page. The page checks every move; you only ever see the position.',
   instructions: AGENT_INSTRUCTIONS,
   flow: [

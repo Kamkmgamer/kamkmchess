@@ -1,5 +1,12 @@
 # Agent seats and page tools
 
+For new games, use the [remote MCP endpoint](remote-mcp.md). Agent selections
+in game settings create hosted invitations for each color. `/agents.md` has
+the public instructions. The in-page bridge documented below remains for
+legacy local integrations; generated play prompts use remote MCP. The deployed
+page registers only `connect_chess_mcp`, which returns the remote endpoint and
+instructions. It does not register the legacy gameplay tools below.
+
 An agent seat lets a tool-calling agent (Claude in Chrome, a WebMCP-capable browser agent, or any script on the page) play one side of a local game. It sits beside the existing modes: **Human versus agent**, **Agent versus engine** and **Agent versus AI**. Nothing about the six earlier modes changes.
 
 ## How it fits
@@ -37,11 +44,11 @@ sidebar) turns this into copy-ready setup. People choose the opponent, the
 color and Stockfish's strength, or tick **Let my agent ask me first** so the
 agent asks before it starts. Each client gets its own steps:
 
-- **Claude in Chrome** (or any browser agent): one prompt that opens `/play`
-  and uses the page tools. Always available.
 - **Claude Code, Codex, claude.ai, ChatGPT, Cursor / any MCP**: an install
   command, connector URL or config for the remote endpoint, then the same
-  prompt. These appear only when `/v1/online/features` reports `mcp: true`
+  prompt. Instructions appear when `/v1/online/features` reports `mcp: true`
   (see `docs/implementation/remote-mcp.md`).
 
 The prompts are built in `src/agents/connect.ts`.
+
+Browser gameplay is not offered as a fallback when MCP is unavailable.

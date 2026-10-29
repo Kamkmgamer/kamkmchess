@@ -25,12 +25,14 @@ describe('agent connection setup', () => {
     expect(prompt).not.toContain('color: "white"');
   });
 
-  it('sets up a game against the person at the screen for browser agents', () => {
+  it('routes legacy browser prompts through MCP and shares a human invitation', () => {
     const prompt = pagePrompt({ ...DEFAULT_AGENT_PREFERENCES, opponent: 'human' }, urls.page);
-    expect(prompt).toContain('Open https://chess.example/play');
+    expect(prompt).toContain('https://chess.example/v1/mcp');
     expect(prompt).toContain('opponent: "human"');
     expect(prompt).not.toContain('engine_think_ms');
-    expect(prompt).toContain('window.kamkmChessAgent.call');
+    expect(prompt).toContain('Do not use GUI, browser tools or computer use');
+    expect(prompt).toContain('watch_url');
+    expect(prompt).toContain('opponent_url');
   });
 
   it('gives each client its own install step and the same prompt', () => {
@@ -41,13 +43,13 @@ describe('agent connection setup', () => {
     expect(JSON.parse(setupSteps('mcp', DEFAULT_AGENT_PREFERENCES, urls)[0]?.copy?.value ?? ''))
       .toEqual({ mcpServers: { 'kamkm-chess': { url: urls.mcp } } });
     for (const client of ['claude-code', 'codex', 'claude-ai', 'chatgpt', 'mcp'] as const) {
-      expect(setupSteps(client, DEFAULT_AGENT_PREFERENCES, urls).at(-1)?.copy?.value).toBe(remotePrompt(DEFAULT_AGENT_PREFERENCES));
+      expect(setupSteps(client, DEFAULT_AGENT_PREFERENCES, urls).at(-1)?.copy?.value).toBe(remotePrompt(DEFAULT_AGENT_PREFERENCES, urls.mcp));
     }
   });
 
-  it('offers no remote steps while the endpoint is off, and the browser route still works', () => {
+  it('does not send agents to browser gameplay when MCP is unavailable', () => {
     expect(setupSteps('claude-code', DEFAULT_AGENT_PREFERENCES, { ...urls, mcp: null })).toEqual([]);
-    expect(setupSteps('browser', DEFAULT_AGENT_PREFERENCES, { ...urls, mcp: null })).toHaveLength(1);
+    expect(setupSteps('browser', DEFAULT_AGENT_PREFERENCES, { ...urls, mcp: null })).toEqual([]);
   });
 
   it('reads the endpoint switch from the feature answer and fails closed', async () => {

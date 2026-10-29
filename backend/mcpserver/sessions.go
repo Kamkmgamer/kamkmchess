@@ -15,8 +15,11 @@ import (
 type session struct {
 	mu sync.Mutex
 	// id is the MCP session id. It never doubles as a credential.
-	id       string
-	lastSeen time.Time
+	id         string
+	lastSeen   time.Time
+	readyMatch string
+	readySeat  online.Seat
+	readyName  string
 
 	principal   onlineauth.Principal
 	matchID     string
@@ -26,6 +29,37 @@ type session struct {
 	// plan is the agent's last plan. It is handed back on its next turn,
 	// the same way the page carries a model's plan.
 	plan string
+}
+
+// Readiness metadata is owned by the store lock, independently of sess.mu.
+func (st *sessionStore) markReady(sess *session) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	sess.readyMatch, sess.readySeat = sess.matchID, sess.seat
+	sess.readyName = sess.agentName
+}
+
+func (st *sessionStore) seatName(matchID string, seat online.Seat) string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	for _, sess := range st.sessions {
+		if sess.readyMatch == matchID && sess.readySeat == seat {
+			return sess.readyName
+		}
+	}
+	return ""
+}
+
+func (st *sessionStore) seatReady(matchID string, seat online.Seat) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.expireLocked()
+	for _, sess := range st.sessions {
+		if sess.readyMatch == matchID && sess.readySeat == seat {
+			return true
+		}
+	}
+	return false
 }
 
 func (sess *session) hasGame() bool { return sess.matchID != "" }

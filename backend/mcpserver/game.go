@@ -62,7 +62,7 @@ type Querier interface {
 func PostgresActiveGames(db Querier) ActiveGames {
 	return func(ctx context.Context) (int, error) {
 		var count int
-		err := db.QueryRow(ctx, `SELECT count(*) FROM online_seats s JOIN online_matches m ON m.match_id = s.match_id
+		err := db.QueryRow(ctx, `SELECT count(DISTINCT m.match_id) FROM online_seats s JOIN online_matches m ON m.match_id = s.match_id
 			WHERE m.status = 'active' AND s.owner_kind = 'guest' AND s.owner_id LIKE 'mcp-agent:%'`).Scan(&count)
 		return count, err
 	}
@@ -70,6 +70,8 @@ func PostgresActiveGames(db Querier) ActiveGames {
 
 // Options configures the endpoint.
 type Options struct {
+	// PageOrigin is the public website used for spectator and seat links.
+	PageOrigin    string
 	Matches       Matches
 	Engine        EngineMatches
 	Credentials   Credentials
@@ -142,35 +144,43 @@ const credentialTTL = 26 * time.Hour
 
 // Instructions is what the server tells a client at initialize.
 const Instructions = "kamkm chess: play an unrated game of chess against Stockfish running on the server. " +
+	"Use MCP for all gameplay, never GUI, browser automation or computer use. Share watch_url with the human immediately. " +
+	"To play another agent, start_game with opponent agent and send opponent_url to the other player. Join invitations with join_seat. " +
 	"Call get_rules first, then start_game with your exact model name. On your turn, get_board shows the position; " +
-	"make_move plays one move and waits for Stockfish's reply. Think for yourself: no code, engines or analysis tools."
+	"make_move plays one move and waits for the opponent's reply. Think for yourself: no move-analysis code, engines or analysis tools. Code used only to call MCP is allowed."
 
 var rules = map[string]any{
-	"summary":      "Standard chess against Stockfish on the kamkm chess server. The server checks every move; you only ever see the position.",
+	"summary":      "Standard chess against Stockfish, a human or another agent on the kamkm chess server. Use MCP for every move and share watch_url with your human.",
 	"instructions": "Choose one legal move per turn in coordinate form: from and to squares, e.g. e2e4, with q, r, b or n appended to promote (e7e8q). Keep a brief plan of at most 80 words; it comes back to you next turn as previousThinking.",
 	"flow": []string{
-		"start_game creates the game. It returns the board once it is your turn.",
+		"start_game creates the game and returns watch_url. Share that URL with your human immediately. For opponent agent or human, share opponent_url with the other player. Keep seat and resume tokens private.",
+		"join_seat accepts the resume_token from the seat fragment of an invitation URL and model_name. It assigns your color in the existing game. Never start a new game to join an invitation.",
+		"waiting-for-players means the other player has not joined yet. Call wait_for_turn until both players are ready.",
 		"get_board shows the position. When status is your-turn, input holds the position, the moves so far, the clocks and your previous plan.",
 		"make_move plays one move and waits for the reply. If status is still opponent-turn afterwards, call wait_for_turn.",
 		"If the server restarted and your session expired, call resume_game with the resume_token from start_game.",
 	},
 	"limits": "Four illegal moves in one turn lose the game. Clocks run while you think: the default is 180 minutes plus 60 seconds per move. " +
 		"If you play Black, your first reply must arrive within 15 seconds of Stockfish's first move or the game is aborted unscored, so answer the opening quickly.",
-	"fairness": "Do not run code, a chess engine or any analysis tool. Do not ask for legal moves; none are listed.",
+	"fairness": "Do not run move-analysis code, a chess engine or any analysis tool. Code used only to call MCP is allowed. Do not ask for legal moves; none are listed.",
 }
 
 func toolList() []map[string]any {
 	empty := map[string]any{"type": "object", "properties": map[string]any{}}
 	readOnly := map[string]any{"readOnlyHint": true}
 	return []map[string]any{
+		{"name": "join_seat", "description": "Join the exact White or Black seat in an invitation URL. Do not start a different game. Share watch_url with your human.", "inputSchema": map[string]any{"type": "object", "required": []string{"resume_token", "model_name"}, "properties": map[string]any{"resume_token": map[string]any{"type": "string"}, "model_name": map[string]any{"type": "string"}}}},
 		{"name": "get_rules", "description": "Read how kamkm chess games work for agents: the move format, budgets, clocks and fairness rules. Call this first.", "inputSchema": empty, "annotations": readOnly},
-		{"name": "start_game", "description": "Start a new game against Stockfish on the server. Returns the board once it is your turn, and a resume_token.", "inputSchema": map[string]any{
+		{"name": "start_game", "description": "Start a hosted game against Stockfish, another agent or a human. Share watch_url with your human and opponent_url with the invited player. Returns your private resume_token.", "inputSchema": map[string]any{
 			"type": "object", "required": []string{"model_name"}, "properties": map[string]any{
 				"model_name":        map[string]any{"type": "string", "description": "Your exact model and variant, e.g. \"Claude Opus 5.5\". Shown as self-reported."},
 				"color":             map[string]any{"type": "string", "enum": []string{"white", "black", "random"}, "default": "white"},
+				"opponent":          map[string]any{"type": "string", "enum": []string{"engine", "agent", "human"}, "default": "engine", "description": "Agent or human creates a shared match and returns a separate opponent invitation URL."},
+				"starting_fen":      map[string]any{"type": "string", "description": "Optional custom starting position."},
+				"defer_join":        map[string]any{"type": "boolean", "description": "Create invitations without marking the creator ready. Used by the human's setup page."},
 				"engine_think_ms":   map[string]any{"type": "integer", "minimum": 100, "maximum": 10000, "default": 1000, "description": "Stockfish thinking time per move. Higher is stronger."},
 				"minutes":           map[string]any{"type": "integer", "minimum": 1, "maximum": 180, "default": 180},
-				"increment_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 60, "default": 60},
+				"increment_seconds": map[string]any{"type": "integer", "minimum": 0, "maximum": 600, "default": 60},
 				"invite_code":       map[string]any{"type": "string", "description": "Only for the official runner: an operator-issued code that puts the game on the verified board."},
 				"runner":            map[string]any{"type": "string", "description": "Optional name of the program driving you, e.g. kamkm-runner/api."},
 			}}},
@@ -218,7 +228,10 @@ func (s *Server) call(ctx context.Context, sess *session, address, name string, 
 	case "resign":
 		return s.resign(ctx, sess)
 	case "join_seat":
-		return nil, errTool("join_seat only works on the kamkm chess web page. Here, call start_game.")
+		if name, ok := args["model_name"].(string); !ok || cleanName(name) == "" {
+			return nil, errTool("model_name is required")
+		}
+		return s.resumeGame(ctx, sess, args)
 	default:
 		return nil, errTool("unknown tool " + name)
 	}
@@ -244,6 +257,9 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 	}
 	code, _ := args["invite_code"].(string)
 	code = strings.TrimSpace(code)
+	if opponent, _ := args["opponent"].(string); code != "" && (opponent == "agent" || opponent == "human") {
+		return nil, errTool("invite_code is only supported for direct games against Stockfish")
+	}
 	if code != "" {
 		valid := false
 		if s.options.Records != nil {
@@ -293,17 +309,57 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		Control:     online.SeatControl{Kind: online.ControlAgent, ModelLabel: &label},
 	}
 	think := time.Duration(intArg(args, "engine_think_ms", 1000, 100, 10_000)) * time.Millisecond
-	match, err := s.options.Engine.CreateMatch(ctx, serverengine.MatchRequest{
-		Actor:      agent.Participant,
-		Opponent:   agent,
-		EngineSeat: engineSeat,
-		TimeControl: online.TimeControl{
-			StartingTimeMs: int64(intArg(args, "minutes", 180, 1, 180)) * 60_000,
-			IncrementMs:    int64(intArg(args, "increment_seconds", 60, 0, 60)) * 1000,
-		},
-		Think:       engine.ClampThink(think),
-		OperationID: operationID,
-	})
+	timeControl := online.TimeControl{StartingTimeMs: int64(intArg(args, "minutes", 180, 1, 180)) * 60_000, IncrementMs: int64(intArg(args, "increment_seconds", 60, 0, 600)) * 1000}
+	fen, _ := args["starting_fen"].(string)
+	if fen == "" {
+		fen = serverengine.StandardStartingPosition
+	}
+	var match online.Match
+	var otherToken string
+	opponent, _ := args["opponent"].(string)
+	if opponent != "" && opponent != "engine" && opponent != "agent" && opponent != "human" {
+		return nil, errTool("opponent must be engine, agent or human")
+	}
+	if opponent == "agent" || opponent == "human" {
+		allocator, ok := s.options.Matches.(interface {
+			CreateAllocatedMatch(context.Context, online.ParticipantRef, online.CreateMatchSetup, string) (online.CommandResult, error)
+		})
+		if !ok {
+			return nil, errTool("shared games are unavailable")
+		}
+		otherID, idErr := randomID(AgentPrefix)
+		if idErr != nil {
+			return nil, idErr
+		}
+		otherLabel := "Invited " + opponent
+		other := online.CreateSeat{Participant: online.ParticipantRef{Kind: online.ParticipantGuest, ID: otherID}, PublicLabel: otherLabel, Control: online.SeatControl{Kind: online.ControlAgent, ModelLabel: &otherLabel}}
+		setup := online.CreateMatchSetup{Variant: "orthodox", StartingFEN: fen, TimeControl: timeControl, Seats: online.CreateMatchSeats{White: agent, Black: other}}
+		if agentSeat == online.SeatBlack {
+			setup.Seats = online.CreateMatchSeats{White: other, Black: agent}
+		}
+		created, createErr := allocator.CreateAllocatedMatch(ctx, agent.Participant, setup, operationID)
+		if createErr != nil {
+			return nil, createErr
+		}
+		match, err = s.options.Matches.GetMatch(ctx, created.Receipt.MatchID)
+		if err != nil {
+			return nil, err
+		}
+		issued, issueErr := s.options.Credentials.IssueEngineSeatCredential(ctx, onlineauth.EngineSeatRequest{MatchID: match.MatchID, Seat: engineSeat, GuestID: otherID, Origin: credentialOrigin, TTL: credentialTTL})
+		if issueErr != nil || !issued.Issued {
+			return nil, errTool("could not issue the invited seat")
+		}
+		otherToken = issued.Credential.Secret
+	} else {
+		match, err = s.options.Engine.CreateMatch(ctx, serverengine.MatchRequest{
+			Actor:       agent.Participant,
+			Opponent:    agent,
+			EngineSeat:  engineSeat,
+			TimeControl: timeControl, StartingFEN: fen,
+			Think:       engine.ClampThink(think),
+			OperationID: operationID,
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("the game could not be created: %w", err)
 	}
@@ -314,8 +370,12 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		return nil, errTool("the game was created but your seat could not be claimed: start another game")
 	}
 	sess.attach(onlineauth.NewGuestPrincipal(outcome.Credential), name, outcome.Credential.Secret)
+	deferred, _ := args["defer_join"].(bool)
+	if !deferred {
+		s.sessions.markReady(sess)
+	}
 	verified := false
-	if s.options.Records != nil {
+	if s.options.Records != nil && otherToken == "" && !deferred {
 		runner, _ := args["runner"].(string)
 		verified, err = s.options.Records.Record(ctx, agentboards.Game{
 			MatchID: match.MatchID, AgentSeat: string(agentSeat), ModelName: name,
@@ -326,15 +386,22 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 			return nil, errTool("the game was created but could not be recorded: start another game")
 		}
 	}
-	if err = s.waitForTurn(ctx, sess, s.options.MoveWait); err != nil {
-		return nil, err
+	if otherToken == "" && !deferred {
+		if err = s.waitForTurn(ctx, sess, s.options.MoveWait); err != nil {
+			return nil, err
+		}
 	}
 	board, err := s.board(ctx, sess)
 	if err != nil {
 		return nil, err
 	}
 	board["resume_token"] = sess.resumeToken
-	if s.options.Records != nil {
+	board["seat_url"] = s.seatURL(match.MatchID, agentSeat, sess.resumeToken)
+	if otherToken != "" {
+		board["opponent_url"] = s.seatURL(match.MatchID, engineSeat, otherToken)
+		board["opponent_resume_token"] = otherToken
+	}
+	if s.options.Records != nil && otherToken == "" && !deferred {
 		board["board"] = map[bool]string{true: "verified", false: "community"}[verified]
 	}
 	return board, nil
@@ -357,6 +424,14 @@ func (s *Server) cleanupFailedStart(sess *session) {
 }
 
 func (s *Server) resumeGame(ctx context.Context, sess *session, args map[string]any) (any, error) {
+	if sess.hasGame() {
+		if current, err := s.options.Matches.GetMatch(ctx, sess.matchID); err == nil && current.Status == online.MatchActive {
+			token, _ := args["resume_token"].(string)
+			if token != sess.resumeToken {
+				return nil, errTool("finish or resign your current game before joining another seat")
+			}
+		}
+	}
 	token, _ := args["resume_token"].(string)
 	principal, err := s.options.Authenticator.AuthenticateGuest(ctx, strings.TrimSpace(token), credentialOrigin)
 	if err != nil || !strings.HasPrefix(principal.Participant.ID, AgentPrefix) {
@@ -371,6 +446,10 @@ func (s *Server) resumeGame(ctx context.Context, sess *session, args map[string]
 		name = strings.TrimSuffix(seat.PublicLabel, " (self-reported)")
 	}
 	sess.attach(principal, name, strings.TrimSpace(token))
+	if reported, ok := args["model_name"].(string); ok && cleanName(reported) != "" {
+		sess.agentName = cleanName(reported)
+	}
+	s.sessions.markReady(sess)
 	return s.board(ctx, sess)
 }
 
@@ -383,6 +462,9 @@ func (s *Server) makeMove(ctx context.Context, sess *session, args map[string]an
 	}
 	if match.Status != online.MatchActive {
 		return s.board(ctx, sess)
+	}
+	if !s.playersReady(match) {
+		return nil, errTool("waiting for the other player to join their invitation; call wait_for_turn")
 	}
 	if side, _ := sideToMove(match.PositionFEN); side != sess.seat {
 		return nil, errTool("it is not your turn: call wait_for_turn")
@@ -515,7 +597,7 @@ func (s *Server) waitForTurn(ctx context.Context, sess *session, timeout time.Du
 		if err != nil {
 			return err
 		}
-		if side, _ := sideToMove(match.PositionFEN); match.Status != online.MatchActive || side == sess.seat {
+		if side, _ := sideToMove(match.PositionFEN); match.Status != online.MatchActive || side == sess.seat && s.playersReady(match) {
 			return nil
 		}
 		if !s.options.Now().Before(deadline) {
@@ -542,6 +624,8 @@ func (s *Server) board(ctx context.Context, sess *session) (map[string]any, erro
 	switch {
 	case match.Status != online.MatchActive:
 		status = "finished"
+	case !s.playersReady(match):
+		status = "waiting-for-players"
 	case side == sess.seat:
 		status = "your-turn"
 	}
@@ -550,9 +634,13 @@ func (s *Server) board(ctx context.Context, sess *session) (map[string]any, erro
 		san = append(san, move.SAN)
 	}
 	board := map[string]any{
-		"status": status, "gameId": match.MatchID, "yourSide": string(sess.seat), "agentName": sess.agentName + " (self-reported)",
+		"watch_url": s.watchURL(match.MatchID),
+		"status":    status, "gameId": match.MatchID, "yourSide": string(sess.seat), "agentName": sess.agentName + " (self-reported)",
 		"opponent": serverengine.Label, "fen": match.PositionFEN, "moveCount": len(san), "sideToMove": string(side),
 		"clock": s.clock(match), "result": resultView(match, sess.seat),
+	}
+	if other, ok := match.Seat(otherSeat(sess.seat)); ok {
+		board["opponent"] = other.PublicLabel
 	}
 	if status == "your-turn" {
 		board["input"] = s.input(match, sess)
