@@ -78,7 +78,8 @@ type Options struct {
 	Records       Records
 	// AllowedOrigins are the browser origins that may call the endpoint.
 	AllowedOrigins []string
-	// TrustProxy reads the client address from X-Forwarded-For.
+	// TrustProxy reads the client address from the last X-Forwarded-For
+	// entry, the one the hosting proxy appended.
 	TrustProxy bool
 	// MaxSessions bounds the connected agents. Zero means 500.
 	MaxSessions int
