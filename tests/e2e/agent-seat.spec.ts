@@ -74,7 +74,10 @@ test('a human joins their side while the opposite agent gets its prompt', async 
   expect(calls[0]).toMatchObject({ name: 'start_game', arguments: { opponent: 'human', color: 'black', defer_join: true } });
   await expect(page.getByRole('button', { name: 'Copy black invite' })).toHaveAttribute('data-copy', /Play as black/);
   await page.getByRole('button', { name: 'Play white' }).click();
-  await expect(page.getByText('Playing white')).toBeVisible();
+  await expect(page.getByText('Joined. You play white.')).toBeVisible();
   expect(calls[1]).toMatchObject({ name: 'join_seat', arguments: { resume_token: 'white-secret', model_name: 'Human' } });
   await expect(page.getByRole('button', { name: 'Resign' })).toBeVisible();
+  // The joined seat reads as the human side; the other keeps its reported name.
+  await expect(page.locator('.player-row.white .player-name strong')).toHaveText('White');
+  await expect(page.locator('.player-row.black .player-name strong')).toHaveText('Kimi K2');
 });

@@ -57,7 +57,7 @@ import { EnginePanel } from './EnginePanel.js';
 import { createEngineSelection, isEngineSelection, recommendEngine, runEngineTurn } from '../engines/local.js';
 import { AGENT_TIME_CONTROL, agentBridge, createAgentSelection, isAgentSelection, registerAgentTools, runAgentTurn } from '../agents/index.js';
 import type { AgentGameView, AgentStartOptions } from '../agents/index.js';
-import { remoteEndpoint } from '../agents/remote.js';
+import { remoteEndpoint, seatPrompt } from '../agents/remote.js';
 import type { PlayerSelectionV1 } from '../storage/index.js';
 import { BROWSER_ENGINES, stopBrowserEngines, stopUnusedBrowserEngines } from '../engines/browser.js';
 import { engineSettings } from '../engines/local.js';
@@ -75,6 +75,7 @@ import { PROMOTIONS } from './promotion-options.js';
 import { usePieceStyle } from './use-piece-style.js';
 import { useBoardStyle } from './use-board-style.js';
 import { SettingsPage } from './SettingsPage.js';
+import { CopyButton } from './copy-button.js';
 import { conciseError, conciseTurnError } from './concise-error.js';
 import { controllerRevisionForConfig, matchesOpponentSelection } from './opponent-selection.js';
 import { getGenerationJournal } from '../integration/generation-runner.js';
@@ -177,7 +178,9 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [feedback, setFeedback] = useState('');
   const [sound, setSound] = useState(isSoundEnabled);
   const [promotion, setPromotion] = useState<PromotionMove | null>(null);
-  const [setupOpen, setSetupOpen] = useState(() => !onlineRoute && (new URLSearchParams(window.location.search).get('setup') === 'new' || !readSidebarPreferences().collapsed));
+  // A hosted agent link opens on the game itself, never on the setup panel.
+  const [setupOpen, setSetupOpen] = useState(() => !initialSession.hosted && !onlineRoute &&
+    (new URLSearchParams(window.location.search).get('setup') === 'new' || !readSidebarPreferences().collapsed));
   const [setupRequest, setSetupRequest] = useState(0);
   const [setupStartingFen, setSetupStartingFen] = useState<string | undefined>();
   const [setupFocus, setSetupFocus] = useState<'opponent' | 'time' | 'position' | null>(null);
@@ -638,7 +641,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     generationSelection.kind === 'model' ? generationSelection.reasoningEffort ?? 'low' : '',
     queuedGenerationIdentity].join('/');
   useEffect(() => {
-    if (!autoGeneration || generationController.current !== null || generationSelection.kind !== 'model' ||
+    if (!autoGeneration || session.hosted || generationController.current !== null || generationSelection.kind !== 'model' ||
       generationResultKind !== 'unresolved' || generationReadiness !== 'ready' ||
       generationClockStatus !== 'running') return;
     const selection = generationSelection;
@@ -1056,8 +1059,15 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const disabled = setupOpen || history.reviewing || promotion !== null || resultPrompt !== null || isLocalBoardInputDisabled(snapshot, working || isModelTurn || generationState === 'producing');
   const players = snapshot.checkpoint.selections.players;
   const spectator = players.white.kind === 'model' && players.black.kind === 'model';
+  // A hosted agent game renders through this same screen; only its extra
+  // affordances (join seat, share links) and the local model machinery are
+  // gated on it, because hosted turns belong to the external agents.
+  const hostedGame = session.hosted ?? null;
+  const seatJoined = hostedGame !== null && (players.white.kind === 'human' || players.black.kind === 'human');
+  const hostedWaiting = hostedGame !== null && snapshot.checkpoint.result.kind === 'unresolved' &&
+    snapshot.checkpoint.clocks.activeSide === null && snapshot.clockReading === null;
   // Local games let either clock be topped up while the game runs and no request is mid-flight.
-  const canAddClockTime = !final && !history.reviewing && snapshot.checkpoint.result.kind === 'unresolved' &&
+  const canAddClockTime = hostedGame === null && !final && !history.reviewing && snapshot.checkpoint.result.kind === 'unresolved' &&
     snapshot.checkpoint.clocks.activeSide !== null && snapshot.readiness === 'ready' &&
     snapshot.clockReading !== null && snapshot.clockReading.status !== 'reconciliation-required' &&
     generationState !== 'producing';
@@ -1118,7 +1128,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     playResultSound(RESULT_CUES[finalTone]);
   }, [finalEvent, finalTone]);
   const result = snapshot.checkpoint.result;
-  const practiceOffered = result.kind === 'final' && PRACTICE_REASONS.has(result.reason) && result.winner === humanColor;
+  const practiceOffered = result.kind === 'final' && PRACTICE_REASONS.has(result.reason) && result.winner === humanColor && hostedGame === null;
   const archiveText = [
     ...(generationJournal?.retainedMessages.map(message => `${message.role}: ${message.content}`) ?? []),
     ...(generationJournal?.discardedMessages.map(message => `Undone ${message.role}: ${message.content}`) ?? []),
@@ -1294,8 +1304,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           data-turn={!final && !history.reviewing ? snapshot.position.sideToMove : undefined}
           data-check={!final && !history.reviewing && checkColor !== undefined ? 'true' : undefined}
           role="status" aria-description={final ? undefined : generationDetail || feedback}>
-          {/* One heading element in every state, so focus sent to it survives the switch to a final result. */}
-          <div className="status-result"><h2 ref={resultStatus} tabIndex={-1} className="status-heading" aria-label={!final && generationState === 'producing' ? isEngineSelection(activePlayer) ? 'Engine is choosing a move' : 'AI is choosing a move' : undefined}>{history.reviewing ? `${history.ply}/${history.count}` : finalResult ? finalResult.headline : generationState === 'stopped' ? 'Paused' : generationState === 'failed' ? conciseTurnError(new Error(generationDetail)) : generationState === 'producing' ? generationDetail === 'Checking connection…' ? 'Checking…' : 'Thinking…' : statusLabel(snapshot)}</h2>
+            {/* One heading element in every state, so focus sent to it survives the switch to a final result. */}
+            <div className="status-result"><h2 ref={resultStatus} tabIndex={-1} className="status-heading" aria-label={!final && generationState === 'producing' ? isEngineSelection(activePlayer) ? 'Engine is choosing a move' : 'AI is choosing a move' : undefined}>{history.reviewing ? `${history.ply}/${history.count}` : finalResult ? finalResult.headline : generationState === 'stopped' ? 'Paused' : generationState === 'failed' ? conciseTurnError(new Error(generationDetail)) : generationState === 'producing' ? generationDetail === 'Checking connection…' ? 'Checking…' : 'Thinking…' : hostedWaiting ? 'Waiting for players' : statusLabel(snapshot)}</h2>
             {finalResult?.detail && !history.reviewing && <p className="status-detail">{finalResult.detail}</p>}</div>
           <div className="button-row">
             {!final && generationState === 'producing' && <IconButton icon="stop" label="Stop generation" onClick={() => void stopModelTurn()} />}
@@ -1304,11 +1314,26 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
               <IconButton icon="play" label={snapshot.modelHandoff.queued?.state === "failed" ? "Retry queued model" : isEngineSelection(activePlayer) ? "Retry engine turn" : "Retry model request"} onClick={() => { if (snapshot.modelHandoff.queued?.state === 'failed') void recoverQueuedModel('retry'); else retryModelTurn(); }} />
               {snapshot.modelHandoff.queued?.state === 'failed' && <IconButton icon="undo" label="Resume previous model" onClick={() => void recoverQueuedModel('resume')} />}
             </>}
-            {!final && Object.values(players).some(player => player.kind === 'model') && !isAgentSelection(recoverySelection) && <IconButton icon="change" label={isEngineSelection(recoverySelection) ? "Choose another engine" : "Choose another model"} onClick={() => setRecoveryOpen(true)} />}
+            {!final && Object.values(players).some(player => player.kind === 'model') && hostedGame === null && !isAgentSelection(recoverySelection) && <IconButton icon="change" label={isEngineSelection(recoverySelection) ? "Choose another engine" : "Choose another model"} onClick={() => setRecoveryOpen(true)} />}
             {snapshot.modelHandoff.queued && <IconButton icon="close" label="Cancel queued model" onClick={() => void cancelQueuedModel()} />}
             {practiceOffered && !spectator && !Object.values(players).some(isEngineSelection) && Object.values(players).some(player => player.kind === 'model') && <IconButton icon="play" label="Start practice from this position" disabled={working} onClick={() => void beginPractice()} />}
           </div>
         </div>
+        {hostedGame && <nav hidden={setupOpen} className="hosted-game" aria-label="Hosted game">
+          {!seatJoined && hostedGame.hasSeat && <button className="button primary" type="button" disabled={working}
+            onClick={() => { void hostedGame.joinSeat().then(() => {
+              // The board orients to the side this browser now plays.
+              setOrientation(hostedGame.side);
+              setFeedback(`Joined. You play ${hostedGame.side}.`);
+            }).catch(error => setFeedback(conciseError(error))); }}>
+            {hostedGame.side === 'white' ? 'Play white' : 'Play black'}</button>}
+          <div className="button-row">
+            <CopyButton label="Copy viewing link" value={hostedGame.watchUrl} />
+            {(Object.entries(hostedGame.invitations) as ['white' | 'black', string][]).map(([color, url]) =>
+              <CopyButton key={color} label={`Copy ${color} invite`} value={seatPrompt(url)} />)}
+          </div>
+          {hostedGame.connectionError() && <p className="status-detail" role="alert">{hostedGame.connectionError()}</p>}
+        </nav>}
         <nav hidden={setupOpen} className="board-tools" aria-label="Board tools"><IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />
           <IconButton icon="undo" label="Undo" onClick={() => void undo()} disabled={working || snapshot.readiness !== 'ready' || !snapshot.checkpoint.rules.moves.length || snapshot.checkpoint.result.kind !== 'unresolved'} />
           <IconButton icon="code" label="Type a move" disabled={disabled} onClick={() => openTool('move')} />

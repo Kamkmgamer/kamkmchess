@@ -39,6 +39,29 @@ export interface LocalGameSession {
   readonly gameId: string;
   readonly restored: boolean;
   readonly controller: GameController;
+  /**
+   * A hosted agent match this page renders from the remote MCP authority.
+   *
+   * The play screen is the one interface for every mode, including agent
+   * games that live on the server. The meta carries what only hosted games
+   * have: the seat this browser may join and the invitations to share.
+   */
+  readonly hosted?: HostedGameMeta;
+}
+
+export interface HostedGameMeta {
+  /** The seat this address belongs to, seat token or not. */
+  readonly side: 'white' | 'black';
+  /** True when the address carries a seat invitation for this browser. */
+  readonly hasSeat: boolean;
+  /** The public viewing URL of the hosted game. */
+  readonly watchUrl: string;
+  /** The private seat invitations captured at game creation, by color. */
+  readonly invitations: Record<'white' | 'black', string>;
+  /** Joins the invited seat, so this browser plays it. */
+  joinSeat(): Promise<void>;
+  /** The poll failure text, or null while the server connection is healthy. */
+  connectionError(): string | null;
 }
 
 /** Composition owns storage and the one active game writer for this page lifetime. */

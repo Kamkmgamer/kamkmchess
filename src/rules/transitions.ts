@@ -1,6 +1,6 @@
 import { castlingSide } from 'chessops/chess';
 import { makeBoardFen, makeCastlingFen } from 'chessops/fen';
-import { makeSan } from 'chessops/san';
+import { makeSan, parseSan } from 'chessops/san';
 import { charToRole, kingCastlesTo, makeSquare, parseSquare } from 'chessops/util';
 import type { NormalMove } from 'chessops/types';
 import { createChessPosition } from './chess-adapter.js';
@@ -28,6 +28,17 @@ export class IllegalMoveError extends Error {
 
 const moveCache = new WeakMap<Position, readonly CoordinateMove[]>();
 const promotions: readonly Promotion[] = ['q', 'r', 'b', 'n'];
+
+/** The coordinate move a SAN token denotes in this position, or null when it is not legal there. */
+export function sanToCoordinateMove(position: Position, san: string): CoordinateMove | null {
+  const move = parseSan(createChessPosition(position), san.trim());
+  if (!move || !('from' in move)) return null;
+  // Orthodox SAN promotions are underpromotions; chessops types carry the full role union.
+  const promotion = move.promotion === undefined ? undefined
+    : ({ queen: 'q', rook: 'r', bishop: 'b', knight: 'n' } as const)[move.promotion as 'queen' | 'rook' | 'bishop' | 'knight'];
+  return promotion === undefined ? { from: makeSquare(move.from), to: makeSquare(move.to) }
+    : { from: makeSquare(move.from), to: makeSquare(move.to), promotion };
+}
 
 /** Legal orthodox coordinates, including explicit promotion choices. */
 export function legalMoves(position: Position): readonly CoordinateMove[] {

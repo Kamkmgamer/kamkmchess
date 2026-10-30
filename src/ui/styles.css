@@ -570,3 +570,7 @@ input, textarea { caret-color: var(--green); }
   .editor-coordinate { font-size: 10px; }
   .focus-page .editor-fen-row textarea { font-size: 16px; }
 }
+/* The hosted agent game's share row lives in the moves sidebar like every other affordance. */
+.hosted-game { display: grid; gap: 10px; padding-top: 12px; border-top: 1px solid var(--edge); }
+.hosted-game .button-row { flex-wrap: wrap; }
+.hosted-game .status-detail { margin: 0; }

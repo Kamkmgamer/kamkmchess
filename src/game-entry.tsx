@@ -62,7 +62,38 @@ function linkedInvitationId(): string | null {
 }
 const linkedInvitation = linkedInvitationId();
 
-void composition.openActiveGame().then(async (session) => {
+/**
+ * A hosted agent game opens the same play screen over the remote MCP
+ * authority. The watch id and, when the address carries one, the seat token
+ * come off the address; a bare /play/agent address redirects to /play.
+ */
+function hostedGameRequest(): { watchId: string; seatToken: string | null; side: 'white' | 'black' } | null {
+  if (window.location.pathname !== '/play/agent') return null;
+  const watchId = new URLSearchParams(window.location.search).get('watch');
+  if (!watchId) {
+    window.location.replace('/play');
+    return null;
+  }
+  const side = new URLSearchParams(window.location.search).get('side') === 'black' ? 'black' : 'white';
+  const seatToken = new URLSearchParams(window.location.hash.slice(1)).get('seat');
+  return { watchId, seatToken, side };
+}
+const hostedRequest = hostedGameRequest();
+
+void (hostedRequest
+  ? (async () => {
+    // The hosted game has no local storage: the server is the only authority,
+    // so the session goes straight to the play screen over the MCP session.
+    const { openHostedGameSession } = await import('./agents/hosted-session.js');
+    const session = openHostedGameSession(hostedRequest);
+    const snapshot = await session.controller.initialize();
+    rootView.render(
+      <StrictMode>
+        <App composition={composition} initialSession={session} initialSnapshot={snapshot} online={online} />
+      </StrictMode>,
+    );
+  })()
+  : composition.openActiveGame().then(async (session) => {
   const snapshot = await session.controller.initialize();
   if (publicConfig.accountsEnabled) {
     // The account shell boots the account session, the account composition and
@@ -104,4 +135,4 @@ void composition.openActiveGame().then(async (session) => {
 }).catch((error: unknown) => {
   const message = error instanceof Error ? error.message : 'The local chess game could not be opened.';
   rootView.render(<main className="focus-page" role="alert" aria-description={message}><h1>Couldn’t open chess</h1><button onClick={() => window.location.reload()}>Reload</button></main>);
-});
+}));

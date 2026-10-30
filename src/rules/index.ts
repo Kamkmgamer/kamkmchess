@@ -1,4 +1,4 @@
-export { applyCoordinateMove, IllegalMoveError, legalMoves } from './transitions.js';
+export { applyCoordinateMove, IllegalMoveError, legalMoves, sanToCoordinateMove } from './transitions.js';
 export type { Transition } from './transitions.js';
 export { parsePosition, PositionValidationError } from './position.js';
 export { isSquareAttackedInFen } from './chess-adapter.js';

@@ -1,3 +1,0 @@
-/* The agent game reuses the standard play-screen layout; only the share row is its own. */
-.agent-board-note { padding: 24px; text-align: center; color: var(--dim, var(--t3-dim)); }
-.agent-invites { display: grid; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--edge); }
