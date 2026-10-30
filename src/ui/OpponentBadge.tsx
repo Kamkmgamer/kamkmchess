@@ -11,10 +11,17 @@ export function OpponentLogo({ modelId }: { readonly modelId: string }) {
   </span>;
 }
 
-export function OpponentBadge({ player, side }: {
+export function OpponentBadge({ player, side, reportedName }: {
   readonly player: PlayerSelectionV1;
   readonly side: 'white' | 'black';
+  /**
+   * The name an agent seat reported for itself, when the caller knows one.
+   *
+   * Agents play under a reserved seat kind, so the routing id alone says
+   * nothing; the name the agent reported decides the brand logo.
+   */
+  readonly reportedName?: string | null;
 }) {
-  if (player.kind === 'model') return <OpponentLogo modelId={player.modelRoutingId} />;
+  if (player.kind === 'model') return <OpponentLogo modelId={reportedName ?? player.modelRoutingId} />;
   return <span className={`player-badge ${side === 'white' ? 'light' : 'dark'}-piece`} aria-hidden="true"><Icon name="user" /></span>;
 }

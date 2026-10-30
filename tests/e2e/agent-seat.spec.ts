@@ -10,7 +10,7 @@ async function hostedGame(page: Page) {
     const origin = new URL(route.request().url()).origin;
     const watch = `${origin}/play/agent?watch=match-fixture`;
     if (route.request().method() === 'GET') {
-      await route.fulfill({ json: { gameId: 'match-fixture', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', status: 'waiting-for-players', players: { white: 'White agent', black: 'Black agent' }, moves: [], clock: { whiteMs: 10800000, blackMs: 10800000 }, result: null, watch_url: watch } });
+      await route.fulfill({ json: { gameId: 'match-fixture', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', status: 'waiting-for-players', players: { white: 'GLM-4.7 (self-reported)', black: 'Kimi K2 (self-reported)' }, moves: [], clock: { whiteMs: 10800000, blackMs: 10800000 }, result: null, watch_url: watch } });
       return;
     }
     const rpc = route.request().postDataJSON() as { id: number; method: string; params: { name: string; arguments: Record<string, unknown> } };
@@ -43,10 +43,16 @@ test('Agent seats have separate invitations and a public live viewer', async ({ 
   await expect(page.getByLabel('Starting minutes')).toHaveValue('180');
   await expect(page.getByLabel('Increment seconds')).toHaveValue('60');
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Watch the agents play' })).toBeVisible();
+  // The game plays on the shared board, like every other mode.
+  await expect(page.getByLabel('Chess match board')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Waiting for players' })).toBeVisible();
+  // Reported model names lose the marker and show their family logo.
+  await expect(page.locator('.opponent-logo[data-brand="glm"]')).toHaveCount(1);
+  await expect(page.locator('.opponent-logo[data-brand="kimi"]')).toHaveCount(1);
+  await expect(page.locator('.player-name strong', { hasText: 'GLM-4.7' })).toHaveText('GLM-4.7');
   expect(calls[0]).toMatchObject({ name: 'start_game', arguments: { opponent: 'agent', color: 'white', defer_join: true } });
-  const white = await page.getByLabel('white agent prompt', { exact: true }).inputValue();
-  const black = await page.getByLabel('black agent prompt', { exact: true }).inputValue();
+  const white = await page.getByRole('button', { name: 'Copy white invite' }).getAttribute('data-copy');
+  const black = await page.getByRole('button', { name: 'Copy black invite' }).getAttribute('data-copy');
   expect(white).toContain('Play as white');
   expect(white).toContain('white-secret');
   expect(white).not.toContain('black-secret');
@@ -54,11 +60,10 @@ test('Agent seats have separate invitations and a public live viewer', async ({ 
   expect(black).toContain('black-secret');
   expect(black).not.toContain('white-secret');
   expect(white).toContain('Do not call start_game');
-  const viewing = await page.getByLabel('Viewing URL', { exact: true }).inputValue();
+  const viewing = await page.getByRole('button', { name: 'Copy viewing link' }).getAttribute('data-copy');
   expect(viewing).not.toContain('secret');
   expect(viewing).not.toContain('#');
-  await expect(page.getByText('Waiting for both players to join')).toBeVisible();
-  await expect(page.getByRole('button', { name: /Play .* myself/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /^Play (white|black)$/ })).toHaveCount(0);
 });
 
 test('a human joins their side while the opposite agent gets its prompt', async ({ page }) => {
@@ -66,10 +71,10 @@ test('a human joins their side while the opposite agent gets its prompt', async 
   await page.goto('/play?setup=new');
   await page.getByLabel('Black', { exact: true }).selectOption('agent');
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'White invitation' })).toBeVisible();
   expect(calls[0]).toMatchObject({ name: 'start_game', arguments: { opponent: 'human', color: 'black', defer_join: true } });
-  await expect(page.getByLabel('black agent prompt', { exact: true })).toHaveValue(/Play as black/);
-  await page.getByRole('button', { name: 'Play white myself' }).click();
-  await expect(page.getByText('You are playing white. Pawn promotions use a queen.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Copy black invite' })).toHaveAttribute('data-copy', /Play as black/);
+  await page.getByRole('button', { name: 'Play white' }).click();
+  await expect(page.getByText('Playing white')).toBeVisible();
   expect(calls[1]).toMatchObject({ name: 'join_seat', arguments: { resume_token: 'white-secret', model_name: 'Human' } });
+  await expect(page.getByRole('button', { name: 'Resign' })).toBeVisible();
 });

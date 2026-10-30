@@ -13,7 +13,7 @@ import { EnginePanel } from './EnginePanel.js';
 import { composePlayersBySide, type BoardSide, type SeatKind, type SideKinds } from './match-modes.js';
 import { AGENT_TIME_CONTROL } from '../agents/seat.js';
 import { conciseError } from './concise-error.js';
-import { ChessMcpClient, remoteEndpoint } from '../agents/remote.js';
+import { ChessMcpClient } from '../agents/remote.js';
 import './new-game-setup.css';
 
 export interface StartedSidebarGame {
@@ -137,7 +137,7 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
         <option value="human">Human</option><option value="engine">Engine</option><option value="ai">Browser AI</option><option value="agent">Agent</option>
       </select></label>)}
     </div>
-    {seats.map(side => sideKinds[side] === 'human' ? null : sideKinds[side] === 'agent' ? <AgentSeatNote key={`${side}-agent`} side={side} /> : hasAgent && sideKinds[side] === 'engine' ? <section className="game-opponent-options" key={side}><h3>{side === 'white' ? 'White' : 'Black'}: server Stockfish</h3><label>Thinking time<select value={serverThink} onChange={event => setServerThink(Number(event.target.value))}><option value={100}>Casual, 100 ms</option><option value={1000}>Club, 1 second</option><option value={5000}>Strong, 5 seconds</option></select></label></section> : <section className="game-opponent-options" aria-label={`${side === 'white' ? 'White' : 'Black'} opponent setup`} key={`${side}-${sideKinds[side]}`}>
+    {seats.map(side => sideKinds[side] === 'human' || sideKinds[side] === 'agent' ? null : hasAgent && sideKinds[side] === 'engine' ? <section className="game-opponent-options" key={side}><h3>{side === 'white' ? 'White' : 'Black'}: server Stockfish</h3><label>Thinking time<select value={serverThink} onChange={event => setServerThink(Number(event.target.value))}><option value={100}>Casual, 100 ms</option><option value={1000}>Club, 1 second</option><option value={5000}>Strong, 5 seconds</option></select></label></section> : <section className="game-opponent-options" aria-label={`${side === 'white' ? 'White' : 'Black'} opponent setup`} key={`${side}-${sideKinds[side]}`}>
       <h3>{side === 'white' ? 'White' : 'Black'} {sideKinds[side] === 'engine' ? 'engine' : 'browser AI'}</h3>
       {sideKinds[side] === 'engine'
         ? <EnginePanel label={`${side === 'white' ? 'White' : 'Black'} engine`} heading={`${side === 'white' ? 'White' : 'Black'} engine`} selected={engineSeats[side]} onSelect={selection => setEngineSeats(current => ({ ...current, [side]: selection }))} />
@@ -145,7 +145,8 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
           onSelectionInvalidated={() => { selectedIdentities.current.delete(side); setAiSeats(current => ({ ...current, [side]: null })); }}
           onSelect={(selection, identity) => { checkedIdentities.current.set(JSON.stringify(selection), identity); selectedIdentities.current.set(side, identity); setAiSeats(current => ({ ...current, [side]: selection })); }} />}
     </section>)}
-    {hasAgent && Object.values(sideKinds).includes('ai') && <p role="alert">Choose Agent for an external agent, Engine for server Stockfish, or Human for a person on the shared board.</p>}
+    {hasAgent && Object.values(sideKinds).includes('ai') && <p role="alert">Agent games can't include Browser AI. Choose Human or Engine.</p>}
+    {hasAgent && !Object.values(sideKinds).includes('ai') && <p className="game-mode-hint">You'll get invite links to share once the game starts.</p>}
     <form onSubmit={createNewGame} className="connection-form game-start-form">
       <fieldset className="game-time-options"><legend>Time control</legend>
         <label>Minutes<input id="starting-minutes" aria-label="Starting minutes" type="number" inputMode="numeric" min="1" max="180" required value={setupMinutes} onChange={event => setSetupMinutes(Number(event.target.value))} /></label>
@@ -170,13 +171,5 @@ export function NewGameSetup({ composition, startingFen, draft, focus, onStarted
       {setupError && <p role="alert">{conciseError(new Error(setupError))}</p>}
       <button className="button primary game-start-button" aria-label="Start game" disabled={working || !setupReady} type="submit">{working ? 'Starting...' : 'Start game'}</button>
     </form>
-  </section>;
-}
-
-function AgentSeatNote({ side }: { readonly side: BoardSide }) {
-  return <section className="game-opponent-options agent-seat-note" aria-label={`${side === 'white' ? 'White' : 'Black'} agent`}>
-    <h3>{side === 'white' ? 'White' : 'Black'}: agent</h3>
-    <p>Start the game to get a {side} invitation and prompt for your agent.</p>
-    <p>MCP endpoint: <code>{remoteEndpoint}</code></p>
   </section>;
 }

@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
 import { OpponentBadge } from './OpponentBadge.js';
-import { resolveOpponentBrand } from './opponent-brand.js';
+import { cleanReportedName, resolveOpponentBrand, resolveReportedBrand } from './opponent-brand.js';
 import { createEngineSelection } from '../engines/local.js';
+import { createAgentSelection } from '../agents/seat.js';
 
 describe('opponent brand recognition', () => {
   it.each([
@@ -28,6 +29,22 @@ describe('opponent brand recognition', () => {
   it('prefers the actual model over a routing namespace', () => {
     expect(resolveOpponentBrand('openai/claude-sonnet-4.6')).toBe('claude');
     expect(resolveOpponentBrand('anthropic/gpt-5.2')).toBe('chatgpt');
+  });
+
+  it('strips the self-reported marker from names an agent chose itself', () => {
+    expect(cleanReportedName('GLM-4.7 (self-reported)')).toBe('GLM-4.7');
+    expect(cleanReportedName('Kimi K2  (SELF-REPORTED) ')).toBe('Kimi K2');
+    expect(cleanReportedName('Claude Opus')).toBe('Claude Opus');
+  });
+
+  it.each([
+    ['GLM-4.7 (self-reported)', 'glm'], ['Kimi K2 (self-reported)', 'kimi'],
+    ['MiniMax M2.5 (self-reported)', 'minimax'], ['Claude Opus 5.5 (self-reported)', 'claude'],
+    ['GPT-5.2 (self-reported)', 'chatgpt'], ['Gemini 3 Pro (self-reported)', 'gemini'],
+    ['Qwen3-Max (self-reported)', 'qwen'], ['Mistral Large (self-reported)', 'mistral'],
+    ['Grok 4 (self-reported)', 'grok'], ['Human (self-reported)', null], ['Mystery agent', null],
+  ])('resolves the family of a reported name: %s', (label, brand) => {
+    expect(resolveReportedBrand(label)).toBe(brand);
   });
 
   it.each(['', 'offline-fixture', 'custom-agent', 'openrouter/auto', 'mygptwrapper', 'notclaude', 'o123', 'stockfisher'])('keeps unknown or unrelated names neutral: %s', modelId => {
@@ -61,5 +78,11 @@ describe('opponent badges', () => {
   it('preserves local human color badges', () => {
     expect(renderToStaticMarkup(createElement(OpponentBadge, { side: 'white', player: { kind: 'human' } }))).toContain('class="player-badge light-piece"');
     expect(renderToStaticMarkup(createElement(OpponentBadge, { side: 'black', player: { kind: 'human' } }))).toContain('class="player-badge dark-piece"');
+  });
+
+  it('brands an agent seat by the name it reported', () => {
+    const agent = createAgentSelection();
+    expect(renderToStaticMarkup(createElement(OpponentBadge, { side: 'white', player: agent }))).toContain('aria-label="AI opponent"');
+    expect(renderToStaticMarkup(createElement(OpponentBadge, { side: 'white', player: agent, reportedName: 'GLM-4.7 (self-reported)' }))).toContain('data-brand="glm"');
   });
 });

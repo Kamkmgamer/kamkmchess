@@ -55,3 +55,16 @@ export function resolveOpponentBrand(modelId: string): OpponentBrand | null {
   }
   return null;
 }
+
+/** The marker the server and the page append to a name an agent chose itself. */
+const SELF_REPORTED = /\s*\(self-reported\)\s*$/i;
+
+/** A self-reported agent name without the marker, ready to display and to match. */
+export function cleanReportedName(label: string): string {
+  return label.replace(SELF_REPORTED, '').trim();
+}
+
+/** The family of a name an agent reported for itself, marker removed first. */
+export function resolveReportedBrand(label: string): OpponentBrand | null {
+  return resolveOpponentBrand(cleanReportedName(label));
+}
