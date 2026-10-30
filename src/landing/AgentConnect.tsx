@@ -46,14 +46,14 @@ function CopyBox({ label, value }: { label: string; value: string }) {
   );
 }
 
-const opponents: readonly Choice<AgentOpponent>[] = [{ value: 'engine', label: 'Stockfish' }, { value: 'human', label: 'Me' }];
+const opponents: readonly Choice<AgentOpponent>[] = [{ value: 'engine', label: 'Stockfish' }, { value: 'human', label: 'Me' }, { value: 'agent', label: 'Another agent' }];
 const colors: readonly Choice<AgentColor>[] = [{ value: 'white', label: 'White' }, { value: 'black', label: 'Black' }, { value: 'random', label: 'Random' }];
 const levels: readonly Choice<AgentLevel>[] = (Object.keys(AGENT_LEVELS) as AgentLevel[]).map(value => ({ value, label: AGENT_LEVELS[value].label }));
 
 /** Copy-ready prompts that get an agent playing in a minute. */
 export function AgentConnect() {
   const [preferences, setPreferences] = useState<AgentPreferences>(DEFAULT_AGENT_PREFERENCES);
-  const [client, setClient] = useState<AgentClient>('browser');
+  const [client, setClient] = useState<AgentClient>('claude-code');
   const [remote, setRemote] = useState(false);
   const tabsId = useId();
 
@@ -62,18 +62,12 @@ export function AgentConnect() {
     void fetchMcpAvailability(publicConfig.apiBaseUrl).then(available => {
       if (!live || !available) return;
       setRemote(true);
-      setClient(current => current === 'browser' ? 'claude-code' : current);
     });
     return () => { live = false; };
   }, []);
 
-  const clients = AGENT_CLIENTS.filter(entry => remote || !entry.remote);
-  const browser = client === 'browser';
-  // Only a page agent can play the person at the screen; remote agents play the server's Stockfish.
-  const effective = browser ? preferences : { ...preferences, opponent: 'engine' as const };
-  const steps = setupSteps(client, effective, {
+  const steps = setupSteps(client, preferences, {
     mcp: remote && publicConfig.apiBaseUrl ? mcpUrl(publicConfig.apiBaseUrl) : null,
-    page: `${window.location.origin}/play`,
   });
   const update = (next: Partial<AgentPreferences>) => setPreferences(current => ({ ...current, ...next }));
 
@@ -81,11 +75,11 @@ export function AgentConnect() {
     <section id="agents" className="agents-section page-width" aria-labelledby="agents-heading">
       <div className="agents-intro">
         <h2 id="agents-heading">Play with<br />your agent.</h2>
-        <p>Let Claude, Codex, ChatGPT or any MCP agent play a full game. It sees only the position and picks its own moves, under the same rules as an AI opponent.</p>
+        <p>Agents play through MCP. Give your agent a prompt, then open its viewing URL to watch live. Play against Stockfish, yourself, or someone else's agent. <a href="/agents.md">Read the agent instructions</a>.</p>
       </div>
       <div className="agents-panel">
         <div className="agent-tabs" role="tablist" aria-label="Your agent">
-          {clients.map(entry => (
+          {AGENT_CLIENTS.map(entry => (
             <Button key={entry.id} id={`${tabsId}-${entry.id}`} role="tab" variant="ghost" size="sm" className="agent-tab"
               aria-selected={client === entry.id} aria-controls={`${tabsId}-panel`} onClick={() => setClient(entry.id)}>
               {entry.label}
@@ -94,9 +88,9 @@ export function AgentConnect() {
         </div>
         <div id={`${tabsId}-panel`} role="tabpanel" aria-labelledby={`${tabsId}-${client}`} className="agent-setup">
           <div className="agent-options">
-            {browser && <Choices label="Opponent" value={preferences.opponent} options={opponents} onChange={opponent => update({ opponent })} disabled={preferences.askMe} />}
+            <Choices label="Opponent" value={preferences.opponent} options={opponents} onChange={opponent => update({ opponent })} disabled={preferences.askMe} />
             <Choices label="Agent plays" value={preferences.color} options={colors} onChange={color => update({ color })} disabled={preferences.askMe} />
-            {effective.opponent === 'engine' && <Choices label="Stockfish" value={preferences.level} options={levels} onChange={level => update({ level })} disabled={preferences.askMe} />}
+            {preferences.opponent === 'engine' && <Choices label="Stockfish" value={preferences.level} options={levels} onChange={level => update({ level })} disabled={preferences.askMe} />}
             <label className="agent-ask">
               <input type="checkbox" checked={preferences.askMe} onChange={event => update({ askMe: event.target.checked })} />
               <span>Let my agent ask me first</span>
@@ -110,7 +104,7 @@ export function AgentConnect() {
               </li>
             ))}
           </ol>
-          {!remote && <p className="agent-note"><Icon icon={Bot} size={16} />Claude Code, Codex, claude.ai and ChatGPT connect through the server, which is not switched on for this site yet. A browser agent works today.</p>}
+          {!remote && <p className="agent-note"><Icon icon={Bot} size={16} />The MCP server is currently unavailable. Try again shortly. Agent gameplay requires the MCP server.</p>}
         </div>
       </div>
     </section>

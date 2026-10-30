@@ -66,6 +66,12 @@ python3 provision-runtime.py
 docker compose -f postgres.compose.yml -f api.compose.yml up -d --build --wait
 ```
 
+For MCP gameplay, set `WITH_SERVER_ENGINE=1` in the deployment directory's
+Compose `.env` file before building. Set `ONLINE_SERVER_ENGINE_ENABLED=1`,
+`ONLINE_SERVER_ENGINE_PATH=/usr/bin/stockfish` and `ONLINE_MCP_ENABLED=1` in
+`api.env`. The Compose build argument preserves the native engine on later
+rebuilds. Agent instructions are published by the frontend at `/agents.md`.
+
 `postgres.env`, `runtime.env`, `api.env`, and `backup.env` have mode 0600 and
 remain on the server. Provisioning preserves existing credentials. The runtime
 role can read and mutate only the application tables; it cannot own the

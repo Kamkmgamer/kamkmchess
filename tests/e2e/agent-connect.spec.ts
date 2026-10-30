@@ -1,28 +1,26 @@
 import { expect, test } from '@playwright/test';
 
-test('the agent section gives a browser agent a ready prompt and follows the choices', async ({ page, context }) => {
-  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+test('the agent section offers every MCP client and follows the choices', async ({ page }) => {
   await page.goto('/#agents');
   const section = page.getByRole('region', { name: /Play with your agent/ });
   await expect(section).toBeVisible();
-  // Without the remote endpoint only the browser route is offered.
-  await expect(section.getByRole('tab')).toHaveText(['Claude in Chrome']);
-  await expect(section.getByText(/not switched on for this site yet/)).toBeVisible();
+  await expect(section.getByRole('tab')).toHaveText(['Claude Code', 'Codex', 'claude.ai', 'ChatGPT', 'Cursor / any MCP']);
+  // The preview build has no service origin: MCP reports unavailable and no steps render.
+  await expect(section.getByText(/MCP server is currently unavailable/)).toBeVisible();
+  await expect(section.locator('.agent-steps li')).toHaveCount(0);
+  await expect(section.getByRole('button', { name: 'Copy prompt' })).toHaveCount(0);
 
-  await section.getByRole('button', { name: 'Black', exact: true }).click();
-  await section.getByRole('button', { name: 'Strong', exact: true }).click();
-  await section.getByRole('button', { name: 'Copy prompt' }).click();
-  await expect(section.getByRole('button', { name: 'Copied' })).toBeVisible();
-  const copied = await page.evaluate(() => navigator.clipboard.readText());
-  expect(copied).toContain('/play and play one game of chess');
-  expect(copied).toContain('color: "black", engine_think_ms: 5000');
+  await section.getByRole('tab', { name: 'Codex' }).click();
+  await expect(section.getByRole('tab', { name: 'Codex' })).toHaveAttribute('aria-selected', 'true');
 
-  await section.getByRole('button', { name: 'Me', exact: true }).click();
-  await expect(section.getByRole('button', { name: 'Strong', exact: true })).toBeHidden();
-  await expect(section.locator('pre')).toContainText('opponent: "human"');
+  // Opponent choices still shape the setup: shared games hide the Stockfish level.
+  await expect(section.getByRole('button', { name: 'Club', exact: true })).toBeVisible();
+  await section.getByRole('button', { name: 'Another agent', exact: true }).click();
+  await expect(section.getByRole('button', { name: 'Club', exact: true })).toBeHidden();
 
   await section.getByLabel('Let my agent ask me first').check();
-  await expect(section.locator('pre')).toContainText('ask me whether I want to play you myself');
+  await expect(section.getByRole('button', { name: 'White', exact: true })).toBeDisabled();
+  await expect(section.getByRole('button', { name: 'Another agent', exact: true })).toBeDisabled();
 });
 
 test('the sidebar links to the agent section', async ({ page }) => {

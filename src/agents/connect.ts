@@ -1,14 +1,12 @@
 /**
  * Copy-ready setup for playing kamkm chess with your own agent.
  *
- * Two routes exist. A browser agent (Claude in Chrome, a WebMCP browser) uses
- * the tools this page registers. Any MCP client (Claude Code, Codex,
- * claude.ai, ChatGPT, Cursor) uses the server's remote MCP endpoint, which is
- * only offered when the service reports it is on.
+ * All clients use the server's remote MCP endpoint. Browser gameplay is not
+ * offered as a fallback when that endpoint is unavailable.
  */
 
-export type AgentClient = 'claude-code' | 'codex' | 'claude-ai' | 'chatgpt' | 'mcp' | 'browser';
-export type AgentOpponent = 'engine' | 'human';
+export type AgentClient = 'claude-code' | 'codex' | 'claude-ai' | 'chatgpt' | 'mcp';
+export type AgentOpponent = 'engine' | 'human' | 'agent';
 export type AgentColor = 'white' | 'black' | 'random';
 export type AgentLevel = 'casual' | 'club' | 'strong';
 
@@ -34,7 +32,6 @@ export const AGENT_CLIENTS: readonly { id: AgentClient; label: string; remote: b
   { id: 'claude-ai', label: 'claude.ai', remote: true },
   { id: 'chatgpt', label: 'ChatGPT', remote: true },
   { id: 'mcp', label: 'Cursor / any MCP', remote: true },
-  { id: 'browser', label: 'Claude in Chrome', remote: false },
 ];
 
 export const MCP_SERVER_NAME = 'kamkm-chess';
@@ -50,24 +47,26 @@ export interface SetupStep {
   readonly copy?: { readonly label: string; readonly value: string };
 }
 
-const FAIRNESS = 'Choose every move yourself: do not run code, a chess engine or any analysis tool.';
+const FAIRNESS = 'Choose every move yourself: do not run code to analyze moves, a chess engine or any analysis tool. Code used only to call MCP is allowed.';
 
-function startLine(preferences: AgentPreferences, tools: 'remote' | 'page'): string {
+function startLine(preferences: AgentPreferences): string {
   if (preferences.askMe) {
-    const opponentQuestion = tools === 'page' ? ' whether I want to play you myself or watch you play Stockfish,' : '';
-    return `Before you start, ask me${opponentQuestion} which color you should play (white, black or random) and how strong Stockfish should be (casual 100 ms, club 1000 ms or strong 5000 ms per move). Then call start_game with my answers.`;
+    return 'Before you start, ask me which color you should play (white, black or random) and how strong Stockfish should be (casual 100 ms, club 1000 ms or strong 5000 ms per move). Then call start_game with my answers.';
   }
-  const opponent = tools === 'page' && preferences.opponent === 'human' ? ', opponent: "human"' : '';
-  const think = tools === 'page' && preferences.opponent === 'human' ? '' : `, engine_think_ms: ${AGENT_LEVELS[preferences.level].thinkMs}`;
+  const opponent = preferences.opponent !== 'engine' ? `, opponent: "${preferences.opponent}"` : '';
+  const think = preferences.opponent !== 'engine' ? '' : `, engine_think_ms: ${AGENT_LEVELS[preferences.level].thinkMs}`;
   return `Call start_game with color: "${preferences.color}"${opponent}${think}.`;
 }
 
 /** The prompt that makes an agent play one game with the remote tools. */
-export function remotePrompt(preferences: AgentPreferences): string {
+export function remotePrompt(preferences: AgentPreferences, endpoint: string): string {
   return [
     `Play one game of chess on kamkm chess using the ${MCP_SERVER_NAME} tools.`,
+    `Use the Streamable HTTP MCP server at ${endpoint}. Connect it if needed. Use MCP for every move. Do not use GUI, browser tools or computer use. If your host cannot connect a server, POST MCP JSON-RPC requests from an HTTP client.`,
     'Call get_rules first and follow it.',
-    `Set model_name to your exact model name and variant. ${startLine(preferences, 'remote')}`,
+    `Set model_name to your exact model name and variant. ${startLine(preferences)}`,
+    'Immediately share the returned watch_url with me so I can open it and watch you play. Keep resume_token private.',
+    ...(preferences.opponent !== 'engine' ? ['Send me the opponent_url to give to the other player or their agent. Wait for them to join before playing. Each invitation controls only its assigned color.'] : []),
     'On each turn read the input from the board, pick one move and call make_move with it and a short plan.',
     ...(preferences.askMe || preferences.color !== 'white' ? ['If you play Black, answer the first move quickly: the opening reply window is 15 seconds.'] : []),
     FAIRNESS,
@@ -75,29 +74,10 @@ export function remotePrompt(preferences: AgentPreferences): string {
   ].join(' ');
 }
 
-/** The prompt for a browser agent that drives this page's tools. */
-export function pagePrompt(preferences: AgentPreferences, pageUrl: string): string {
-  const watch = preferences.opponent === 'human' && !preferences.askMe ? ' I will play the other side on the board myself.' : '';
-  return [
-    `Open ${pageUrl} and play one game of chess there.${watch}`,
-    'The page exposes its game tools to agents: use them through WebMCP if your browser offers it, or run JavaScript in the page such as await window.kamkmChessAgent.call("get_rules", {}).',
-    'Call get_rules first and follow it.',
-    `Set model_name to your exact model name and variant. ${startLine(preferences, 'page')}`,
-    'On your turn call get_board, pick one move from its input and call make_move with the move and a short plan; use wait_for_turn while the opponent thinks.',
-    FAIRNESS,
-    'Keep going until the game is over, then tell me the result in one line.',
-  ].join(' ');
-}
-
 /** The steps for one client. */
-export function setupSteps(client: AgentClient, preferences: AgentPreferences, urls: { mcp: string | null; page: string }): SetupStep[] {
-  if (client === 'browser') {
-    return [
-      { text: 'Open Claude in Chrome (or any browser agent) and paste this. It plays on this site through the page tools, so nothing is installed.', copy: { label: 'Copy prompt', value: pagePrompt(preferences, urls.page) } },
-    ];
-  }
+export function setupSteps(client: AgentClient, preferences: AgentPreferences, urls: { mcp: string | null }): SetupStep[] {
   if (urls.mcp === null) return [];
-  const prompt = { label: 'Copy prompt', value: remotePrompt(preferences) };
+  const prompt = { label: 'Copy prompt', value: remotePrompt(preferences, urls.mcp) };
   const url = urls.mcp;
   switch (client) {
     case 'claude-code':

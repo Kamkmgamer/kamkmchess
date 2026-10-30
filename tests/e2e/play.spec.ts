@@ -283,11 +283,11 @@ test('finishes a legal AI match, preserves plans, restores its result and fits m
   await expect(page.getByRole('heading', { name: 'White won', exact: true })).toBeVisible();
   expect(fixture.calls).toHaveLength(4);
   expect(JSON.stringify(fixture.modelCalls[1])).toContain('retained plan 1');
-  expect(JSON.stringify(fixture.modelCalls[1])).toContain('retained reasoning 1');
+  expect(JSON.stringify(fixture.modelCalls[1])).not.toContain('retained reasoning 1');
   expect(JSON.stringify(fixture.modelCalls[1])).toContain('e4 e5 Qh5');
   expect(JSON.stringify(fixture.modelCalls[2])).toContain('retained plan 2');
   expect(JSON.stringify(fixture.modelCalls[2])).not.toContain('retained plan 1');
-  expect(JSON.stringify(fixture.modelCalls[2])).toContain('retained reasoning 2');
+  expect(JSON.stringify(fixture.modelCalls[2])).not.toContain('retained reasoning 2');
   expect(JSON.stringify(fixture.modelCalls[2])).not.toContain('retained reasoning 1');
   for (const call of fixture.modelCalls) {
     expect(new TextEncoder().encode(JSON.stringify(call)).byteLength).toBeLessThan(2_000);

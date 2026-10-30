@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_AGENT_PREFERENCES, fetchMcpAvailability, mcpUrl, pagePrompt, remotePrompt, setupSteps,
+  DEFAULT_AGENT_PREFERENCES, fetchMcpAvailability, mcpUrl, remotePrompt, setupSteps,
 } from './connect.js';
 
-const urls = { mcp: 'https://chess.example/v1/mcp', page: 'https://chess.example/play' };
+const urls = { mcp: 'https://chess.example/v1/mcp' };
 
 describe('agent connection setup', () => {
   it('builds the remote endpoint from the service origin', () => {
@@ -11,26 +11,28 @@ describe('agent connection setup', () => {
   });
 
   it('writes the chosen color and strength into the remote prompt', () => {
-    const prompt = remotePrompt({ ...DEFAULT_AGENT_PREFERENCES, color: 'black', level: 'strong' });
+    const prompt = remotePrompt({ ...DEFAULT_AGENT_PREFERENCES, color: 'black', level: 'strong' }, urls.mcp);
     expect(prompt).toContain('start_game with color: "black", engine_think_ms: 5000');
     expect(prompt).toContain('get_rules first');
     expect(prompt).toContain('do not run code');
     expect(prompt).toContain('15 seconds');
-    expect(remotePrompt(DEFAULT_AGENT_PREFERENCES)).not.toContain('15 seconds');
+    expect(remotePrompt(DEFAULT_AGENT_PREFERENCES, urls.mcp)).not.toContain('15 seconds');
   });
 
   it('lets the agent ask instead of presetting', () => {
-    const prompt = remotePrompt({ ...DEFAULT_AGENT_PREFERENCES, askMe: true });
+    const prompt = remotePrompt({ ...DEFAULT_AGENT_PREFERENCES, askMe: true }, urls.mcp);
     expect(prompt).toContain('ask me which color');
     expect(prompt).not.toContain('color: "white"');
   });
 
-  it('sets up a game against the person at the screen for browser agents', () => {
-    const prompt = pagePrompt({ ...DEFAULT_AGENT_PREFERENCES, opponent: 'human' }, urls.page);
-    expect(prompt).toContain('Open https://chess.example/play');
+  it('hands a human opponent a shared game through MCP', () => {
+    const prompt = remotePrompt({ ...DEFAULT_AGENT_PREFERENCES, opponent: 'human' }, urls.mcp);
+    expect(prompt).toContain('https://chess.example/v1/mcp');
     expect(prompt).toContain('opponent: "human"');
     expect(prompt).not.toContain('engine_think_ms');
-    expect(prompt).toContain('window.kamkmChessAgent.call');
+    expect(prompt).toContain('Do not use GUI, browser tools or computer use');
+    expect(prompt).toContain('watch_url');
+    expect(prompt).toContain('opponent_url');
   });
 
   it('gives each client its own install step and the same prompt', () => {
@@ -41,13 +43,13 @@ describe('agent connection setup', () => {
     expect(JSON.parse(setupSteps('mcp', DEFAULT_AGENT_PREFERENCES, urls)[0]?.copy?.value ?? ''))
       .toEqual({ mcpServers: { 'kamkm-chess': { url: urls.mcp } } });
     for (const client of ['claude-code', 'codex', 'claude-ai', 'chatgpt', 'mcp'] as const) {
-      expect(setupSteps(client, DEFAULT_AGENT_PREFERENCES, urls).at(-1)?.copy?.value).toBe(remotePrompt(DEFAULT_AGENT_PREFERENCES));
+      expect(setupSteps(client, DEFAULT_AGENT_PREFERENCES, urls).at(-1)?.copy?.value).toBe(remotePrompt(DEFAULT_AGENT_PREFERENCES, urls.mcp));
     }
   });
 
-  it('offers no remote steps while the endpoint is off, and the browser route still works', () => {
+  it('shows no steps when MCP is unavailable', () => {
     expect(setupSteps('claude-code', DEFAULT_AGENT_PREFERENCES, { ...urls, mcp: null })).toEqual([]);
-    expect(setupSteps('browser', DEFAULT_AGENT_PREFERENCES, { ...urls, mcp: null })).toHaveLength(1);
+    expect(setupSteps('mcp', DEFAULT_AGENT_PREFERENCES, { ...urls, mcp: null })).toEqual([]);
   });
 
   it('reads the endpoint switch from the feature answer and fails closed', async () => {

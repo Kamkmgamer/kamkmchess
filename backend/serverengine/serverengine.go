@@ -93,13 +93,21 @@ type Options struct {
 
 // Service drives the server engine seats.
 type Service struct {
-	options Options
+	readiness func(online.Match) bool
+	options   Options
 
 	mu         sync.Mutex
 	principals map[string]onlineauth.Principal
 	inFlight   map[string]bool
 	retryAt    map[string]time.Time
 	wg         sync.WaitGroup
+}
+
+// SetReadiness installs an admission check for hosted invitation games.
+func (s *Service) SetReadiness(check func(online.Match) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.readiness = check
 }
 
 // New returns a driver. Every dependency is required.
@@ -306,6 +314,12 @@ func (s *Service) Play(ctx context.Context, ref SeatRef) error {
 	match, err := s.options.Matches.GetMatch(ctx, ref.MatchID)
 	if err != nil {
 		return err
+	}
+	s.mu.Lock()
+	ready := s.readiness
+	s.mu.Unlock()
+	if ready != nil && !ready(match) {
+		return nil
 	}
 	seat, ok := match.Seat(ref.Seat)
 	if !ok || seat.Participant.ID != ref.OwnerID || seat.Control.Kind != online.ControlEngine {

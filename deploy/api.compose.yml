@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: api.Dockerfile
+      args:
+        WITH_SERVER_ENGINE: ${WITH_SERVER_ENGINE:-0}
     image: kamkmchess-api:local
     restart: unless-stopped
     env_file: api.env

@@ -113,6 +113,7 @@ export function App() {
             <h1 id="hero-heading">Chess against a<br />different mind.</h1>
             <p>Play against AI models that choose their own moves.<br className="desktop-break" /> A familiar game, with a new kind of opponent.</p>
             <Button size="lg" onClick={() => openGameOptions('modelId')}>Play against AI</Button>
+            <p>Bringing your own agent? <a href="/agents.md">Use the MCP server</a> and share its live viewing URL. <a href="#agents">Get a prompt</a>.</p>
           </div>
         </section>
 
