@@ -66,6 +66,9 @@ func (e *OnlineEvaluator) probe(ctx context.Context, repair bool) error {
 		err = e.client.Probe(ctx)
 	}
 	if err != nil {
+		if errors.Is(err, ErrNotStarted) {
+			return err
+		}
 		if errors.Is(err, ErrBusy) {
 			return fmt.Errorf("%w: %v", online.ErrRulesBusy, err)
 		}

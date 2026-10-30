@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"regexp"
 	"strings"
 	"time"
@@ -489,7 +490,7 @@ func (s *Server) makeMove(ctx context.Context, sess *session, args map[string]an
 		return s.illegal(ctx, sess, match, lease, move)
 	}
 	if err != nil {
-		return nil, s.commandError(err)
+		return nil, s.commandError("move execution", err)
 	}
 	if plan, _ := args["plan"].(string); strings.TrimSpace(plan) != "" {
 		sess.plan = clip(strings.TrimSpace(plan), 800)
@@ -512,7 +513,7 @@ func (s *Server) illegal(ctx context.Context, sess *session, match online.Match,
 		Kind: online.ActionRecordRecoveryAttempt, Recovery: &online.RecordRecoveryAttemptAction{Attempt: online.RecoveryIllegalMove},
 	}))
 	if err != nil {
-		return nil, s.commandError(err)
+		return nil, s.commandError("illegal move accounting", err)
 	}
 	board, err := s.board(ctx, sess)
 	if err != nil {
@@ -543,7 +544,7 @@ func (s *Server) resign(ctx context.Context, sess *session) (any, error) {
 		return nil, err
 	}
 	if _, err = s.options.Matches.Execute(ctx, sess.principal.Participant, s.command(sess, match, lease, online.Action{Kind: online.ActionResign})); err != nil {
-		return nil, s.commandError(err)
+		return nil, s.commandError("resignation", err)
 	}
 	board, err := s.board(ctx, sess)
 	if err != nil {
@@ -558,7 +559,7 @@ func (s *Server) lease(ctx context.Context, sess *session, match online.Match) (
 		RunnerID: "mcp:" + sess.id[:16], TurnVersion: match.Version, ControlEpoch: match.ControlEpoch,
 	})
 	if err != nil {
-		return online.RunnerLease{}, s.commandError(err)
+		return online.RunnerLease{}, s.commandError("runner lease", err)
 	}
 	return lease, nil
 }
@@ -572,7 +573,7 @@ func (s *Server) command(sess *session, match online.Match, lease online.RunnerL
 }
 
 // commandError turns a refused command into advice the agent can follow.
-func (s *Server) commandError(err error) error {
+func (s *Server) commandError(stage string, err error) error {
 	switch {
 	case errors.Is(err, online.ErrConflict):
 		return errTool("the game changed while you were thinking: call get_board and try again")
@@ -580,8 +581,19 @@ func (s *Server) commandError(err error) error {
 		return errTool("the game is over: call get_board to see the result")
 	case errors.Is(err, onlineauth.ErrUnauthenticated), errors.Is(err, online.ErrNotAuthorized):
 		return errTool("your seat credential is no longer valid: start a new game")
+	case errors.Is(err, online.ErrRulesBusy):
+		return errTool("the chess rules worker is busy with another request. Call get_board before retrying")
+	case errors.Is(err, online.ErrUnavailable):
+		return errTool("the chess rules service could not process the action. Call get_board before retrying")
 	default:
-		return errTool("the server could not take that action right now: try again shortly")
+		slog.Default().Error("MCP command failed", "stage", stage, "error", err)
+		if stage == "runner lease" {
+			return errTool("the server could not prepare the action. Call get_board before retrying")
+		}
+		if stage == "illegal move accounting" {
+			return errTool("the server failed while recording the illegal attempt. Call get_board before retrying")
+		}
+		return errTool("the server could not confirm whether the action was accepted. Call get_board before retrying")
 	}
 }
 

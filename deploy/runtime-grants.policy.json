@@ -40,7 +40,7 @@
     "online_offers": ["SELECT", "INSERT", "UPDATE"],
     "online_public_profiles": ["SELECT", "INSERT", "UPDATE"],
     "online_profile_guest_links": ["SELECT", "INSERT", "UPDATE"],
-    "online_turn_budgets": ["SELECT", "INSERT"],
+    "online_turn_budgets": ["SELECT", "INSERT", "UPDATE"],
 
     "online_presence": ["SELECT", "INSERT", "UPDATE"],
     "online_service_health": ["SELECT", "INSERT"],
@@ -90,7 +90,7 @@
     "online_offers": "Draw and takeback offers are created, updated when they are resolved and read for staleness.",
     "online_public_profiles": "A public profile is created, updated by its owner and read by the public profile API.",
     "online_profile_guest_links": "A guest link is created once and updated when it is revoked. It is never deleted.",
-    "online_turn_budgets": "Per-turn budgets are append-only records of spent attempts and corrections.",
+    "online_turn_budgets": "Per-turn budgets are inserted for a spent attempt and updated while that turn remains active.",
     "online_presence": "The presence row of a seat is created, updated on every heartbeat and read for the abandonment claim.",
     "online_service_health": "The health checkpoints of the service are append-only. They are the input of a conservative interruption interval.",
     "online_service_liveness": "The liveness records of the service are append-only.",

@@ -490,11 +490,22 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 	// opponent.
 	stopHealth := StartHealthMonitor(ctx, pool, health, onlineService, HealthMonitorConfig{
 		Interval: cfg.Online.HealthCheckInterval,
-		// The failures of the monitor are the classes of the rules client
-		// and the durable state of the service. They carry no secret, so
-		// they are logged: a closed gate has to be visible in the log of
-		// the instance that closed it.
+		// Expected busy, cold-start and cancelled probes are debug events.
+		// Other failures are logged because a closed gate has to be visible
+		// in the log of the instance that closed it.
 		OnError: func(err error) {
+			if errors.Is(err, rulesworker.ErrNotStarted) {
+				slog.Default().Debug("online rules health probe skipped before the worker's first request")
+				return
+			}
+			if errors.Is(err, online.ErrRulesBusy) || errors.Is(err, rulesworker.ErrBusy) {
+				slog.Default().Debug("online rules health probe skipped while the worker is handling a request")
+				return
+			}
+			if rulesCancellation(err) {
+				slog.Default().Debug("online rules health probe was cancelled")
+				return
+			}
 			slog.Default().Error("the online health check failed", "error", err)
 		},
 	})

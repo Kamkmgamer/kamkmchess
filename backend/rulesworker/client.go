@@ -87,6 +87,21 @@ var (
 	ErrBusy = errors.New("rules worker is busy with another request")
 )
 
+// ErrNotStarted marks a probe of the intentionally cold worker. It remains in
+// the busy class so health checks do not start the worker, but does not claim
+// that another request is using it.
+var ErrNotStarted error = notStartedError{}
+
+type notStartedError struct{}
+
+func (notStartedError) Error() string {
+	return "rules worker has not started yet"
+}
+
+func (notStartedError) Is(target error) bool {
+	return target == ErrBusy
+}
+
 // RejectionError is a valid protocol response that refused the input. It never
 // contains a candidate.
 type RejectionError struct {
@@ -484,9 +499,9 @@ func (c *Client) probe(ctx context.Context, repair bool) error {
 	}
 	if c.proc == nil && !repair {
 		// The worker is not running. A check does not start it: a monitor
-		// must not warm the traffic path. The worker is not broken either,
-		// so this is the busy class and not an outage.
-		return ErrBusy
+		// must not warm the traffic path. It has not started yet, which is
+		// distinct from another request holding its slot.
+		return ErrNotStarted
 	}
 	// The worker has to be running and ready. The readiness probe is
 	// itself a bounded exchange, so a worker that never becomes ready
