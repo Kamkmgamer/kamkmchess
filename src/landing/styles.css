@@ -1,4 +1,5 @@
 @import '../theme-tokens.css';
+@import '../ui/board.css';
 @import '../components/quartz/styles.css';
 @source '../';
 
@@ -206,16 +207,6 @@ body { margin: 0; }
 .preview-player-logo { width: var(--space-8); height: var(--space-8); padding: var(--space-1); object-fit: contain; flex-shrink: 0; background: #fff; border-radius: var(--radius-inner); }
 .preview-player-side { display: flex; align-items: center; gap: var(--space-2); color: var(--text-2); font: var(--type-label-sm); }
 .preview-player-row[data-active] .preview-player-side { color: var(--text-1); font-weight: var(--weight-strong); }
-.chessboard { display: grid; grid-template-columns: repeat(8, 1fr); aspect-ratio: 1; overflow: hidden; border-radius: var(--radius-inner); }
-.board-square { position: relative; display: grid; place-items: center; aspect-ratio: 1; background: var(--board-light); }
-.board-square[data-color='dark'] { background: var(--board-dark); }
-.board-square[data-last-move]::after { position: absolute; content: ''; inset: 0; background: rgb(255 255 51 / 50%); pointer-events: none; }
-.rank-label, .file-label { position: absolute; color: var(--board-dark); font: var(--type-label-sm); }
-.board-square[data-color='dark'] :is(.rank-label, .file-label) { color: var(--board-light); }
-.rank-label { left: var(--space-1); top: var(--space-0-5); }
-.file-label { right: var(--space-1); bottom: var(--space-0-5); }
-.chess-piece { position: relative; z-index: 1; display: grid; place-items: center; width: 100%; height: 100%; }
-.chess-piece img { display: block; width: 100%; height: 100%; }
 .opening-controls { display: flex; flex-direction: column; gap: var(--space-3); }
 .move-count { color: var(--text-2); font: var(--type-label); font-variant-numeric: tabular-nums; }
 .move-buttons { display: flex; align-items: center; gap: var(--space-2); }
@@ -325,7 +316,6 @@ body { margin: 0; }
   .hero-dither[data-animated] .hero-dither-pattern { inset: -24px -4px; animation: hero-dither-drift 12s ease-in-out infinite; }
   .hero-dither[data-animated] .hero-dither-pattern-primary { animation-delay: -6s; }
   .hero-dither[data-paused] .hero-dither-pattern { animation-play-state: paused; }
-  .board-square[data-last-move] .chess-piece { animation: place-piece var(--dur-base) var(--ease-step); }
 }
 @keyframes hero-dither-drift {
   0% { transform: translateY(8px); opacity: 0; }
@@ -344,11 +334,7 @@ body { margin: 0; }
   .hero { color: CanvasText; }
   .hero-dither { display: none; }
   .hero-media::after { opacity: 1; background: Canvas; }
-  .board-square { background: Canvas; color: CanvasText; }
-  .board-square[data-color='dark'] { background: CanvasText; color: Canvas; }
-  .board-square, .chess-piece img { forced-color-adjust: none; }
 }
-@keyframes place-piece { from { opacity: 0.5; transform: translateY(var(--space-1)); } to { opacity: 1; transform: translateY(0); } }
 .page-sections .boards-section { display: flex; flex-direction: column; gap: var(--space-6); padding-block: var(--space-15) var(--space-10); }
 .boards-heading { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: var(--space-4); }
 .boards-tabs { display: flex; gap: var(--space-1); }

@@ -31,12 +31,13 @@ describe('landing integration with the playable workspace', () => {
   it('shows a finished custom position with the demo players and result', () => {
     const position = parsePosition('7k/6Q1/6K1/8/8/8/8/8 b - - 0 1');
     const markup = renderToStaticMarkup(<OpeningPreview setup={{ ...defaultSetup, humanColor: 'b', start: { kind: 'custom', position } }} onOptions={() => {}} />);
-    expect(markup.match(/class="board-square"/g)).toHaveLength(64);
+    // The preview renders the play screen's own Chessground board.
+    expect(markup.match(/class="board-host cg-wrap"/g)).toHaveLength(1);
     expect(markup).toContain('Stockfish 19');
     expect(markup).toContain('GPT-6.9-Astra');
     expect(markup).toContain('alt="Stockfish logo"');
     expect(markup).toContain('alt="ChatGPT logo"');
-    expect(markup).toContain('Black at the bottom');
+    expect(markup).toContain('Game over');
     expect(markup).toContain('White wins by checkmate.');
     expect(markup).not.toContain('Next move');
   });

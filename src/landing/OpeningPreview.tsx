@@ -1,22 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
-import { Chess, DEFAULT_POSITION } from 'chess.js';
 import { Button } from '../components/quartz/ui/button';
 import { Icon, Pause, Play, Renew, Settings } from '../components/quartz/icon';
 import { OPPONENT_BRANDS } from '../ui/opponent-brand';
-import { ChessBoard } from './ChessBoard';
+import { ChessBoard } from '../ui/ChessBoard.js';
 import type { PreviewSetup } from './game-setup';
-import { demoFrame, playDemoLoop } from './demo-game';
+import { STANDARD_FEN, createDemoGame, demoFrame, playDemoLoop } from './demo-game';
 
 type PreviewProps = { setup: PreviewSetup; onOptions: () => void };
 
 export function OpeningPreview(props: PreviewProps) {
-  const startingFen = props.setup.start.kind === 'custom' ? props.setup.start.position.fen : DEFAULT_POSITION;
+  const startingFen = props.setup.start.kind === 'custom' ? props.setup.start.position.fen : STANDARD_FEN;
   return <AutomaticGame key={startingFen} {...props} startingFen={startingFen} />;
 }
 
 function AutomaticGame({ setup, onOptions, startingFen }: PreviewProps & { startingFen: string }) {
-  const game = useRef(new Chess(startingFen));
-  const [frame, setFrame] = useState(() => demoFrame(new Chess(startingFen)));
+  const game = useRef(createDemoGame(startingFen));
+  // The initial frame comes from its own game, so the ref is never read during render.
+  const [frame, setFrame] = useState(() => demoFrame(createDemoGame(startingFen)));
   const [playing, setPlaying] = useState(true);
   const [restart, setRestart] = useState(0);
   const [loading, setLoading] = useState(!frame.result);
@@ -38,10 +38,10 @@ function AutomaticGame({ setup, onOptions, startingFen }: PreviewProps & { start
   }, [playing, restart, startingFen]);
 
   function restartGame() {
-    game.current = new Chess(startingFen);
+    game.current = createDemoGame(startingFen);
     setFrame(demoFrame(game.current));
     setError(null);
-    setLoading(!game.current.isGameOver());
+    setLoading(!demoFrame(game.current).result);
     setPlaying(true);
     setRestart(current => current + 1);
   }
@@ -62,7 +62,10 @@ function AutomaticGame({ setup, onOptions, startingFen }: PreviewProps & { start
               <div className="preview-player-identity"><img className="preview-player-logo" src={OPPONENT_BRANDS.stockfish.logo} alt="Stockfish logo" width="24" height="24" /><span>Stockfish 19</span></div>
               <span className="preview-player-side"><span className="player-piece" data-side={topColor} aria-hidden="true" />{sideName(topColor)}</span>
             </div>
-            <ChessBoard board={frame.board} orientation={bottomColor} lastMove={frame.move} label={`Demo game after ${frame.moves.length} moves`} />
+            {/* The play screen's own board: one component, one styling source. */}
+            <ChessBoard orientation={bottomColor === 'w' ? 'white' : 'black'} model={{ position: frame.position, identity: 'landing-demo' }}
+              disabled visible view={{ position: frame.position, lastMove: frame.lastMove }}
+              premoveColor={null} allowPremove={false} onMove={async () => false} />
             <div className="preview-player-row" data-active={!frame.result && frame.turn === bottomColor || undefined}>
               <div className="preview-player-identity"><img className="preview-player-logo" data-brand="chatgpt" src={OPPONENT_BRANDS.chatgpt.logo} alt="ChatGPT logo" width="24" height="24" /><span>GPT-6.9-Astra</span></div>
               <span className="preview-player-side"><span className="player-piece" data-side={bottomColor} aria-hidden="true" />{sideName(bottomColor)}</span>
@@ -79,12 +82,12 @@ function AutomaticGame({ setup, onOptions, startingFen }: PreviewProps & { start
             </div>
             <div className="opening-annotation" aria-live={frame.result || error || !playing ? 'polite' : 'off'} aria-atomic="true">
               <h3>{status}</h3>
-              <p>{frame.result ?? error ?? (frame.move ? `${sideName(frame.move.color)} plays ${frame.move.san}.` : 'The game starts automatically. White moves first.')}</p>
+              <p>{frame.result ?? error ?? (frame.lastMove ? `${sideName(frame.lastMove.color)} plays ${frame.lastMove.san}.` : 'The game starts automatically. White moves first.')}</p>
             </div>
             <ol className="opening-moves" aria-label="Recent game moves">
               {recentMoves.map((move, index) => (
                 <li key={frame.moves.length - recentMoves.length + index} data-current={index === recentMoves.length - 1 || undefined}>
-                  <span className="visually-hidden">{move.before.split(' ')[5]}. {sideName(move.color)}: </span>{move.san}
+                  <span className="visually-hidden">{move.number}. {sideName(move.color)}: </span>{move.san}
                 </li>
               ))}
             </ol>
