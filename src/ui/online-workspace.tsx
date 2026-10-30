@@ -56,6 +56,7 @@ import {
 } from './online-owned-invitations.js';
 import { legalMoves, parsePosition } from '../rules/index.js';
 import type { CoordinateMove, Promotion } from '../rules/index.js';
+import { PROMOTIONS } from './promotion-options.js';
 import { formatOnlineClock, onlineClockReading } from '../online/clock.js';
 import type { OnlineClockReading } from '../online/clock.js';
 import { onlineSideToMove } from '../online/turn.js';
@@ -165,11 +166,6 @@ const CLOCK_CHOICES: readonly { readonly minutes: number; readonly increment: nu
   { minutes: 3, increment: 2 },
   { minutes: 5, increment: 3 },
   { minutes: 10, increment: 5 },
-];
-
-const PROMOTIONS: readonly { value: Promotion; label: string }[] = [
-  { value: 'q', label: 'Queen' }, { value: 'r', label: 'Rook' },
-  { value: 'b', label: 'Bishop' }, { value: 'n', label: 'Knight' },
 ];
 
 /**

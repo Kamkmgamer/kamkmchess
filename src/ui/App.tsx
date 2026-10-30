@@ -70,6 +70,8 @@ import type { SoundCue } from './sounds.js';
 import { pieceImage } from './piece-image.js';
 import { CapturedPieces } from './CapturedPieces.js';
 import { capturedSummary } from './captured-material.js';
+import { formatClock } from './clock-format.js';
+import { PROMOTIONS } from './promotion-options.js';
 import { usePieceStyle } from './use-piece-style.js';
 import { useBoardStyle } from './use-board-style.js';
 import { SettingsPage } from './SettingsPage.js';
@@ -119,15 +121,6 @@ interface AppProps {
    * arrives after the change belongs to an identity that is gone.
    */
   readonly accountIdentity?: string | null;
-}
-const PROMOTIONS: readonly { value: Promotion; label: string }[] = [
-  { value: 'q', label: 'Queen' }, { value: 'r', label: 'Rook' },
-  { value: 'b', label: 'Bishop' }, { value: 'n', label: 'Knight' },
-];
-
-function formatClock(milliseconds: number): string {
-  const total = Math.max(0, Math.ceil(milliseconds / 1_000));
-  return Math.floor(total / 60) + ':' + (total % 60).toString().padStart(2, '0');
 }
 const RESULT_CUES: Record<ResultTone, SoundCue> = { win: 'win', loss: 'loss', draw: 'draw', neutral: 'draw' };
 /** Final results that leave the human ahead and the game worth continuing as practice. */
@@ -1104,10 +1097,13 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const premoveColor = !history.reviewing && !final && !setupOpen && !promotion &&
     snapshot.readiness === 'ready' && snapshot.clockReading?.status === 'running' ? humanColor : null;
   const allowPremove = premoveColor !== null && isModelTurn && !working;
+  /** The name an agent seat reported for itself; it labels the row and picks the logo. */
+  const reportedAgentName = (side: 'white' | 'black'): string | null =>
+    isAgentSelection(players[side]) ? agentBridge.reportedName(snapshot.checkpoint.gameId) : null;
   const playerLabel = (side: 'white' | 'black') => {
     const player = snapshot.checkpoint.selections.players[side];
     if (isAgentSelection(player)) {
-      const name = agentBridge.reportedName(snapshot.checkpoint.gameId);
+      const name = reportedAgentName(side);
       return name === null ? player.modelRoutingId : name;
     }
     return isEngineSelection(player) ? BROWSER_ENGINES[engineSettings(player).engineId].name
@@ -1274,7 +1270,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     <div className="match-layout" hidden={focusPage} data-practice={snapshot.checkpoint.practice.mode} data-committed-model={snapshot.modelHandoff.committed?.modelRoutingId} data-queued-model={snapshot.modelHandoff.queued?.selection.modelRoutingId}>
       <section className="board-column" id="board" ref={boardPanel} tabIndex={-1} aria-label="Chess match board">
         {(['black', 'white'] as const).map(side => <div key={side} className={`player-row ${side} ${side === orientation ? 'near-player' : 'far-player'} ${activeSide === side ? 'active' : ''}`}>
-          <OpponentBadge player={players[side]} side={side} reportedName={isAgentSelection(players[side]) ? agentBridge.reportedName(snapshot.checkpoint.gameId) : null} /><div className="player-meta"><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
+          <OpponentBadge player={players[side]} side={side} reportedName={reportedAgentName(side)} /><div className="player-meta"><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
           <CapturedPieces pieces={side === 'white' ? captures.capturedByWhite : captures.capturedByBlack} capturedColor={side === 'white' ? 'b' : 'w'}
             advantage={side === 'white' ? (captures.advantage > 0 ? captures.advantage : null) : captures.advantage < 0 ? -captures.advantage : null} /></div>
           {clockHeld && activeSide === side && <span className="clock-held" title="Clock held after a failed model turn">held</span>}

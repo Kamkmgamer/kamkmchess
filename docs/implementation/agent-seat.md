@@ -15,7 +15,7 @@ An agent seat lets a tool-calling agent (Claude in Chrome, a WebMCP-capable brow
 - `runAgentTurn` (`src/agents/turn.ts`) mirrors `runGenerationTurn`: it opens a fenced model turn, composes the same compact input with `composeMoveInput`, archives the request, waits for the agent's reply through the `AgentBridge`, and lets `decideCompletedAnswer` and the controller judge it. Illegal-move and formatting budgets, plan memory (`previousThinking`), Undo and Stop behave exactly as they do for an API model.
 - The bridge only carries one open turn between the match and a tool call. It never decides legality, clocks or results.
 - Agent modes default to 180 minutes plus 60 seconds per move. The clock core is unchanged.
-- The agent's name is self-reported (`model_name`), kept per game in local storage and shown as "Name (self-reported)". The archived request records it too.
+- The agent's name is self-reported (`model_name`), kept per game in local storage and shown on the board with its model-family logo when one matches; the self-reported marker stays in the MCP payload but is not displayed. The archived request records the name too.
 
 ## Tools
 

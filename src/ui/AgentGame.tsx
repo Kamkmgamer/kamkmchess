@@ -8,7 +8,9 @@ import type { CoordinateMove, Promotion } from '../rules/index.js';
 import { ChessMcpClient, remoteEndpoint, seatPrompt } from '../agents/remote.js';
 import type { AppliedMoveV1 } from '../storage/index.js';
 import { OpponentLogo } from './OpponentBadge.js';
-import { cleanReportedName, resolveOpponentBrand } from './opponent-brand.js';
+import { cleanReportedName, resolveReportedBrand } from './opponent-brand.js';
+import { formatClock } from './clock-format.js';
+import { PROMOTIONS } from './promotion-options.js';
 import { pieceImage } from './piece-image.js';
 import { usePieceStyle } from './use-piece-style.js';
 import './agent-game.css';
@@ -18,19 +20,9 @@ interface LiveBoard {
   clock: { whiteMs: number; blackMs: number }; result: { winner: string | null; reason: string } | null; watch_url: string;
 }
 
-const PROMOTIONS: readonly { value: Promotion; label: string }[] = [
-  { value: 'q', label: 'Queen' }, { value: 'r', label: 'Rook' },
-  { value: 'b', label: 'Bishop' }, { value: 'n', label: 'Knight' },
-];
-
-function formatClock(milliseconds: number): string {
-  const total = Math.max(0, Math.ceil(milliseconds / 1_000));
-  return Math.floor(total / 60) + ':' + (total % 60).toString().padStart(2, '0');
-}
-
 function CopyButton({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false);
-  return <button className="button" type="button" data-copy={value} onClick={() => {
+  return <button className="button" type="button" title={value} data-copy={value} onClick={() => {
     void navigator.clipboard?.writeText(value).then(
       () => { setCopied(true); window.setTimeout(() => setCopied(false), 1600); },
       () => setCopied(false));
@@ -135,21 +127,21 @@ export function AgentGame() {
     <div className="match-layout">
       <section className="board-column" id="board" aria-label="Chess match board">
         {(['black', 'white'] as const).map(color => {
-          const name = cleanReportedName(board?.players[color] ?? (color === 'white' ? 'White' : 'Black'));
-          const badge = resolveOpponentBrand(name) ? <OpponentLogo modelId={name} />
+          const label = board?.players[color] ?? (color === 'white' ? 'White' : 'Black');
+          const name = cleanReportedName(label);
+          const badge = resolveReportedBrand(label) ? <OpponentLogo modelId={name} />
             : <span className={`player-badge ${color === 'white' ? 'light' : 'dark'}-piece`} aria-hidden="true"><Icon name={name.toLowerCase() === 'human' ? 'user' : 'bot'} /></span>;
           return <div key={color} className={`player-row ${color} ${color === orientation ? 'near-player' : 'far-player'} ${activeSide === color ? 'active' : ''}`}>
-          {badge}
-          <div className="player-meta"><div className="player-name"><strong title={name}>{name}</strong></div></div>
-          <time className={`clock ${activeSide === color ? 'running' : ''}`} data-low={board && board.clock[`${color}Ms`] < 20_000 || undefined}
-            aria-label={`${color} clock ${formatClock(board?.clock[`${color}Ms`] ?? 0)}`}>{formatClock(board?.clock[`${color}Ms`] ?? 0)}</time>
+            {badge}
+            <div className="player-meta"><div className="player-name"><strong title={name}>{name}</strong></div></div>
+            <time className={`clock ${activeSide === color ? 'running' : ''}`} data-low={board && board.clock[`${color}Ms`] < 20_000 || undefined}
+              aria-label={`${color} clock ${formatClock(board?.clock[`${color}Ms`] ?? 0)}`}>{formatClock(board?.clock[`${color}Ms`] ?? 0)}</time>
           </div>;
         })}
         <div className="playing-board">
           {board && position ? <ChessBoard orientation={orientation} model={{ position, identity: gameId }} view={{ position, lastMove: null }}
             visible disabled={!myTurn || busy} premoveColor={null} allowPremove={false} onMove={attemptBoardMove} />
-            : error ? <p className="agent-board-note" role="alert">{error}</p>
-            : <p className="agent-board-note" role="status">Connecting…</p>}
+            : <p className="agent-board-note" role={error ? 'alert' : 'status'}>{error || 'Connecting…'}</p>}
           {promotion && <section className="promotion-panel" aria-label="Promotion"><div className="promotion-options">
             {PROMOTIONS.map(piece => <button className="button quiet" type="button" key={piece.value} aria-label={piece.label}
               autoFocus={piece.value === 'q'} onClick={() => selectPromotion(piece.value)}>
@@ -164,7 +156,9 @@ export function AgentGame() {
           data-turn={!finished && board?.status !== 'waiting-for-players' && position ? position.sideToMove : undefined}
           data-check={check ? 'true' : undefined}>
           <div className="status-result"><h2 className="status-heading">{status}</h2>
-            {(joined || feedback) && <p className="status-detail" role={feedback ? 'alert' : undefined}>{feedback || `Playing ${side}`}</p>}</div>
+            {/* A live board keeps its failure visible here; before it loads, the board column shows the error. */}
+            {board && error !== '' && <p className="status-detail" role="alert">{error}</p>}
+            {!(board && error !== '') && (joined || feedback) && <p className="status-detail" role={feedback ? 'alert' : undefined}>{feedback || `Playing ${side}`}</p>}</div>
           <div className="button-row">
             {joined && !finished && <IconButton icon="resign" label="Resign" disabled={busy} onClick={resign} />}
             <IconButton icon="flip" label="Flip board" onClick={() => setOrientation(value => value === 'white' ? 'black' : 'white')} />
