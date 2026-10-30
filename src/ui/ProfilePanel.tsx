@@ -3,6 +3,8 @@ import { createProfilePanel } from '../profile/panel.js';
 import { PROFILE_AVATAR_CHOICES } from '../profile/contracts.js';
 import type { ProfileClient, GuestSeatBinding } from '../profile/client.js';
 import { IconButton } from './Icon.js';
+import { ProfileAvatarView } from './profile-avatar.js';
+import { generatedProfileHue } from './profile-hue.js';
 import '../profile-panel.css';
 
 export interface ProfilePanelProps {
@@ -46,7 +48,7 @@ export function ProfilePanel({ client, guestSeat = null }: ProfilePanelProps) {
     <h2 id="profile-panel-title">Public profile</h2>
     <p className="muted">Your public name is filled in from your account. Change it here any time.</p>
     <div className="profile-identity">
-      <ProfileAvatar kind={state.profile?.avatar.kind ?? 'generated'} value={state.profile?.avatar.value ?? ''} profileId={state.profile?.profileId ?? ''} />
+      <ProfileAvatarView avatar={state.profile?.avatar ?? { kind: 'generated', value: '' }} profileId={state.profile?.profileId ?? ''} />
       <div className="profile-identity-text">
         <p className="profile-name">{state.profile?.username ?? 'Player'}</p>
       </div>
@@ -70,7 +72,7 @@ export function ProfilePanel({ client, guestSeat = null }: ProfilePanelProps) {
       <div className="profile-avatar-choices">
         <label className="profile-avatar-choice">
           <input className="profile-avatar-input" type="radio" name="profile-avatar" value="" checked={state.avatarDraft === ''} onChange={() => panel.setAvatarDraft('')} />
-          <span className="profile-swatch" data-avatar="generated" style={generatedStyle(state.profile?.profileId ?? '')} aria-hidden="true" />
+          <span className="profile-swatch" data-avatar="generated" style={generatedProfileHue(state.profile?.profileId ?? '')} aria-hidden="true" />
           <span className="sr-only">Generated avatar</span>
         </label>
         {PROFILE_AVATAR_CHOICES.map(choice => <label className="profile-avatar-choice" key={choice}>
@@ -100,27 +102,4 @@ export function ProfilePanel({ client, guestSeat = null }: ProfilePanelProps) {
 
     <p className="profile-status" role="status">{state.message}</p>
   </section>;
-}
-
-/** The avatar of a profile, chosen or generated. */
-function ProfileAvatar({ kind, value, profileId }: { kind: string; value: string; profileId: string }) {
-  if (kind === 'chosen') {
-    return <span className="profile-avatar" data-avatar={value} aria-hidden="true" />;
-  }
-  return <span className="profile-avatar" data-avatar="generated" style={generatedStyle(profileId || value)} aria-hidden="true" />;
-}
-
-/**
- * The hue of a generated avatar.
- *
- * The generated avatar is derived from the public profile identifier, so it
- * is stable for a person and needs no storage. The hue is only a starting
- * point; the swatch keeps its own contrast.
- */
-function generatedStyle(profileId: string): React.CSSProperties {
-  let hash = 0;
-  for (let index = 0; index < profileId.length; index += 1) {
-    hash = (hash * 31 + profileId.charCodeAt(index)) % 360;
-  }
-  return { '--profile-hue': String(hash) } as React.CSSProperties;
 }

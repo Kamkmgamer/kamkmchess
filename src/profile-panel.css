@@ -4,7 +4,6 @@
 .profile-identity { display: flex; gap: 14px; align-items: center; padding-block: 14px; border-block: 1px solid var(--rule); }
 .profile-identity-text { min-width: 0; }
 .profile-name { font-weight: 600; overflow-wrap: anywhere; }
-.profile-avatar { width: 48px; height: 48px; flex: 0 0 48px; border-radius: 50%; border: 1px solid var(--rule); background: var(--soft); }
 .profile-field { display: grid; gap: 6px; margin-block: 16px; }
 .profile-field > span { color: var(--dim); font-size: 12px; }
 .profile-field input { min-height: 44px; padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); color: var(--ink); }
@@ -24,15 +23,15 @@
 /* The chosen avatars are quiet two-stop gradients. The generated avatar
    derives its hue from the public profile identifier, so it is stable for a
    person and stores nothing. */
-.profile-swatch[data-avatar="ember"], .profile-avatar[data-avatar="ember"] { background: linear-gradient(140deg, #e2725b, #a3341f); }
-.profile-swatch[data-avatar="harbor"], .profile-avatar[data-avatar="harbor"] { background: linear-gradient(140deg, #2f7f8f, #14495c); }
-.profile-swatch[data-avatar="meadow"], .profile-avatar[data-avatar="meadow"] { background: linear-gradient(140deg, #5f8f52, #2f5c30); }
-.profile-swatch[data-avatar="orchid"], .profile-avatar[data-avatar="orchid"] { background: linear-gradient(140deg, #9a5fa0, #5c2f66); }
-.profile-swatch[data-avatar="slate"], .profile-avatar[data-avatar="slate"] { background: linear-gradient(140deg, #6b7280, #3f4550); }
-.profile-swatch[data-avatar="sunrise"], .profile-avatar[data-avatar="sunrise"] { background: linear-gradient(140deg, #d99b3a, #a35a1c); }
-.profile-swatch[data-avatar="tide"], .profile-avatar[data-avatar="tide"] { background: linear-gradient(140deg, #2f7f9e, #17455f); }
-.profile-swatch[data-avatar="violet"], .profile-avatar[data-avatar="violet"] { background: linear-gradient(140deg, #6f5bb5, #3b2f6b); }
-.profile-swatch[data-avatar="generated"], .profile-avatar[data-avatar="generated"] {
+.profile-swatch[data-avatar="ember"] { background: linear-gradient(140deg, #e2725b, #a3341f); }
+.profile-swatch[data-avatar="harbor"] { background: linear-gradient(140deg, #2f7f8f, #14495c); }
+.profile-swatch[data-avatar="meadow"] { background: linear-gradient(140deg, #5f8f52, #2f5c30); }
+.profile-swatch[data-avatar="orchid"] { background: linear-gradient(140deg, #9a5fa0, #5c2f66); }
+.profile-swatch[data-avatar="slate"] { background: linear-gradient(140deg, #6b7280, #3f4550); }
+.profile-swatch[data-avatar="sunrise"] { background: linear-gradient(140deg, #d99b3a, #a35a1c); }
+.profile-swatch[data-avatar="tide"] { background: linear-gradient(140deg, #2f7f9e, #17455f); }
+.profile-swatch[data-avatar="violet"] { background: linear-gradient(140deg, #6f5bb5, #3b2f6b); }
+.profile-swatch[data-avatar="generated"] {
   background: linear-gradient(140deg, hsl(var(--profile-hue, 210) 42% 60%), hsl(calc(var(--profile-hue, 210) + 40) 40% 34%));
 }
 

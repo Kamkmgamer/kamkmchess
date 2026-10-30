@@ -29,6 +29,8 @@ export interface OnlineSeatRow {
   readonly label: string;
   /** The compact declared control of the seat. */
   readonly controlLabel: string;
+  /** The declared control itself, so the row can badge it. */
+  readonly control: SeatControl | null;
   /** True when the owner of this browser plays the seat. */
   readonly yours: boolean;
 }
@@ -60,6 +62,7 @@ export function onlineSeatRows(view: OnlineMatchView, yourSeat: Seat | null): On
       seat,
       label: found?.publicLabel ?? (seat === 'white' ? 'White' : 'Black'),
       controlLabel: onlineControlLabel(found?.control ?? null),
+      control: found?.control ?? null,
       yours: yourSeat === seat,
     });
   }

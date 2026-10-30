@@ -27,7 +27,7 @@ beforeEach(() => {
   board = { ...watchBoard, fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5'] };
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === 'POST') {
-      const body = JSON.parse(String(init.body) ?? '{}') as { method: string; params?: { name: string; arguments?: Record<string, unknown> } };
+      const body = JSON.parse(String(init.body)) as { method: string; params?: { name: string; arguments?: Record<string, unknown> } };
       if (body.method === 'initialize') return mcpOk({ protocolVersion: '2025-06-18' });
       rpc.push({ name: body.params?.name ?? '', args: body.params?.arguments ?? {} });
       if (body.params?.name === 'make_move') {
@@ -90,7 +90,7 @@ describe('hosted game sessions', () => {
   it('maps a server rejection of the seat move to an illegal-move result', async () => {
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'POST') {
-        const body = JSON.parse(String(init.body) ?? '{}') as { method: string; params?: { name: string } };
+        const body = JSON.parse(String(init.body)) as { method: string; params?: { name: string } };
         if (body.method === 'initialize') return mcpOk({ protocolVersion: '2025-06-18' });
         if (body.params?.name === 'join_seat') return mcpOk({ seat: 'white' });
         if (body.params?.name === 'make_move') {

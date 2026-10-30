@@ -306,6 +306,8 @@ export type AgentDecisionOutcome =
   | { readonly kind: 'unknown'; readonly detail: string };
 
 export interface OnlineComposition {
+  /** The trusted service origin. */
+  readonly baseUrl: string;
   /** The open online surfaces. */
   readonly features: OnlineFeatureFlags;
   /**
@@ -4193,6 +4195,7 @@ export function createOnlineComposition(options: OnlineCompositionOptions): Onli
     })();
   }
   return {
+    baseUrl,
     get features() {
       return features;
     },

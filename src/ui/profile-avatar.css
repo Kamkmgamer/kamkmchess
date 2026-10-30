@@ -1,0 +1,18 @@
+/* The profile avatar swatch. It travels with the ProfileAvatarView component
+   so every surface that names a player can show their avatar. */
+.profile-avatar { width: 48px; height: 48px; flex: 0 0 48px; border-radius: 50%; border: 1px solid var(--rule); background: var(--soft); }
+
+/* The chosen avatars are quiet two-stop gradients. The generated avatar
+   derives its hue from the public profile identifier, so it is stable for a
+   person and stores nothing. */
+.profile-avatar[data-avatar="ember"] { background: linear-gradient(140deg, #e2725b, #a3341f); }
+.profile-avatar[data-avatar="harbor"] { background: linear-gradient(140deg, #2f7f8f, #14495c); }
+.profile-avatar[data-avatar="meadow"] { background: linear-gradient(140deg, #5f8f52, #2f5c30); }
+.profile-avatar[data-avatar="orchid"] { background: linear-gradient(140deg, #9a5fa0, #5c2f66); }
+.profile-avatar[data-avatar="slate"] { background: linear-gradient(140deg, #6b7280, #3f4550); }
+.profile-avatar[data-avatar="sunrise"] { background: linear-gradient(140deg, #d99b3a, #a35a1c); }
+.profile-avatar[data-avatar="tide"] { background: linear-gradient(140deg, #2f7f9e, #17455f); }
+.profile-avatar[data-avatar="violet"] { background: linear-gradient(140deg, #6f5bb5, #3b2f6b); }
+.profile-avatar[data-avatar="generated"] {
+  background: linear-gradient(140deg, hsl(var(--profile-hue, 210) 42% 60%), hsl(calc(var(--profile-hue, 210) + 40) 40% 34%));
+}

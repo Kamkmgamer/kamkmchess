@@ -46,6 +46,10 @@ import { Icon, IconButton } from './Icon.js';
 import { ChessBoard } from './ChessBoard.js';
 import { MoveList } from './MoveList.js';
 import { OpponentPanel } from './OpponentPanel.js';
+import { OpponentLogo } from './OpponentBadge.js';
+import { ProfileAvatarView } from './profile-avatar.js';
+import { useSeatProfiles } from './online-identities.js';
+import { createProfileClient } from '../profile/client.js';
 import { FriendInvitationPreview } from './friend-preview.js';
 import { friendInvitationRequest } from './friend-setup.js';
 import {
@@ -884,6 +888,9 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, onConfigu
   // the owner looks at an earlier position.
   const reviewing = view !== null && ply !== moveCount;
   const rows = view ? onlineSeatRows(view, seat) : [];
+  // A signed-in seat's public label is the username its owner chose, so the
+  // public profile — name and avatar — is one unauthenticated lookup away.
+  const seatProfiles = useSeatProfiles(rows.map(row => row.label), createProfileClient({ baseUrl: composition.baseUrl }));
   const agentRunner = view && seat ? composition.agentRunnerState(view.matchId, seat) : null;
   // The runner offers its decisions in the phases the interface renders them
   // in, so the owner sees every decision the runner offers.
@@ -1978,12 +1985,24 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, onConfigu
 
     {tab === 'games' && view && position && <div className="match-layout online-match">
       <section className="board-column" aria-label="Online match board">
-        {rows.map(row => <div key={row.seat} className={`player-row ${row.seat}`}>
-          <div className="player-name"><strong title={row.label}>{row.label}</strong><span className="player-control">{row.controlLabel}</span></div>
-          <time className={`clock ${reading.activeSeat === row.seat ? 'running' : ''}`} aria-label={`${row.seat} clock ${formatOnlineClock(row.seat === 'white' ? reading.whiteMs : reading.blackMs)}`}>
-            {formatOnlineClock(row.seat === 'white' ? reading.whiteMs : reading.blackMs)}
-          </time>
-        </div>)}
+        {rows.map(row => {
+          // A signed-in player shows the avatar their profile chose; a guest
+          // or an unnamed account keeps the neutral player badge. Engine and
+          // agent seats read like they do on the offline screen.
+          const profile = seatProfiles.get(row.label) ?? null;
+          const badge = row.control && row.control.kind !== 'human'
+            ? <OpponentLogo modelId={row.control.modelLabel ?? ''} />
+            : profile
+              ? <ProfileAvatarView avatar={profile.avatar} profileId={profile.profileId} />
+              : <span className={`player-badge ${row.seat === 'white' ? 'light' : 'dark'}-piece`} aria-hidden="true"><Icon name="user" /></span>;
+          return <div key={row.seat} className={`player-row ${row.seat}`}>
+            {badge}
+            <div className="player-meta"><div className="player-name"><strong title={row.label}>{row.label}</strong><span className="player-control">{row.controlLabel}</span></div></div>
+            <time className={`clock ${reading.activeSeat === row.seat ? 'running' : ''}`} aria-label={`${row.seat} clock ${formatOnlineClock(row.seat === 'white' ? reading.whiteMs : reading.blackMs)}`}>
+              {formatOnlineClock(row.seat === 'white' ? reading.whiteMs : reading.blackMs)}
+            </time>
+          </div>;
+        })}
         <div className="playing-board">
           <ChessBoard
             orientation={seat === 'black' ? 'black' : 'white'}

@@ -56,9 +56,10 @@ export interface ProfileClientOptions {
    *
    * The binding is the fence of the whole slice. Every credentialed stage of
    * a call checks it, so a call that started under one account is settled
-   * and discarded instead of publishing under another.
+   * and discarded instead of publishing under another. The public reads
+   * work without one.
    */
-  readonly identity: ProfileIdentityBinding;
+  readonly identity?: ProfileIdentityBinding;
   readonly fetch?: typeof fetch;
 }
 
@@ -109,7 +110,7 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
 
   /** Refuses a call that no longer belongs to the active account. */
   function assertLive(): void {
-    if (identity.signal.aborted) throw accountChanged();
+    if (identity?.signal.aborted) throw accountChanged();
   }
 
   /**
@@ -120,7 +121,8 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
    * and the late result is dropped.
    */
   async function fenced<T>(work: Promise<T>): Promise<T> {
-    const signal = identity.signal;
+    const signal = identity?.signal;
+    if (!signal) return work;
     if (signal.aborted) {
       void work.catch(() => undefined);
       throw accountChanged();
@@ -202,7 +204,7 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
     if (guarded) {
       // The transport may honour the signal; the fence below does not depend
       // on it, so a late response is still discarded.
-      requestInit.signal = identity.signal;
+      if (identity) requestInit.signal = identity.signal;
       assertLive();
     }
     if (init.body !== undefined) {
@@ -253,7 +255,7 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
     path: string,
     init: { method?: string; body?: unknown; proof?: string } = {},
   ): Promise<{ status: number; data: unknown }> {
-    const account = identity.account;
+    const account = identity?.account;
     if (!account) throw new ProfileRequestError('Sign in to edit your profile.', 401, 'not_signed_in');
     assertLive();
     let token: string;
@@ -275,14 +277,14 @@ export function createProfileClient(options: ProfileClientOptions): ProfileClien
 
   /** Mints an ownership proof from the guest seat credential of this browser. */
   async function mintOwnershipProof(): Promise<GuestOwnershipProof> {
-    const guestSeat = identity.guestSeat;
+    const guestSeat = identity?.guestSeat;
     if (!guestSeat) throw new ProfileRequestError('No guest seat is open in this browser.', 400, 'no_guest_seat');
     assertLive();
     let token: string;
     try {
       token = await fenced(guestSeat.issue());
     } catch (error) {
-      if (identity.signal.aborted) throw accountChanged();
+      if (identity?.signal.aborted) throw accountChanged();
       if (error instanceof ProfileRequestError) throw error;
       throw new ProfileRequestError('No guest seat is open in this browser.', 400, 'no_guest_seat');
     }

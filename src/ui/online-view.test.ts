@@ -75,8 +75,11 @@ describe('the compact control labels (UX-06)', () => {
   it('shows one compact label per seat and no separate declared-models list', () => {
     const rows = onlineSeatRows(matchView(), 'white');
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toEqual({ seat: 'white', label: 'Alice', controlLabel: 'Human', yours: true });
-    expect(rows[1]).toEqual({ seat: 'black', label: 'Stockfish 19 Lite', controlLabel: 'Engine · Stockfish 19 Lite (browser)', yours: false });
+    expect(rows[0]).toEqual({ seat: 'white', label: 'Alice', controlLabel: 'Human', control: { kind: 'human' }, yours: true });
+    expect(rows[1]).toEqual({
+      seat: 'black', label: 'Stockfish 19 Lite', controlLabel: 'Engine · Stockfish 19 Lite (browser)',
+      control: { kind: 'engine', modelLabel: 'Stockfish 19 Lite' }, yours: false,
+    });
   });
 
   it('names the opponent of the focused match', () => {
