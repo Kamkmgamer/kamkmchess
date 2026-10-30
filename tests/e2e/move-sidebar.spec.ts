@@ -31,16 +31,16 @@ test('paired move history scrolls, reviews, survives reload and Undo, and stacks
   await page.setViewportSize({ width: 1280, height: 844 });
   await startLocal(page);
   const chess = new Chess();
-  const line = 'e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Nb8 d4 Nbd7 c4 c6 Nc3 Bb7 a3 b4 axb4 exd4 Nxd4 Re8 Nf5 Bf8'.split(' ');
+  const line = 'e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Nb8 d4 Nbd7 c4 c6 Nc3 Bb7 a3 b4 axb4 exd4 Nxd4 Re8 Nf5 Bf8 Bg5 h6 Bh4 Be7 Qd3 Nc5 Bc2 Kh7'.split(' ');
   for (const san of line) {
     const next = chess.move(san);
     await move(page, next.from + next.to);
   }
   const table = page.getByRole('table', { name: 'Committed moves' });
   await expect(table.getByRole('button')).toHaveCount(line.length);
-  await expect(table.locator('tbody tr')).toHaveCount(16);
+  await expect(table.locator('tbody tr')).toHaveCount(20);
   await expect(table.locator('tbody tr').first()).toHaveText('1.e4e5');
-  await expect(table.locator('tbody tr').last()).toHaveText('16.Nf5Bf8');
+  await expect(table.locator('tbody tr').last()).toHaveText('20.Bc2Kh7');
   await expect.poll(() => page.locator('.move-scroll').evaluate(element => element.scrollTop)).toBeGreaterThan(0);
   await expect.poll(() => selectedIsInScrollport(page)).toBe(true);
   const board = await page.locator('.board-host').boundingBox();
@@ -52,18 +52,18 @@ test('paired move history scrolls, reviews, survives reload and Undo, and stacks
   await expect(table.locator('[aria-current]')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeDisabled();
   await table.getByRole('button', { name: 'View move 2: e5', exact: true }).click();
-  await expect(page.locator('.match-status')).toContainText('2/32');
+  await expect(page.locator('.match-status')).toContainText('2/40');
   await expect(table.getByRole('button', { name: 'View move 2: e5', exact: true })).toHaveAttribute('aria-current', 'step');
   await expect.poll(() => selectedIsInScrollport(page)).toBe(true);
   await page.getByRole('button', { name: 'Live', exact: true }).click();
   await expect.poll(() => selectedIsInScrollport(page)).toBe(true);
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
   await page.reload();
-  await expect(table.getByRole('button')).toHaveCount(32);
+  await expect(table.getByRole('button')).toHaveCount(40);
   await expect.poll(() => selectedIsInScrollport(page)).toBe(true);
   await page.getByRole('button', { name: 'Undo', exact: true }).click();
-  await expect(table.getByRole('button')).toHaveCount(31);
-  await expect(table.getByRole('button', { name: 'View move 31: Nf5', exact: true })).toHaveAttribute('aria-current', 'step');
+  await expect(table.getByRole('button')).toHaveCount(39);
+  await expect(table.getByRole('button', { name: 'View move 39: Bc2', exact: true })).toHaveAttribute('aria-current', 'step');
 
   for (const width of [390, 320]) {
     await page.setViewportSize({ width, height: 844 });

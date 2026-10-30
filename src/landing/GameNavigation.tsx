@@ -10,7 +10,7 @@ export type OptionsFocus = 'modelId' | 'minutes' | 'fen' | null;
 type GameNavigationProps = {
   onOptions: (focus?: OptionsFocus) => void;
   onNavigate: () => void;
-  onAppearance: () => void;
+  onSettings: () => void;
   account: AccountControlsState;
   onAccount: () => void;
 };
@@ -25,7 +25,7 @@ function currentSection() {
 }
 
 /** One navigation tree for the fixed rail and the mobile drawer. */
-export function GameNavigation({ onOptions, onNavigate, onAppearance, account, onAccount }: GameNavigationProps) {
+export function GameNavigation({ onOptions, onNavigate, onSettings, account, onAccount }: GameNavigationProps) {
   const id = useId();
   const section = useSyncExternalStore(subscribeToSection, currentSection, () => '#home');
   const accountLabel = account.status === 'loading' ? 'Loading account' : account.status === 'error' ? 'Retry account' : account.user ? 'Account settings' : 'Sign in';
@@ -62,8 +62,8 @@ export function GameNavigation({ onOptions, onNavigate, onAppearance, account, o
       </nav>
 
       <div className="sidebar-bottom">
-        <Button className="sidebar-row" variant="ghost" size="lg" aria-haspopup="dialog" onClick={onAppearance}>
-          <Icon icon={Settings} size={20} /><span>Appearance</span>
+        <Button className="sidebar-row" variant="ghost" size="lg" aria-haspopup="dialog" onClick={onSettings}>
+          <Icon icon={Settings} size={20} /><span>Settings</span>
         </Button>
         <nav className="sidebar-utilities" aria-label="About and help">
           <a className="sidebar-row" href="#questions" aria-current={section === '#questions' ? 'location' : undefined} onClick={onNavigate}>

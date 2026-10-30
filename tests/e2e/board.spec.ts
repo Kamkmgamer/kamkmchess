@@ -4,7 +4,6 @@ import type { Page } from '@playwright/test';
 async function startLocal(page: Page, fen = '') {
   await page.goto('/play');
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await page.getByLabel('Game mode').selectOption('local');
   if (fen) {
     await page.getByRole('button', { name: 'Custom starting position', exact: true }).click();
     await page.getByLabel('Custom starting position (six-field FEN)').fill(fen);

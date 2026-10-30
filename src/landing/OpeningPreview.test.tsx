@@ -7,7 +7,7 @@ import { GameNavigation } from './GameNavigation';
 
 describe('landing integration with the playable workspace', () => {
   it('links the primary play action to the existing game', () => {
-    const markup = renderToStaticMarkup(<GameNavigation onOptions={() => {}} onNavigate={() => {}} onAppearance={() => {}} account={{ status: 'disabled', user: null, busy: false, message: '' }} onAccount={() => {}} />);
+    const markup = renderToStaticMarkup(<GameNavigation onOptions={() => {}} onNavigate={() => {}} onSettings={() => {}} account={{ status: 'disabled', user: null, busy: false, message: '' }} onAccount={() => {}} />);
     expect(markup).toMatch(/<button[^>]*>[\s\S]*?AI opponent/);
     expect(markup).toContain('href="/play"');
     expect(markup).toContain('href="/play?online=new"');
@@ -19,7 +19,7 @@ describe('landing integration with the playable workspace', () => {
   });
 
   it('shows the signed-in account in the settings control', () => {
-    const markup = renderToStaticMarkup(<GameNavigation onOptions={() => {}} onNavigate={() => {}} onAppearance={() => {}}
+    const markup = renderToStaticMarkup(<GameNavigation onOptions={() => {}} onNavigate={() => {}} onSettings={() => {}}
       account={{ status: 'ready', user: { name: 'Alex Player', email: 'alex@example.com', imageUrl: 'https://img.clerk.com/avatar.png' }, busy: false, message: '' }} onAccount={() => {}} />);
     expect(markup).toContain('Alex Player');
     expect(markup).toContain('alex@example.com');

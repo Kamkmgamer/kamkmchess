@@ -1,0 +1,9 @@
+.board-style-options { display: grid; gap: 8px; min-width: 0; }
+/* The checkerboard rides on the inline palette from board-style.ts; the span carries a legal-move dot so the
+   preview shows squares and feedback together. */
+.board-style-preview {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%; max-width: 180px; aspect-ratio: 2 / 1; overflow: hidden; border-radius: 4px;
+  background-size: 25% 25%;
+}
+.board-style-swatch { aspect-ratio: 1; }

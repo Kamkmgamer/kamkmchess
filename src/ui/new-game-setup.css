@@ -49,6 +49,8 @@
 .sidebar-game-setup .seat-indicator { display: block; margin-bottom: 12px; }
 .sidebar-game-setup [role='alert'] { padding: 8px; background: var(--t3-error-surface); color: var(--t3-error-foreground); }
 .sidebar-game-setup :is(button, input, select, textarea):focus-visible { outline: 2px solid var(--t3-focus); outline-offset: 2px; }
+/* Same rule as the sidebar: fields carry no focus ring, buttons keep the keyboard ring. */
+.sidebar-game-setup :is(input, select, textarea):focus-visible { outline: none; }
 .sidebar-game-setup .position-editor-layout { display: flex; flex-direction: column; min-width: 0; gap: 16px; }
 .sidebar-game-setup .editor-interaction { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
 .sidebar-game-setup .editor-board-column { display: grid; grid-area: auto; width: 100%; min-width: 0; gap: 8px; }

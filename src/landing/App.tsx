@@ -12,14 +12,16 @@ import { resolveHeroDitherVariant } from './hero-dither';
 import { GameNavigation, type OptionsFocus } from './GameNavigation';
 import { defaultSetup } from './game-setup';
 import { useTheme } from '../use-theme';
-import { ThemeOptions } from './ThemeOptions';
+import { SettingsPage } from '../ui/SettingsPage';
+import { isSoundEnabled, setSoundEnabled } from '../ui/sounds';
+import { useBoardStyle } from '../ui/use-board-style';
 import { RightGameSidebar } from '../navigation/RightGameSidebar';
 import { HomeGameSetup } from './HomeGameSetup';
 import { readSidebarPreferences } from '../navigation/sidebar-preferences';
 import { createAccountControls } from '../accounts/account-controls';
 import { publicConfig } from '../public-config';
 
-type SidebarPanel = { kind: 'closed' } | { kind: 'navigation' } | { kind: 'appearance' };
+type SidebarPanel = { kind: 'closed' } | { kind: 'navigation' };
 
 function Wordmark() {
   return (
@@ -32,16 +34,17 @@ function Wordmark() {
 
 export function App() {
   const theme = useTheme();
+  useBoardStyle();
   const [accountControls] = useState(() => createAccountControls(publicConfig.accountsEnabled ? publicConfig.clerkPublishableKey : null));
   const account = useSyncExternalStore(accountControls.subscribe, accountControls.getSnapshot, accountControls.getSnapshot);
   const pendingAccountSettings = useRef(false);
   const [gameOptions, setGameOptions] = useState<{ open: boolean; focus: 'opponent' | 'time' | 'position' | null }>(() => ({ open: !readSidebarPreferences().collapsed, focus: null }));
   const [panel, setPanel] = useState<SidebarPanel>({ kind: 'closed' });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sound, setSound] = useState(isSoundEnabled);
   const sidebarOpen = panel.kind !== 'closed';
-  const panelRef = useRef<HTMLDivElement>(null);
   const ditherVariant = resolveHeroDitherVariant(typeof window === 'undefined' ? '' : window.location.search);
   const portal = useQuartzPortal();
-  const panelFocusSelector = panel.kind === 'appearance' ? 'select' : null;
 
   useEffect(() => {
     const media = window.matchMedia('(min-width: 1001px)');
@@ -49,13 +52,6 @@ export function App() {
     media.addEventListener('change', closeMobileSidebar);
     return () => media.removeEventListener('change', closeMobileSidebar);
   }, []);
-
-  useEffect(() => {
-    // The mobile menu and settings share a popup, so changing panels needs new focus.
-    if (!panelFocusSelector) return;
-    const frame = requestAnimationFrame(() => panelRef.current?.querySelector<HTMLElement>(panelFocusSelector)?.focus());
-    return () => cancelAnimationFrame(frame);
-  }, [panelFocusSelector]);
 
   function closeNavigation() {
     setPanel({ kind: 'closed' });
@@ -66,8 +62,9 @@ export function App() {
     setGameOptions({ open: true, focus: focus === 'modelId' ? 'opponent' : focus === 'minutes' ? 'time' : focus === 'fen' ? 'position' : null });
   }
 
-  function openAppearance() {
-    setPanel({ kind: 'appearance' });
+  function openSettings() {
+    setPanel({ kind: 'closed' });
+    setSettingsOpen(true);
   }
 
   function openAccountSettings() {
@@ -91,7 +88,7 @@ export function App() {
       <a className="skip-link" href="#main">Skip to content</a>
       <aside className="game-sidebar" aria-label="Main sidebar">
         <Wordmark />
-        <GameNavigation onOptions={openGameOptions} onNavigate={closeNavigation} onAppearance={openAppearance} account={account} onAccount={openAccountSettings} />
+        <GameNavigation onOptions={openGameOptions} onNavigate={closeNavigation} onSettings={openSettings} account={account} onAccount={openAccountSettings} />
       </aside>
       <Button className="mobile-menu-trigger" variant="secondary" size="icon-lg" aria-label="Open navigation" aria-haspopup="dialog" aria-expanded={panel.kind === 'navigation'} onClick={() => { setPanel({ kind: 'navigation' }); }}>
         <Icon icon={SidePanelOpen} size={24} />
@@ -161,16 +158,30 @@ export function App() {
 
       <Dialog.Portal {...(portal ? { container: portal } : {})}>
         <Dialog.Backdrop className="sidebar-backdrop" />
-        {/* Each panel needs its own focus manager when replacing the mobile menu. */}
-        <Dialog.Popup key={panel.kind} ref={panelRef} className={`sidebar-panel${panel.kind === 'navigation' ? ' sidebar-panel-navigation' : ''}`} initialFocus={() => panelFocusSelector ? panelRef.current?.querySelector<HTMLElement>(panelFocusSelector) ?? true : true}>
+        <Dialog.Popup className="sidebar-panel sidebar-panel-navigation">
           <div className="mobile-sidebar-heading">
-            <Dialog.Title>{panel.kind === 'navigation' ? 'kamkm chess' : 'Appearance'}</Dialog.Title>
+            <Dialog.Title>kamkm chess</Dialog.Title>
             <Dialog.Close render={<Button variant="ghost" size="icon-lg" aria-label="Close menu" />}><Icon icon={Close} /></Dialog.Close>
           </div>
-          <Dialog.Description className="visually-hidden">{panel.kind === 'navigation' ? 'Explore chess, set up a game or find help.' : 'Choose a theme, appearance and chess piece style.'}</Dialog.Description>
-          {panel.kind === 'navigation'
-            ? <GameNavigation onOptions={openGameOptions} onNavigate={closeNavigation} onAppearance={openAppearance} account={account} onAccount={openAccountSettings} />
-            : <ThemeOptions {...theme} />}
+          <Dialog.Description className="visually-hidden">Explore chess, set up a game or find help.</Dialog.Description>
+          <GameNavigation onOptions={openGameOptions} onNavigate={closeNavigation} onSettings={openSettings} account={account} onAccount={openAccountSettings} />
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
+    <Dialog.Root open={settingsOpen} onOpenChange={setSettingsOpen}>
+      <Dialog.Portal {...(portal ? { container: portal } : {})}>
+        <Dialog.Backdrop className="sidebar-backdrop" />
+        <Dialog.Popup className="landing-settings-dialog"
+          initialFocus={() => document.querySelector<HTMLElement>('.landing-settings-dialog input[name="settings-theme"]:checked') ?? true}>
+          <div className="landing-settings-heading">
+            <Dialog.Title>Settings</Dialog.Title>
+            <Dialog.Close render={<Button variant="ghost" size="icon-lg" aria-label="Close" />}><Icon icon={Close} /></Dialog.Close>
+          </div>
+          <Dialog.Description className="visually-hidden">Choose a theme, appearance, board and piece style.</Dialog.Description>
+          <div className="settings-page">
+            <SettingsPage theme={theme.theme} appearance={theme.appearance} sound={sound}
+              onTheme={theme.setTheme} onAppearance={theme.setAppearance} onSound={enabled => { setSound(enabled); setSoundEnabled(enabled); }} />
+          </div>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

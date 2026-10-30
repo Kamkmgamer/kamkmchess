@@ -147,7 +147,7 @@ body { margin: 0; }
 .theme-options { display: grid; gap: var(--space-6); }
 .theme-options label { display: grid; gap: var(--space-3); font: var(--type-label); }
 .theme-options select { width: 100%; min-height: var(--control-lg); padding: var(--space-3); border: var(--line-hair) solid var(--line-control); border-radius: var(--radius-soft); background: var(--surface-card); color: var(--text-1); font: var(--type-body); }
-.theme-options select:focus-visible { outline: var(--line-focus) solid var(--border-focus); outline-offset: var(--space-0-5); }
+.theme-options select:focus-visible { outline: none; }
 
 /* Equal outer padding centers the rounded media panel on all four sides. */
 .hero { position: relative; min-height: 100svh; isolation: isolate; display: grid; overflow: hidden; padding: var(--hero-panel-inset); background: var(--surface-page); color: var(--text-1); --hero-panel-inset: var(--space-6); --hero-panel-radius: calc(var(--radius-frame) * 2); }

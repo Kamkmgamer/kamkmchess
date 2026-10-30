@@ -32,7 +32,7 @@ test('AI opponent opens the functional right-hand drawer and the redundant previ
   await expect(page).toHaveURL(/\/$/);
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Chess against a');
   await expect(page.locator('.setup-panel')).toHaveCount(0);
-  await page.getByLabel('Game mode').selectOption('local');
+  await page.getByLabel('Black', { exact: true }).selectOption('human');
   await page.getByLabel('Starting minutes', { exact: true }).fill('7');
   await page.getByLabel('Increment seconds', { exact: true }).fill('3');
   await page.screenshot({ path: testInfo.outputPath('home-right-game-options.png') });
@@ -74,7 +74,7 @@ test('the right drawer collapses, resizes, remembers its width and preserves dra
   await expect(control).toHaveAttribute('aria-valuenow', '320');
   await control.press('Enter');
   await expect(control).toHaveAttribute('aria-valuenow', '420');
-  await page.getByLabel('Game mode').selectOption('local');
+  await page.getByLabel('Black', { exact: true }).selectOption('human');
   await page.getByLabel('Starting minutes', { exact: true }).fill('9');
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.getByLabel('Starting minutes', { exact: true })).toHaveValue('9');
@@ -101,13 +101,13 @@ test('mobile AI opponent opens the right drawer and creates a local match', asyn
   await page.getByRole('button', { name: 'Open navigation' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'AI opponent', exact: true }).click();
   await expect(page.locator('.right-game-sidebar')).toBeVisible();
-  await page.getByLabel('Game mode').selectOption('local');
+  await page.getByLabel('Black', { exact: true }).selectOption('human');
   await expectNoOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('mobile-right-game-options.png') });
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(page).toHaveURL(/\/play$/);
   await page.getByRole('button', { name: 'New game', exact: true }).click();
-  await expect(page.getByLabel('Game mode')).toBeVisible();
+  await expect(page.getByLabel('White', { exact: true })).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(page.locator('.right-game-sidebar')).toHaveCount(0);
   await page.setViewportSize({ width: 320, height: 844 });
@@ -119,12 +119,12 @@ test('right drawer controls work when preference storage is unavailable', async 
   await page.addInitScript(() => { Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Storage disabled', 'SecurityError'); } }); });
   await page.goto('/');
   await page.getByRole('button', { name: 'AI opponent', exact: true }).click();
-  await page.getByLabel('Game mode').selectOption('local');
+  await page.getByLabel('Black', { exact: true }).selectOption('human');
   await page.getByRole('separator', { name: 'Game settings width' }).press('End');
   await expect(page.getByRole('separator', { name: 'Game settings width' })).toHaveAttribute('aria-valuenow', '720');
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.getByRole('button', { name: 'Expand game settings' }).click();
-  await expect(page.getByLabel('Game mode')).toBeVisible();
+  await expect(page.getByLabel('White', { exact: true })).toBeVisible();
 });
 
 test('an AI opponent configured on the homepage plays the saved match', async ({ page }) => {
@@ -145,10 +145,10 @@ test('an AI opponent configured on the homepage plays the saved match', async ({
   });
   await page.goto('/');
   await page.getByRole('button', { name: 'AI opponent', exact: true }).click();
-  await page.getByLabel('Game mode').selectOption('ai');
+  await page.getByLabel('Black', { exact: true }).selectOption('ai');
   await page.getByLabel('API key', { exact: true }).fill('offline-key');
   await page.getByRole('button', { name: 'Connect', exact: true }).click();
-  await page.getByLabel('Available models').selectOption('sidebar-fixture');
+  await page.getByLabel('Available models', { exact: true }).selectOption('sidebar-fixture');
   await page.getByRole('button', { name: 'Allow', exact: true }).click();
   await expect(page.getByText('Ready', { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\/$/);
