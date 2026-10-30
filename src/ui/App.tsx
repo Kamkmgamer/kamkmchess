@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { FormEvent } from 'react';
 import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { ChessBoard } from './ChessBoard.js';
@@ -76,6 +76,8 @@ import { usePieceStyle } from './use-piece-style.js';
 import { useBoardStyle } from './use-board-style.js';
 import { SettingsPage } from './SettingsPage.js';
 import { CopyButton } from './copy-button.js';
+import { createAccountControls } from '../accounts/account-controls.js';
+import { publicConfig } from '../public-config.js';
 import { conciseError, conciseTurnError } from './concise-error.js';
 import { controllerRevisionForConfig, matchesOpponentSelection } from './opponent-selection.js';
 import { getGenerationJournal } from '../integration/generation-runner.js';
@@ -190,6 +192,11 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [working, setWorking] = useState(false);
   const checkedIdentities = useRef(new Map<string, OpponentIdentityV1>());
   const [modelSelection, setModelSelection] = useState<ModelSelection | null>(null);
+  // The signed-in account of this browser, read the same way the navigation
+  // drawer reads it, so the player rows can name its seat.
+  const [accountControls] = useState(() => createAccountControls(publicConfig.accountsEnabled ? publicConfig.clerkPublishableKey : null));
+  const account = useSyncExternalStore(accountControls.subscribe, accountControls.getSnapshot, accountControls.getSnapshot);
+  const clerkUser = account.user;
   const [opponentIdentity, setOpponentIdentity] = useState<OpponentIdentityV1 | null>(null);
   const [handoff, setHandoff] = useState<HandoffSnapshotV1>({ committed: null, queued: null, producing: null });
   const [autoGeneration, setAutoGeneration] = useState(true);
@@ -1112,6 +1119,11 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     isAgentSelection(players[side]) ? agentBridge.reportedName(snapshot.checkpoint.gameId) : null;
   const playerLabel = (side: 'white' | 'black') => {
     const player = snapshot.checkpoint.selections.players[side];
+    if (player.kind === 'human') {
+      // The seat this browser plays in a hosted game reads as its owner.
+      if (hostedGame && seatJoined && side === hostedGame.side && clerkUser) return clerkUser.name;
+      return side === 'white' ? 'White' : 'Black';
+    }
     if (isAgentSelection(player)) {
       const name = reportedAgentName(side);
       return name === null ? player.modelRoutingId : name;
@@ -1235,6 +1247,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     </header>}
     {onlineVisible && online && <div className="online-overlay" role="dialog" aria-modal="true" aria-label="Online play" tabIndex={-1}>
       <OnlineWorkspace composition={online} onClose={closeOnline} initialTab={onlineInitialTab}
+        accountUser={clerkUser}
         agentLabel={online.agent?.label ?? null}
         onConfigureAgent={() => { closeOnline(); openSetup(undefined, 'opponent'); }}
         checkAgent={checkOnlineAgent}
@@ -1280,7 +1293,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     <div className="match-layout" hidden={focusPage} data-practice={snapshot.checkpoint.practice.mode} data-committed-model={snapshot.modelHandoff.committed?.modelRoutingId} data-queued-model={snapshot.modelHandoff.queued?.selection.modelRoutingId}>
       <section className="board-column" id="board" ref={boardPanel} tabIndex={-1} aria-label="Chess match board">
         {(['black', 'white'] as const).map(side => <div key={side} className={`player-row ${side} ${side === orientation ? 'near-player' : 'far-player'} ${activeSide === side ? 'active' : ''}`}>
-          <OpponentBadge player={players[side]} side={side} reportedName={reportedAgentName(side)} /><div className="player-meta"><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
+          <OpponentBadge player={players[side]} side={side} reportedName={reportedAgentName(side)}
+            accountUser={hostedGame && seatJoined && side === hostedGame.side ? clerkUser : null} /><div className="player-meta"><div className="player-name"><strong title={playerLabel(side)}>{playerLabel(side)}</strong></div>
           <CapturedPieces pieces={side === 'white' ? captures.capturedByWhite : captures.capturedByBlack} capturedColor={side === 'white' ? 'b' : 'w'}
             advantage={side === 'white' ? (captures.advantage > 0 ? captures.advantage : null) : captures.advantage < 0 ? -captures.advantage : null} /></div>
           {clockHeld && activeSide === side && <span className="clock-held" title="Clock held after a failed model turn">held</span>}

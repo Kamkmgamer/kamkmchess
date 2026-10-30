@@ -11,7 +11,7 @@ export function OpponentLogo({ modelId }: { readonly modelId: string }) {
   </span>;
 }
 
-export function OpponentBadge({ player, side, reportedName }: {
+export function OpponentBadge({ player, side, reportedName, accountUser }: {
   readonly player: PlayerSelectionV1;
   readonly side: 'white' | 'black';
   /**
@@ -21,7 +21,17 @@ export function OpponentBadge({ player, side, reportedName }: {
    * nothing; the name the agent reported decides the brand logo.
    */
   readonly reportedName?: string | null;
+  /**
+   * The signed-in account of this browser, when the row is its own seat.
+   * The photo the player signed in with shows instead of the generic badge.
+   */
+  readonly accountUser?: { readonly name: string; readonly imageUrl: string | null } | null;
 }) {
   if (player.kind === 'model') return <OpponentLogo modelId={reportedName ?? player.modelRoutingId} />;
+  if (accountUser?.imageUrl) {
+    return <span className="opponent-logo" title={accountUser.name}>
+      <img src={accountUser.imageUrl} alt="" width={22} height={22} referrerPolicy="no-referrer" />
+    </span>;
+  }
   return <span className={`player-badge ${side === 'white' ? 'light' : 'dark'}-piece`} aria-hidden="true"><Icon name="user" /></span>;
 }

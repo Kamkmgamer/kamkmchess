@@ -144,6 +144,8 @@ export interface OnlineWorkspaceProps {
   readonly onClose: () => void;
   /** Opens the account profile and history of the owner. */
   readonly onOpenProfile?: () => void;
+  /** The signed-in account of this browser, when the page has one. */
+  readonly accountUser?: { readonly name: string; readonly imageUrl: string | null } | null;
   /** Opens the browser-owned AI connection setup before queueing an agent. */
   readonly onConfigureAgent?: () => void;
   /** The public label of the owner's own agent, when one is selected. */
@@ -597,7 +599,7 @@ export function OnlinePublicHistory({ history }: { readonly history: OnlineProfi
  * The screen owns no service state. It renders the composition and asks it to
  * act.
  */
-export function OnlineWorkspace({ composition, onClose, onOpenProfile, onConfigureAgent, agentLabel, initialTab, checkAgent,
+export function OnlineWorkspace({ composition, onClose, onOpenProfile, accountUser, onConfigureAgent, agentLabel, initialTab, checkAgent,
   agentService, agentConnectionStore, agentNamespace, onAgentConnected }: OnlineWorkspaceProps) {
   const [tab, setTab] = useState<OnlineTab>(initialTab ?? 'games');
   const [clockIndex, setClockIndex] = useState(1);
@@ -1986,18 +1988,23 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, onConfigu
     {tab === 'games' && view && position && <div className="match-layout online-match">
       <section className="board-column" aria-label="Online match board">
         {rows.map(row => {
-          // A signed-in player shows the avatar their profile chose; a guest
-          // or an unnamed account keeps the neutral player badge. Engine and
-          // agent seats read like they do on the offline screen.
-          const profile = seatProfiles.get(row.label) ?? null;
-          const badge = row.control && row.control.kind !== 'human'
-            ? <OpponentLogo modelId={row.control.modelLabel ?? ''} />
-            : profile
-              ? <ProfileAvatarView avatar={profile.avatar} profileId={profile.profileId} />
-              : <span className={`player-badge ${row.seat === 'white' ? 'light' : 'dark'}-piece`} aria-hidden="true"><Icon name="user" /></span>;
+          // The owner's own seat reads as the account they signed in with.
+          // A signed-in opponent shows the avatar their public profile chose;
+          // a guest or an unnamed account keeps the neutral player badge.
+          // Engine and agent seats read like they do on the offline screen.
+          const mine = row.yours && accountUser ? accountUser : null;
+          const profile = mine ? null : seatProfiles.get(row.label) ?? null;
+          const badge = mine?.imageUrl
+            ? <span className="opponent-logo" title={mine.name}><img src={mine.imageUrl} alt="" width={22} height={22} referrerPolicy="no-referrer" /></span>
+            : row.control && row.control.kind !== 'human'
+              ? <OpponentLogo modelId={row.control.modelLabel ?? ''} />
+              : profile
+                ? <ProfileAvatarView avatar={profile.avatar} profileId={profile.profileId} />
+                : <span className={`player-badge ${row.seat === 'white' ? 'light' : 'dark'}-piece`} aria-hidden="true"><Icon name="user" /></span>;
+          const label = mine ? mine.name : row.label;
           return <div key={row.seat} className={`player-row ${row.seat}`}>
             {badge}
-            <div className="player-meta"><div className="player-name"><strong title={row.label}>{row.label}</strong><span className="player-control">{row.controlLabel}</span></div></div>
+            <div className="player-meta"><div className="player-name"><strong title={label}>{label}</strong><span className="player-control">{row.controlLabel}</span></div></div>
             <time className={`clock ${reading.activeSeat === row.seat ? 'running' : ''}`} aria-label={`${row.seat} clock ${formatOnlineClock(row.seat === 'white' ? reading.whiteMs : reading.blackMs)}`}>
               {formatOnlineClock(row.seat === 'white' ? reading.whiteMs : reading.blackMs)}
             </time>

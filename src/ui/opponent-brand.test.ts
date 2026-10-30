@@ -85,4 +85,19 @@ describe('opponent badges', () => {
     expect(renderToStaticMarkup(createElement(OpponentBadge, { side: 'white', player: agent }))).toContain('aria-label="AI opponent"');
     expect(renderToStaticMarkup(createElement(OpponentBadge, { side: 'white', player: agent, reportedName: 'GLM-4.7 (self-reported)' }))).toContain('data-brand="glm"');
   });
+
+  it('shows the signed-in account photo on its own human seat', () => {
+    const html = renderToStaticMarkup(createElement(OpponentBadge, {
+      side: 'white', player: { kind: 'human' },
+      accountUser: { name: 'Alex Player', imageUrl: 'https://img.clerk.com/account.png' },
+    }));
+    expect(html).toContain('src="https://img.clerk.com/account.png"');
+    expect(html).toContain('title="Alex Player"');
+    // A signed-in account without a photo keeps the neutral badge.
+    const plain = renderToStaticMarkup(createElement(OpponentBadge, {
+      side: 'white', player: { kind: 'human' }, accountUser: { name: 'Alex Player', imageUrl: null },
+    }));
+    expect(plain).toContain('player-badge light-piece');
+    expect(plain).not.toContain('<img');
+  });
 });
