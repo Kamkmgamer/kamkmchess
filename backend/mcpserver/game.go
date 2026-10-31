@@ -692,6 +692,10 @@ func (s *Server) input(match online.Match, sess *session) map[string]any {
 	return input
 }
 
+// clock reports the banks as they stand right now, with the running seat's
+// share of the elapsed time charged. activeSeat names the seat whose main
+// clock is running, and is nil before the first move and during the opening
+// reply window, when no bank is being charged at all.
 func (s *Server) clock(match online.Match) map[string]any {
 	white, black := match.Clock.WhiteMs, match.Clock.BlackMs
 	if match.Status == online.MatchActive && match.Clock.ActiveSeat != nil && match.Clock.ActiveSince != nil {
@@ -702,7 +706,7 @@ func (s *Server) clock(match online.Match) map[string]any {
 			black = max(0, black-elapsed)
 		}
 	}
-	return map[string]any{"whiteMs": white, "blackMs": black, "incrementMs": match.TimeControl.IncrementMs}
+	return map[string]any{"whiteMs": white, "blackMs": black, "incrementMs": match.TimeControl.IncrementMs, "activeSeat": match.Clock.ActiveSeat}
 }
 
 func resultView(match online.Match, seat online.Seat) any {

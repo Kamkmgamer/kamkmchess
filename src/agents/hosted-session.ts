@@ -16,7 +16,7 @@ const STANDARD_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 /** The watch payload of a hosted game, published by the MCP server. */
 interface WatchBoard {
   gameId: string; fen: string; status: string; players: Record<string, string>; moves: string[];
-  clock: { whiteMs: number; blackMs: number; incrementMs?: number };
+  clock: { whiteMs: number; blackMs: number; incrementMs?: number; activeSeat?: 'white' | 'black' | null };
   result: { kind?: string; winner?: string | null; reason?: string } | null;
   watch_url: string;
 }
@@ -104,11 +104,15 @@ export class HostedGameController implements GameController {
 
   private async poll(): Promise<void> {
     if (this.stopped) return;
-    this.lastPollAt = performance.now();
     try {
       const response = await fetch(`${remoteEndpoint}?watch=${encodeURIComponent(this.watchId)}`, { credentials: 'omit', cache: 'no-store' });
       if (!response.ok) throw new Error('This hosted game is unavailable.');
-      this.adopt(await response.json() as WatchBoard);
+      const board = await response.json() as WatchBoard;
+      // The anchor is the instant the payload was adopted: the server already
+      // charged the elapsed time up to its own answer, and a failed attempt
+      // leaves the last anchor in place so a running clock keeps charging.
+      this.lastPollAt = performance.now();
+      this.adopt(board);
       this.connectionError = null;
     } catch (error) {
       this.connectionError = error instanceof Error ? error.message : 'Connection lost. Retrying.';
@@ -164,10 +168,14 @@ export class HostedGameController implements GameController {
     const waiting = !finished && board.status !== 'active';
     const activeSide = finished || waiting ? null : sideToMove;
     const banks = { whiteMs: Math.max(0, Math.round(board.clock.whiteMs)), blackMs: Math.max(0, Math.round(board.clock.blackMs)) };
-    const elapsed = activeSide === null ? 0 : Math.max(0, performance.now() - this.lastPollAt);
-    const remaining = activeSide === null ? banks : {
-      whiteMs: activeSide === 'white' ? Math.max(0, banks.whiteMs - elapsed) : banks.whiteMs,
-      blackMs: activeSide === 'black' ? Math.max(0, banks.blackMs - elapsed) : banks.blackMs,
+    // The server charges only a running main clock. Before the first move and
+    // during the opening reply window none runs, so the banks stand and the
+    // interpolation must not charge the side to move between polls.
+    const runningSeat = activeSide === null ? null : board.clock.activeSeat ?? null;
+    const elapsed = runningSeat === null ? 0 : Math.max(0, performance.now() - this.lastPollAt);
+    const remaining = runningSeat === null ? banks : {
+      whiteMs: runningSeat === 'white' ? Math.max(0, banks.whiteMs - elapsed) : banks.whiteMs,
+      blackMs: runningSeat === 'black' ? Math.max(0, banks.blackMs - elapsed) : banks.blackMs,
     };
     const clockReading: ClockReading | null = activeSide === null ? null : {
       activeSide,
