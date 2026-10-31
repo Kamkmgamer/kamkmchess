@@ -24,7 +24,9 @@ function mcpOk(structured: Record<string, unknown>): Response {
 
 beforeEach(() => {
   vi.stubGlobal('window', { location: { origin: 'https://chess.test' } });
-  board = { ...watchBoard, fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5'] };
+  // Five plies in, the opening reply window has closed and black's main clock runs.
+  board = { ...watchBoard, fen: 'r1bqkbnr/pppp1ppp/2n5/1B2p3/4P3/5N2/PPPP1PPP/RNBQK2R b KQkq - 3 3', moves: ['e4', 'e5', 'Nf3', 'Nc6', 'Bb5'],
+    clock: { ...watchBoard.clock, activeSeat: 'black' } };
   vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
     if (init?.method === 'POST') {
       const body = JSON.parse(String(init.body)) as { method: string; params?: { name: string; arguments?: Record<string, unknown> } };
@@ -41,7 +43,7 @@ beforeEach(() => {
   }));
 });
 
-afterEach(() => { vi.unstubAllGlobals(); rpc.length = 0; });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); rpc.length = 0; });
 
 describe('hosted game sessions', () => {
   it('renders the watch payload as an ordinary play-screen snapshot', async () => {
@@ -138,5 +140,33 @@ describe('hosted game sessions', () => {
     expect(snapshot.checkpoint.rules.startingFen).toBe(asSeen);
     expect(snapshot.checkpoint.rules.moves).toHaveLength(0);
     expect(snapshot.position.fen).toBe(asSeen);
+  });
+
+  it('holds the opening banks still until the server runs a main clock', async () => {
+    // Before the first move no bank is being charged, so the display must not
+    // tick white down and then snap back to full on every poll.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    board = { ...watchBoard, fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', moves: [],
+      clock: { whiteMs: 900_000, blackMs: 900_000, incrementMs: 60_000 } };
+    const session = openHostedGameSession({ watchId: 'match-1', seatToken: null, side: 'white' });
+    const snapshot = await session.controller.initialize();
+    expect(snapshot.clockReading).toMatchObject({ status: 'running', activeSide: 'white' });
+    expect(snapshot.clockReading?.remaining?.whiteMs).toBe(900_000);
+    const unsubscribe = session.controller.subscribe(() => undefined);
+    await vi.advanceTimersByTimeAsync(3_500);
+    await expect(session.controller.reconcile()).resolves.toMatchObject({
+      clockReading: { status: 'running', remaining: { whiteMs: 900_000, blackMs: 900_000 } },
+    });
+    // The server arms white's main clock once the opening exchange is played,
+    // and from then on the display interpolates the running bank.
+    board = { ...board, fen: 'rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2', moves: ['e4', 'e5'],
+      clock: { whiteMs: 890_000, blackMs: 900_000, incrementMs: 60_000, activeSeat: 'white' } };
+    await vi.advanceTimersByTimeAsync(1_100);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const running = await session.controller.reconcile();
+    expect(running.clockReading).toMatchObject({ status: 'running', activeSide: 'white' });
+    expect(running.clockReading?.remaining?.whiteMs ?? 0).toBeLessThan(890_000);
+    expect(running.clockReading?.remaining?.blackMs).toBe(900_000);
+    unsubscribe();
   });
 });

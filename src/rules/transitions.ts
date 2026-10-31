@@ -31,13 +31,18 @@ const promotions: readonly Promotion[] = ['q', 'r', 'b', 'n'];
 
 /** The coordinate move a SAN token denotes in this position, or null when it is not legal there. */
 export function sanToCoordinateMove(position: Position, san: string): CoordinateMove | null {
-  const move = parseSan(createChessPosition(position), san.trim());
+  const engine = createChessPosition(position);
+  const move = parseSan(engine, san.trim());
   if (!move || !('from' in move)) return null;
+  // chessops names a castle after the rook (e1h1); the page's vocabulary is the
+  // king's landing square (e1g1), the same form legalMoves emits.
+  const side = castlingSide(engine, move);
+  const to = makeSquare(side ? kingCastlesTo(engine.turn, side) : move.to);
   // Orthodox SAN promotions are underpromotions; chessops types carry the full role union.
   const promotion = move.promotion === undefined ? undefined
     : ({ queen: 'q', rook: 'r', bishop: 'b', knight: 'n' } as const)[move.promotion as 'queen' | 'rook' | 'bishop' | 'knight'];
-  return promotion === undefined ? { from: makeSquare(move.from), to: makeSquare(move.to) }
-    : { from: makeSquare(move.from), to: makeSquare(move.to), promotion };
+  return promotion === undefined ? { from: makeSquare(move.from), to }
+    : { from: makeSquare(move.from), to, promotion };
 }
 
 /** Legal orthodox coordinates, including explicit promotion choices. */
@@ -66,16 +71,24 @@ export function applyCoordinateMove(position: Position, move: CoordinateMove): T
   const engine = createChessPosition(position);
   const raw: NormalMove = { from: parseSquare(move.from), to: parseSquare(move.to),
     ...(move.promotion === undefined ? {} : { promotion: charToRole(move.promotion) }) };
+  // chessops accepts a castle named after the king's landing square (e1g1) or
+  // after the rook (e1h1, the form its own move generator and parseSan emit).
+  // Both are the same move; play the landing-square form so every caller sees
+  // one canonical set of coordinates.
   const castle = castlingSide(engine, raw);
-  if ((castle && raw.to !== kingCastlesTo(engine.turn, castle)) || !engine.isLegal(raw)) throw new IllegalMoveError(move);
+  const applied: NormalMove = castle
+    ? { from: raw.from, to: kingCastlesTo(engine.turn, castle),
+      ...(raw.promotion === undefined ? {} : { promotion: raw.promotion }) }
+    : raw;
+  if (!engine.isLegal(applied)) throw new IllegalMoveError(move);
   const movingPiece = position.pieces.find(piece => piece.square === move.from);
   if (!movingPiece) throw new Error('A legal move has no moving piece.');
-  const enPassant = movingPiece.type === 'p' && move.from[0] !== move.to[0] && !engine.board.get(raw.to);
-  const captureSquare = enPassant ? `${move.to[0]}${move.from[1]}` : move.to;
+  const enPassant = movingPiece.type === 'p' && move.from[0] !== move.to[0] && !engine.board.get(applied.to);
+  const captureSquare = enPassant ? `${move.to[0]}${move.from[1]}` : makeSquare(applied.to);
   const capturedPiece = position.pieces.find(piece => piece.square === captureSquare) ?? null;
   const isCapture = capturedPiece !== null;
-  const san = makeSan(engine, raw);
-  engine.play(raw);
+  const san = makeSan(engine, applied);
+  engine.play(applied);
   const enPassantSquare = movingPiece.type === 'p' && Math.abs(Number(move.to[1]) - Number(move.from[1])) === 2
     ? `${move.from[0]}${(Number(move.to[1]) + Number(move.from[1])) / 2}` : '-';
   const nextPosition = parsePosition([
