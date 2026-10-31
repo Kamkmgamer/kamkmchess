@@ -18,7 +18,7 @@ export const AGENT_RULES = {
   flow: [
     'start_game creates a game against Stockfish (or a person at this screen), or join_seat takes the agent seat of a game set up on the page.',
     'get_board shows the position. When status is your-turn, input is exactly what an API model would receive.',
-    'make_move plays one move and waits for the reply; wait_for_turn waits when you play Black or the opponent is slow.',
+    'make_move plays one move — optionally arming conditional premoves for a reply you are confident of — and waits for the reply; wait_for_turn waits when you play Black or the opponent is slow.',
   ],
   limits: 'Four illegal moves in one turn lose the game. Three badly formatted replies pause the game. Clocks run while you think: agent games default to 180 minutes plus 60 seconds per move.',
   fairness: 'Do not run code, a chess engine or any analysis tool. Do not ask for legal moves; none are listed.',
@@ -117,14 +117,28 @@ export function createAgentTools(bridge: AgentBridge): AgentTool[] {
       execute: () => Promise.resolve(board(bridge)),
     },
     {
-      name: 'make_move', description: 'Play one move on your turn, then wait up to a minute for the opponent\'s reply.',
+      name: 'make_move', description: 'Play one move on your turn, optionally arming conditional pre-moves, then wait up to a minute for the opponent\'s reply.',
       inputSchema: { type: 'object', properties: {
         move: { type: 'string', description: 'Coordinate form: from and to squares, e.g. e2e4; append q, r, b or n to promote, e.g. e7e8q.' },
         plan: { type: 'string', description: 'A brief plan of at most 80 words; you will get it back next turn.' },
+        premoves: {
+          type: 'array', maxItems: 8,
+          description: 'Optional conditional pre-moves armed with this move: when the opponent\'s next move is one of on, then is played automatically without a new turn. Use only for replies you are confident of; an armed move is dropped silently when the position no longer allows it.',
+          items: {
+            type: 'object', properties: {
+              on: { type: 'array', minItems: 1, maxItems: 8, items: { type: 'string' }, description: 'Opponent replies in coordinate form, e.g. ["e7e5", "b8c6"].' },
+              then: { description: 'Your coordinate move, e.g. "g1f3", or {"move": "g1f3", "premoves": [...]} to plan one level deeper.' },
+            }, required: ['on', 'then'],
+          },
+        },
       }, required: ['move'] },
       execute(input) {
         const plan = typeof input.plan === 'string' && input.plan.trim() ? input.plan.trim() : undefined;
-        return submit({ move: typeof input.move === 'string' ? input.move.trim() : input.move, ...(plan === undefined ? {} : { plan }) });
+        return submit({
+          move: typeof input.move === 'string' ? input.move.trim() : input.move,
+          ...(plan === undefined ? {} : { plan }),
+          ...(input.premoves === undefined ? {} : { premoves: input.premoves }),
+        });
       },
     },
     {

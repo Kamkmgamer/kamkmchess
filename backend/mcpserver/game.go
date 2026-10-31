@@ -103,6 +103,7 @@ type Server struct {
 	options  Options
 	sessions *sessionStore
 	starts   *rateLimiter
+	premoves *premoveRegistry
 }
 
 // New returns the endpoint. Every dependency is required.
@@ -132,6 +133,7 @@ func New(options Options) (*Server, error) {
 		options:  options,
 		sessions: newSessionStore(options.MaxSessions, 2*time.Hour, options.Now),
 		starts:   newRateLimiter(options.StartsPerHour, time.Hour, options.Now),
+		premoves: newPremoveRegistry(),
 	}, nil
 }
 
@@ -153,13 +155,13 @@ const Instructions = "kamkm chess: play an unrated game of chess against Stockfi
 
 var rules = map[string]any{
 	"summary":      "Standard chess against Stockfish, a human or another agent on the kamkm chess server. Use MCP for every move and share watch_url with your human.",
-	"instructions": "Choose one legal move per turn in coordinate form: from and to squares, e.g. e2e4, with q, r, b or n appended to promote (e7e8q). Keep a brief plan of at most 80 words; it comes back to you next turn as previousThinking.",
+	"instructions": "Choose one legal move per turn in coordinate form: from and to squares, e.g. e2e4, with q, r, b or n appended to promote (e7e8q). Keep a brief plan of at most 80 words; it comes back to you next turn as previousThinking. make_move may also carry premoves, an array of {on, then} entries that arm conditional pre-moves: on lists opponent coordinate replies and then is your coordinate move, or {move, premoves} to plan deeper; armed moves play by themselves and are dropped silently when the position no longer allows them.",
 	"flow": []string{
 		"start_game creates the game and returns watch_url. Share that URL with your human immediately. For opponent agent or human, share opponent_url with the other player. Keep seat and resume tokens private.",
 		"join_seat accepts the resume_token from the seat fragment of an invitation URL and model_name. It assigns your color in the existing game. Never start a new game to join an invitation.",
 		"waiting-for-players means the other player has not joined yet. Call wait_for_turn until both players are ready.",
 		"get_board shows the position. When status is your-turn, input holds the position, the moves so far, the clocks and your previous plan.",
-		"make_move plays one move and waits for the reply. If status is still opponent-turn afterwards, call wait_for_turn.",
+		"make_move plays one move — optionally arming conditional premoves for a reply you are confident of — and waits for the reply. If status is still opponent-turn afterwards, call wait_for_turn.",
 		"If the server restarted and your session expired, call resume_game with the resume_token from start_game.",
 	},
 	"limits": "Four illegal moves in one turn lose the game. Clocks run while you think: the default is 180 minutes plus 60 seconds per move. " +
@@ -189,10 +191,15 @@ func toolList() []map[string]any {
 		{"name": "resume_game", "description": "Re-attach a game after your session expired, with the resume_token start_game returned.", "inputSchema": map[string]any{
 			"type": "object", "required": []string{"resume_token"}, "properties": map[string]any{"resume_token": map[string]any{"type": "string"}}}},
 		{"name": "get_board", "description": "Read your game: status, your side, the position and, on your turn, your input.", "inputSchema": empty, "annotations": readOnly},
-		{"name": "make_move", "description": "Play one move on your turn, then wait for Stockfish's reply.", "inputSchema": map[string]any{
+		{"name": "make_move", "description": "Play one move on your turn, optionally arming conditional pre-moves, then wait for Stockfish's reply.", "inputSchema": map[string]any{
 			"type": "object", "required": []string{"move"}, "properties": map[string]any{
-				"move":         map[string]any{"type": "string", "description": "Coordinate form: from and to squares, e.g. e2e4; append q, r, b or n to promote, e.g. e7e8q."},
-				"plan":         map[string]any{"type": "string", "description": "A brief plan of at most 80 words; you will get it back next turn."},
+				"move": map[string]any{"type": "string", "description": "Coordinate form: from and to squares, e.g. e2e4; append q, r, b or n to promote, e.g. e7e8q."},
+				"plan": map[string]any{"type": "string", "description": "A brief plan of at most 80 words; you will get it back next turn."},
+				"premoves": map[string]any{"type": "array", "maxItems": 8, "description": "Optional conditional pre-moves armed with this move: when the opponent's next move is one of on, then is played automatically without a new turn. Use only for replies you are confident of; an armed move is dropped silently when the position no longer allows it.", "items": map[string]any{
+					"type": "object", "required": []string{"on", "then"}, "properties": map[string]any{
+						"on":   map[string]any{"type": "array", "minItems": 1, "maxItems": 8, "items": map[string]any{"type": "string"}, "description": "Opponent replies in coordinate form, e.g. [\"e7e5\", \"b8c6\"]."},
+						"then": map[string]any{"description": "Your coordinate move, e.g. \"g1f3\", or {\"move\": \"g1f3\", \"premoves\": [...]} to plan one level deeper."},
+					}}},
 				"wait_seconds": map[string]any{"type": "number", "minimum": 0, "maximum": 25, "description": "How long to wait for the opponent's reply before returning. Default is the full wait; 0 returns right after the move is accepted."},
 			}}},
 		{"name": "wait_for_turn", "description": "Wait until it is your turn or the game ends, up to the timeout (default and maximum 25 seconds).", "inputSchema": map[string]any{
@@ -493,6 +500,10 @@ func (s *Server) makeMove(ctx context.Context, sess *session, args map[string]an
 	if !coordinateMove.MatchString(move) {
 		return nil, errTool(fmt.Sprintf("%q is not a coordinate move. Use from and to squares like e2e4, with q, r, b or n to promote (e7e8q). This does not count as an illegal move.", raw))
 	}
+	premoves, err := parsePremovePlan(args["premoves"])
+	if err != nil {
+		return nil, errTool(err.Error() + ". This does not count as an illegal move; call make_move again without premoves or with a corrected plan.")
+	}
 	ctx = onlineauth.WithPrincipal(ctx, sess.principal)
 	lease, err := s.lease(ctx, sess, match)
 	if err != nil {
@@ -504,6 +515,13 @@ func (s *Server) makeMove(ctx context.Context, sess *session, args map[string]an
 	}
 	if err != nil {
 		return nil, s.commandError("move execution", err)
+	}
+	if len(premoves) > 0 {
+		// The move is on the board, so the plan arms for the reply. It fires when
+		// this session next observes the position and dies with the process.
+		s.premoves.arm(match.MatchID, sess.seat, premoves)
+	} else {
+		s.premoves.clear(match.MatchID, sess.seat)
 	}
 	if plan, _ := args["plan"].(string); strings.TrimSpace(plan) != "" {
 		sess.plan = clip(strings.TrimSpace(plan), 800)
@@ -622,6 +640,55 @@ func (s *Server) requireGame(ctx context.Context, sess *session) (online.Match, 
 	return s.options.Matches.GetMatch(ctx, sess.matchID)
 }
 
+// maybeFireArmedPremoves plays the seat's armed conditional pre-move when the latest
+// move matches a trigger. The plan exists exactly while the seat's reply is pending:
+// while it is still the opponent's turn the plan keeps waiting, and once the seat's
+// turn arrives the plan is consumed — fired on a matching trigger, discarded
+// otherwise. A fired reply's nested branches re-arm for the next reply. An illegal or
+// refused premove is dropped without spending an illegal attempt, the same way the
+// page discards a premove it can no longer play.
+func (s *Server) maybeFireArmedPremoves(ctx context.Context, sess *session, match online.Match) online.Match {
+	nodes := s.premoves.armed(match.MatchID, sess.seat)
+	if len(nodes) == 0 {
+		return match
+	}
+	if match.Status != online.MatchActive {
+		s.premoves.clear(match.MatchID, sess.seat)
+		return match
+	}
+	if side, _ := sideToMove(match.PositionFEN); side != sess.seat || !s.PlayersReady(match) {
+		return match // the reply is still pending; the plan keeps waiting
+	}
+	s.premoves.clear(match.MatchID, sess.seat)
+	last := match.Moves[len(match.Moves)-1]
+	var branch *armedPremoveNode
+	for index := range nodes {
+		if armedTriggerMatches(nodes[index].Trigger, last.UCI) {
+			branch = &nodes[index]
+			break
+		}
+	}
+	if branch == nil {
+		return match
+	}
+	armedCtx := onlineauth.WithPrincipal(ctx, sess.principal)
+	lease, err := s.lease(armedCtx, sess, match)
+	if err != nil {
+		return match
+	}
+	if _, err := s.options.Matches.Execute(armedCtx, sess.principal.Participant,
+		s.command(sess, match, lease, online.Action{Kind: online.ActionSubmitMove, SubmitMove: &online.SubmitMoveAction{UCI: branch.Reply}})); err != nil {
+		return match
+	}
+	if len(branch.Premoves) > 0 {
+		s.premoves.arm(match.MatchID, sess.seat, branch.Premoves)
+	}
+	if fresh, err := s.options.Matches.GetMatch(ctx, sess.matchID); err == nil {
+		return fresh
+	}
+	return match
+}
+
 func (s *Server) waitForTurn(ctx context.Context, sess *session, timeout time.Duration) error {
 	if !sess.hasGame() {
 		return errTool("you have no game: call start_game")
@@ -632,8 +699,18 @@ func (s *Server) waitForTurn(ctx context.Context, sess *session, timeout time.Du
 		if err != nil {
 			return err
 		}
-		if side, _ := sideToMove(match.PositionFEN); match.Status != online.MatchActive || side == sess.seat && s.PlayersReady(match) {
+		if match.Status != online.MatchActive {
+			s.premoves.clear(match.MatchID, sess.seat)
 			return nil
+		}
+		if side, _ := sideToMove(match.PositionFEN); side == sess.seat && s.PlayersReady(match) {
+			// The reply this call waited for has arrived, so an armed conditional
+			// premove fires here; the loop keeps waiting for the answer to the
+			// premove within the same bound.
+			match = s.maybeFireArmedPremoves(ctx, sess, match)
+			if side, _ := sideToMove(match.PositionFEN); side == sess.seat && s.PlayersReady(match) {
+				return nil
+			}
 		}
 		if !s.options.Now().Before(deadline) {
 			return nil
@@ -654,6 +731,8 @@ func (s *Server) board(ctx context.Context, sess *session) (map[string]any, erro
 	if err != nil {
 		return nil, err
 	}
+	// Reading the board is also the moment an armed conditional premove catches up.
+	match = s.maybeFireArmedPremoves(ctx, sess, match)
 	side, _ := sideToMove(match.PositionFEN)
 	status := "opponent-turn"
 	switch {

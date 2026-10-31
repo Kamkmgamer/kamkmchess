@@ -1,4 +1,4 @@
-export { classifyCompletedAnswer, normalizeCoordinateToken, requiresExplicitPromotion } from './parse.js';
+export { classifyCompletedAnswer, normalizeCoordinateToken, parseCoordinateMove, parsePremoves, requiresExplicitPromotion } from './parse.js';
 export { detectExplicitRefusal, finalStatement } from './refusal.js';
 export type { RefusalDetection, RefusalRejection } from './refusal.js';
 export {
@@ -9,6 +9,7 @@ export {
   decideCompletedAnswer,
   decideModelTurn,
 } from './budgets.js';
+export { MAX_PREMOVE_BRANCHES, MAX_PREMOVE_DEPTH } from './types.js';
 export type {
   IllegalMoveAttemptRecordV1,
   ModelTurnDecision,
@@ -24,6 +25,8 @@ export type {
   DeclarationOrigin,
   FormatFailureReason,
   MoveDeclaration,
+  PremoveBranchV1,
+  PremoveNodeV1,
   ReplyClassification,
   ResignationDeclaration,
   RetainedFieldV1,

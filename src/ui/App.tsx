@@ -1114,6 +1114,19 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const premoveColor = !history.reviewing && !final && !setupOpen && !promotion &&
     snapshot.readiness === 'ready' && snapshot.clockReading?.status === 'running' ? humanColor : null;
   const allowPremove = premoveColor !== null && isModelTurn && !working;
+  /** What an AI seat has armed, shown to its opponent while the reply is pending. */
+  const armedPremoveNotice = final || history.reviewing ? null : (() => {
+    const armed = snapshot.premoves;
+    if (armed === null) return null;
+    const lines = (['white', 'black'] as const)
+      .filter(side => players[side].kind === 'model' && armed[side].length > 0)
+      .map(side => {
+        const nodes = armed[side];
+        const branches = nodes.slice(0, 3).map(node => `${node.trigger} → ${node.san}`).join(' · ');
+        return `${side === 'white' ? 'White' : 'Black'} pre-moved ${branches}${nodes.length > 3 ? ` (+${nodes.length - 3} more)` : ''}`;
+      });
+    return lines.length === 0 ? null : lines.join(' — ');
+  })();
   /** The name an agent seat reported for itself; it labels the row and picks the logo. */
   const reportedAgentName = (side: 'white' | 'black'): string | null =>
     isAgentSelection(players[side]) ? agentBridge.reportedName(snapshot.checkpoint.gameId) : null;
@@ -1305,6 +1318,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           {showEvaluation && <EvaluationBar key={session.gameId} orientation={orientation} startingFen={snapshot.checkpoint.rules.startingFen}
             moves={snapshot.checkpoint.rules.moves.slice(0, history.ply).map(move => `${move.from}${move.to}${move.promotion ?? ''}`).join(' ')} />}
           <ChessBoard orientation={orientation} model={{ position: snapshot.position, identity: boardIdentity }} disabled={disabled} visible={!focusPage} onMove={attemptBoardMove} view={history} premoveColor={premoveColor} allowPremove={allowPremove} />
+          {armedPremoveNotice && <p className="premove-plan" role="status">{armedPremoveNotice}</p>}
           {promotion && <section className="promotion-panel" aria-label="Promotion"><div className="promotion-options">{PROMOTIONS.map(piece => <button className="button quiet" type="button" key={piece.value} aria-label={piece.label} autoFocus={piece.value === 'q'} onClick={() => selectPromotion(piece.value)}><img alt="" width="36" height="36" src={pieceImage(snapshot.position.sideToMove, piece.value, pieceStyle)} /></button>)}<IconButton icon="close" label="Cancel promotion" onClick={() => setPromotion(null)} /></div></section>}
         </div>
       </section>

@@ -27,6 +27,7 @@
 .board-host cg-board square.premove-dest.oc { background: radial-gradient(transparent 79%, rgb(57 61 150 / 40%) 80%); }
 .board-host cg-board square.current-premove { background-color: rgb(100 112 220 / 50%); }
 .premove-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; font-size: 12px; }
+.premove-plan { margin: 6px 0 0; font-size: 12px; opacity: 0.85; }
 .board-hint { margin: 6px 0 0; }
 .board-host coords { color: var(--board-light); font-size: clamp(9px, 1.25vw, 13px); font-weight: 700; opacity: 1; }
 .board-host coords.ranks { top: 0; left: 4px; }
