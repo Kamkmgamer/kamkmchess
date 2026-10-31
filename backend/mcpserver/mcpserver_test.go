@@ -8,6 +8,24 @@ import (
 	"time"
 )
 
+func TestMoveWaitClampsTheRequestedReplyWait(t *testing.T) {
+	const bound = 25 * time.Second
+	for name, test := range map[string]struct {
+		requested any
+		want      time.Duration
+	}{
+		"absent":   {nil, bound},         // agent runners keep the full wait
+		"zero":     {float64(0), 0},      // the human's page reconciles through its own poll
+		"over":     {float64(99), bound}, // never longer than the bound
+		"negative": {float64(-3), 0},     // a negative wait cannot wait at all
+		"partial":  {1.5, 1500 * time.Millisecond},
+	} {
+		if got := moveWait(test.requested, bound); got != test.want {
+			t.Fatalf("moveWait(%s) = %s, want %s", name, got, test.want)
+		}
+	}
+}
+
 func TestToolResultTextCompactsBoardResults(t *testing.T) {
 	result := map[string]any{
 		"result":  "accepted",

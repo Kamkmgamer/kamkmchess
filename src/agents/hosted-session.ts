@@ -11,6 +11,11 @@ import type { HostedGameMeta, LocalGameSession } from '../ui/match-composition.j
 import { ChessMcpClient, remoteEndpoint } from './remote.js';
 
 const POLL_MS = 1000;
+// While the game is being played the page keeps up with the server's own
+// turn polling, so the opponent's move — and its check highlight — lands
+// about as fast as a locally generated model turn. Idle and finished games
+// fall back to the slow cadence.
+const LIVE_POLL_MS = 300;
 const STANDARD_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 
 /** The watch payload of a hosted game, published by the MCP server. */
@@ -99,7 +104,12 @@ export class HostedGameController implements GameController {
       if (this.listeners.size > 0) this.publish();
       void this.poll().then(() => { if (this.listeners.size > 0) this.publish(); });
       this.schedule();
-    }, POLL_MS);
+    }, this.pollInterval());
+  }
+
+  /** The polling cadence: live while the game is being played, slow otherwise. */
+  private pollInterval(): number {
+    return this.board !== null && this.board.result === null && this.board.status === 'active' ? LIVE_POLL_MS : POLL_MS;
   }
 
   private async poll(): Promise<void> {
@@ -295,7 +305,11 @@ export class HostedGameController implements GameController {
         candidate.from === intent.move.from && candidate.to === intent.move.to);
       if (!legal) return { kind: 'rejected', reason: 'illegal-move', snapshot: current };
       try {
-        await this.client.call('make_move', { move: `${intent.move.from}${intent.move.to}${intent.move.promotion ?? ''}` });
+        // No wait: like the ordinary controller, the intent returns as soon
+        // as the move is committed and the opponent's reply arrives through
+        // the watch poll. Waiting here held the whole play screen for the
+        // agent's think time and kept premoves out of reach for that window.
+        await this.client.call('make_move', { move: `${intent.move.from}${intent.move.to}${intent.move.promotion ?? ''}`, wait_seconds: 0 });
       } catch {
         return { kind: 'rejected', reason: 'illegal-move', snapshot: current };
       }

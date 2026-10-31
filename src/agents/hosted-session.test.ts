@@ -86,7 +86,9 @@ describe('hosted game sessions', () => {
       schemaVersion: 1, kind: 'human-move', fence: snapshot.fence, move: { from: 'a2', to: 'a4' },
     });
     expect(result.kind).toBe('accepted');
-    expect(rpc[1]).toMatchObject({ name: 'make_move', args: { move: 'a2a4' } });
+    // The move intent returns without waiting for the opponent's reply, so
+    // the play screen stays as responsive as a local game's.
+    expect(rpc[1]).toMatchObject({ name: 'make_move', args: { move: 'a2a4', wait_seconds: 0 } });
   });
 
   it('maps a server rejection of the seat move to an illegal-move result', async () => {
@@ -167,6 +169,25 @@ describe('hosted game sessions', () => {
     expect(running.clockReading).toMatchObject({ status: 'running', activeSide: 'white' });
     expect(running.clockReading?.remaining?.whiteMs ?? 0).toBeLessThan(890_000);
     expect(running.clockReading?.remaining?.blackMs).toBe(900_000);
+    unsubscribe();
+  });
+
+  it('polls live while the game is being played, slowly when it is not', async () => {
+    // The opponent's move and its check highlight ride the watch poll, so a
+    // played game keeps the server's own turn cadence and a waiting or
+    // finished game falls back to the idle one.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance'] });
+    const watchCount = () => vi.mocked(fetch).mock.calls
+      .filter(([, init]) => (init as RequestInit | undefined)?.method !== 'POST').length;
+    const session = openHostedGameSession({ watchId: 'match-1', seatToken: null, side: 'white' });
+    await session.controller.initialize();
+    const unsubscribe = session.controller.subscribe(() => undefined);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const live = watchCount();
+    expect(live).toBeGreaterThanOrEqual(3);
+    board = { ...board, status: 'waiting-for-players' };
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(watchCount() - live).toBeLessThanOrEqual(2);
     unsubscribe();
   });
 });

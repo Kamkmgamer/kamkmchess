@@ -145,6 +145,35 @@ func TestMCPAgentPlaysTheServerEngine(t *testing.T) {
 	}
 }
 
+// The human's page asks make_move for no wait: the move intent returns as
+// soon as the move is accepted, without holding the call for the opponent's
+// reply. The reply keeps arriving through the watch poll, so the play screen
+// behaves like a local game: the move commits immediately, premoves unlock
+// while the opponent thinks, and the check highlight is not held back.
+func TestMCPMakeMoveWithoutWaitReturnsAfterItsOwnMove(t *testing.T) {
+	_, c := newMCPEndpoint(t)
+	if _, errText := c.tool("start_game", map[string]any{"model_name": "Model", "engine_think_ms": 100}); errText != "" {
+		t.Fatal(errText)
+	}
+	started := time.Now()
+	played, errText := c.tool("make_move", map[string]any{"move": "e2e4", "wait_seconds": 0})
+	if errText != "" {
+		t.Fatal(errText)
+	}
+	after := played["board"].(map[string]any)
+	if played["result"] != "accepted" || after["status"] != "opponent-turn" || after["moveCount"] != float64(1) {
+		t.Fatalf("a no-wait move returned the reply anyway: %v", played)
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("a no-wait move still waited %s", elapsed)
+	}
+	// The reply still lands for the same session on the next read.
+	replied, errText := c.tool("wait_for_turn", nil)
+	if errText != "" || replied["moveCount"] != float64(2) || replied["status"] != "your-turn" {
+		t.Fatalf("the reply did not arrive: %v, %q", replied, errText)
+	}
+}
+
 // Four illegal moves in one turn lose the game, as they do on the page.
 func TestMCPFourIllegalMovesLose(t *testing.T) {
 	_, c := newMCPEndpoint(t)

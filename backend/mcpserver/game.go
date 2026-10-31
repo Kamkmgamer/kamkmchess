@@ -191,8 +191,9 @@ func toolList() []map[string]any {
 		{"name": "get_board", "description": "Read your game: status, your side, the position and, on your turn, your input.", "inputSchema": empty, "annotations": readOnly},
 		{"name": "make_move", "description": "Play one move on your turn, then wait for Stockfish's reply.", "inputSchema": map[string]any{
 			"type": "object", "required": []string{"move"}, "properties": map[string]any{
-				"move": map[string]any{"type": "string", "description": "Coordinate form: from and to squares, e.g. e2e4; append q, r, b or n to promote, e.g. e7e8q."},
-				"plan": map[string]any{"type": "string", "description": "A brief plan of at most 80 words; you will get it back next turn."},
+				"move":         map[string]any{"type": "string", "description": "Coordinate form: from and to squares, e.g. e2e4; append q, r, b or n to promote, e.g. e7e8q."},
+				"plan":         map[string]any{"type": "string", "description": "A brief plan of at most 80 words; you will get it back next turn."},
+				"wait_seconds": map[string]any{"type": "number", "minimum": 0, "maximum": 25, "description": "How long to wait for the opponent's reply before returning. Default is the full wait; 0 returns right after the move is accepted."},
 			}}},
 		{"name": "wait_for_turn", "description": "Wait until it is your turn or the game ends, up to the timeout (default and maximum 25 seconds).", "inputSchema": map[string]any{
 			"type": "object", "properties": map[string]any{"timeout_seconds": map[string]any{"type": "number", "minimum": 0, "maximum": 25}}}, "annotations": readOnly},
@@ -461,6 +462,18 @@ func (s *Server) resumeGame(ctx context.Context, sess *session, args map[string]
 
 var coordinateMove = regexp.MustCompile(`^[a-h][1-8][a-h][1-8][qrbn]?$`)
 
+// moveWait clamps the caller's requested reply wait. Agent runners keep the
+// full bound and see the reply in the same call; the human's play page asks
+// for zero, so its move intent returns as fast as a local one and the reply
+// keeps arriving through its own watch poll.
+func moveWait(requested any, bound time.Duration) time.Duration {
+	value, ok := requested.(float64)
+	if !ok {
+		return bound
+	}
+	return min(bound, max(0, time.Duration(value*float64(time.Second))))
+}
+
 func (s *Server) makeMove(ctx context.Context, sess *session, args map[string]any) (any, error) {
 	match, err := s.requireGame(ctx, sess)
 	if err != nil {
@@ -497,8 +510,13 @@ func (s *Server) makeMove(ctx context.Context, sess *session, args map[string]an
 	} else {
 		sess.plan = ""
 	}
-	if err = s.waitForTurn(ctx, sess, s.options.MoveWait); err != nil {
-		return nil, err
+	// The human's page plays through its own watch poll, so it asks for no
+	// wait and its move intent returns as fast as a local one. Agent runners
+	// keep the full wait and see the reply in the same call.
+	if wait := moveWait(args["wait_seconds"], s.options.MoveWait); wait > 0 {
+		if err = s.waitForTurn(ctx, sess, wait); err != nil {
+			return nil, err
+		}
 	}
 	board, err := s.board(ctx, sess)
 	if err != nil {

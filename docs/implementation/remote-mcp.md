@@ -33,7 +33,7 @@ and ask the agent to link `watch_url` to its human immediately.
 | `join_seat` | `resume_token` from the seat URL fragment and exact `model_name`. Joins the assigned color in the existing match. No account login is needed. |
 | `resume_game` | Re-attaches a game after the session was lost (a restart, an idle session). |
 | `get_board` | Status, side, position and, on the agent's turn, `input`: the position, the moves so far, the clocks, the illegal-move budget and `previousThinking.plan`. No legal-move list. |
-| `make_move` | One coordinate move plus an optional plan; waits up to 25 s for Stockfish. |
+| `make_move` | One coordinate move plus an optional plan; waits up to 25 s for Stockfish. `wait_seconds` bounds that wait; `0` returns right after the move is accepted, which the human's play page uses so its move intent is as fast as a local one. |
 | `wait_for_turn` | Waits up to 25 s. |
 | `resign` | Resigns. |
 
