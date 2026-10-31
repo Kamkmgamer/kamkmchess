@@ -253,6 +253,105 @@ test('cancels premoves and keeps a reviewed position while the AI finishes', asy
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
 });
 
+test('plays each queued premove against its own AI reply', async ({ page }) => {
+  const releases: Array<() => void> = [];
+  await provider(page, [], async (route, index, fixture) => {
+    if (index === 0) {
+      await new Promise<void>((resolve) => { releases.push(resolve); });
+      await fixture.respond(route, '{"move":"e7e5"}');
+    } else if (index === 1) {
+      await new Promise<void>((resolve) => { releases.push(resolve); });
+      await fixture.respond(route, '{"move":"b8c6"}');
+    } else await fixture.respond(route, '{"resign":true}');
+  });
+  await page.goto('/play');
+  await configure(page);
+  await move(page, 'e2e4');
+  await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
+  await dragBoardMove(page, 'g1', 'f3');
+  await dragBoardMove(page, 'f1', 'c4');
+  await expect(page.getByRole('status', { name: 'Premoves queued: g1 to f3, f1 to c4.', exact: true })).toBeVisible();
+  await expect(page.locator('square.current-premove:visible')).toHaveCount(4);
+  releases[0]?.();
+  await expect(movesOnBoard(page)).toHaveCount(3);
+  await expect(movesOnBoard(page).last()).toContainText('Nf3');
+  // Bc4 waits for the next reply and keeps its highlight as the queue head.
+  await expect(page.locator('square.current-premove:visible')).toHaveCount(2);
+  await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
+  releases[1]?.();
+  await expect(movesOnBoard(page)).toHaveCount(5);
+  await expect(movesOnBoard(page).last()).toContainText('Bc4');
+  await expect(page.locator('square.current-premove:visible')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel premove' })).toHaveCount(0);
+});
+
+test('clears the whole queue when the reply makes the first premove illegal', async ({ page }) => {
+  let release: (() => void) | undefined;
+  await provider(page, [], async (route, index, fixture) => {
+    if (index === 0) await fixture.respond(route, '{"move":"e7e5"}');
+    else if (index === 1) {
+      await new Promise<void>((resolve) => { release = resolve; });
+      await fixture.respond(route, '{"move":"d8h4"}');
+    } else await fixture.respond(route, '{"resign":true}');
+  });
+  await page.goto('/play');
+  await configure(page);
+  await move(page, 'e2e4');
+  await move(page, 'f2f3');
+  await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
+  await dragBoardMove(page, 'b1', 'c3');
+  await dragBoardMove(page, 'g1', 'e2');
+  await expect(page.getByRole('status', { name: 'Premoves queued: b1 to c3, g1 to e2.', exact: true })).toBeVisible();
+  release?.();
+  // Qh4+ arrives; Nc3 does not answer the check, so the later premove is
+  // dropped with it instead of playing out of a position that never was.
+  await expect(movesOnBoard(page)).toHaveCount(4);
+  await expect(movesOnBoard(page).last()).toContainText('Qh4');
+  await expect(page.locator('square.current-premove:visible')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Cancel premove' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
+});
+
+test('queues a premove promotion with its piece and plays it after the reply', async ({ page }) => {
+  let release: (() => void) | undefined;
+  await provider(page, [], async (route, index, fixture) => {
+    if (index === 0) await fixture.respond(route, '{"move":"e7e5"}');
+    else if (index === 1) await fixture.respond(route, '{"move":"b7b5"}');
+    else if (index === 2) await fixture.respond(route, '{"move":"g8f6"}');
+    else if (index === 3) await fixture.respond(route, '{"move":"g7g6"}');
+    else if (index === 4) {
+      await new Promise<void>((resolve) => { release = resolve; });
+      await fixture.respond(route, '{"move":"f6g8"}');
+    } else await fixture.respond(route, '{"resign":true}');
+  });
+  await page.goto('/play');
+  await configure(page);
+  await move(page, 'e2e4');
+  await move(page, 'a2a4');
+  await move(page, 'a4b5');
+  await move(page, 'b5b6');
+  await move(page, 'b6a7');
+  await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
+  // The pawn on a7 faces the a8 rook straight ahead; the promotion premove
+  // takes the b8 knight diagonally.
+  await dragBoardMove(page, 'a7', 'b8');
+  const picker = page.getByRole('region', { name: 'Premove promotion', exact: true });
+  await expect(picker).toBeVisible();
+  // Nothing is queued without a chosen piece.
+  await picker.getByRole('button', { name: 'Cancel premove promotion', exact: true }).click();
+  await expect(picker).toHaveCount(0);
+  await expect(page.locator('square.current-premove:visible')).toHaveCount(0);
+  await dragBoardMove(page, 'a7', 'b8');
+  await expect(picker).toBeVisible();
+  await picker.getByRole('button', { name: 'Queen', exact: true }).click();
+  await expect(page.getByRole('status', { name: 'Premove a7 to b8 queued.', exact: true })).toBeVisible();
+  await expect(page.locator('square.current-premove:visible')).toHaveCount(2);
+  release?.();
+  await expect(movesOnBoard(page)).toHaveCount(11);
+  await expect(movesOnBoard(page).last()).toContainText('b8=Q');
+  await expect(page.locator('square.current-premove:visible')).toHaveCount(0);
+});
+
 test('plays against the AI without a position-check worker', async ({ page }) => {
   const fixture = await provider(page, ['e7e5']);
   const workers: string[] = [];
