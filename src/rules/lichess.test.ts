@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyCoordinateMove, legalMoves, parsePosition, timeoutWinner } from './index.js';
+import { applyCoordinateMove, legalMoves, parsePosition, sanToCoordinateMove, timeoutWinner } from './index.js';
 import type { Position } from './types.js';
 
 function perft(position: Position, depth: number): number {
@@ -20,7 +20,18 @@ describe('chessops integration', () => {
     const before = legalMoves(position);
     expect(applyCoordinateMove(position, { from: 'e1', to: 'g1' }).san).toBe('O-O');
     expect(legalMoves(position)).toBe(before);
-    expect(() => applyCoordinateMove(position, { from: 'e1', to: 'h1' })).toThrow();
+  });
+
+  it('takes a castle by the king landing square or by the rook square, like chessops', () => {
+    const position = parsePosition('r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1');
+    const byLandingSquare = applyCoordinateMove(position, { from: 'e1', to: 'g1' });
+    const byRookSquare = applyCoordinateMove(position, { from: 'e1', to: 'h1' });
+    expect(byRookSquare.san).toBe('O-O');
+    expect(byRookSquare.position.fen).toBe(byLandingSquare.position.fen);
+    expect(byRookSquare.isCapture).toBe(false);
+    // SAN replay reads chessops' own king-to-rook form back as the landing square.
+    expect(sanToCoordinateMove(position, 'O-O')).toEqual({ from: 'e1', to: 'g1' });
+    expect(sanToCoordinateMove(position, 'O-O-O')).toEqual({ from: 'e1', to: 'c1' });
   });
 
   it.each([
