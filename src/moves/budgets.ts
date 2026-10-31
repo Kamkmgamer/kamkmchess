@@ -1,7 +1,12 @@
 import { IllegalMoveError, applyCoordinateMove } from '../rules/index.js';
 import type { CoordinateMove, Position, Transition } from '../rules/index.js';
 import { classifyCompletedAnswer } from './parse.js';
-import type { CompletedAnswer, FormatFailureReason, ReplyClassification } from './types.js';
+import type {
+  CompletedAnswer,
+  FormatFailureReason,
+  PremoveBranchV1,
+  ReplyClassification,
+} from './types.js';
 import { explainIllegalMove } from './violations.js';
 import type { IllegalMoveExplanation } from './violations.js';
 
@@ -50,6 +55,8 @@ export type ModelTurnDecision =
       readonly kind: 'accepted-move';
       readonly move: CoordinateMove;
       readonly transition: Transition;
+      /** Conditional pre-moves to arm once this move is on the board, when the model attached any. */
+      readonly premoves?: readonly PremoveBranchV1[];
       /** A legal accepted move resets the next turn's budgets. */
       readonly budgets: TurnBudgetsV1;
     }
@@ -145,6 +152,7 @@ export function decideModelTurn(input: ModelTurnInput): ModelTurnDecision {
       kind: 'accepted-move',
       move: transition.move,
       transition,
+      ...(classification.premoves === undefined ? {} : { premoves: classification.premoves }),
       budgets: createTurnBudgets(),
     };
   } catch (error) {

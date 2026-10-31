@@ -38,6 +38,28 @@ and no suffix becomes the `missing-promotion` clarification instead of an illega
 piece is ever chosen for the model. Passing the position is how the module avoids charging
 the chess budget for a formatting gap; the position is never sent to a model.
 
+## Conditional pre-moves
+
+A JSON move answer may carry an optional `premoves` array: the conditions the model wants
+armed together with its move. Each branch pairs opponent replies (`on`, coordinate form)
+with the reply to play (`then`, either a coordinate or a nested object carrying its own
+`premoves`):
+
+```json
+{"move":"e2e4","plan":"...",
+ "premoves":[
+   {"on":["e7e5","b8c6"],"then":"g1f3"},
+   {"on":["c7c5"],"then":{"move":"c2c3","premoves":[{"on":["g8f6"],"then":{"move":"d2d4"}}]}}]}
+```
+
+`parsePremoves` reads the field strictly. Every trigger and reply is a normalized
+coordinate token; nesting is capped at `MAX_PREMOVE_DEPTH` pre-moved replies and
+`MAX_PREMOVE_BRANCHES` branches per level. The field is decoration, never the command: a
+malformed or over-budget value is dropped — the raw value survives as a retained field —
+and the move itself still plays. Legality is never decided here; the controller checks
+each branch against the board when it arms it and again when it fires it, discarding
+branches that cannot legally happen without charging any budget.
+
 A resignation requires a final model-authored statement. `resign: true`, "I resign.",
 "Resign.", an explicit refusal to move, a forfeit, or a concession resign. Quoted, block
 quoted, hypothetical, attributed, and historical text does not. An HTTP error, a missing

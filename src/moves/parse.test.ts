@@ -206,3 +206,67 @@ describe('completed answer classification', () => {
     expect(classify('{"move":"e2e4","plan":"I resign"}')).toMatchObject({ kind: 'move', plan: 'I resign' });
   });
 });
+
+describe('conditional pre-moves', () => {
+  it('[MOV-07] reads a well-formed plan with nested branches', () => {
+    const result = classify(
+      JSON.stringify({
+        move: 'e2e4', plan: 'Occupy the center.',
+        premoves: [
+          { on: ['e7e5', ' B8C6 '], then: 'g1f3' },
+          { on: ['c7c5'], then: { move: 'c2c3', premoves: [{ on: ['g8f6'], then: { move: 'd2d4', premoves: [{ on: ['a7a6'], then: 'c3d5' }] } }] } },
+        ],
+      }),
+    );
+    expect(result).toMatchObject({ kind: 'move', move: { from: 'e2', to: 'e4' } });
+    if (result.kind !== 'move' || result.premoves === undefined) throw new Error('expected a move with premoves');
+    expect(result.premoves).toEqual([
+      { on: ['e7e5', 'b8c6'], then: { move: { from: 'g1', to: 'f3' } } },
+      { on: ['c7c5'], then: { move: { from: 'c2', to: 'c3' }, premoves: [
+        { on: ['g8f6'], then: { move: { from: 'd2', to: 'd4' }, premoves: [
+          { on: ['a7a6'], then: { move: { from: 'c3', to: 'd5' } } },
+        ] } },
+      ] } },
+    ]);
+    expect(result.retainedFields).toEqual([]);
+  });
+
+  it('[MOV-07] never blocks the move on a malformed plan and keeps it as a retained field', () => {
+    for (const premoves of ['yes', [], [{}], [{ on: 'e7e5', then: 'g1f3' }], [{ on: ['e9e5'], then: 'g1f3' }],
+      [{ on: ['e7e5'], then: 'g1f9' }], [{ on: ['e7e5'] }],
+      Array.from({ length: 9 }, () => ({ on: ['a7a6'], then: 'a2a3' }))] as unknown[]) {
+      const result = classify(JSON.stringify({ move: 'e2e4', premoves }));
+      expect(result).toMatchObject({ kind: 'move', move: { from: 'e2', to: 'e4' } });
+      if (result.kind !== 'move') throw new Error('expected a move declaration');
+      expect(result.premoves).toBeUndefined();
+      expect(result.retainedFields).toEqual([{ key: 'premoves', value: premoves }]);
+    }
+  });
+
+  it('[MOV-07] drops a plan nested deeper than three pre-moved replies', () => {
+    const deep = [{ on: ['a7a6'], then: { move: 'a2a3', premoves: [{ on: ['a6a5'], then: { move: 'a3a4', premoves: [{ on: ['a5a4'], then: { move: 'b2b3', premoves: [{ on: ['a4a3'], then: 'c2c3' }] } }] } }] } }];
+    const result = classify(JSON.stringify({ move: 'e2e4', premoves: deep }));
+    if (result.kind !== 'move') throw new Error('expected a move declaration');
+    expect(result.premoves).toBeUndefined();
+    expect(result.retainedFields).toEqual([{ key: 'premoves', value: deep }]);
+  });
+
+  it('[MOV-07] tolerates harmless extra keys on branches', () => {
+    const result = classify(JSON.stringify({ move: 'e2e4', premoves: [{ on: ['e7e5'], then: 'g1f3', note: 'confident' }] }));
+    if (result.kind !== 'move' || result.premoves === undefined) throw new Error('expected a move with premoves');
+    expect(result.premoves).toEqual([{ on: ['e7e5'], then: { move: { from: 'g1', to: 'f3' } } }]);
+  });
+
+  it('[MOV-07] accepts a promotion suffix on triggers and replies', () => {
+    const result = classify(JSON.stringify({ move: 'e7e8q', premoves: [{ on: ['a7a8q'], then: 'd7e8q' }] }));
+    if (result.kind !== 'move' || result.premoves === undefined) throw new Error('expected a move with premoves');
+    expect(result.premoves).toEqual([{ on: ['a7a8q'], then: { move: { from: 'd7', to: 'e8', promotion: 'q' } } }]);
+  });
+
+  it('[MOV-07] ignores premoves beside a resignation and beside a missing promotion', () => {
+    expect(classify(JSON.stringify({ resign: true, premoves: [{ on: ['a7a6'], then: 'a2a3' }] })))
+      .toMatchObject({ kind: 'resignation' });
+    const promotionReady = classify('{"move":"g7g8","premoves":[{"on":["a7a6"],"then":"a2a3"}]}', PROMOTION_READY);
+    expect(promotionReady).toMatchObject({ kind: 'format-failure', reason: 'missing-promotion' });
+  });
+});

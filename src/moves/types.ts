@@ -25,6 +25,28 @@ export interface RetainedFieldV1 {
   readonly value: unknown;
 }
 
+/**
+ * How deep conditional pre-moves may nest below the played move: the played move
+ * plus up to three pre-moved replies. One level deeper than the cap is malformed.
+ */
+export const MAX_PREMOVE_DEPTH = 3;
+
+/** How many conditional branches one pre-move level may carry. */
+export const MAX_PREMOVE_BRANCHES = 8;
+
+/** One conditional pre-move branch: if the opponent plays one of `on`, play `then`. */
+export interface PremoveBranchV1 {
+  /** Opponent replies in coordinate form, as the model wrote them. */
+  readonly on: readonly string[];
+  readonly then: PremoveNodeV1;
+}
+
+/** A pre-moved reply and, optionally, the conditions armed once it has fired. */
+export interface PremoveNodeV1 {
+  readonly move: CoordinateMove;
+  readonly premoves?: readonly PremoveBranchV1[];
+}
+
 /** A normalized coordinate command read from one completed answer. */
 export interface MoveDeclaration {
   readonly kind: 'move';
@@ -33,6 +55,8 @@ export interface MoveDeclaration {
   readonly text: string;
   readonly origin: DeclarationOrigin;
   readonly plan?: string;
+  /** Well-formed conditional pre-moves armed together with this move. */
+  readonly premoves?: readonly PremoveBranchV1[];
   /** Extra non-action fields kept for the match conversation and archive. */
   readonly retainedFields: readonly RetainedFieldV1[];
 }

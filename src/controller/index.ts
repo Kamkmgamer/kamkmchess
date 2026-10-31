@@ -29,8 +29,8 @@ import {
   timeoutWinner,
 } from '../rules/index.js';
 import type { CoordinateMove, Position } from '../rules/index.js';
-import { MAX_FORMAT_CORRECTIONS, MAX_ILLEGAL_MOVE_ATTEMPTS } from '../moves/index.js';
-import type { ModelTurnDecision } from '../moves/index.js';
+import { MAX_FORMAT_CORRECTIONS, MAX_ILLEGAL_MOVE_ATTEMPTS, MAX_PREMOVE_BRANCHES, parseCoordinateMove } from '../moves/index.js';
+import type { ModelTurnDecision, PremoveBranchV1 } from '../moves/index.js';
 import { explainIllegalMove } from '../moves/violations.js';
 import { checkProofEvidence } from '../proofs/checker.js';
 import { createDeadnessQuery, createTimeoutMatingQuery, proofQueryIdentity } from '../proofs/queries.js';
@@ -137,6 +137,8 @@ export interface ControllerSnapshotV1 {
     readonly requestId: string | null;
   };
   modelHandoff: ModelHandoffSnapshotV1;
+  /** Conditional pre-moves currently armed per side, when any are armed. */
+  premoves: ArmedPremovesSnapshotV1 | null;
 }
 
 export interface ModelHandoffSnapshotV1 {
@@ -147,9 +149,31 @@ export interface ModelHandoffSnapshotV1 {
 
 export interface ControllerMoveEventV1 {
   schemaVersion: 1;
-  kind: 'human-move' | 'model-move';
+  /** `premove` is a model-side move fired from armed conditional pre-moves; it is internal. */
+  kind: 'human-move' | 'model-move' | 'premove';
   fence: ControllerFenceV1;
   move: CoordinateMove;
+  /** Conditional pre-moves to arm once this model-side move is on the board. */
+  premoves?: readonly PremoveBranchV1[];
+}
+
+/**
+ * One armed conditional pre-move: when the opponent's next move equals `trigger`
+ * (castling in either square form), `reply` is played without a new model turn.
+ * The node was proven legal when it was armed; `premoves` re-arms after it fires.
+ */
+export interface ArmedPremoveNodeV1 {
+  readonly trigger: string;
+  readonly reply: string;
+  /** The reply's SAN in the position after the trigger, for display. */
+  readonly san: string;
+  readonly premoves?: readonly ArmedPremoveNodeV1[];
+}
+
+/** Both sides' currently armed conditional pre-moves, as the snapshot exposes them. */
+export interface ArmedPremovesSnapshotV1 {
+  readonly white: readonly ArmedPremoveNodeV1[];
+  readonly black: readonly ArmedPremoveNodeV1[];
 }
 
 /**
@@ -839,6 +863,7 @@ function copySnapshot(snapshot: ControllerSnapshotV1): ControllerSnapshotV1 {
     readiness: snapshot.readiness,
     adjudication: structuredClone(snapshot.adjudication),
     modelHandoff: structuredClone(snapshot.modelHandoff),
+    premoves: snapshot.premoves === null ? null : structuredClone(snapshot.premoves),
   };
 }
 
@@ -1134,6 +1159,148 @@ function withoutUndoBaseline(
   return withoutExtension(extensions, UNDO_BASELINE_EXTENSION);
 }
 
+const PREMOVES_EXTENSION = 'premoves';
+
+interface PremovesDataV1 {
+  readonly white: readonly ArmedPremoveNodeV1[] | null;
+  readonly black: readonly ArmedPremoveNodeV1[] | null;
+}
+
+/** Deep-validates one armed node as saved data; returns null when the shape is unrecognized. */
+function readArmedNode(value: unknown): ArmedPremoveNodeV1 | null {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.trigger !== 'string' || typeof record.reply !== 'string' || typeof record.san !== 'string') return null;
+  if (record.premoves === undefined) return { trigger: record.trigger, reply: record.reply, san: record.san };
+  if (!Array.isArray(record.premoves)) return null;
+  const premoves: ArmedPremoveNodeV1[] = [];
+  for (const entry of record.premoves) {
+    const node = readArmedNode(entry);
+    if (node === null) return null;
+    premoves.push(node);
+  }
+  return { trigger: record.trigger, reply: record.reply, san: record.san, premoves };
+}
+
+/**
+ * Reads the armed-premoves extension leniently: unrecognized saved data simply means
+ * nothing is armed, because a lost pre-move plan must never invalidate a saved game.
+ */
+function premovesDataOf(extensions: GameCheckpointV1['extensions']): PremovesDataV1 {
+  const section = extensions[PREMOVES_EXTENSION];
+  if (section === undefined || section.version !== 1 || section.data === null ||
+    typeof section.data !== 'object' || Array.isArray(section.data)) {
+    return { white: null, black: null };
+  }
+  const record = section.data as Record<string, unknown>;
+  const readSide = (value: unknown): readonly ArmedPremoveNodeV1[] | null => {
+    if (value === null || value === undefined) return null;
+    if (!Array.isArray(value)) return null;
+    const nodes: ArmedPremoveNodeV1[] = [];
+    for (const entry of value) {
+      const node = readArmedNode(entry);
+      if (node === null) return null;
+      nodes.push(node);
+    }
+    return nodes;
+  };
+  return { white: readSide(record.white), black: readSide(record.black) };
+}
+
+/** Writes one side's armed plan; an empty plan clears that side's slot and keeps the other's. */
+function withPremoves(
+  extensions: GameCheckpointV1['extensions'], side: ClockSide, nodes: readonly ArmedPremoveNodeV1[],
+): GameCheckpointV1['extensions'] {
+  const prior = premovesDataOf(extensions);
+  const armed = nodes.length === 0 ? null : jsonSafe(nodes);
+  return { ...extensions, [PREMOVES_EXTENSION]: { version: 1, data: {
+    white: side === 'white' ? armed : jsonSafe(prior.white),
+    black: side === 'black' ? armed : jsonSafe(prior.black),
+  } } };
+}
+
+/**
+ * Computes one side's armed conditional pre-moves against the position right after that
+ * side's move. A branch whose trigger or reply cannot legally happen there is dropped:
+ * it would never fire, so it never belongs in the armed plan or in a notice.
+ */
+function armPremoves(position: Position, branches: readonly PremoveBranchV1[] | undefined): readonly ArmedPremoveNodeV1[] {
+  if (branches === undefined) return [];
+  const nodes: ArmedPremoveNodeV1[] = [];
+  for (const branch of branches.slice(0, MAX_PREMOVE_BRANCHES)) {
+    if (branch === null || typeof branch !== 'object' || !Array.isArray(branch?.on)) continue;
+    const then = branch.then as { move?: unknown; premoves?: unknown } | null | undefined;
+    if (then === null || typeof then !== 'object' || !validCoordinateMove(then.move as CoordinateMove)) continue;
+    const reply = then.move as CoordinateMove;
+    for (const trigger of branch.on.slice(0, MAX_PREMOVE_BRANCHES)) {
+      if (typeof trigger !== 'string') continue;
+      const triggerMove = parseCoordinateMove(trigger);
+      if (triggerMove === null) continue;
+      let afterTrigger: Position;
+      try {
+        afterTrigger = applyCoordinateMove(position, triggerMove).position;
+      } catch {
+        continue; // The opponent can never play this trigger here.
+      }
+      let afterReply: Position;
+      let san: string;
+      try {
+        const applied = applyCoordinateMove(afterTrigger, reply);
+        afterReply = applied.position;
+        san = applied.san;
+      } catch {
+        continue; // The reply is illegal against this trigger, so the branch cannot fire.
+      }
+      const nested = armPremoves(afterReply, then.premoves as readonly PremoveBranchV1[] | undefined);
+      nodes.push({
+        trigger: triggerMove.from + triggerMove.to + (triggerMove.promotion ?? ''),
+        reply: reply.from + reply.to + (reply.promotion ?? ''),
+        san,
+        ...(nested.length === 0 ? {} : { premoves: nested }),
+      });
+    }
+  }
+  return nodes;
+}
+
+/**
+ * Reports whether one armed trigger denotes the move that was just played. Coordinates
+ * compare directly; a castle recorded in the other square form is replayed from the
+ * position before the played move and matches when it reaches the same position.
+ */
+function triggerMatchesPlayed(played: AppliedMoveV1, trigger: string): boolean {
+  if (played.from + played.to + (played.promotion ?? '') === trigger) return true;
+  const coordinate = parseCoordinateMove(trigger);
+  if (coordinate === null) return false;
+  try {
+    return applyCoordinateMove(parsePosition(played.fenBefore), coordinate).position.fen === played.fenAfter;
+  } catch {
+    return false;
+  }
+}
+
+/** Restores the parsed branch shape from armed nodes so a fire can re-arm the nested plan. */
+function armedNodesToBranches(nodes: readonly ArmedPremoveNodeV1[]): readonly PremoveBranchV1[] {
+  const branches: PremoveBranchV1[] = [];
+  for (const node of nodes) {
+    const move = parseCoordinateMove(node.reply);
+    if (move === null) continue;
+    const nested = node.premoves === undefined ? [] : armedNodesToBranches(node.premoves);
+    branches.push({ on: [node.trigger], then: nested.length === 0 ? { move } : { move, premoves: nested } });
+  }
+  return branches;
+}
+
+function premovesSnapshot(checkpoint: GameCheckpointV1): ArmedPremovesSnapshotV1 | null {
+  if (checkpoint.result.kind !== 'unresolved') return null;
+  const data = premovesDataOf(checkpoint.extensions);
+  if (data.white === null && data.black === null) return null;
+  return {
+    white: structuredClone(data.white ?? []),
+    black: structuredClone(data.black ?? []),
+  };
+}
+
 function validCoordinateMove(move: CoordinateMove): boolean {
   if (typeof move !== 'object' || move === null || Array.isArray(move)) return false;
   const keys = Object.keys(move);
@@ -1408,6 +1575,7 @@ class IndexedGameController implements GameController {
       readiness,
       adjudication: this.adjudicationStatus(checkpoint),
       modelHandoff: handoffSnapshot(checkpoint),
+      premoves: premovesSnapshot(checkpoint),
     };
   }
 
@@ -2100,7 +2268,10 @@ class IndexedGameController implements GameController {
       const prior = this.checkpoint!.selections.players[side] as ModelSelection;
       const candidate = state.producing !== null &&
         modelConfigurationIdentity(state.producing) !== modelConfigurationIdentity(prior) ? state.producing : undefined;
-      return this.acceptMove({ schemaVersion: 1, kind: 'model-move', fence, move: effect.move }, candidate);
+      return this.acceptMove({
+        schemaVersion: 1, kind: 'model-move', fence, move: effect.move,
+        ...(effect.premoves === undefined ? {} : { premoves: effect.premoves }),
+      }, candidate);
     }
     if (effect.budgets === null || typeof effect.budgets !== 'object' || effect.budgets.schemaVersion !== 1 ||
       !Number.isSafeInteger(effect.budgets.illegalMoveAttempts) || !Number.isSafeInteger(effect.budgets.formatCorrections) ||
@@ -2902,6 +3073,7 @@ class IndexedGameController implements GameController {
             promotion: transition.move.promotion ?? null,
             san,
           },
+          ...(event.kind === 'premove' ? { premove: true } : {}),
           clock: {
             elapsedChargedMs: clockCandidate.elapsedChargedMs,
             incrementCredit: clockCandidate.incrementCredit,
@@ -3017,8 +3189,16 @@ class IndexedGameController implements GameController {
             },
           }
         : finalCheckpoint;
+      // A model-side move always re-arms that side's conditional pre-moves — an empty
+      // plan clears the slot — while a move that ends the game disarms both sides.
+      let extensions = checkpointWithUndoBaseline.extensions;
+      if (finalResult !== null) {
+        extensions = withPremoves(withPremoves(extensions, 'white', []), 'black', []);
+      } else if (event.kind !== 'human-move') {
+        extensions = withPremoves(extensions, side, armPremoves(transition.position, event.premoves));
+      }
       return {
-        checkpoint: checkpointWithUndoBaseline,
+        checkpoint: { ...checkpointWithUndoBaseline, extensions },
         position: transition.position,
         clockState: finalResult === null ? clockCandidate.clock : null,
         value: { kind: 'accepted' as const },
@@ -3040,7 +3220,53 @@ class IndexedGameController implements GameController {
         snapshot: committed.snapshot,
       };
     }
-    return { kind: 'accepted', snapshot: committed.snapshot };
+    return await this.fireArmedPremoves(committed.snapshot);
+  }
+
+  /**
+   * After any accepted move, the side to move now owns the moment its conditional
+   * pre-moves were armed for: a branch matching the move just played is played without a
+   * model turn (its nested branches re-arm with the fired move), and a non-matching
+   * opponent move discards the armed plan. This chains across both sides, which lets two
+   * agents with armed plans answer each other; every fire consumes one branch level, so
+   * the chain is bounded by the armed plans' depth.
+   */
+  private async fireArmedPremoves(committed: ControllerSnapshotV1): Promise<GameControllerIntentResultV1> {
+    const checkpoint = committed.checkpoint;
+    if (checkpoint.result.kind !== 'unresolved') return { kind: 'accepted', snapshot: committed };
+    const nextSide = sideForCheckpoint(checkpoint);
+    const armed = premovesDataOf(checkpoint.extensions)[nextSide];
+    if (armed === null || armed.length === 0) return { kind: 'accepted', snapshot: committed };
+    const played = checkpoint.rules.moves.at(-1);
+    if (played === undefined) return { kind: 'accepted', snapshot: committed };
+    const branch = armed.find((node) => triggerMatchesPlayed(played, node.trigger));
+    if (branch === undefined) {
+      const cleared = await this.commitMutation(createFence(checkpoint), (context) => ({
+        checkpoint: { ...context.checkpoint, extensions: withPremoves(context.checkpoint.extensions, nextSide, []) },
+        position: context.position,
+        clockState: context.clockState,
+        value: { kind: 'premoves-discarded' as const },
+      }));
+      return { kind: 'accepted', snapshot: cleared.snapshot };
+    }
+    const move = parseCoordinateMove(branch.reply);
+    if (move === null) {
+      // An unreadable saved reply cannot fire; discard the branch rather than guess.
+      const cleared = await this.commitMutation(createFence(checkpoint), (context) => ({
+        checkpoint: { ...context.checkpoint, extensions: withPremoves(context.checkpoint.extensions, nextSide, []) },
+        position: context.position,
+        clockState: context.clockState,
+        value: { kind: 'premoves-discarded' as const },
+      }));
+      return { kind: 'accepted', snapshot: cleared.snapshot };
+    }
+    return await this.acceptMove({
+      schemaVersion: 1,
+      kind: 'premove',
+      fence: createFence(checkpoint),
+      move,
+      premoves: branch.premoves === undefined ? [] : armedNodesToBranches(branch.premoves),
+    });
   }
 
   private noClockCandidate(
