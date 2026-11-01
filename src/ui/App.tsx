@@ -840,10 +840,11 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     setSetupOpen(true);
   };
 
-  const attemptBoardMove = useCallback((move: PromotionMove) => {
+  const attemptBoardMove = useCallback((move: CoordinateMove) => {
     const hasPromotions = legalMoves(snapshot.position).some((candidate) =>
       candidate.from === move.from && candidate.to === move.to && candidate.promotion);
-    if (hasPromotions) {
+    // A queued premove already carries the piece chosen at queue time.
+    if (hasPromotions && !move.promotion) {
       setPromotion(move);
       setFeedback('Choose a piece for promotion from ' + move.from + ' to ' + move.to + '.');
       return Promise.resolve(false);

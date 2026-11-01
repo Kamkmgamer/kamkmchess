@@ -5,7 +5,14 @@
  * (src/ui/ChessBoard.tsx); a styling change lands on every surface at once.
  */
 :root[data-appearance='dark'] .board-host { box-shadow: none; }
-.board-frame { padding: 3px 0; }
+.board-frame { position: relative; padding: 3px 0; }
+/* The queue-time premove promotion picker floats over the board like the
+ * turn-time one does over the playing board. */
+.board-frame > .promotion-panel {
+  position: absolute; z-index: 3; top: 50%; left: 12px; right: 12px; width: fit-content;
+  max-width: calc(100% - 24px); margin: auto; padding: 8px; transform: translateY(-50%);
+  box-shadow: 0 8px 28px rgb(0 0 0 / .25);
+}
 .board-host { width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 4px; box-shadow: 0 0 0 1px var(--edge); }
 /* Chessground owns hit testing and piece transforms; these rules retain the board palette. */
 .board-host.cg-wrap { box-sizing: border-box; }

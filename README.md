@@ -74,7 +74,7 @@ The board uses Lichess's [Chessground](https://github.com/lichess-org/chessgroun
 
 Use Left/Right to review earlier or later moves, Home for the starting position, and End or **Live** to return to play. Moves in the list are clickable. Reviewing history keeps the live game and clocks running. Entering history or starting another game clears queued input.
 
-During an AI turn, drag or click your piece to queue one premove. It plays only if legal after the reply. Escape, right-click, or **Cancel premove** clears it.
+During an AI turn, drag or click your pieces to queue any number of premoves. One plays after each reply if it is still legal. An illegal premove cancels the rest of the queue. Choose a promotion piece when queueing a pawn's promotion. Escape, right-click, or **Cancel premove** clears the whole queue.
 
 Right-drag draws green arrows and right-click draws circles. Hold Shift for red, Control for blue, or Alt for amber. Repeat a drawing to remove it, or left-click an empty square to clear all drawings.
 

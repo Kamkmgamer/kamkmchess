@@ -71,7 +71,7 @@ test('a human joins their side while the opposite agent gets its prompt', async 
   await page.goto('/play?setup=new');
   await page.getByLabel('Black', { exact: true }).selectOption('agent');
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
-  expect(calls[0]).toMatchObject({ name: 'start_game', arguments: { opponent: 'human', color: 'black', defer_join: true } });
+  await expect.poll(() => calls[0]).toMatchObject({ name: 'start_game', arguments: { opponent: 'human', color: 'black', defer_join: true } });
   await expect(page.getByRole('button', { name: 'Copy black invite' })).toHaveAttribute('data-copy', /Play as black/);
   await page.getByRole('button', { name: 'Play white' }).click();
   await expect(page.getByText('Joined. You play white.')).toBeVisible();
