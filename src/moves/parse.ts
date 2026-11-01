@@ -5,10 +5,13 @@ import type {
   CompletedAnswer,
   DeclarationOrigin,
   FormatFailureReason,
+  PremoveBranchV1,
+  PremoveNodeV1,
   ReplyClassification,
   ResignationDeclaration,
   RetainedFieldV1,
 } from './types.js';
+import { MAX_PREMOVE_BRANCHES, MAX_PREMOVE_DEPTH } from './types.js';
 
 const COORDINATE_PATTERN = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 const ACTION_KEYS: ReadonlySet<string> = new Set(['move', 'resign']);
@@ -20,10 +23,69 @@ function unwrapSingleFence(text: string): string {
   return withoutOpening.replace(/```[^\n`]*$/, '').trim();
 }
 
-function retainedFieldsOf(value: Record<string, unknown>): readonly RetainedFieldV1[] {
+function retainedFieldsOf(value: Record<string, unknown>, extraExcluded: readonly string[] = []): readonly RetainedFieldV1[] {
   return Object.entries(value)
-    .filter(([key]) => !ACTION_KEYS.has(key) && key !== 'plan')
+    .filter(([key]) => !ACTION_KEYS.has(key) && key !== 'plan' && !extraExcluded.includes(key))
     .map(([key, entry]) => ({ key, value: entry }));
+}
+
+/**
+ * Reads the optional conditional pre-moves of a JSON answer.
+ *
+ * Returns undefined when the field is absent, null when it is present but malformed
+ * or over budget — a malformed plan never blocks the move itself — and the parsed
+ * branches otherwise. Triggers and replies are normalized coordinate tokens; the
+ * parser checks their shape, never their legality.
+ */
+export function parsePremoves(raw: unknown): readonly PremoveBranchV1[] | undefined | null {
+  return parsePremoveList(raw, 1);
+}
+
+function parsePremoveList(raw: unknown, depth: number): readonly PremoveBranchV1[] | undefined | null {
+  if (raw === undefined) return undefined;
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > MAX_PREMOVE_BRANCHES) return null;
+  const branches: PremoveBranchV1[] = [];
+  for (const entry of raw) {
+    const branch = parsePremoveBranch(entry, depth);
+    if (branch === null) return null;
+    branches.push(branch);
+  }
+  return branches;
+}
+
+function parsePremoveBranch(entry: unknown, depth: number): PremoveBranchV1 | null {
+  if (depth > MAX_PREMOVE_DEPTH || entry === null || typeof entry !== 'object' || Array.isArray(entry)) return null;
+  const record = entry as Record<string, unknown>;
+  if (!Array.isArray(record.on) || record.on.length === 0 || record.on.length > MAX_PREMOVE_BRANCHES) return null;
+  const on: string[] = [];
+  for (const trigger of record.on) {
+    if (typeof trigger !== 'string') return null;
+    const normalized = normalizeCoordinateToken(trigger);
+    if (!COORDINATE_PATTERN.test(normalized)) return null;
+    on.push(normalized);
+  }
+  const then = parsePremoveNode(record.then, depth);
+  return then === null ? null : { on, then };
+}
+
+function parsePremoveNode(raw: unknown, depth: number): PremoveNodeV1 | null {
+  let move: unknown;
+  let nested: unknown = undefined;
+  if (typeof raw === 'string') {
+    move = raw;
+  } else if (raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+    move = (raw as Record<string, unknown>).move;
+    nested = (raw as Record<string, unknown>).premoves;
+  } else {
+    return null;
+  }
+  if (typeof move !== 'string') return null;
+  const normalized = normalizeCoordinateToken(move);
+  const coordinate = toCoordinateMove(normalized);
+  if (coordinate === null) return null;
+  if (nested === undefined) return { move: coordinate };
+  const premoves = parsePremoveList(nested, depth + 1);
+  return premoves === undefined || premoves === null ? null : { move: coordinate, premoves };
 }
 
 function isSquare(value: string): value is Square {
@@ -40,6 +102,14 @@ function isPromotion(value: string): value is Promotion {
  */
 export function normalizeCoordinateToken(raw: string): string {
   return raw.replace(/\s+/g, '').toLowerCase();
+}
+
+/**
+ * Reads one coordinate token as a coordinate move, or returns null. It never adds a
+ * promotion piece and never reorders or completes squares.
+ */
+export function parseCoordinateMove(text: string): CoordinateMove | null {
+  return toCoordinateMove(normalizeCoordinateToken(text));
 }
 
 function toCoordinateMove(text: string): CoordinateMove | null {
@@ -96,6 +166,7 @@ function moveReadOutcome(
   position: Position | undefined,
   retainedFields: readonly RetainedFieldV1[],
   plan: string | undefined,
+  premoves?: readonly PremoveBranchV1[],
 ): ReplyClassification {
   if (position !== undefined && requiresExplicitPromotion(position, read.move)) {
     return {
@@ -105,7 +176,11 @@ function moveReadOutcome(
       retainedFields,
     };
   }
-  return { kind: 'move', move: read.move, text: read.text, origin, retainedFields, ...(plan === undefined ? {} : { plan }) };
+  return {
+    kind: 'move', move: read.move, text: read.text, origin, retainedFields,
+    ...(plan === undefined ? {} : { plan }),
+    ...(premoves === undefined ? {} : { premoves }),
+  };
 }
 
 /** Every explicit final `Move:` line, in reply order, with its raw coordinate token. */
@@ -136,7 +211,8 @@ function classifyJsonObject(
   const hasResignation = Object.prototype.hasOwnProperty.call(value, 'resign');
   if (!hasMove && !hasResignation) return null;
 
-  const retainedFields = retainedFieldsOf(value);
+  const premoves = parsePremoves(value.premoves);
+  const retainedFields = retainedFieldsOf(value, premoves === undefined || premoves === null ? [] : ['premoves']);
   const plan = typeof value.plan === 'string' ? value.plan : undefined;
   const resigns = hasResignation && value.resign === true;
   const declaresResignation = hasResignation && value.resign !== false;
@@ -168,7 +244,7 @@ function classifyJsonObject(
   if (read === 'unreadable') {
     return { kind: 'format-failure', reason: 'unreadable-move', fragment: raw, retainedFields };
   }
-  return moveReadOutcome(read, 'json-move', position, retainedFields, plan);
+  return moveReadOutcome(read, 'json-move', position, retainedFields, plan, premoves === null ? undefined : premoves);
 }
 
 /**

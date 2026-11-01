@@ -92,5 +92,15 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 	if match.Status == online.MatchActive && !s.PlayersReady(match) {
 		status = "waiting-for-players"
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"gameId": match.MatchID, "fen": match.PositionFEN, "status": status, "players": players, "moves": moves, "clock": s.clock(match), "result": match.Result, "watch_url": s.watchURL(match.MatchID)})
+	writeJSON(w, http.StatusOK, map[string]any{"gameId": match.MatchID, "fen": match.PositionFEN, "status": status, "players": players, "moves": moves, "clock": s.clock(match), "result": match.Result, "premoves": s.premovesView(match), "watch_url": s.watchURL(match.MatchID)})
+}
+
+// premovesView exposes each side's armed conditional pre-moves in the watch payload, so
+// the human's play screen can show what a remote agent has committed to. Plans are
+// advisory: the server plays a fired reply only for the seat that armed it.
+func (s *Server) premovesView(match online.Match) map[string]any {
+	return map[string]any{
+		"white": s.premoves.armed(match.MatchID, online.SeatWhite),
+		"black": s.premoves.armed(match.MatchID, online.SeatBlack),
+	}
 }

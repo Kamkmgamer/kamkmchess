@@ -1,5 +1,5 @@
 import type {
-  AdjudicationWorkV1, ControllerFenceV1, ControllerSnapshotV1,
+  AdjudicationWorkV1, ArmedPremoveNodeV1, ControllerFenceV1, ControllerSnapshotV1,
   GameController, GameControllerIntentResultV1, GameControllerIntentV1,
 } from '../controller/index.js';
 import { applyCoordinateMove, legalMoves, parsePosition, sanToCoordinateMove } from '../rules/index.js';
@@ -7,6 +7,7 @@ import type { Position } from '../rules/index.js';
 import type { AppliedMoveV1, GameResultV1, PlayerSelectionV1 } from '../storage/index.js';
 import type { FinalResultReasonV1 } from '../storage/types.js';
 import type { ClockReading, ClockSide } from '../clocks/index.js';
+import { parseCoordinateMove } from '../moves/index.js';
 import type { HostedGameMeta, LocalGameSession } from '../ui/match-composition.js';
 import { ChessMcpClient, remoteEndpoint } from './remote.js';
 
@@ -23,6 +24,8 @@ interface WatchBoard {
   gameId: string; fen: string; status: string; players: Record<string, string>; moves: string[];
   clock: { whiteMs: number; blackMs: number; incrementMs?: number; activeSeat?: 'white' | 'black' | null };
   result: { kind?: string; winner?: string | null; reason?: string } | null;
+  /** Conditional pre-moves a remote agent has armed, when the server exposes them. */
+  premoves?: { white: ArmedPremoveNodeV1[] | null; black: ArmedPremoveNodeV1[] | null } | null;
   watch_url: string;
 }
 
@@ -62,6 +65,34 @@ function replayAll(startingFen: string, sans: readonly string[]): Replay | null 
     });
   }
   return { startingFen, moves, position, appliedCount: sans.length };
+}
+
+/**
+ * Adapts the watch payload's armed plan against the replayed position: the server
+ * stores bare coordinates, so the reply's SAN is computed here and a branch that can
+ * no longer legally happen is dropped from the notice.
+ */
+function armedFromWatch(position: Position, nodes: readonly ArmedPremoveNodeV1[] | null | undefined): ArmedPremoveNodeV1[] {
+  if (nodes === undefined || nodes === null || nodes.length === 0) return [];
+  const armed: ArmedPremoveNodeV1[] = [];
+  for (const node of nodes) {
+    const trigger = parseCoordinateMove(node.trigger);
+    const reply = parseCoordinateMove(node.reply);
+    if (trigger === null || reply === null) continue;
+    let san: string;
+    let afterReply: Position;
+    try {
+      const afterTrigger = applyCoordinateMove(position, trigger).position;
+      const applied = applyCoordinateMove(afterTrigger, reply);
+      san = applied.san;
+      afterReply = applied.position;
+    } catch {
+      continue;
+    }
+    const premoves = armedFromWatch(afterReply, node.premoves);
+    armed.push({ trigger: node.trigger, reply: node.reply, san, ...(premoves.length === 0 ? {} : { premoves }) });
+  }
+  return armed;
 }
 
 /**
@@ -248,6 +279,12 @@ export class HostedGameController implements GameController {
       readiness: 'ready',
       adjudication: { status: 'none', query: null, requestId: null },
       modelHandoff: { committed: null, producing: null, queued: null },
+      premoves: (() => {
+        if (finished || !board.premoves) return null;
+        const white = armedFromWatch(position, board.premoves.white);
+        const black = armedFromWatch(position, board.premoves.black);
+        return white.length === 0 && black.length === 0 ? null : { white, black };
+      })(),
     };
   }
 

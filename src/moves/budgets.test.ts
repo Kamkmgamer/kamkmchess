@@ -271,3 +271,25 @@ describe('model turn budgets', () => {
     });
   });
 });
+
+describe('conditional pre-moves in turn decisions', () => {
+  it('[MOV-07] carries a well-formed plan into the accepted move', () => {
+    const decision = decide(createTurnBudgets(),
+      JSON.stringify({ move: 'e2e4', plan: 'Center.', premoves: [{ on: ['e7e5'], then: 'g1f3' }] }), INITIAL);
+    expect(decision).toMatchObject({
+      kind: 'accepted-move',
+      move: { from: 'e2', to: 'e4' },
+      premoves: [{ on: ['e7e5'], then: { move: { from: 'g1', to: 'f3' } } }],
+    });
+  });
+
+  it('[MOV-07] omits premoves when the answer carries none or a malformed one', () => {
+    const none = decide(createTurnBudgets(), JSON.stringify({ move: 'e2e4' }), INITIAL);
+    expect(none.kind).toBe('accepted-move');
+    if (none.kind === 'accepted-move') expect(none.premoves).toBeUndefined();
+    const malformed = decide(createTurnBudgets(),
+      JSON.stringify({ move: 'e2e4', premoves: [{ on: 'e7e5', then: 'g1f3' }] }), INITIAL);
+    expect(malformed.kind).toBe('accepted-move');
+    if (malformed.kind === 'accepted-move') expect(malformed.premoves).toBeUndefined();
+  });
+});

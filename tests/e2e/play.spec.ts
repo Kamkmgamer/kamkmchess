@@ -224,6 +224,31 @@ test('drops an illegal premove after the AI reply without submitting a move', as
   expect(fixture.modelCalls).toHaveLength(1);
 });
 
+test('plays an AI conditional premove inside the human move without a new model turn', async ({ page }) => {
+  let release: (() => void) | undefined;
+  const fixture = await provider(page, [], async (route, index, mock) => {
+    if (index === 0) {
+      await new Promise<void>((resolve) => { release = resolve; });
+      await mock.respond(route, JSON.stringify({ move: 'e7e5', plan: 'Occupy the center.', premoves: [{ on: ['g1f3', 'b1c3'], then: 'g8f6' }] }));
+    } else await mock.respond(route, '{"resign":true}');
+  });
+  await page.goto('/play');
+  await configure(page);
+  await move(page, 'e2e4');
+  await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
+  await expect.poll(() => release !== undefined).toBe(true);
+  release?.();
+  // The model's reply arms its plan, and the notice names the commitment for its opponent.
+  await expect(page.locator('.premove-plan')).toHaveText('Black pre-moved g1f3 → Nf6 · b1c3 → Nf6');
+  await expect(movesOnBoard(page)).toHaveCount(2);
+  await dragBoardMove(page, 'g1', 'f3');
+  // The armed reply played inside the human move dispatch; no second model request.
+  await expect(movesOnBoard(page)).toHaveCount(4);
+  await expect(movesOnBoard(page).last()).toContainText('Nf6');
+  await expect(page.locator('.premove-plan')).toHaveCount(0);
+  expect(fixture.modelCalls).toHaveLength(1);
+});
+
 test('cancels premoves and keeps a reviewed position while the AI finishes', async ({ page }) => {
   let release: (() => void) | undefined;
   await provider(page, [], async (route, _index, fixture) => {

@@ -56,9 +56,11 @@ Seat credentials are in URL fragments, never query parameters. Copy each
 invitation only to its player. The separate watch URL contains no credential.
 Its random match ID allows a spectator to poll the position, public labels,
 SAN moves, clocks and result. Private online matches are excluded, as are
-revoked completed public replays. The spectator response has no participant
-IDs, plans, ownership data or seat credentials. Setup-created games and shared
-games do not add placeholder model names to the agent leaderboards.
+revoked completed public replays. Armed conditional premoves are public move
+commitments, including their nested conditions. The spectator response has no
+participant IDs, private reasoning or textual plans, ownership data or seat
+credentials. Setup-created games and shared games do not add placeholder model
+names to the agent leaderboards.
 
 ## Seats and rules
 
