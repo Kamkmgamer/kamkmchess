@@ -65,13 +65,13 @@ function premoveTailSquares(queue: readonly QueuedPremove[]): Map<Key, string> {
   return squares;
 }
 
-function syncPremoveDisplay(instance: Api, queue: readonly QueuedPremove[], pending: { readonly from: Key; readonly to: Key } | null): void {
+function syncPremoveDisplay(instance: Api, queue: readonly QueuedPremove[]): void {
   // Chessground holds a single premove. Point its slot at the queue head so
   // the highlight and play-time validation keep working; a promotion choice
   // that is still open is not queued yet and stays off the board. The slot is
   // not part of the public set() config, but the state is documented as
   // writable at the caller's own risk, and the redraw below renders it.
-  const head = pending ? undefined : queue[0];
+  const head = queue[0];
   if (head) instance.state.premovable.current = [head.from, head.to];
   else delete instance.state.premovable.current;
   instance.set({ highlight: { custom: premoveTailSquares(queue) } });
@@ -109,13 +109,20 @@ export function ChessBoard({ orientation, model, disabled, visible, onMove, view
     premovesRef.current = next;
     setPremoves(next);
     const instance = board.current;
-    if (instance) syncPremoveDisplay(instance, next, pendingPremoveRef.current);
+    if (instance) syncPremoveDisplay(instance, next);
   }, []);
   const clearPremoves = useCallback(() => {
     pendingPremoveRef.current = null;
     setPendingPremovePromotion(null);
     applyQueue([]);
   }, [applyQueue]);
+  const playQueuedPremove = useCallback(() => {
+    const instance = board.current;
+    if (!instance || latest.current.disabled || playingPremoveRef.current || !premovesRef.current.length) return;
+    playingPremoveRef.current = premovesRef.current[0] ?? null;
+    if (instance.playPremove()) applyQueue(premovesRef.current.slice(1));
+    else { playingPremoveRef.current = null; clearPremoves(); }
+  }, [applyQueue, clearPremoves]);
   useEffect(() => {
     if (!host.current) return;
     const instance = Chessground(host.current, {
@@ -151,15 +158,16 @@ export function ChessBoard({ orientation, model, disabled, visible, onMove, view
               // queued against positions that never happened.
               if (metadata.premove) clearPremoves();
             };
-            if (current.disabled || !isSquare(from) || !isSquare(to)) { restore(); return; }
+            if (current.disabled || !isSquare(from) || !isSquare(to)) { restore(); playingPremoveRef.current = null; return; }
             // The queued head carries the promotion piece chosen at queue
             // time; it left the queue when the play began.
             const head = metadata.premove ? playingPremoveRef.current : undefined;
-            playingPremoveRef.current = null;
             const move: CoordinateMove = head?.promotion ? { from, to, promotion: head.promotion } : { from, to };
             void current.onMove(move).then((accepted) => {
               if (!accepted) discard();
-            }).catch(discard);
+            }).catch(discard).finally(() => {
+              if (metadata.premove) playingPremoveRef.current = null;
+            });
           },
         },
       },
@@ -178,7 +186,7 @@ export function ChessBoard({ orientation, model, disabled, visible, onMove, view
               // exists to validate against.
               pendingPremoveRef.current = { from: orig, to: dest };
               setPendingPremovePromotion({ from: orig, to: dest });
-              syncPremoveDisplay(instance, premovesRef.current, pendingPremoveRef.current);
+              syncPremoveDisplay(instance, premovesRef.current);
               return;
             }
             applyQueue([...premovesRef.current, { from: orig, to: dest }]);
@@ -187,7 +195,7 @@ export function ChessBoard({ orientation, model, disabled, visible, onMove, view
             if (board.current !== instance) return;
             // Starting a new premove drag clears Chessground's slot first; the
             // queue survives and its head highlight is restored here.
-            syncPremoveDisplay(instance, premovesRef.current, pendingPremoveRef.current);
+            syncPremoveDisplay(instance, premovesRef.current);
           },
         },
       },
@@ -276,12 +284,8 @@ export function ChessBoard({ orientation, model, disabled, visible, onMove, view
     // Invalid heads are discarded without submitting a controller intent, and
     // a premove that cannot play cancels the rest of the queue: every later
     // entry was premised on positions that never happened.
-    if (!disabled && premovesRef.current.length) {
-      playingPremoveRef.current = premovesRef.current[0] ?? null;
-      if (instance.playPremove()) applyQueue(premovesRef.current.slice(1));
-      else { playingPremoveRef.current = null; clearPremoves(); }
-    }
-  }, [disabled, fen, orientation, premoveColor, allowPremove, applyQueue, clearPremoves]);
+    playQueuedPremove();
+  }, [disabled, fen, orientation, premoveColor, allowPremove, playQueuedPremove]);
 
   const choosePremovePromotion = (piece: Promotion) => {
     const pending = pendingPremoveRef.current;
@@ -289,12 +293,13 @@ export function ChessBoard({ orientation, model, disabled, visible, onMove, view
     pendingPremoveRef.current = null;
     setPendingPremovePromotion(null);
     applyQueue([...premovesRef.current, { from: pending.from, to: pending.to, promotion: piece }]);
+    playQueuedPremove();
   };
   const cancelPremovePromotion = () => {
     pendingPremoveRef.current = null;
     setPendingPremovePromotion(null);
     const instance = board.current;
-    if (instance) syncPremoveDisplay(instance, premovesRef.current, null);
+    if (instance) syncPremoveDisplay(instance, premovesRef.current);
   };
   const premoveHead = premoves[0];
   const premoveLabel = !premoveHead ? ''

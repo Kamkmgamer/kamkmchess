@@ -272,12 +272,14 @@ test('plays each queued premove against its own AI reply', async ({ page }) => {
   await dragBoardMove(page, 'f1', 'c4');
   await expect(page.getByRole('status', { name: 'Premoves queued: g1 to f3, f1 to c4.', exact: true })).toBeVisible();
   await expect(page.locator('square.current-premove:visible')).toHaveCount(4);
+  await expect.poll(() => releases.length).toBe(1);
   releases[0]?.();
   await expect(movesOnBoard(page)).toHaveCount(3);
   await expect(movesOnBoard(page).last()).toContainText('Nf3');
   // Bc4 waits for the next reply and keeps its highlight as the queue head.
   await expect(page.locator('square.current-premove:visible')).toHaveCount(2);
   await expect(page.getByRole('button', { name: 'Stop generation', exact: true })).toBeVisible();
+  await expect.poll(() => releases.length).toBe(2);
   releases[1]?.();
   await expect(movesOnBoard(page)).toHaveCount(5);
   await expect(movesOnBoard(page).last()).toContainText('Bc4');
@@ -312,16 +314,20 @@ test('clears the whole queue when the reply makes the first premove illegal', as
   await expect(page.getByRole('button', { name: 'Type a move', exact: true })).toBeEnabled();
 });
 
-test('queues a premove promotion with its piece and plays it after the reply', async ({ page }) => {
-  let release: (() => void) | undefined;
+for (const timing of ['before reply', 'after reply', 'behind a queued move'] as const) {
+test(`queues a premove promotion chosen ${timing}`, async ({ page }) => {
+  const releases: Array<() => void> = [];
   await provider(page, [], async (route, index, fixture) => {
     if (index === 0) await fixture.respond(route, '{"move":"e7e5"}');
     else if (index === 1) await fixture.respond(route, '{"move":"b7b5"}');
     else if (index === 2) await fixture.respond(route, '{"move":"g8f6"}');
     else if (index === 3) await fixture.respond(route, '{"move":"g7g6"}');
     else if (index === 4) {
-      await new Promise<void>((resolve) => { release = resolve; });
+      await new Promise<void>((resolve) => { releases.push(resolve); });
       await fixture.respond(route, '{"move":"f6g8"}');
+    } else if (index === 5 && timing === 'behind a queued move') {
+      await new Promise<void>((resolve) => { releases.push(resolve); });
+      await fixture.respond(route, '{"move":"e8e7"}');
     } else await fixture.respond(route, '{"resign":true}');
   });
   await page.goto('/play');
@@ -341,16 +347,28 @@ test('queues a premove promotion with its piece and plays it after the reply', a
   await picker.getByRole('button', { name: 'Cancel premove promotion', exact: true }).click();
   await expect(picker).toHaveCount(0);
   await expect(page.locator('square.current-premove:visible')).toHaveCount(0);
+  if (timing === 'behind a queued move') await dragBoardMove(page, 'g1', 'f3');
   await dragBoardMove(page, 'a7', 'b8');
   await expect(picker).toBeVisible();
+  if (timing !== 'before reply') {
+    await expect.poll(() => releases.length).toBe(1);
+    releases[0]?.();
+    await expect(movesOnBoard(page)).toHaveCount(timing === 'after reply' ? 10 : 11);
+    await expect(picker).toBeVisible();
+  }
   await picker.getByRole('button', { name: 'Queen', exact: true }).click();
-  await expect(page.getByRole('status', { name: 'Premove a7 to b8 queued.', exact: true })).toBeVisible();
-  await expect(page.locator('square.current-premove:visible')).toHaveCount(2);
-  release?.();
-  await expect(movesOnBoard(page)).toHaveCount(11);
+  if (timing !== 'after reply') {
+    await expect(page.getByRole('status', { name: 'Premove a7 to b8 queued.', exact: true })).toBeVisible();
+    await expect(page.locator('square.current-premove:visible')).toHaveCount(2);
+    const replyIndex = timing === 'before reply' ? 0 : 1;
+    await expect.poll(() => releases.length).toBe(replyIndex + 1);
+    releases[replyIndex]?.();
+  }
+  await expect(movesOnBoard(page)).toHaveCount(timing === 'behind a queued move' ? 13 : 11);
   await expect(movesOnBoard(page).last()).toContainText('b8=Q');
   await expect(page.locator('square.current-premove:visible')).toHaveCount(0);
 });
+}
 
 test('plays against the AI without a position-check worker', async ({ page }) => {
   const fixture = await provider(page, ['e7e5']);
