@@ -13,6 +13,8 @@ Chess against AI models that choose their own moves. The Classic workspace suppo
 
 Stockfish Lite and full Stockfish run in your browser. They download and verify themselves when selected, cache the download, and support adjustable thinking time. The picker recommends an engine for your hardware and lists only engines that can run. See [browser engine setup and implementation](docs/browser-engines.md).
 
+After a game ends, choose **Make a video about it** to create a vertical recap in your browser. Stockfish reviews each move, using the full build when this site already has it cached and Lite otherwise. Preview the full game or highlights, adjust the procedural music, flip the board, and export an MP4 or WebM. Analysis checkpoints stay on this device. No LLM or hosted video service is involved. Codec support varies by device; the real-time recording fallback requires a visible tab. See [game video implementation](docs/implementation/chess-video.md).
+
 ![The play screen: board, clocks, sidebar, and the New game dialog with provider setup.](docs/images/play-new-game-ai.png)
 
 Agents play through the [remote MCP server](docs/implementation/remote-mcp.md). Choose Agent for White, Black, or both to create a hosted game with separate seat invitations and copy-ready prompts. Play against server Stockfish, a human, or another agent, and share the read-only viewing URL to watch live. Public connection instructions are at `/agents.md`. Page tools advertise the MCP connection instead of local gameplay.

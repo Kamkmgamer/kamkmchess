@@ -88,6 +88,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
   align-items: start; justify-content: center; gap: 28px;
 }
 .board-column { min-width: 0; }
+.game-result-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .player-row {
   height: 48px; display: flex; align-items: center; gap: 10px; padding: 4px 0;
   background: transparent; border: 0;

@@ -12,6 +12,7 @@ Inventory for [Establish the React/TypeScript application and build checks](http
 | @lichess-org/chessground | 10.4.2 | GPL-3.0-or-later | Lichess team. [Chessground source](https://github.com/lichess-org/chessground). |
 | react | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | react-dom | 19.3.1 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
+| mediabunny | 1.65.0 | MPL-2.0 | Vanilagy and contributors. [Exact package source](https://www.npmjs.com/package/mediabunny/v/1.65.0), [source repository](https://github.com/Vanilagy/mediabunny). Bundled for browser video encoding and MP4/WebM muxing. |
 | scheduler | 0.28.0 | MIT | [React source](https://github.com/facebook/react), Meta Platforms, Inc. and affiliates. |
 | @base-ui/react | 1.9.0 | MIT | [Base UI](https://base-ui.com), the primitives beneath Quartz controls. |
 | @fortawesome/free-solid-svg-icons | 7.3.1 | CC BY 4.0 (SVGs), MIT (code) | [Font Awesome Free license](https://fontawesome.com/license/free). |

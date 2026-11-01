@@ -152,6 +152,9 @@ test('two browser engines use Lite evaluation, release workers after setup and S
   await expect.poll(() => workers.size).toBe(1);
   await page.getByRole('button', { name: 'New game', exact: true }).click();
   await expect.poll(() => workers.size).toBe(0);
+  // New game retains the previous seat setup. Choose local play explicitly.
+  await page.getByLabel('White', { exact: true }).selectOption('human');
+  await page.getByLabel('Black', { exact: true }).selectOption('human');
   await page.getByRole('button', { name: 'Start game', exact: true }).click();
   await expect(page.locator('.evaluation-bar')).toHaveCount(0);
   await expect.poll(() => workers.size).toBe(0);

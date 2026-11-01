@@ -48,6 +48,7 @@
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "chessops": "0.15.1",
+    "mediabunny": "1.65.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "stockfish": "19.0.1",
