@@ -143,8 +143,8 @@ func parsePremoveBranches(list []any, depth int) ([]armedPremoveNode, error) {
 // castlingKey collapses the two square forms a castle may be written in — by the
 // king's landing square (e1g1) or by the rook square chessops and Stockfish emit
 // (e1h1) — and likewise the queenside pairs. Standard chess cannot otherwise move a
-// king two squares, so collapsing is exact there; a custom starting position with a
-// king on its e-file is the accepted exception.
+// king two squares. Call this only for an accepted move whose SAN confirms castling;
+// rooks and queens can use the same coordinates for distinct ordinary moves.
 func castlingKey(uci string) string {
 	switch uci {
 	case "e1g1", "e1h1":
@@ -162,7 +162,15 @@ func castlingKey(uci string) string {
 // armedTriggerMatches reports whether an armed trigger denotes the played move. Both
 // sides are normalized: plans normally arrive normalized, but a stored plan must never
 // misfire over whitespace or letter case.
-func armedTriggerMatches(trigger, playedUCI string) bool {
-	return castlingKey(strings.ToLower(strings.TrimSpace(trigger))) ==
-		castlingKey(strings.ToLower(strings.TrimSpace(playedUCI)))
+func armedTriggerMatches(trigger string, played online.Move) bool {
+	trigger = strings.ToLower(strings.TrimSpace(trigger))
+	uci := strings.ToLower(strings.TrimSpace(played.UCI))
+	if trigger == uci {
+		return true
+	}
+	san := strings.TrimRight(played.SAN, "+#")
+	if san != "O-O" && san != "O-O-O" {
+		return false
+	}
+	return castlingKey(trigger) == castlingKey(uci)
 }

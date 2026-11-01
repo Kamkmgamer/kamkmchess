@@ -64,18 +64,19 @@ func TestParsePremovePlan(t *testing.T) {
 }
 
 func TestArmedTriggerMatchesBothCastleSquareForms(t *testing.T) {
-	for trigger, played := range map[string]string{
-		"e1g1": "e1h1", "e1h1": "e1g1", "e8g8": "e8h8", "e1c1": "e1a1", "e8c8": "e8a8",
-		"g1f3": "g1f3", " E7E5 ": "e7e5",
+	for _, example := range []struct{ trigger, uci, san string }{
+		{"e1g1", "e1h1", "O-O"}, {"e1h1", "e1g1", "O-O+"}, {"e8g8", "e8h8", "O-O#"},
+		{"e1c1", "e1a1", "O-O-O"}, {"e8c8", "e8a8", "O-O-O+"},
+		{"g1f3", "g1f3", "Nf3"}, {" E7E5 ", "e7e5", "e5"},
 	} {
-		if !armedTriggerMatches(trigger, played) {
-			t.Fatalf("trigger %s did not match played %s", trigger, played)
+		if !armedTriggerMatches(example.trigger, online.Move{UCI: example.uci, SAN: example.san}) {
+			t.Fatalf("trigger %s did not match played %s", example.trigger, example.uci)
 		}
 	}
-	if armedTriggerMatches("e1g1", "e1a1") {
+	if armedTriggerMatches("e1g1", online.Move{UCI: "e1a1", SAN: "O-O-O"}) {
 		t.Fatal("kingside trigger matched a queenside move")
 	}
-	if armedTriggerMatches("g1f3", "g8f6") {
+	if armedTriggerMatches("g1f3", online.Move{UCI: "g8f6", SAN: "Nf6"}) {
 		t.Fatal("distinct plain moves matched")
 	}
 }
@@ -248,6 +249,22 @@ func TestMaybeFireArmedPremovesDropsARefusedReply(t *testing.T) {
 	}
 	if nodes := server.premoves.armed("m1", sess.seat); nodes != nil {
 		t.Fatalf("a dropped plan stayed armed: %+v", nodes)
+	}
+}
+
+func TestMaybeFireArmedPremovesDoesNotAliasOrdinaryRookMoves(t *testing.T) {
+	server, matches, sess := fireFixture(t)
+	matches.match.PositionFEN = "k6r/8/8/8/4P3/8/8/4K1N1 w - - 1 2"
+	matches.match.Moves[len(matches.match.Moves)-1] = online.Move{
+		Version: 2, Seat: online.SeatBlack, UCI: "e8h8", SAN: "Rh8",
+	}
+	server.premoves.arm("m1", sess.seat, []armedPremoveNode{{Trigger: "e8g8", Reply: "g1f3"}})
+	server.maybeFireArmedPremoves(context.Background(), sess, matches.match)
+	if len(matches.submits) != 0 {
+		t.Fatalf("a plan for Rg8 fired after Rh8: %v", matches.submits)
+	}
+	if nodes := server.premoves.armed("m1", sess.seat); nodes != nil {
+		t.Fatalf("a nonmatching plan stayed armed: %+v", nodes)
 	}
 }
 

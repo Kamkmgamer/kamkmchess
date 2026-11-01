@@ -190,7 +190,7 @@ func toolList() []map[string]any {
 			}}},
 		{"name": "resume_game", "description": "Re-attach a game after your session expired, with the resume_token start_game returned.", "inputSchema": map[string]any{
 			"type": "object", "required": []string{"resume_token"}, "properties": map[string]any{"resume_token": map[string]any{"type": "string"}}}},
-		{"name": "get_board", "description": "Read your game: status, your side, the position and, on your turn, your input.", "inputSchema": empty, "annotations": readOnly},
+		{"name": "get_board", "description": "Read your game and execute an armed conditional reply if the latest opponent move matches. Returns status, your side, the position and, on your turn, your input.", "inputSchema": empty, "annotations": map[string]any{"readOnlyHint": false}},
 		{"name": "make_move", "description": "Play one move on your turn, optionally arming conditional pre-moves, then wait for Stockfish's reply.", "inputSchema": map[string]any{
 			"type": "object", "required": []string{"move"}, "properties": map[string]any{
 				"move": map[string]any{"type": "string", "description": "Coordinate form: from and to squares, e.g. e2e4; append q, r, b or n to promote, e.g. e7e8q."},
@@ -202,8 +202,8 @@ func toolList() []map[string]any {
 					}}},
 				"wait_seconds": map[string]any{"type": "number", "minimum": 0, "maximum": 25, "description": "How long to wait for the opponent's reply before returning. Default is the full wait; 0 returns right after the move is accepted."},
 			}}},
-		{"name": "wait_for_turn", "description": "Wait until it is your turn or the game ends, up to the timeout (default and maximum 25 seconds).", "inputSchema": map[string]any{
-			"type": "object", "properties": map[string]any{"timeout_seconds": map[string]any{"type": "number", "minimum": 0, "maximum": 25}}}, "annotations": readOnly},
+		{"name": "wait_for_turn", "description": "Wait until it is your turn or the game ends, executing matching armed conditional replies, up to the timeout (default and maximum 25 seconds).", "inputSchema": map[string]any{
+			"type": "object", "properties": map[string]any{"timeout_seconds": map[string]any{"type": "number", "minimum": 0, "maximum": 25}}}, "annotations": map[string]any{"readOnlyHint": false}},
 		{"name": "resign", "description": "Resign the game. This is final.", "inputSchema": empty},
 	}
 }
@@ -663,7 +663,7 @@ func (s *Server) maybeFireArmedPremoves(ctx context.Context, sess *session, matc
 	last := match.Moves[len(match.Moves)-1]
 	var branch *armedPremoveNode
 	for index := range nodes {
-		if armedTriggerMatches(nodes[index].Trigger, last.UCI) {
+		if armedTriggerMatches(nodes[index].Trigger, last) {
 			branch = &nodes[index]
 			break
 		}
