@@ -1,0 +1,34 @@
+﻿.focus-page.game-review { width: min(100%, 1100px); max-width: 1100px; }
+.review-heading { margin-bottom: 22px; align-items: start; }
+.review-heading h2 { outline: none; }
+.review-heading p { margin: 5px 0 0; color: var(--dim); }
+.review-layout { display: grid; grid-template-columns: minmax(0, 600px) minmax(280px, 370px); gap: 32px; align-items: start; }
+.review-board-column { min-width: 0; }
+.review-player { min-height: 32px; font-weight: 600; overflow-wrap: anywhere; }
+.review-player-bottom { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.review-board-caption { margin: 4px 0; color: var(--dim); font-size: .875rem; text-align: center; }
+.review-navigation { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 8px; }
+.review-navigation span { min-width: 76px; text-align: center; color: var(--dim); font-variant-numeric: tabular-nums; }
+.review-panel { min-width: 0; display: grid; gap: 22px; }
+.review-panel h3 { margin: 0 0 8px; font-size: 1.05rem; }
+.review-panel p { margin: 0 0 12px; line-height: 1.5; }
+.review-state, .review-summary, .review-feedback, .review-moves { padding: 18px; background: var(--panel); border: 1px solid var(--edge); border-radius: 12px; }
+.review-state progress { width: 100%; accent-color: var(--green); }
+.review-state p, .review-summary > p, .review-depth { color: var(--dim); font-size: .875rem; }
+.review-summary-grid { display: grid; gap: 10px; margin: 16px 0; }
+.review-summary-grid div { display: grid; gap: 3px; min-width: 0; }
+.review-summary-grid strong { overflow-wrap: anywhere; }
+.review-summary-grid span { color: var(--dim); font-size: .875rem; }
+.review-move-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.review-grade { font-size: .78rem; font-weight: 700; color: var(--dim); }
+.review-grade[data-grade='great'], .review-grade[data-grade='best'] { color: var(--green); }
+.review-grade[data-grade='blunder'], .review-grade[data-grade='mistake'] { color: light-dark(#a12e28, #ffaaa1); }
+.review-grade[data-grade='inaccuracy'], .review-grade[data-grade='slight-inaccuracy'] { color: light-dark(#79520b, #f2c973); }
+.review-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+.review-line, .review-practice-message { padding: 12px; background: var(--soft); border-radius: 8px; overflow-wrap: anywhere; }
+.review-feedback .review-depth { margin: 12px 0 0; }
+.review-move-list { max-height: 260px; overflow-y: auto; }
+.review-move-list button { display: flex; justify-content: space-between; gap: 12px; width: 100%; min-height: 40px; padding: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); text-align: left; cursor: pointer; }
+.review-move-list button:hover, .review-move-list button[aria-current] { background: var(--soft); }
+.review-move-list button:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+@media (max-width: 760px) { .review-layout { grid-template-columns: minmax(0, 1fr); gap: 20px; } .review-board-column { width: min(100%, 600px); margin-inline: auto; } }

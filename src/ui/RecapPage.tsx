@@ -19,6 +19,7 @@ export interface RecapInput {
   readonly boardStyle: BoardStyle;
   readonly pieceStyle: PieceStyle;
   readonly orientation: 'white' | 'black';
+  readonly initialView?: 'review' | 'video';
 }
 
 function clock(seconds: number): string { return `${Math.floor(seconds / 60)}:${Math.floor(seconds % 60).toString().padStart(2, '0')}`; }

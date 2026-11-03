@@ -9,9 +9,9 @@ import { coordinateText } from './replay.js';
 import type { GameReplay, ReplayMove } from './replay.js';
 import { loadReview, saveReview } from './store.js';
 
-const REVIEW_VERSION = 1;
+const REVIEW_VERSION = 2;
 const NODES = 100_000;
-export interface ReviewedMove extends ReplayMove, MoveAssessment { readonly ply: number }
+export interface ReviewedMove extends ReplayMove, MoveAssessment { readonly ply: number; readonly bestLine?: readonly string[]; readonly playedLine?: readonly string[] }
 export interface GameReview { readonly replay: GameReplay; readonly engineId: BrowserEngineId; readonly moves: readonly ReviewedMove[] }
 export interface ReviewProgress { readonly engine: string; readonly completed: number; readonly total: number; readonly download: number | null; readonly fallback: boolean }
 
@@ -87,7 +87,7 @@ export async function reviewGame(replay: GameReplay, signal: AbortSignal, onProg
         const confirmed = best.pv[0] === search.bestMove && legalPv(position, best) && legalPv(position, played) && (!second || legalPv(position, second));
         let assessment = assessMove({ best, played, second, uci: move.uci, bestSan, legalCount: legal.length, confirmed });
         if (assessment.grade === 'great' && initialBest !== best.pv[0]) assessment = { ...assessment, grade: 'best', explanation: "Stockfish's first choice." };
-        reviewed.push({ ...move, ...assessment, ply: index + 1 });
+        reviewed.push({ ...move, ...assessment, ply: index + 1, bestLine: best.pv, playedLine: played.pv });
         aborted(signal);
         await saveReview(key, reviewed);
         aborted(signal);
