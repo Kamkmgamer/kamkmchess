@@ -83,18 +83,22 @@ of at most four connections. A browser build receives only the three public
 
 The target host has an isolated deployment in `/opt/kamkmchess/server`. Its
 API and MCP endpoint share the API container; PostgreSQL is on its private
-Compose network. The API verifies the target's own database certificate. A
-restricted, persistent SSH tunnel makes the target API available at
-`127.0.0.1:18082` on the existing public host without exposing the target's
-API or database to the internet. The existing public HTTPS route stays on
-port 18081 until the first backend deployment completes.
+Compose network. The API verifies the target's own database certificate.
+Nginx terminates HTTPS for `chess-api.agent.soft-magic.com` and proxies to the
+local API. `nginx-target.conf`, `certbot-target.sh`, the certificate deploy
+hook, and `kamkmchess-certbot.timer` configure certificate renewal. The public
+hostname is also the Vercel API base URL and `/v1` rewrite destination.
+
+During DNS propagation a restricted SSH tunnel makes the target API available
+at `127.0.0.1:18082` on the old host, so clients with the old address still
+reach the target database. The target database is never exposed publicly.
 
 `.github/workflows/deploy-backend.yml` builds and deploys after a push to
 `main` changes backend code or the rules worker. Its deployment key is
 restricted to `cd-entrypoint.sh`; the migration key on the target is
 restricted to `cd-source.sh`. GitHub secrets `KAMKM_TARGET_DEPLOY_KEY` and
 `KAMKM_TARGET_KNOWN_HOSTS` hold the CI key and verified host keys. A manual
-workflow dispatch only verifies the key; it does not deploy.
+workflow dispatch can verify the key or explicitly deploy the selected revision.
 
 On its first deployment the workflow backs up the source, stops its API,
 copies a consistent database dump, restores and migrates it on the target,

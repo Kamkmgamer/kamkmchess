@@ -2,6 +2,12 @@ name: Deploy backend
 
 on:
   workflow_dispatch:
+    inputs:
+      operation:
+        description: Verify the connection or deploy the selected revision
+        type: choice
+        options: [verify, deploy]
+        default: verify
   push:
     branches: [main]
     paths:
@@ -25,7 +31,7 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || inputs.operation == 'deploy'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -68,7 +74,7 @@ jobs:
           ssh -i ~/.ssh/kamkm-deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes root@104.204.68.77 "deploy $GITHUB_SHA" < release.tar.gz
 
   verify-connection:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && inputs.operation != 'deploy'
     runs-on: ubuntu-latest
     steps:
       - name: Check the restricted deployment key
