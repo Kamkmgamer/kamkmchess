@@ -1,5 +1,7 @@
 import { parseUciEvaluation } from './uci-score.js';
 import type { EngineEvaluation } from './uci-score.js';
+import { isUciMove, parseReviewLine, ReviewIterations } from './review-score.js';
+import type { ReviewLine } from './review-score.js';
 
 export type BrowserEngineId = 'stockfish-lite' | 'stockfish-full';
 export interface BrowserEngineSettings { engineId: BrowserEngineId; hashMb: number; moveTimeMs: number }
@@ -86,6 +88,17 @@ export async function downloadBrowserEngine(id: BrowserEngineId, onProgress?: (p
 }
 
 export interface BrowserEngineResult { move: string; engineName: string; elapsedMs: number }
+export interface ReviewSearchOptions {
+  readonly nodes: number;
+  readonly multiPv: number;
+  readonly searchMove?: string;
+  readonly hashMb?: number;
+}
+export interface ReviewSearchResult {
+  readonly lines: readonly ReviewLine[];
+  readonly bestMove: string;
+  readonly engineName: string;
+}
 
 /** A dedicated Worker keeps search off the UI thread. Searches are serialized per engine build. */
 export class BrowserUciEngine {
@@ -140,6 +153,34 @@ export class BrowserUciEngine {
     await this.run(settings, position, signal, onEvaluation);
   }
 
+  async review(position: { startingFen: string; moves: readonly string[] }, options: ReviewSearchOptions, signal?: AbortSignal): Promise<ReviewSearchResult> {
+    if (this.busy) throw new Error('This engine is still finishing another turn. Stop that turn and retry.');
+    if (!Number.isSafeInteger(options.nodes) || options.nodes < 1 || !Number.isInteger(options.multiPv) || options.multiPv < 1 || options.multiPv > 3
+      || (options.searchMove !== undefined && !isUciMove(options.searchMove))) throw new Error('Invalid review search settings.');
+    this.busy = true;
+    try {
+      if (!this.initialized) { await this.exchange('uci', line => line === 'uciok', 30_000, signal); this.initialized = true; }
+      for (const command of [
+        `setoption name Hash value ${options.hashMb ?? 16}`,
+        'setoption name Skill Level value 20', 'setoption name UCI_LimitStrength value false',
+        'setoption name UCI_AnalyseMode value true', 'setoption name UCI_ShowWDL value true',
+        `setoption name MultiPV value ${options.multiPv}`, 'ucinewgame',
+      ]) this.worker.postMessage(command);
+      await this.exchange('isready', line => line === 'readyok', 10_000, signal);
+      this.worker.postMessage(`position fen ${position.startingFen}${position.moves.length ? ` moves ${position.moves.join(' ')}` : ''}`);
+      const iterations = new ReviewIterations(options.multiPv);
+      const command = `go nodes ${options.nodes}${options.searchMove ? ` searchmoves ${options.searchMove}` : ''}`;
+      const result = await this.exchange(command, line => line.startsWith('bestmove '), 45_000, signal, line => {
+        const parsed = parseReviewLine(line);
+        if (parsed) iterations.accept(parsed);
+      });
+      const bestMove = result.split(/\s+/)[1] ?? '';
+      const lines = iterations.result();
+      if (!isUciMove(bestMove) || !lines.length || (options.searchMove && bestMove !== options.searchMove)) throw new Error('No reliable evaluation returned. Retry the review.');
+      return { lines, bestMove, engineName: this.name };
+    } finally { this.busy = false; }
+  }
+
   private async run(settings: BrowserEngineSettings, position: { startingFen: string; moves: readonly string[] }, signal?: AbortSignal, onEvaluation?: (evaluation: EngineEvaluation) => void): Promise<BrowserEngineResult> {
     if (this.busy) throw new Error('This engine is still finishing another turn. Stop that turn and retry.');
     this.busy = true;
@@ -147,6 +188,8 @@ export class BrowserUciEngine {
     try {
       if (!this.initialized) { await this.exchange('uci', line => line === 'uciok', 30_000, signal); this.initialized = true; }
       this.worker.postMessage(`setoption name Hash value ${settings.hashMb}`);
+      this.worker.postMessage('setoption name MultiPV value 1');
+      this.worker.postMessage('setoption name UCI_ShowWDL value false');
       this.worker.postMessage('ucinewgame');
       await this.exchange('isready', line => line === 'readyok', 10_000, signal);
       this.worker.postMessage(`position fen ${position.startingFen}${position.moves.length ? ` moves ${position.moves.join(' ')}` : ''}`);

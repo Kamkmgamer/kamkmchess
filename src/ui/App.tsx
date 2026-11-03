@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { FormEvent } from 'react';
 import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { ChessBoard } from './ChessBoard.js';
@@ -63,6 +63,8 @@ import { BROWSER_ENGINES, stopBrowserEngines, stopUnusedBrowserEngines } from '.
 import { engineSettings } from '../engines/local.js';
 import { Icon, IconButton } from './Icon.js';
 import { GameResultCard } from './GameResultCard.js';
+import { captureReplay } from '../review/replay.js';
+import type { RecapInput } from './RecapPage.js';
 import { describeResult } from './game-result.js';
 import type { ResultTone } from './game-result.js';
 import { isSoundEnabled, playResultSound, setSoundEnabled } from './sounds.js';
@@ -87,6 +89,7 @@ import { RightGameSidebar } from '../navigation/RightGameSidebar.js';
 import { LeftGameRail } from '../navigation/LeftGameRail.js';
 import { readSidebarPreferences } from '../navigation/sidebar-preferences.js';
 import { NewGameSetup } from './NewGameSetup.js';
+const RecapPage = lazy(() => import('./RecapPage.js'));
 import type { NewGameDraft, StartedSidebarGame } from './NewGameSetup.js';
 import { resultDeclarationAvailability, resultDeclarationCopy } from './result-declaration.js';
 import type { ResultDeclarationChoice } from './result-declaration.js';
@@ -174,7 +177,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     initialSnapshot.checkpoint.selections.players.white.kind === 'model' && initialSnapshot.checkpoint.selections.players.black.kind === 'human' ? 'black' : 'white');
   const { theme, setTheme, appearance, setAppearance } = useTheme();
   const pieceStyle = usePieceStyle();
-  useBoardStyle();
+  const boardStyle = useBoardStyle();
   const [coordinate, setCoordinate] = useState('');
   const [coordinateError, setCoordinateError] = useState('');
   const [feedback, setFeedback] = useState('');
@@ -188,6 +191,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [setupFocus, setSetupFocus] = useState<'opponent' | 'time' | 'position' | null>(null);
   const [setupDraft, setSetupDraft] = useState<NewGameDraft | undefined>();
   const [tool, setTool] = useState<'settings' | 'position' | 'archive' | 'move' | 'agents' | null>(null);
+  const [recap, setRecap] = useState<RecapInput | null>(null);
+  const [recapError, setRecapError] = useState<string | null>(null);
   const [resultPrompt, setResultPrompt] = useState<ResultDeclarationChoice | null>(null);
   const [working, setWorking] = useState(false);
   const checkedIdentities = useRef(new Map<string, OpponentIdentityV1>());
@@ -231,6 +236,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     if (pendingInvitation) setDismissedInvitation(pendingInvitation);
   }
   function openOnline(tab: 'games' | 'new' | 'profile' = 'games'): void {
+    setRecap(null);
     setOnlineInitialTab(tab);
     setOnlineOpen(true);
   }
@@ -521,7 +527,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       }
     }
   }
-  const history = useBoardHistory(snapshot, !setupOpen && !promotion && !recoveryOpen && !tool && resultPrompt === null);
+  const history = useBoardHistory(snapshot, !setupOpen && !promotion && !recoveryOpen && !tool && !recap && resultPrompt === null);
   // The trays follow the reviewed ply, so stepping back also steps the captures back.
   const captures = useMemo(() => capturedSummary(
     snapshot.checkpoint.rules.startingFen,
@@ -831,6 +837,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   }, [refresh, session.controller]);
 
   const openSetup = (fen?: string, focus: 'opponent' | 'time' | 'position' | null = null) => {
+    setRecap(null);
     // A closing popup can still be mounted when another setup request arrives.
     setSetupRequest(request => request + 1);
     setSetupStartingFen(fen);
@@ -1159,8 +1166,15 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     ...(generationJournal?.retainedMessages.map(message => `${message.role}: ${message.content}`) ?? []),
     ...(generationJournal?.discardedMessages.map(message => `Undone ${message.role}: ${message.content}`) ?? []),
   ].join('\n\n');
-  const openTool = (next: typeof tool) => { setTool(next); setFeedback(''); setCoordinateError(''); };
-  const focusPage = tool !== null || recoveryOpen;
+  const openTool = (next: typeof tool) => { setRecap(null); setTool(next); setFeedback(''); setCoordinateError(''); };
+  const focusPage = tool !== null || recoveryOpen || recap !== null;
+  const makeRecap = () => {
+    try {
+      const replay = captureReplay(snapshot.checkpoint, { white: playerLabel('white'), black: playerLabel('black') });
+      stopBrowserEngines(); setRecapError(null);
+      setRecap({ replay, boardStyle, pieceStyle, orientation });
+    } catch (error) { setRecapError(conciseError(error)); }
+  };
   const downloadArchive = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify({ checkpoint: snapshot.checkpoint, conversation: generationJournal }, null, 2)], { type: 'application/json' }));
     const link = document.createElement('a'); link.href = url; link.download = `chess-${session.gameId}.json`; link.click(); URL.revokeObjectURL(url);
@@ -1168,6 +1182,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const openAgents = () => { setCatalogRefresh(value => value + 1); openTool('agents'); };
   const showEvaluation = spectator && !focusPage && !setupOpen;
   const acceptSidebarGame = ({ session: nextSession, snapshot: started, identities, draft }: StartedSidebarGame) => {
+    setRecap(null); setRecapError(null);
     setSetupDraft(draft);
     generationController.current?.abort();
     practiceController.current?.abort();
@@ -1229,7 +1244,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     <LeftGameRail tool={tool} recoveryOpen={recoveryOpen} onlineOpen={onlineVisible && Boolean(online)}
       showConversation={(['white', 'black'] as const).some(side => snapshot.checkpoint.selections.players[side].kind === 'model')}
       onNewGame={() => openSetup()}
-      onBoard={() => { setTool(null); setRecoveryOpen(false); if (onlineVisible) closeOnline(); }}
+      onBoard={() => { setRecap(null); setTool(null); setRecoveryOpen(false); if (onlineVisible) closeOnline(); }}
       onTool={next => next === 'agents' ? openAgents() : openTool(next)}
       onDownload={downloadArchive}
       onAccount={onOpenAccount}
@@ -1239,6 +1254,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       onAgents={online ? openAgents : undefined}
       menuOpen={menuOpen} onMenuOpenChange={setMenuOpen} />
     <main className="workspace minimal-workspace" id="main">
+    {recap && <Suspense fallback={<p role="status">Loading video tools…</p>}><RecapPage key={`${recap.replay.gameId}/${recap.replay.lineId}`} input={recap}
+      onClose={() => { setRecap(null); requestAnimationFrame(() => resultStatus.current?.focus()); }} /></Suspense>}
     {!focusPage && <header className="topbar">
       <IconButton className="button quiet icon-button topbar-menu" icon="menu" label="Menu" onClick={() => setMenuOpen(true)} />
       <a className="wordmark" href="/" aria-label="Kamkm Chess home">kamkm chess</a>
@@ -1324,7 +1341,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         </div>
       </section>
       <aside className="moves-sidebar" id="moves-panel" ref={movesPanel} tabIndex={-1} aria-labelledby="moves-title">
-        {finalResult && <GameResultCard result={finalResult} onNewGame={() => openSetup()} />}
+        {finalResult && <GameResultCard result={finalResult} onNewGame={() => openSetup()} onMakeVideo={makeRecap} />}
+        {recapError && <p role="alert">{recapError}</p>}
         <div className="moves-heading"><h2 id="moves-title">Moves</h2><span className="count" aria-label={`Move ${history.ply} of ${history.count}`}>{history.ply}/{history.count}</span>
           <span className="mobile-board-return"><IconButton icon="board" label="Show board" aria-controls="board" onClick={() => { boardPanel.current?.focus({ preventScroll: true }); boardPanel.current?.scrollIntoView({ block: 'start' }); }} /></span>
         </div>

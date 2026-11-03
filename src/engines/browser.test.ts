@@ -33,6 +33,26 @@ function stubEngineDownloads() {
 afterEach(() => { vi.unstubAllGlobals(); vi.resetModules(); FakeWorker.instances = []; });
 
 describe('browser UCI workers', () => {
+  it('reviews exact candidate sets with WDL and restricts a validated played move', async () => {
+    vi.stubGlobal('Worker', FakeWorker);
+    const { BrowserUciEngine } = await import('./browser.js');
+    const engine = new BrowserUciEngine({ scriptUrl: 'blob:script', wasmUrl: 'blob:wasm', cached: true });
+    const worker = FakeWorker.instances[0]!;
+    worker.searchLines = [
+      'info depth 10 multipv 1 score cp 30 wdl 100 800 100 nodes 10000 pv e2e4',
+      'info depth 10 multipv 2 score cp 20 wdl 90 800 110 nodes 10000 pv d2d4',
+      'info depth 11 multipv 1 score cp 50 wdl 120 800 80 nodes 12000 pv e2e4',
+      'info depth 11 multipv 2 score cp 40 upperbound wdl 110 800 90 nodes 12000 pv d2d4', 'bestmove e2e4',
+    ];
+    const reviewed = await engine.review(position, { nodes: 12000, multiPv: 2 });
+    expect(reviewed.lines.map(line => line.depth)).toEqual([10, 10]);
+    expect(worker.commands).toContain('setoption name UCI_ShowWDL value true');
+    worker.searchLines = ['info depth 12 multipv 1 score cp 0 wdl 50 900 50 pv e2e4', 'bestmove e2e4'];
+    await engine.review(position, { nodes: 12000, multiPv: 1, searchMove: 'e2e4' });
+    expect(worker.commands).toContain('go nodes 12000 searchmoves e2e4');
+    await expect(engine.review(position, { nodes: 100, multiPv: 1, searchMove: 'e2e4\nquit' })).rejects.toThrow('Invalid');
+    engine.close();
+  });
   it('releases unused opponent workers while preserving a selected engine for later turns', async () => {
     stubEngineDownloads();
     const browser = await import('./browser.js');

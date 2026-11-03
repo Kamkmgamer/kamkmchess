@@ -101,4 +101,9 @@
 /* Stacked on a phone the strip right under the board already carries the result; the topbar keeps New. */
 @media (max-width: 760px) {
   .minimal-workspace .game-result-card { display: none; }
+  .minimal-workspace .game-result-card[data-video] { display: block; padding: 12px; }
+  .minimal-workspace .game-result-card[data-video]::before,
+  .minimal-workspace .game-result-card[data-video] .game-result-summary,
+  .minimal-workspace .game-result-card[data-video] .game-result-new { display: none; }
+  .minimal-workspace .game-result-card[data-video] .button { width: 100%; min-height: 44px; }
 }

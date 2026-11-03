@@ -8,11 +8,12 @@ const GLYPHS: Record<ResultTone, IconName> = { win: 'trophy', loss: 'flag', draw
  * Sits at the top of the moves sidebar once a game is final. The live region in App announces
  * the result, so the card carries no aria-live of its own.
  */
-export function GameResultCard({ result, onNewGame }: {
+export function GameResultCard({ result, onNewGame, onMakeVideo }: {
   readonly result: ResultAnnouncement;
   readonly onNewGame: () => void;
+  readonly onMakeVideo?: () => void;
 }) {
-  return <section className="game-result-card" data-tone={result.tone} aria-label="Game result">
+  return <section className="game-result-card" data-tone={result.tone} data-video={onMakeVideo ? 'true' : undefined} aria-label="Game result">
     <div className="game-result-summary">
       <span className="game-result-glyph"><Icon name={GLYPHS[result.tone]} /></span>
       <div className="game-result-text">
@@ -20,6 +21,8 @@ export function GameResultCard({ result, onNewGame }: {
         {result.detail && <span className="game-result-detail">{result.detail}</span>}
       </div>
     </div>
-    <button className="button primary" type="button" onClick={onNewGame}>New game</button>
+    <div className="game-result-actions"><button className="button primary game-result-new" type="button" onClick={onNewGame}>New game</button>
+      {onMakeVideo && <button className="button secondary" type="button" onClick={onMakeVideo}>Make a video about it</button>}
+    </div>
   </section>;
 }

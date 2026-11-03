@@ -39,7 +39,11 @@
  *   completion, and its public replay is one action away. An abort is named
  *   as an abort and it is marked as unscored.
  */
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { captureOnlineReplay } from '../review/online-replay.js';
+import type { RecapInput } from './RecapPage.js';
+import { getBoardStyle } from './board-style.js';
+import { getPieceStyle } from './piece-style.js';
 import { createRequestOwner } from './request-owner.js';
 import { createGuestCredential } from '../online/auth.js';
 import { Icon, IconButton } from './Icon.js';
@@ -135,6 +139,7 @@ import {
 } from './online-account-removal.js';
 import type { OnlineAccountDeletion, OnlineReplayErasure, OnlineReplayErasureScope } from './online-account-removal.js';
 import './online.css';
+const RecapPage = lazy(() => import('./RecapPage.js'));
 
 /** The tabs of the online screen. */
 export type OnlineTab = 'games' | 'new' | 'profile';
@@ -602,6 +607,7 @@ export function OnlinePublicHistory({ history }: { readonly history: OnlineProfi
 export function OnlineWorkspace({ composition, onClose, onOpenProfile, accountUser, onConfigureAgent, agentLabel, initialTab, checkAgent,
   agentService, agentConnectionStore, agentNamespace, onAgentConnected }: OnlineWorkspaceProps) {
   const [tab, setTab] = useState<OnlineTab>(initialTab ?? 'games');
+  const [recap, setRecap] = useState<{ readonly input: RecapInput; readonly owner: string | null; readonly generation: number } | null>(null);
   const [clockIndex, setClockIndex] = useState(1);
   const [now, setNow] = useState(() => Date.now());
   // The review cursor follows the live position. It only holds an earlier
@@ -1761,6 +1767,17 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, accountUs
     }
   }
 
+  function makeVideo(): void {
+    if (!view) return;
+    try {
+      const replay = captureOnlineReplay(view, composition.identityKey ?? 'guest');
+      setRecap({ owner: composition.identityKey, generation: composition.identityGeneration,
+        input: { replay, boardStyle: getBoardStyle(), pieceStyle: getPieceStyle(), orientation: seat === 'black' ? 'black' : 'white' } });
+    } catch (error) { reportFailure(error instanceof Error ? error.message : 'This game could not be replayed.'); }
+  }
+  if (recap && recap.owner === composition.identityKey && recap.generation === composition.identityGeneration) {
+    return <Suspense fallback={<p role="status">Loading video tools…</p>}><RecapPage input={recap.input} onClose={() => setRecap(null)} /></Suspense>;
+  }
   return <section className="focus-page online-workspace" aria-label="Online play">
     <div className="panel-heading">
       <h2>Online</h2>
@@ -2078,6 +2095,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, accountUs
           </div>
         </div>}
         {view.result !== null && <div className="button-row">
+          {view.result.kind !== 'abort' && <button className="button secondary" type="button" onClick={makeVideo}>Make a video about it</button>}
           <button className="button quiet" type="button" disabled={busy} onClick={() => void proposeRematch()}>Propose rematch</button>
           <button className="button quiet" type="button" disabled={busy} onClick={() => void readRematchOffer()}>Check for a rematch</button>
           {rematchChoice === 'accept' && <IconButton icon="check" label="Accept rematch" variant="default" disabled={busy} onClick={() => void acceptRematch()} />}
