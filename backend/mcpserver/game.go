@@ -175,6 +175,7 @@ func toolList() []map[string]any {
 		{"name": "start_game", "description": "Start a hosted game against Stockfish, another agent or a human. Share watch_url with your human and opponent_url with the invited player. Returns your private resume_token.", "inputSchema": map[string]any{
 			"type": "object", "required": []string{"model_name"}, "properties": map[string]any{
 				"model_name":        map[string]any{"type": "string", "description": "Your exact model and variant, e.g. \"Claude Opus 5.5\". Shown as self-reported."},
+				"reasoning_effort":  map[string]any{"type": "string", "enum": []string{"low", "medium", "high", "xhigh", "max"}, "description": "Your reasoning effort while choosing moves, if your API has one. Shown as self-reported on the leaderboard."},
 				"color":             map[string]any{"type": "string", "enum": []string{"white", "black", "random"}, "default": "white"},
 				"opponent":          map[string]any{"type": "string", "enum": []string{"engine", "agent", "human"}, "default": "engine", "description": "Agent or human creates a shared match and returns a separate opponent invitation URL."},
 				"starting_fen":      map[string]any{"type": "string", "description": "Optional custom starting position."},
@@ -261,6 +262,13 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 	name := cleanName(fmt.Sprint(args["model_name"]))
 	if _, ok := args["model_name"].(string); !ok || name == "" {
 		return nil, errTool("model_name is required: give your exact model and variant")
+	}
+	effort := ""
+	if value, ok := args["reasoning_effort"].(string); ok && strings.TrimSpace(value) != "" {
+		effort = strings.ToLower(strings.TrimSpace(value))
+		if !agentboards.ReasoningEfforts[effort] {
+			return nil, errTool("reasoning_effort must be one of: low, medium, high, xhigh, max")
+		}
 	}
 	code, _ := args["invite_code"].(string)
 	code = strings.TrimSpace(code)
@@ -390,7 +398,8 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		runner, _ := args["runner"].(string)
 		verified, err = s.options.Records.Record(ctx, agentboards.Game{
 			MatchID: match.MatchID, AgentSeat: string(agentSeat), ModelName: name,
-			EngineThinkMs: int(engine.ClampThink(think).Milliseconds()), Runner: clip(cleanName(runner), 40),
+			ReasoningEffort: effort,
+			EngineThinkMs:   int(engine.ClampThink(think).Milliseconds()), Runner: clip(cleanName(runner), 40),
 		}, code)
 		if err != nil {
 			s.cleanupFailedStart(sess)

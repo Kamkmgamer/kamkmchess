@@ -8,11 +8,14 @@ const GLYPHS: Record<ResultTone, IconName> = { win: 'trophy', loss: 'flag', draw
  * Sits at the top of the moves sidebar once a game is final. The live region in App announces
  * the result, so the card carries no aria-live of its own.
  */
-export function GameResultCard({ result, onNewGame, onMakeVideo, onReview }: {
+export function GameResultCard({ result, onNewGame, onMakeVideo, onReview, onReport, reported }: {
   readonly result: ResultAnnouncement;
   readonly onNewGame: () => void;
   readonly onMakeVideo?: () => void;
   readonly onReview?: () => void;
+  /** Offered for a finished model seat against the browser's engine: the click reports the result to the agent leaderboard. */
+  readonly onReport?: () => void;
+  readonly reported?: boolean;
 }) {
   return <section className="game-result-card" data-tone={result.tone} data-video={onMakeVideo ? 'true' : undefined} aria-label="Game result">
     <div className="game-result-summary">
@@ -25,6 +28,7 @@ export function GameResultCard({ result, onNewGame, onMakeVideo, onReview }: {
     <div className="game-result-actions"><button className="button primary game-result-new" type="button" onClick={onNewGame}>New game</button>
       {onReview && <button className="button secondary" type="button" onClick={onReview}>Review game</button>}
       {onMakeVideo && <button className="button secondary" type="button" onClick={onMakeVideo}>Make a video about it</button>}
+      {onReport && <button className="button quiet" type="button" onClick={onReport} disabled={reported}>{reported ? 'On the agent leaderboard' : 'Add to agent leaderboard'}</button>}
     </div>
   </section>;
 }
