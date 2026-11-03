@@ -5,7 +5,7 @@ deadline=$root/.retire-not-before
 [ -f "$deadline" ] || exit 0
 [ "$(date -u +%s)" -ge "$(cat "$deadline")" ] || exit 0
 test -f "$root/.target-cutover-complete"
-domain=chess-api.agent.soft-magic.com
+domain=api.chess.khalil.mageed.net
 test -f "/etc/letsencrypt/live/$domain/fullchain.pem"
 openssl x509 -in /etc/kamkmchess-tls/fullchain.pem -noout -checkend 604800 >/dev/null
 getent ahostsv4 "$domain" | awk '{print $1}' | grep -qx 104.204.68.77

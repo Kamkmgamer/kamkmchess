@@ -1,7 +1,7 @@
 # Server deployment
 
 Vercel serves the frontend at `https://chess.khalil.mageed.net`. The Go API is
-`https://chess-api.agent.soft-magic.com`. The frontend calls that API directly;
+`https://api.chess.khalil.mageed.net`. The frontend calls that API directly;
 Vercel's `/v1/*` rewrite preserves compatibility with same-origin API clients.
 Vercel also runs the stateless `api/provider-relay.ts` Node function for remote
 custom AI endpoints that do not support browser CORS, such as Ollama Cloud.
@@ -83,10 +83,12 @@ of at most four connections. A browser build receives only the three public
 The target host has an isolated deployment in `/opt/kamkmchess/server`. Its
 API and MCP endpoint share the API container; PostgreSQL is on its private
 Compose network. The API verifies the target's own database certificate.
-Nginx terminates HTTPS for `chess-api.agent.soft-magic.com` and proxies to the
+Nginx terminates HTTPS for `api.chess.khalil.mageed.net` and proxies to the
 local API. `nginx-target.conf`, `certbot-target.sh`, the certificate deploy
 hook, and `kamkmchess-certbot.timer` configure certificate renewal. The public
-hostname is also the Vercel API base URL and `/v1` rewrite destination.
+hostname is also the Vercel API base URL and `/v1` rewrite destination. The
+former `chess-api.agent.soft-magic.com` host remains an HTTPS alias for older
+clients, with its own renewable certificate.
 
 During DNS propagation a restricted SSH tunnel makes the target API available
 at `127.0.0.1:18082` on the old host, so clients with the old address still

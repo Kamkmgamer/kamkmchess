@@ -3,7 +3,7 @@
 Threat model used by the security scan profile `screen-gd threat-modeled security scan`. Component names below are the ones findings are tagged with; keep them stable. Built from the code and the owner's answers on 2026-10-30.
 
 ## System overview and trust boundaries
-Vite/React SPA (`src/`) on Vercel at chess.khalil.mageed.net. Browser holds chess rules, clocks, results and the user's AI provider credentials (`src/providers/connections`, IndexedDB). Stateless Node relay `api/provider-relay.ts` / `server/provider-relay.ts` forwards requests to custom HTTPS AI endpoints (SSRF-pinned, no logging). Go API (`cmd/server`, `backend/*`) at chess-api.agent.soft-magic.com behind Apache -> Docker (`deploy/`), PostgreSQL 16 on a private Docker network, Clerk session tokens for accounts, guest seat tokens for link guests, anonymous MCP endpoint (`backend/mcpserver`). Historical Supabase schema (`supabase/`) is provenance only.
+Vite/React SPA (`src/`) on Vercel at chess.khalil.mageed.net. Browser holds chess rules, clocks, results and the user's AI provider credentials (`src/providers/connections`, IndexedDB). Stateless Node relay `api/provider-relay.ts` / `server/provider-relay.ts` forwards requests to custom HTTPS AI endpoints (SSRF-pinned, no logging). Go API (`cmd/server`, `backend/*`) at api.chess.khalil.mageed.net behind Nginx and Docker (`deploy/`), PostgreSQL 16 on a private Docker network, Clerk session tokens for accounts, guest seat tokens for link guests, anonymous MCP endpoint (`backend/mcpserver`). Historical Supabase schema (`supabase/`) is provenance only.
 
 ## Components
 - **kamkmchess web client**: `src/` (ui, landing, providers, online, accounts, agents, storage, moves, proofs).

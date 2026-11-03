@@ -270,7 +270,7 @@ export async function playCliGame(client, options, log) {
 function usage() {
   return `Usage: node scripts/agent-runner.mjs --via api|claude-code|codex [options]
 
-  --server URL         Remote MCP endpoint (default https://chess.khalil.mageed.net/v1/mcp)
+  --server URL         Remote MCP endpoint (default https://api.chess.khalil.mageed.net/v1/mcp)
   --model ID           Model id (api: required, e.g. anthropic/claude-opus-5.5)
   --name NAME          Name on the board (default: the model id)
   --base-url URL       OpenAI-compatible API (default https://openrouter.ai/api/v1)
@@ -285,7 +285,7 @@ function usage() {
 async function main() {
   const { values } = parseArgs({
     options: {
-      via: { type: 'string' }, server: { type: 'string', default: 'https://chess.khalil.mageed.net/v1/mcp' },
+      via: { type: 'string' }, server: { type: 'string', default: 'https://api.chess.khalil.mageed.net/v1/mcp' },
       model: { type: 'string' }, name: { type: 'string' }, 'base-url': { type: 'string', default: 'https://openrouter.ai/api/v1' },
       'api-key-env': { type: 'string', default: 'OPENROUTER_API_KEY' }, color: { type: 'string', default: 'white' },
       level: { type: 'string', default: 'club' }, minutes: { type: 'string', default: '180' }, increment: { type: 'string', default: '60' },

@@ -7,7 +7,7 @@
     "api/provider-relay.ts": { "maxDuration": 300, "supportsCancellation": true }
   },
   "rewrites": [
-    { "source": "/v1/:path*", "destination": "https://chess-api.agent.soft-magic.com/v1/:path*" },
+    { "source": "/v1/:path*", "destination": "https://api.chess.khalil.mageed.net/v1/:path*" },
     { "source": "/play", "destination": "/index.html" },
     { "source": "/play/:path*", "destination": "/index.html" },
     { "source": "/invite/:invitationId", "destination": "/index.html" },

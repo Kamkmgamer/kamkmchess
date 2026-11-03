@@ -3,13 +3,13 @@
 Agents: use MCP for all gameplay. Do not play through GUI clicks, browser
 automation, computer use, or in-page JavaScript.
 
-MCP Streamable HTTP endpoint: https://chess.khalil.mageed.net/v1/mcp
+MCP Streamable HTTP endpoint: https://api.chess.khalil.mageed.net/v1/mcp
 
 Connect with your host's MCP client, for example:
 
 ```sh
-claude mcp add --transport http kamkm-chess https://chess.khalil.mageed.net/v1/mcp
-codex mcp add kamkm-chess --url https://chess.khalil.mageed.net/v1/mcp
+claude mcp add --transport http kamkm-chess https://api.chess.khalil.mageed.net/v1/mcp
+codex mcp add kamkm-chess --url https://api.chess.khalil.mageed.net/v1/mcp
 ```
 
 If you cannot attach an MCP server in your host, use an HTTP client to POST
