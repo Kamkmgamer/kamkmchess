@@ -1,0 +1,5 @@
+# Trust only the target database's private certificate for its TLS connection.
+services:
+  api:
+    volumes:
+      - ./tls/server.crt:/run/kamkmchess-db-ca/server.crt:ro

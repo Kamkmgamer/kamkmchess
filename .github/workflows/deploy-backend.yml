@@ -1,0 +1,86 @@
+name: Deploy backend
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'cmd/**'
+      - 'src/online-rules-worker/**'
+      - 'src/rules/**'
+      - 'scripts/build-rules-worker.mjs'
+      - 'go.mod'
+      - 'go.sum'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'deploy/api.Dockerfile'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:rules-worker
+      - run: go test ./backend/mcpserver ./cmd/...
+      - run: python3 deploy/test-cd-source.py
+      - name: Build release
+        run: |
+          mkdir -p release/bin release/rules-worker
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o release/bin/kamkmchess-api ./cmd/server
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o release/bin/kamkmchess-migrate ./cmd/migrate
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o release/bin/khabackup ./backend/backup/cmd/khabackup
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o release/bin/khasuspend ./backend/online/cmd/khasuspend
+          cp build/rules-worker/worker.mjs build/rules-worker/LICENSE.txt build/rules-worker/THIRD_PARTY_NOTICES.txt release/rules-worker/
+          cp deploy/cd-target.sh release/cd-target.sh
+          cp deploy/api.Dockerfile release/api.Dockerfile
+          tar -C release -czf release.tar.gz cd-target.sh api.Dockerfile bin/kamkmchess-api bin/kamkmchess-migrate bin/khabackup bin/khasuspend rules-worker/worker.mjs rules-worker/LICENSE.txt rules-worker/THIRD_PARTY_NOTICES.txt
+      - name: Deploy to target
+        env:
+          DEPLOY_KEY: ${{ secrets.KAMKM_TARGET_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.KAMKM_TARGET_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          test -n "$DEPLOY_KEY" && test -n "$KNOWN_HOSTS"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" | tr -d '\r' > ~/.ssh/kamkm-deploy
+          printf '%s\n' "$KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/kamkm-deploy ~/.ssh/known_hosts
+          ssh -i ~/.ssh/kamkm-deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes root@104.204.68.77 "deploy $GITHUB_SHA" < release.tar.gz
+
+  verify-connection:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the restricted deployment key
+        env:
+          DEPLOY_KEY: ${{ secrets.KAMKM_TARGET_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.KAMKM_TARGET_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          test -n "$DEPLOY_KEY" && test -n "$KNOWN_HOSTS"
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" | tr -d '\r' > ~/.ssh/kamkm-deploy
+          printf '%s\n' "$KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/kamkm-deploy ~/.ssh/known_hosts
+          if ssh -i ~/.ssh/kamkm-deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes root@104.204.68.77 probe >response 2>&1; then exit 1; fi
+          grep -qx 'Unsupported operation' response

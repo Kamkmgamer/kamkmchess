@@ -79,6 +79,42 @@ schema, create roles or databases, or bypass row security. The API uses a pool
 of at most four connections. A browser build receives only the three public
 `KAMKM_PUBLIC_*` settings from `.env.example`.
 
+## Target host delivery
+
+The target host has an isolated deployment in `/opt/kamkmchess/server`. Its
+API and MCP endpoint share the API container; PostgreSQL is on its private
+Compose network. The API verifies the target's own database certificate. A
+restricted, persistent SSH tunnel makes the target API available at
+`127.0.0.1:18082` on the existing public host without exposing the target's
+API or database to the internet. The existing public HTTPS route stays on
+port 18081 until the first backend deployment completes.
+
+`.github/workflows/deploy-backend.yml` builds and deploys after a push to
+`main` changes backend code or the rules worker. Its deployment key is
+restricted to `cd-entrypoint.sh`; the migration key on the target is
+restricted to `cd-source.sh`. GitHub secrets `KAMKM_TARGET_DEPLOY_KEY` and
+`KAMKM_TARGET_KNOWN_HOSTS` hold the CI key and verified host keys. A manual
+workflow dispatch only verifies the key; it does not deploy.
+
+On its first deployment the workflow backs up the source, stops its API,
+copies a consistent database dump, restores and migrates it on the target,
+checks the target API, and verifies a target backup before switching the
+public route. The source refuses the move if a restore fence or external
+deletion evidence is present. A watchdog restarts the source if the transfer
+does not complete while the route still points there. After the route moves,
+the source stays stopped so it cannot accept writes against stale data.
+Later deployments back up the target, build the image, stop the API, apply
+migrations and restart it. A failed migration leaves the target API stopped;
+inspect the failure and restore from the verified backup when needed.
+
+The target's `kamkmchess-backup.timer` runs the encrypted daily and weekly
+backup procedure. The SSH tunnel and backup timer are systemd units. Keep
+their keys, the database certificate, the Compose environment files and the
+backup passphrase outside the repository. Backups are local to the target;
+an offsite copy must be configured separately. Changes to the restricted
+source or CI entry-point scripts require updating their installed copies on
+the corresponding host before using the new version.
+
 ## The durable restore fence
 
 A restore replaces the schema of the target database. A fence inside that
