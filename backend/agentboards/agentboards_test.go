@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +15,23 @@ func TestLevelBucketsTheThinkTime(t *testing.T) {
 	for thinkMs, want := range map[int]string{100: "casual", 499: "casual", 500: "club", 1000: "club", 3000: "strong", 10000: "strong"} {
 		if got := Level(thinkMs); got != want {
 			t.Errorf("Level(%d) = %q, want %q", thinkMs, got, want)
+		}
+	}
+}
+
+// pgx rejects a query whose placeholder count differs from its argument
+// count before any row is read, so a board query and its arguments must
+// always agree.
+func TestBoardQueryPlaceholdersMatchItsArguments(t *testing.T) {
+	placeholders := regexp.MustCompile(`\$([0-9]+)`)
+	for _, name := range []string{BoardVerified, BoardCommunity, BoardBrowser} {
+		query, args := boardQuery(name)
+		distinct := map[string]bool{}
+		for _, match := range placeholders.FindAllStringSubmatch(query, -1) {
+			distinct[match[1]] = true
+		}
+		if len(distinct) != len(args) {
+			t.Errorf("boardQuery(%q) carries %d placeholders and %d arguments", name, len(distinct), len(args))
 		}
 	}
 }

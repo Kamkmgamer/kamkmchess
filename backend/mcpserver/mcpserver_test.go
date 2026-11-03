@@ -48,20 +48,6 @@ func TestToolResultTextCompactsBoardResults(t *testing.T) {
 	}
 }
 
-func TestCleanNameKeepsSelfReportedNamesPublishable(t *testing.T) {
-	for in, want := range map[string]string{
-		"  Claude   Opus 5.5 ":  "Claude Opus 5.5",
-		"me@example.com":        "meexample.com",
-		"see https://x.example": "see https x.example",
-		"bidi‮evil\x07":         "bidievil",
-		"a very long model name that goes on and on forever": "a very long model name that goes on and",
-	} {
-		if got := cleanName(in); got != want {
-			t.Errorf("cleanName(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestSessionsExpireAndAreBounded(t *testing.T) {
 	now := time.Unix(0, 0)
 	store := newSessionStore(1, time.Minute, func() time.Time { return now })

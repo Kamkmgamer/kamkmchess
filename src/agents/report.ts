@@ -15,7 +15,7 @@ export interface AgentGameReport {
   readonly model: string;
   /** The effort the model seat played at, when it had one. */
   readonly reasoningEffort?: string;
-  /** The browser engine's think time per move. */
+  /** The browser engine's realized think time per move, averaged over its moves. */
   readonly engineThinkMs: number;
   /** The outcome from the model's own perspective. */
   readonly result: 'win' | 'draw' | 'loss';

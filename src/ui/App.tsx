@@ -217,6 +217,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   /** The finished game this browser reported to the agent leaderboard, if it did. */
   const [agentReport, setAgentReport] = useState<{ gameId: string; sent: boolean } | null>(null);
+  /** The engine seat's realized think times of one game, accumulated while it moved, for the browser-board report. */
+  const [engineThink, setEngineThink] = useState<{ gameId: string; sumMs: number; moves: number } | null>(null);
   const [onlineOpen, setOnlineOpen] = useState(() => onlineRoute === 'new' || onlineRoute === 'profile');
   const [menuOpen, setMenuOpen] = useState(false);
   const [onlineInitialTab, setOnlineInitialTab] = useState<'games' | 'new' | 'profile'>(routedOnlineTab);
@@ -706,10 +708,13 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           }
           if (isEngineSelection(queuedSelection)) {
             setGenerationDetail('Thinking…');
-            const accepted = await runEngineTurn(session.controller, abort!.signal);
+            const turn = await runEngineTurn(session.controller, abort!.signal);
             if (sessionRef.current.gameId !== session.gameId) return;
-            setGenerationState(accepted ? 'idle' : 'failed');
-            setGenerationDetail(accepted ? 'Move saved.' : 'Move unavailable. Retry.');
+            if (turn.accepted) setEngineThink(state => state?.gameId === session.gameId
+              ? { gameId: session.gameId, sumMs: state.sumMs + turn.thinkMs, moves: state.moves + 1 }
+              : { gameId: session.gameId, sumMs: turn.thinkMs, moves: 1 });
+            setGenerationState(turn.accepted ? 'idle' : 'failed');
+            setGenerationDetail(turn.accepted ? 'Move saved.' : 'Move unavailable. Retry.');
             setJournalRefresh(revision => revision + 1);
             return;
           }
@@ -1186,11 +1191,16 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     const model = seats[modelSide];
     if (model.kind !== 'model') return null;
     const winner = snapshot.checkpoint.result.winner;
+    // The band reflects what was played: the engine's realized think time per
+    // move, or its configured think time when it never moved.
+    const realizedThink = engineThink !== null && engineThink.gameId === snapshot.checkpoint.gameId && engineThink.moves > 0
+      ? Math.round(engineThink.sumMs / engineThink.moves)
+      : engineSettings(otherSeat).moveTimeMs;
     return {
       clientGameId: snapshot.checkpoint.gameId,
       model: publicAgentLabel(model.modelRoutingId),
       ...(model.reasoningEffort ? { reasoningEffort: model.reasoningEffort } : {}),
-      engineThinkMs: engineSettings(otherSeat).moveTimeMs,
+      engineThinkMs: realizedThink,
       result: winner === 'draw' ? 'draw' as const : winner === modelSide ? 'win' as const : 'loss' as const,
       moveCount: history.count,
     };

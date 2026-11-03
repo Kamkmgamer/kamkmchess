@@ -10,9 +10,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/agentboards"
+	"github.com/Kamkmgamer/kamkmchess/backend/agentname"
 	"github.com/Kamkmgamer/kamkmchess/backend/engine"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
@@ -237,7 +237,7 @@ func (s *Server) call(ctx context.Context, sess *session, address, name string, 
 	case "resign":
 		return s.resign(ctx, sess)
 	case "join_seat":
-		if name, ok := args["model_name"].(string); !ok || cleanName(name) == "" {
+		if name, ok := args["model_name"].(string); !ok || agentname.Clean(name) == "" {
 			return nil, errTool("model_name is required")
 		}
 		return s.resumeGame(ctx, sess, args)
@@ -260,7 +260,7 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 			return nil, errTool("you already have a game in progress: finish it or resign first")
 		}
 	}
-	name := cleanName(fmt.Sprint(args["model_name"]))
+	name := agentname.Clean(fmt.Sprint(args["model_name"]))
 	if _, ok := args["model_name"].(string); !ok || name == "" {
 		return nil, errTool("model_name is required: give your exact model and variant")
 	}
@@ -400,7 +400,7 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		verified, err = s.options.Records.Record(ctx, agentboards.Game{
 			MatchID: match.MatchID, AgentSeat: string(agentSeat), ModelName: name,
 			ReasoningEffort: effort,
-			EngineThinkMs:   int(engine.ClampThink(think).Milliseconds()), Runner: clip(cleanName(runner), 40),
+			EngineThinkMs:   int(engine.ClampThink(think).Milliseconds()), Runner: agentname.Clip(agentname.Clean(runner), 40),
 		}, code)
 		if err != nil {
 			s.cleanupFailedStart(sess)
@@ -467,8 +467,8 @@ func (s *Server) resumeGame(ctx context.Context, sess *session, args map[string]
 		name = strings.TrimSuffix(seat.PublicLabel, " (self-reported)")
 	}
 	sess.attach(principal, name, token)
-	if reported, ok := args["model_name"].(string); ok && cleanName(reported) != "" {
-		sess.agentName = cleanName(reported)
+	if reported, ok := args["model_name"].(string); ok && agentname.Clean(reported) != "" {
+		sess.agentName = agentname.Clean(reported)
 	}
 	s.sessions.markReady(sess)
 	return s.board(ctx, sess)
@@ -531,7 +531,7 @@ func (s *Server) makeMove(ctx context.Context, sess *session, args map[string]an
 		s.premoves.clear(match.MatchID, sess.seat)
 	}
 	if plan, _ := args["plan"].(string); strings.TrimSpace(plan) != "" {
-		sess.plan = clip(strings.TrimSpace(plan), 800)
+		sess.plan = agentname.Clip(strings.TrimSpace(plan), 800)
 	} else {
 		sess.plan = ""
 	}
@@ -839,28 +839,6 @@ func sideToMove(fen string) (online.Seat, bool) {
 		return online.SeatBlack, true
 	}
 	return online.SeatWhite, true
-}
-
-// cleanName keeps a self-reported name publishable: no control characters,
-// no address-like text, and short enough for the seat label.
-func cleanName(name string) string {
-	name = strings.Join(strings.Fields(name), " ")
-	name = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '@' {
-			return -1
-		}
-		return r
-	}, name)
-	name = strings.ReplaceAll(name, "://", " ")
-	return strings.TrimSpace(clip(name, 40))
-}
-
-func clip(value string, limit int) string {
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit])
 }
 
 func plural(n int) string {

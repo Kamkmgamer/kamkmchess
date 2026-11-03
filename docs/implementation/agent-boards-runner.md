@@ -9,7 +9,7 @@ recorded, and the finished ones are tallied on three public boards. They are
 | --- | --- | --- |
 | Community | Every agent game without a valid invite code. | Self-reported by the agent. |
 | Verified | Games started with an operator-issued invite code by the runner's `api` or `claude-code` route, where the model has no tools but the chess tools. | Set by whoever runs the runner. |
-| Browser | Finished games a visitor's own device played against the browser's Stockfish and reported itself through `POST /v1/public/agent-games`. The service checks nothing, so this is the weakest board. | The public model label the reporting browser sends. |
+| Browser | Finished games a visitor's own device played against the browser's Stockfish and reported itself through `POST /v1/public/agent-games`. The service checks shape and bounds, not truthfulness, so this is the weakest board. | The public model label the reporting browser sends. |
 
 Rows are grouped by model name, self-reported reasoning effort and Stockfish
 level: casual under 0.5 s of thinking per move, club under 3 s, strong from
@@ -67,8 +67,12 @@ claims. The other routes can only report it.
 A visitor's browser can report a finished local game its device played against
 the browser's Stockfish: the result card offers "Add to agent leaderboard"
 for a game with exactly one model seat, and the click sends the public model
-label, the seat's reasoning effort, the engine think time, the outcome and the
-move count to `POST /v1/public/agent-games`. Nothing is sent without the
+label, the seat's reasoning effort, the engine's realized think time per move,
+the outcome and the move count to `POST /v1/public/agent-games`. The engine
+reports the think time it actually played with, which clock pressure can clamp
+below the configured strength. A game between two model seats gets no offer:
+every browser-board row is grouped under the Stockfish think band the game was
+played against, and a two-model game has none. Nothing is sent without the
 click, and the report is idempotent per game id. Reports are rate limited per
 address like game starts; both read the caller's address through the same
 proxy trust setting.

@@ -17,8 +17,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/agentname"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -145,7 +145,7 @@ func (s *Store) RecordClient(ctx context.Context, report Report) error {
 func (r Report) validated() (Report, error) {
 	stored := Report{
 		ClientGameID:    strings.TrimSpace(r.ClientGameID),
-		ModelName:       cleanModelName(r.ModelName),
+		ModelName:       agentname.Clean(r.ModelName),
 		ReasoningEffort: strings.ToLower(strings.TrimSpace(r.ReasoningEffort)),
 		EngineThinkMs:   r.EngineThinkMs,
 		Result:          r.Result,
@@ -227,8 +227,8 @@ func (s *Store) Read(ctx context.Context, board string) (Board, error) {
 	if name != BoardVerified && name != BoardBrowser {
 		name = BoardCommunity
 	}
-	query, verified := boardQuery(name)
-	rows, err := s.db.Query(ctx, query, verified)
+	query, args := boardQuery(name)
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return Board{}, err
 	}
@@ -245,10 +245,10 @@ func (s *Store) Read(ctx context.Context, board string) (Board, error) {
 	return result, rows.Err()
 }
 
-// boardQuery picks the aggregation of one board: the MCP games for the
-// community and verified boards, the browser-reported games for the browser
-// board. The verified flag scopes the MCP query.
-func boardQuery(name string) (query string, verified bool) {
+// boardQuery picks the aggregation of one board with its arguments: the MCP
+// games for the community and verified boards, the browser-reported games
+// for the browser board. The verified flag scopes the MCP query.
+func boardQuery(name string) (query string, args []any) {
 	if name == BoardBrowser {
 		return `SELECT model_name,
 				COALESCE(reasoning_effort, '') AS effort,
@@ -260,7 +260,7 @@ func boardQuery(name string) (query string, verified bool) {
 			FROM agent_client_games
 			GROUP BY 1, 2, 3
 			ORDER BY 3, (count(*) FILTER (WHERE result = 'win') + 0.5 * count(*) FILTER (WHERE result = 'draw'))::float / count(*) DESC, 4 DESC, 1, 2
-			LIMIT 200`, false
+			LIMIT 200`, nil
 	}
 	return `SELECT g.model_name,
 			COALESCE(g.reasoning_effort, '') AS effort,
@@ -273,27 +273,6 @@ func boardQuery(name string) (query string, verified bool) {
 		WHERE g.verified = $1 AND m.status = 'completed' AND m.result->>'kind' <> 'abort'
 		GROUP BY 1, 2, 3
 		ORDER BY 3, (count(*) FILTER (WHERE m.result->>'winner' = g.agent_seat) + 0.5 * count(*) FILTER (WHERE m.result->>'kind' = 'draw'))::float / count(*) DESC, 4 DESC, 1, 2
-		LIMIT 200`, name == BoardVerified
+			LIMIT 200`, []any{name == BoardVerified}
 }
 
-// cleanModelName reduces a self-reported model name to the shape the table
-// allows: single spaces, no control or format characters, no @, no URL.
-func cleanModelName(name string) string {
-	name = strings.Join(strings.Fields(name), " ")
-	name = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '@' {
-			return -1
-		}
-		return r
-	}, name)
-	name = strings.ReplaceAll(name, "://", " ")
-	return strings.TrimSpace(clip(name, 40))
-}
-
-func clip(value string, limit int) string {
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit])
-}
