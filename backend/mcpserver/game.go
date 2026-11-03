@@ -16,6 +16,7 @@ import (
 	"github.com/Kamkmgamer/kamkmchess/backend/engine"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/Kamkmgamer/kamkmchess/backend/ratelimit"
 	"github.com/Kamkmgamer/kamkmchess/backend/serverengine"
 	"github.com/jackc/pgx/v5"
 )
@@ -102,7 +103,7 @@ type Options struct {
 type Server struct {
 	options  Options
 	sessions *sessionStore
-	starts   *rateLimiter
+	starts   *ratelimit.Limiter
 	premoves *premoveRegistry
 }
 
@@ -132,7 +133,7 @@ func New(options Options) (*Server, error) {
 	return &Server{
 		options:  options,
 		sessions: newSessionStore(options.MaxSessions, 2*time.Hour, options.Now),
-		starts:   newRateLimiter(options.StartsPerHour, time.Hour, options.Now),
+		starts:   ratelimit.New(options.StartsPerHour, time.Hour, options.Now),
 		premoves: newPremoveRegistry(),
 	}, nil
 }
@@ -294,7 +295,7 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 	if active >= s.options.MaxActiveGames {
 		return nil, errTool("the server is at its limit of games in progress: try again in a few minutes")
 	}
-	if !s.starts.allow(address) {
+	if !s.starts.Allow(address) {
 		return nil, errTool("too many games started from your address this hour: try again later")
 	}
 	agentSeat := online.SeatWhite

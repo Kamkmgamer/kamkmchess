@@ -22,9 +22,12 @@ export interface BoardRow {
   readonly score: number;
 }
 
-export type AgentBoards = Readonly<Record<BoardKind, readonly BoardRow[]>>;
-
-const kinds: readonly BoardKind[] = ['verified', 'community', 'browser'];
+export type AgentBoards = Readonly<{
+  verified: readonly BoardRow[];
+  community: readonly BoardRow[];
+  /** The browser board answers only when its own endpoint does. */
+  browser?: readonly BoardRow[];
+}>;
 
 function readRows(body: unknown): BoardRow[] | null {
   if (typeof body !== 'object' || body === null) return null;
@@ -36,7 +39,11 @@ function readRows(body: unknown): BoardRow[] | null {
     && ['games', 'wins', 'draws', 'losses', 'score'].every(key => typeof (row as Record<string, unknown>)[key] === 'number'));
 }
 
-/** All boards, or null while the service has them switched off or cannot answer. */
+/**
+ * The verified and community boards — plus the browser board when its own
+ * endpoint answers — or null while the service has them switched off or the
+ * core two cannot answer.
+ */
 export async function fetchAgentBoards(apiOrigin: string | null, fetcher: typeof fetch = fetch): Promise<AgentBoards | null> {
   if (apiOrigin === null) return null;
   const read = async (board: BoardKind) => {
@@ -44,8 +51,9 @@ export async function fetchAgentBoards(apiOrigin: string | null, fetcher: typeof
     return response.ok ? readRows(await response.json()) : null;
   };
   try {
-    const [verified, community, browser] = await Promise.all(kinds.map(read));
-    return verified && community && browser ? { verified, community, browser } : null;
+    const [verified, community, browser] = await Promise.all([read('verified'), read('community'), read('browser')]);
+    if (verified === null || community === null) return null;
+    return browser ? { verified, community, browser } : { verified, community };
   } catch {
     return null;
   }

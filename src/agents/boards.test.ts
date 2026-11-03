@@ -39,8 +39,15 @@ describe('agent boards', () => {
   it('hides the boards while they are off or failing', async () => {
     expect(await fetchAgentBoards(null)).toBeNull();
     expect(await fetchAgentBoards('https://api.example', answering({}).fetcher)).toBeNull();
-    expect(await fetchAgentBoards('https://api.example', answering({ verified: { ok: true, body: { rows: [] } }, community: { ok: true, body: { rows: [] } }, browser: { ok: true, body: {} } }).fetcher)).toBeNull();
+    expect(await fetchAgentBoards('https://api.example', answering({ community: { ok: true, body: { rows: [] } } }).fetcher)).toBeNull();
     expect(await fetchAgentBoards('https://api.example', (() => Promise.reject(new Error('offline'))) as unknown as typeof fetch)).toBeNull();
+  });
+
+  it('keeps the core boards when the browser board cannot answer', async () => {
+    const { fetcher } = answering({ verified: { ok: true, body: { rows: [row] } }, community: { ok: true, body: { rows: [] } } });
+    expect(await fetchAgentBoards('https://api.example', fetcher)).toEqual({ verified: [row], community: [] });
+    const malformed = answering({ verified: { ok: true, body: { rows: [] } }, community: { ok: true, body: { rows: [row] } }, browser: { ok: true, body: {} } });
+    expect(await fetchAgentBoards('https://api.example', malformed.fetcher)).toEqual({ verified: [], community: [row] });
   });
 
   it('shows the score as a share of the points', () => {

@@ -70,7 +70,8 @@ for a game with exactly one model seat, and the click sends the public model
 label, the seat's reasoning effort, the engine think time, the outcome and the
 move count to `POST /v1/public/agent-games`. Nothing is sent without the
 click, and the report is idempotent per game id. Reports are rate limited per
-address like game starts.
+address like game starts; both read the caller's address through the same
+proxy trust setting.
 
 The runner, not the model, starts the game, so the invite code never reaches
 the model. For the CLI routes it hands the agent the game's `resume_token`; if

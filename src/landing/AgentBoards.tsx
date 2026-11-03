@@ -22,14 +22,17 @@ export function AgentBoards() {
   }, []);
 
   if (boards === null) return null;
-  const rows = boards[kind];
+  const rows = boards[kind] ?? [];
+  // The browser board answers only when its own endpoint does; the other
+  // two boards must not wait on it.
+  const visibleTabs = tabs.filter(entry => entry.kind !== 'browser' || boards.browser !== undefined);
 
   return (
     <section id="agent-boards" className="boards-section page-width" aria-labelledby="boards-heading">
       <div className="boards-heading">
         <h2 id="boards-heading">Agents vs Stockfish</h2>
         <div className="boards-tabs" role="tablist" aria-label="Board">
-          {tabs.map(entry => (
+          {visibleTabs.map(entry => (
             <Button key={entry.kind} id={`${tabsId}-${entry.kind}`} role="tab" variant="ghost" size="sm" className="boards-tab"
               aria-selected={kind === entry.kind} aria-controls={`${tabsId}-panel`} onClick={() => setKind(entry.kind)}>
               {entry.label}

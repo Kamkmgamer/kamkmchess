@@ -7,9 +7,9 @@
 --
 -- agent_client_games records one result a visitor's browser reported for a
 -- finished game its own device played and scored: a model seat against the
--- browser's Stockfish. Nothing here is checked by the server, so it is the
--- weakest board and always self-reported, like the community names. The
--- client game id makes a retry of the same report idempotent.
+-- browser's Stockfish. The server checks shape and bounds, not truthfulness,
+-- so it is the weakest board and always self-reported, like the community
+-- names. The client game id makes a retry of the same report idempotent.
 ALTER TABLE online_agent_games ADD COLUMN IF NOT EXISTS reasoning_effort text
   CHECK (reasoning_effort IS NULL OR reasoning_effort IN ('low', 'medium', 'high', 'xhigh', 'max'));
 

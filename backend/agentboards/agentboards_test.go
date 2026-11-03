@@ -107,7 +107,7 @@ func (r *recordingRecorder) RecordClient(_ context.Context, report Report) error
 
 func TestReportHandlerStoresOneWellFormedReport(t *testing.T) {
 	recorder := &recordingRecorder{}
-	handler := ReportHandler(recorder, 100, time.Hour)
+	handler := ReportHandler(recorder, 100, time.Hour, false)
 	post := func(body string) *httptest.ResponseRecorder {
 		recorder2 := httptest.NewRecorder()
 		handler.ServeHTTP(recorder2, httptest.NewRequest(http.MethodPost, "/v1/public/agent-games", strings.NewReader(body)))
@@ -144,7 +144,7 @@ func TestReportHandlerStoresOneWellFormedReport(t *testing.T) {
 
 func TestReportHandlerLimitsEachAddress(t *testing.T) {
 	recorder := &recordingRecorder{}
-	handler := ReportHandler(recorder, 1, time.Hour)
+	handler := ReportHandler(recorder, 1, time.Hour, false)
 	body := `{"clientGameId":"game-1","modelName":"m","engineThinkMs":1000,"result":"loss","moveCount":9}`
 	first := httptest.NewRecorder()
 	handler.ServeHTTP(first, httptest.NewRequest(http.MethodPost, "/v1/public/agent-games", strings.NewReader(body)))
@@ -161,11 +161,30 @@ func TestReportHandlerLimitsEachAddress(t *testing.T) {
 	if third.Code != http.StatusOK {
 		t.Fatalf("another address answered %d", third.Code)
 	}
+	// Behind a trusted proxy the forwarded entry names the caller, so
+	// visitors do not share the proxy's own budget.
+	proxied := ReportHandler(recorder, 1, time.Hour, true)
+	forward := func(last string) *httptest.ResponseRecorder {
+		recorder2 := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/v1/public/agent-games", strings.NewReader(body))
+		request.Header.Set("X-Forwarded-For", last)
+		proxied.ServeHTTP(recorder2, request)
+		return recorder2
+	}
+	if code := forward("198.51.100.7").Code; code != http.StatusOK {
+		t.Fatalf("the first forwarded report answered %d", code)
+	}
+	if code := forward("198.51.100.7").Code; code != http.StatusTooManyRequests {
+		t.Fatalf("the repeated forwarded report answered %d", code)
+	}
+	if code := forward("198.51.100.8").Code; code != http.StatusOK {
+		t.Fatalf("another forwarded address answered %d", code)
+	}
 }
 
 func TestReportHandlerTellsAStorageFailureFromABadReport(t *testing.T) {
 	recorder := &recordingRecorder{err: errors.New("database down")}
-	handler := ReportHandler(recorder, 10, time.Hour)
+	handler := ReportHandler(recorder, 10, time.Hour, false)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/v1/public/agent-games", strings.NewReader(`{"clientGameId":"g","modelName":"m","engineThinkMs":1000,"result":"win","moveCount":1}`)))
 	if response.Code != http.StatusServiceUnavailable {
