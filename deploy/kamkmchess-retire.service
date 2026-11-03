@@ -1,0 +1,7 @@
+[Unit]
+Description=Retire the old chess backend after DNS propagation
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/kamkmchess/server/retire-target.sh

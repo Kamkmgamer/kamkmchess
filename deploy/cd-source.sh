@@ -49,5 +49,8 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
     python3 -c 'import os, pathlib, tempfile; p=pathlib.Path("/home/agentsoftmagic/public_html/chess-api/.htaccess"); s=p.read_text(); old="http://127.0.0.1:18081/"; assert s.count(old)==1; fd,n=tempfile.mkstemp(dir=p.parent); os.fchmod(fd,p.stat().st_mode & 0o777); os.write(fd,s.replace(old,"http://127.0.0.1:18082/").encode()); os.close(fd); os.replace(n,p)'
     rm -f "$marker"
     ;;
+  retire)
+    exec python3 /home/agentsoftmagic/kamkmchess/retire-source.py
+    ;;
   *) echo 'Unsupported operation' >&2; exit 2 ;;
 esac

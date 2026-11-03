@@ -49,6 +49,7 @@ jobs:
       - run: pnpm build:rules-worker
       - run: go test ./backend/mcpserver ./cmd/...
       - run: python3 deploy/test-cd-source.py
+      - run: python3 deploy/test-retire-source.py
       - name: Build release
         run: |
           mkdir -p release/bin release/rules-worker

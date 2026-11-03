@@ -12,13 +12,12 @@ The same handler runs in Vite development and preview. A static-only `dist/`
 deployment cannot serve the relay. No database credential or shared provider
 key is needed for this function, and the Go API deployment is unchanged.
 
-The server deployment directory is `/home/agentsoftmagic/kamkmchess`.
-Apache owns HTTPS and proxies the API's cPanel document root through
-`api.htaccess` to `127.0.0.1:18081`. The API container runs as UID 65532 with a
-read-only filesystem. PostgreSQL 16 has no published host port. It is reachable
-only through the dedicated Docker network, using SCRAM passwords and verified
-TLS for the runtime role. The network alias matches the AutoSSL certificate.
-Migrations and backups use a separate administrative role inside the container.
+The production server deployment directory is `/opt/kamkmchess/server` on the
+target host. Nginx terminates HTTPS and proxies to `127.0.0.1:18081`. The API
+container runs as UID 65532 with a read-only filesystem. PostgreSQL 16 has no
+published host port. It is reachable only through the dedicated Docker network,
+using SCRAM passwords and verified TLS for the runtime role. Migrations and
+backups use a separate administrative role inside the container.
 
 ## Online update delivery
 
@@ -39,7 +38,7 @@ revoked membership, then measure concurrent streams against the existing host
 and database pool. Go's flush calls and response headers do not prove Apache
 delivery or hosting capacity. Record these checks in KHA-83 before rollout.
 
-## Build and start
+## Legacy source-host build and start
 
 Build static Linux amd64 binaries from the repository using Go 1.26 or newer.
 The following commands use a POSIX shell; in PowerShell set the equivalent
@@ -118,6 +117,14 @@ backup passphrase outside the repository. Backups are local to the target;
 an offsite copy must be configured separately. Changes to the restricted
 source or CI entry-point scripts require updating their installed copies on
 the corresponding host before using the new version.
+
+The public DNS zone remains managed by the existing nameservers. After its API
+A record changes, `kamkmchess-retire.timer` waits at least five hours for the
+previous four-hour DNS TTL. It checks the target certificate, DNS, HTTPS and
+container health before stopping the source database, removing the old chess
+backup cron block and restricted tunnel keys, and stopping the tunnel. Source
+database volumes and encrypted backups are retained for recovery. The timer
+retries if a prerequisite is unavailable.
 
 ## The durable restore fence
 

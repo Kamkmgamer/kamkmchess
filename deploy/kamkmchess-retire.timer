@@ -1,0 +1,10 @@
+[Unit]
+Description=Check whether the old chess backend can be retired
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
