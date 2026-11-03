@@ -96,6 +96,46 @@ async function archivedText(page: Page) {
 
 const movesOnBoard = (page: Page) => page.getByRole('table', { name: 'Committed moves' }).getByRole('button');
 
+for (const [pieceStyle, boardStyle] of [['merida', 'green'], ['firi', 'ice']] as const) test(`downloads the displayed board as a PNG with ${pieceStyle} pieces`, async ({ page }) => {
+  await page.addInitScript(({ pieces, board }) => {
+    localStorage.setItem('kamkmchess.piece-style.v1', pieces);
+    localStorage.setItem('kamkmchess.board-style.v1', board);
+  }, { pieces: pieceStyle, board: boardStyle });
+  await page.goto('/play');
+  const button = page.getByRole('button', { name: 'Download board screenshot' });
+  await expect(button).toBeVisible();
+  const board = page.locator('.board-host');
+  const boardBox = (await board.boundingBox())!;
+  const panelBox = (await page.locator('#board').boundingBox())!;
+  const reference = await board.screenshot();
+  const downloadPromise = page.waitForEvent('download');
+  await button.click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('chess-position.png');
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const png = Buffer.concat(chunks);
+  expect(png.subarray(0, 8)).toEqual(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  const difference = await page.evaluate(async ({ exported, reference, x, y, size }) => {
+    const load = (data: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image(); img.onload = () => resolve(img); img.onerror = reject; img.src = `data:image/png;base64,${data}`;
+    });
+    const [result, original] = await Promise.all([load(exported), load(reference)]);
+    const canvas = document.createElement('canvas'); canvas.width = 128; canvas.height = 128;
+    const ctx = canvas.getContext('2d')!;
+    // Compare the white pawn on a2, including its light gradient.
+    ctx.drawImage(original, 0, original.height * 6 / 8, original.width / 8, original.height / 8, 0, 0, 128, 128);
+    const expected = ctx.getImageData(0, 0, 128, 128).data;
+    ctx.drawImage(result, x * 2, (y + size * 6 / 8) * 2, size / 4, size / 4, 0, 0, 128, 128);
+    const actual = ctx.getImageData(0, 0, 128, 128).data;
+    let total = 0;
+    for (let i = 0; i < actual.length; i += 4) for (let channel = 0; channel < 3; channel++) total += Math.abs(actual[i + channel]! - expected[i + channel]!);
+    return total / (128 * 128 * 3);
+  }, { exported: png.toString('base64'), reference: reference.toString('base64'), x: boardBox.x - panelBox.x, y: boardBox.y - panelBox.y, size: boardBox.width });
+  expect(difference).toBeLessThan(15);
+});
+
 test('a custom provider without browser CORS loads models, passes its check and plays through the site relay', async ({ page }) => {
   await provider(page, ['e7e5']);
   await page.route(`${endpoint}/**`, route => route.abort('blockedbyclient'));

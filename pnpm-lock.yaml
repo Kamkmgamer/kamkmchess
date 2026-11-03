@@ -202,6 +202,9 @@ importers:
       clsx:
         specifier: 2.1.1
         version: 2.1.1
+      html-to-image:
+        specifier: 1.11.13
+        version: 1.11.13
       mediabunny:
         specifier: 1.65.0
         version: 1.65.0
@@ -1321,6 +1324,9 @@ packages:
 
   hookified@2.2.0:
     resolution: {integrity: sha512-p/LgFzRN5FeoD3DLS6bkUapeye6E4SI6yJs6KetENd18S+FBthqYq2amJUWpt5z0EQwwHemidjY5OqJGEKm5uA==}
+
+  html-to-image@1.11.13:
+    resolution: {integrity: sha512-cuOPoI7WApyhBElTTb9oqsawRvZ0rHhaHwghRLlTuffoD1B2aDemlCruLeZrUIIdvG7gs9xeELEPm6PhuASqrg==}
 
   idb-keyval@6.2.1:
     resolution: {integrity: sha512-8Sb3veuYCyrZL+VBt9LJfZjLUPWVvqn8tG28VqYNFCo43KHcKuq+b4EiXGeuaLAQWL2YmyDgMp2aSpH9JHsEQg==}
@@ -3059,6 +3065,8 @@ snapshots:
   hookified@1.15.1: {}
 
   hookified@2.2.0: {}
+
+  html-to-image@1.11.13: {}
 
   idb-keyval@6.2.1: {}
 

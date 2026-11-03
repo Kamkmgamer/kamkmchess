@@ -34,6 +34,7 @@ export interface RenderAssets {
   readonly positions: ReadonlyMap<string, readonly PieceOnSquare[]>;
   readonly boardStyle: BoardStyle;
   readonly credits: readonly string[];
+  readonly visibleCredits: readonly string[];
 }
 
 export async function prepareRenderAssets(timeline: RecapTimeline, boardStyle: BoardStyle, pieceStyle: PieceStyle, signal: AbortSignal): Promise<RenderAssets> {
@@ -58,7 +59,8 @@ export async function prepareRenderAssets(timeline: RecapTimeline, boardStyle: B
   for (const fen of [timeline.review.replay.startingFen, ...timeline.review.moves.flatMap(move => [move.fenBefore, move.fenAfter])]) {
     if (!positions.has(fen)) positions.set(fen, parsePosition(fen).pieces);
   }
-  return { images, positions, boardStyle, credits: CREDIT[pieceStyle] };
+  const credits = CREDIT[pieceStyle];
+  return { images, positions, boardStyle, credits, visibleCredits: pieceStyle === 'firi' || pieceStyle === 'kaneo' ? credits : [] };
 }
 
 function fitText(context: CanvasRenderingContext2D, text: string, x: number, y: number, width: number, size: number, weight = 500): void {
@@ -202,7 +204,7 @@ export function renderFrame(canvas: HTMLCanvasElement, timeline: RecapTimeline, 
   context.fillStyle = '#d7d9d0'; context.fillRect(48, 1135, 624, 3);
   context.fillStyle = '#567753'; context.fillRect(48, 1135, 624 * Math.min(1, Math.max(0, seconds / timeline.duration)), 3);
   context.fillStyle = MUTED;
-  assets.credits.forEach((credit, index) => fitText(context, credit, 48, 1180 + index * 24, 625, 16));
+  assets.visibleCredits.forEach((credit, index) => fitText(context, credit, 48, 1180 + index * 24, 625, 16));
   if (jumping) {
     context.fillStyle = PAPER; context.globalAlpha = 1 - Math.min(1, time / 0.6); context.fillRect(0, boardY - 5, 720, boardSize + 10); context.globalAlpha = 1;
     context.fillStyle = MUTED; fitText(context, 'Later in the game', 48, 312, 625, 20);

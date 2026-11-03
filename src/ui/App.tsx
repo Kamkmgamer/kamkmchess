@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { AlertDialog } from '@base-ui/react/alert-dialog';
 import { ChessBoard } from './ChessBoard.js';
 import { EvaluationBar } from './EvaluationBar.js';
+import { ScreenshotButton } from './ScreenshotButton.js';
 import { MoveList } from './MoveList.js';
 import { OnlineWorkspace } from './online-workspace.js';
 import type { OnlineComposition } from '../online/composition.js';
@@ -202,6 +203,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [accountControls] = useState(() => createAccountControls(publicConfig.accountsEnabled ? publicConfig.clerkPublishableKey : null));
   const account = useSyncExternalStore(accountControls.subscribe, accountControls.getSnapshot, accountControls.getSnapshot);
   const clerkUser = account.user;
+  const [hostedPlayerName, setHostedPlayerName] = useState('');
   const [opponentIdentity, setOpponentIdentity] = useState<OpponentIdentityV1 | null>(null);
   const [handoff, setHandoff] = useState<HandoffSnapshotV1>({ committed: null, queued: null, producing: null });
   const [autoGeneration, setAutoGeneration] = useState(true);
@@ -1142,7 +1144,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     const player = snapshot.checkpoint.selections.players[side];
     if (player.kind === 'human') {
       // The seat this browser plays in a hosted game reads as its owner.
-      if (hostedGame && seatJoined && side === hostedGame.side && clerkUser) return clerkUser.name;
+      if (hostedGame && seatJoined && side === hostedGame.side) return hostedPlayerName.trim() || clerkUser?.name || 'Guest';
+      if (!hostedGame && clerkUser && players[side === 'white' ? 'black' : 'white'].kind !== 'human') return clerkUser.name;
       return side === 'white' ? 'White' : 'Black';
     }
     if (isAgentSelection(player)) {
@@ -1170,7 +1173,12 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const focusPage = tool !== null || recoveryOpen || recap !== null;
   const makeRecap = () => {
     try {
-      const replay = captureReplay(snapshot.checkpoint, { white: playerLabel('white'), black: playerLabel('black') });
+      const recapLabel = (side: 'white' | 'black') => {
+        const player = players[side];
+        const label = playerLabel(side);
+        return isEngineSelection(player) || hostedGame?.playerControl(side) === 'engine' ? `${label} (engine)` : player.kind === 'model' && !hostedGame ? `${label} (agent)` : label;
+      };
+      const replay = captureReplay(snapshot.checkpoint, { white: recapLabel('white'), black: recapLabel('black') });
       stopBrowserEngines(); setRecapError(null);
       setRecap({ replay, boardStyle, pieceStyle, orientation });
     } catch (error) { setRecapError(conciseError(error)); }
@@ -1180,7 +1188,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     const link = document.createElement('a'); link.href = url; link.download = `chess-${session.gameId}.json`; link.click(); URL.revokeObjectURL(url);
   };
   const openAgents = () => { setCatalogRefresh(value => value + 1); openTool('agents'); };
-  const showEvaluation = spectator && !focusPage && !setupOpen;
+  const showEvaluation = (spectator || (hostedGame !== null && !seatJoined)) && !focusPage && !setupOpen;
   const acceptSidebarGame = ({ session: nextSession, snapshot: started, identities, draft }: StartedSidebarGame) => {
     setRecap(null); setRecapError(null);
     setSetupDraft(draft);
@@ -1367,13 +1375,13 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           </div>
         </div>
         {hostedGame && <nav hidden={setupOpen} className="hosted-game" aria-label="Hosted game">
-          {!seatJoined && hostedGame.hasSeat && <button className="button primary" type="button" disabled={working}
-            onClick={() => { void hostedGame.joinSeat().then(() => {
+          {!seatJoined && hostedGame.hasSeat && <><label>Player name <input value={hostedPlayerName} onChange={event => setHostedPlayerName(event.target.value)} placeholder={clerkUser?.name || 'Guest'} maxLength={40} /></label><button className="button primary" type="button" disabled={working}
+            onClick={() => { void hostedGame.joinSeat(hostedPlayerName.trim() || clerkUser?.name || 'Guest').then(() => {
               // The board orients to the side this browser now plays.
               setOrientation(hostedGame.side);
               setFeedback(`Joined. You play ${hostedGame.side}.`);
             }).catch(error => setFeedback(conciseError(error))); }}>
-            {hostedGame.side === 'white' ? 'Play white' : 'Play black'}</button>}
+            {hostedGame.side === 'white' ? 'Play white' : 'Play black'}</button></>}
           <div className="button-row">
             <CopyButton label="Copy viewing link" value={hostedGame.watchUrl} />
             {(Object.entries(hostedGame.invitations) as ['white' | 'black', string][]).map(([color, url]) =>
@@ -1382,6 +1390,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           {hostedGame.connectionError() && <p className="status-detail" role="alert">{hostedGame.connectionError()}</p>}
         </nav>}
         <nav hidden={setupOpen} className="board-tools" aria-label="Board tools"><IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />
+          <ScreenshotButton target={boardPanel} />
           <IconButton icon="undo" label="Undo" onClick={() => void undo()} disabled={working || snapshot.readiness !== 'ready' || !snapshot.checkpoint.rules.moves.length || snapshot.checkpoint.result.kind !== 'unresolved'} />
           <IconButton icon="code" label="Type a move" disabled={disabled} onClick={() => openTool('move')} />
           {resultActions.resigningSide !== null && <>

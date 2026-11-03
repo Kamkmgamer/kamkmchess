@@ -27,16 +27,17 @@ function legalPv(position: Position, line: ReviewLine): boolean {
   } catch { return false; }
 }
 
-export async function reviewGame(replay: GameReplay, signal: AbortSignal, onProgress: (value: ReviewProgress) => void): Promise<GameReview> {
+export async function reviewGame(replay: GameReplay, signal: AbortSignal, onProgress: (value: ReviewProgress) => void, fast = false): Promise<GameReview> {
   aborted(signal);
-  const preferred: BrowserEngineId = await isEngineDownloaded('stockfish-full') ? 'stockfish-full' : 'stockfish-lite';
+  const preferred: BrowserEngineId = !fast && await isEngineDownloaded('stockfish-full') ? 'stockfish-full' : 'stockfish-lite';
+  const nodes = fast ? 20_000 : NODES;
   for (const engineId of preferred === 'stockfish-full' ? ['stockfish-full', 'stockfish-lite'] as const : ['stockfish-lite'] as const) {
     const fallback = engineId !== preferred;
     const engine = BROWSER_ENGINES[engineId].name;
     let worker: BrowserUciEngine | null = null;
     try {
       onProgress({ engine, completed: 0, total: replay.moves.length, download: null, fallback });
-      const key = JSON.stringify({ v: REVIEW_VERSION, engine: `${ENGINE_VERSION}/${engineId}`, nodes: NODES,
+      const key = JSON.stringify({ v: REVIEW_VERSION, engine: `${ENGINE_VERSION}/${engineId}`, nodes,
         game: replay.gameId, scope: replay.scope, line: replay.lineId, fen: replay.startingFen,
         moves: replay.moves.map(move => move.uci), result: [replay.result.winner, replay.result.reason] });
       const cached = await loadReview(key);
@@ -67,19 +68,19 @@ export async function reviewGame(replay: GameReplay, signal: AbortSignal, onProg
         const legal = legalMoves(position);
         const root = { startingFen: replay.startingFen, moves: replay.moves.slice(0, index).map(move => move.uci) };
         const multiPv = Math.min(2, legal.length);
-        let search = await worker.review(root, { nodes: NODES, multiPv }, signal);
+        let search = await worker.review(root, { nodes, multiPv }, signal);
         let best = search.lines[0]!;
         let second = search.lines[1];
         let played = search.lines.find(line => line.pv[0] === move.uci)
-          ?? (await worker.review(root, { nodes: NODES, multiPv: 1, searchMove: move.uci }, signal)).lines[0]!;
+          ?? (await worker.review(root, { nodes, multiPv: 1, searchMove: move.uci }, signal)).lines[0]!;
         const initialBest = best.pv[0];
         const a = expectedScore(best), b = expectedScore(played), c = second ? expectedScore(second) : null;
         const important = b !== null && a !== null && (a - b >= 0.02 || b > a + 0.03 || (c !== null && a - c >= 0.10));
         if (important || best.depth < 8 || played.depth < 8 || best.pv[0] !== search.bestMove) {
-          search = await worker.review(root, { nodes: NODES * 3, multiPv }, signal);
+          search = await worker.review(root, { nodes: nodes * 3, multiPv }, signal);
           best = search.lines[0]!; second = search.lines[1];
           played = search.lines.find(line => line.pv[0] === move.uci)
-            ?? (await worker.review(root, { nodes: NODES * 3, multiPv: 1, searchMove: move.uci }, signal)).lines[0]!;
+            ?? (await worker.review(root, { nodes: nodes * 3, multiPv: 1, searchMove: move.uci }, signal)).lines[0]!;
         }
         const bestCoordinate = legal.find(candidate => coordinateText(candidate) === best.pv[0]);
         const bestSan = bestCoordinate ? applyCoordinateMove(position, bestCoordinate).san : '';

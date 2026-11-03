@@ -48,6 +48,14 @@ describe('game review worker ownership and recovery', () => {
     expect(mock.load.mock.calls[0]![0]).not.toBe(mock.load.mock.calls[1]![0]);
     expect(mock.close.mock.calls.map(call => call[0])).toEqual(['stockfish-full', 'stockfish-lite']);
   });
+  it('uses Lite directly in faster mode even when the full engine is installed', async () => {
+    mock.downloaded.mockResolvedValue(true);
+    const result = await reviewGame(replay(), new AbortController().signal, vi.fn(), true);
+    expect(result.engineId).toBe('stockfish-lite');
+    expect(mock.download.mock.calls.map(call => call[0])).toEqual(['stockfish-lite']);
+    expect(mock.downloaded).not.toHaveBeenCalled();
+    expect(mock.search.mock.calls[0]![1]).toMatchObject({ nodes: 20_000 });
+  });
   it('resumes completed positions without another worker or engine download', async () => {
     const initial = await reviewGame(replay(), new AbortController().signal, vi.fn());
     mock.load.mockResolvedValue(initial.moves); mock.search.mockClear(); mock.download.mockClear();

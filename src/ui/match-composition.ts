@@ -59,7 +59,8 @@ export interface HostedGameMeta {
   /** The private seat invitations captured at game creation, by color. */
   readonly invitations: Record<'white' | 'black', string>;
   /** Joins the invited seat, so this browser plays it. */
-  joinSeat(): Promise<void>;
+  joinSeat(name: string): Promise<void>;
+  playerControl(side: 'white' | 'black'): string | null;
   /** The poll failure text, or null while the server connection is healthy. */
   connectionError(): string | null;
 }

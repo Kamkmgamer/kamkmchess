@@ -22,6 +22,14 @@ export function captureOnlineReplay(view: Pick<OnlineMatchView, 'matchId' | 'sta
       promotion: move.uci.slice(4) || null, san: move.san, fenBefore: previous, fenAfter: move.resultingFen };
     previous = move.resultingFen; return saved;
   });
+  const label = (side: 'white' | 'black') => {
+    const seat = view.seats.find(candidate => candidate.seat === side);
+    const name = seat?.publicLabel ?? (side === 'white' ? 'White' : 'Black');
+    if (!seat || seat.control.kind === 'human') return name;
+    const controller = seat.control.kind === 'engine' ? 'engine' : 'agent';
+    const model = seat.control.modelLabel;
+    return model ? `${name} (${controller}: ${model})` : `${name} (${controller})`;
+  };
   const replay = captureReplay({
     gameId: view.matchId, namespace: { kind: 'guest' }, extensions: {},
     archive: { egressStatus: 'eligible', currentLine: { lineId: 'online', eventIds: [] }, discardedLines: [] },
@@ -30,7 +38,6 @@ export function captureOnlineReplay(view: Pick<OnlineMatchView, 'matchId' | 'sta
       enPassantSquare: position.enPassantSquare, halfmoveClock: position.halfmoveClock, fullmoveNumber: position.fullmoveNumber,
       repetitionLedger: { version: 1, positions: [] } },
     result: { kind: 'final', winner, reason: REASONS[view.result.reason], eventId: 'online-final', decidedAtMs: 0 },
-  }, { white: view.seats.find(seat => seat.seat === 'white')?.publicLabel ?? 'White',
-    black: view.seats.find(seat => seat.seat === 'black')?.publicLabel ?? 'Black' });
+  }, { white: label('white'), black: label('black') });
   return Object.freeze({ ...replay, scope: `online:${scope}` });
 }

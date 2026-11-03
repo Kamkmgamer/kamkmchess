@@ -32,6 +32,8 @@ export default function RecapPage({ input, onClose }: { readonly input: RecapInp
   const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [mode, setMode] = useState<RecapMode>(input.replay.moves.length > 70 ? 'highlights' : 'replay');
+  const [fast, setFast] = useState(false);
+  const [playerNames, setPlayerNames] = useState(input.replay.players);
   const [orientation, setOrientation] = useState(input.orientation);
   const [volume, setVolume] = useState(0.65);
   const [time, setTime] = useState(0);
@@ -46,7 +48,10 @@ export default function RecapPage({ input, onClose }: { readonly input: RecapInp
   const exported = useRef<ExportResult | null>(null);
   const downloadUrl = useRef<string | null>(null);
   const alive = useRef(false);
-  const timeline = useMemo(() => review ? planRecap(review, mode) : null, [review, mode]);
+  const timeline = useMemo(() => review ? planRecap({ ...review, replay: { ...review.replay, players: {
+    white: playerNames.white.trim() || input.replay.players.white,
+    black: playerNames.black.trim() || input.replay.players.black,
+  } } }, mode) : null, [review, mode, playerNames, input.replay.players]);
   const activeScene = timeline ? sceneAt(timeline, time) : null;
   const busy = phase === 'reviewing' || phase === 'exporting';
 
@@ -66,7 +71,7 @@ export default function RecapPage({ input, onClose }: { readonly input: RecapInp
     job.current = controller;
     void (async () => {
       try {
-        const result = await reviewGame(input.replay, controller.signal, progress => { if (!controller.signal.aborted) setReviewProgress(progress); });
+        const result = await reviewGame(input.replay, controller.signal, progress => { if (!controller.signal.aborted) setReviewProgress(progress); }, fast);
         const ready = await prepareRenderAssets(planRecap(result), input.boardStyle, input.pieceStyle, controller.signal);
         if (controller.signal.aborted) return;
         setReview(result); setAssets(ready); setPhase('ready');
@@ -76,7 +81,7 @@ export default function RecapPage({ input, onClose }: { readonly input: RecapInp
       }
     })();
     return () => controller.abort();
-  }, [input, attempt]);
+  }, [input, attempt, fast]);
 
   useEffect(() => {
     if (!playing && timeline && assets && canvas.current) renderFrame(canvas.current, timeline, time, assets, orientation);
@@ -170,6 +175,14 @@ export default function RecapPage({ input, onClose }: { readonly input: RecapInp
           : <div className="recap-waiting"><div className="recap-board-mark" aria-hidden="true" /><p>{phase === 'stopped' ? 'Review paused' : phase === 'error' ? 'Review unavailable' : 'Reviewing your game'}</p></div>}
       </div>
       <div className="recap-controls">
+        <fieldset className="recap-mode" disabled={phase === 'exporting'}><legend>Analysis</legend>
+          <label><input type="radio" name="analysis-speed" checked={!fast} onChange={() => { job.current?.abort(); setPlaying(false); clearDownload(); setReview(null); setAssets(null); setError(null); setPhase('reviewing'); setFast(false); }} />Standard</label>
+          <label><input type="radio" name="analysis-speed" checked={fast} onChange={() => { job.current?.abort(); setPlaying(false); clearDownload(); setReview(null); setAssets(null); setError(null); setPhase('reviewing'); setFast(true); }} />Analyze faster with Stockfish 19 Lite</label>
+          {fast && <p>Uses a smaller search for a quicker, less detailed review.</p>}
+        </fieldset>
+        <div className="recap-player-names">{(['white', 'black'] as const).map(side => <label key={side}>{side === 'white' ? 'White player' : 'Black player'}
+          <input type="text" maxLength={100} value={playerNames[side]} disabled={phase === 'exporting'} onChange={event => { setPlaying(false); clearDownload(); setPlayerNames(current => ({ ...current, [side]: event.target.value })); }} />
+        </label>)}</div>
         {busy && <div className="recap-progress" role="status" aria-live="polite">
           <p>{progressLabel}</p><progress value={percentage} max={1} aria-label={progressLabel} />
           <div className="recap-progress-detail"><span>{phase === 'reviewing' ? reviewProgress?.engine ?? 'Stockfish' : `${Math.round(percentage * 100)}%`}</span>

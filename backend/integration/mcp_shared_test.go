@@ -61,6 +61,13 @@ func TestMCPSharedInvitationsAndSpectators(t *testing.T) {
 	if response.StatusCode != 200 || watch["fen"] == nil || strings.Contains(string(encoded), board["resume_token"].(string)) || strings.Contains(string(encoded), "participant") {
 		t.Fatalf("unsafe spectator response: %d %s", response.StatusCode, encoded)
 	}
+	players, ok := watch["players"].(map[string]any)
+	if !ok || players["white"] != "White agent (self-reported)" || players["black"] != "Black agent (self-reported)" {
+		t.Fatalf("spectator names: %v", watch["players"])
+	}
+	if _, ok := watch["controls"].(map[string]any); !ok {
+		t.Fatalf("spectator controls: %v", watch["controls"])
+	}
 }
 
 func TestMCPBlackInvitationDefersStockfishOpening(t *testing.T) {

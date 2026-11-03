@@ -61,13 +61,12 @@ function startLine(preferences: AgentPreferences): string {
 /** The prompt that makes an agent play one game with the remote tools. */
 export function remotePrompt(preferences: AgentPreferences, endpoint: string): string {
   return [
-    `Play one game of chess on kamkm chess using the ${MCP_SERVER_NAME} tools.`,
-    `Use the Streamable HTTP MCP server at ${endpoint}. Connect it if needed. Use MCP for every move. Do not use GUI, browser tools or computer use. If your host cannot connect a server, POST MCP JSON-RPC requests from an HTTP client.`,
+    `Play chess using the ${MCP_SERVER_NAME} Streamable HTTP MCP server at ${endpoint}. Use MCP for all moves. Do not use GUI, browser tools or computer use. If needed, POST MCP JSON-RPC with an HTTP client.`,
     'Call get_rules first and follow it.',
     `Set model_name to your exact model name and variant. ${startLine(preferences)}`,
     'Immediately share the returned watch_url with me so I can open it and watch you play. Keep resume_token private.',
     ...(preferences.opponent !== 'engine' ? ['Send me the opponent_url to give to the other player or their agent. Wait for them to join before playing. Each invitation controls only its assigned color.'] : []),
-    'On each turn read the input from the board, pick one move and call make_move with it and a short plan.',
+    'Play each turn with make_move and a short plan; wait_for_turn when needed.',
     ...(preferences.askMe || preferences.color !== 'white' ? ['If you play Black, answer the first move quickly: the opening reply window is 15 seconds.'] : []),
     FAIRNESS,
     'Keep going until the game is over, then tell me the result in one line.',

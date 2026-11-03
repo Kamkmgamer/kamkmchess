@@ -25,4 +25,13 @@ describe('online recap adapter', () => {
     expect(() => captureOnlineReplay({ ...original, result: { kind: 'abort', winner: null, reason: 'abort' } }, 'guest')).toThrow('scored');
     expect(() => captureOnlineReplay({ ...original, moves: [] }, 'guest')).toThrow('match');
   });
+  it('includes the public player and agent or engine controlling each seat', () => {
+    const original = view();
+    const white = original.seats[0]!;
+    const black = original.seats[1]!;
+    const agent = captureOnlineReplay({ ...original, seats: [white, { ...black, control: { kind: 'agent', modelLabel: 'Claude' } }] }, 'guest');
+    expect(agent.players).toEqual({ white: 'Alice', black: 'Bob (agent: Claude)' });
+    const engine = captureOnlineReplay({ ...original, seats: [white, { ...black, control: { kind: 'engine', modelLabel: 'Stockfish' } }] }, 'guest');
+    expect(engine.players.black).toBe('Bob (engine: Stockfish)');
+  });
 });

@@ -78,9 +78,11 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	players := map[string]string{}
+	controls := map[string]string{}
 	moves := make([]string, 0, len(match.Moves))
 	for _, seat := range match.Seats {
 		players[string(seat.Seat)] = seat.PublicLabel
+		controls[string(seat.Seat)] = string(seat.Control.Kind)
 		if name := s.sessions.seatName(match.MatchID, seat.Seat); name != "" {
 			players[string(seat.Seat)] = name + " (self-reported)"
 		}
@@ -92,7 +94,7 @@ func (s *Server) watch(w http.ResponseWriter, r *http.Request) {
 	if match.Status == online.MatchActive && !s.PlayersReady(match) {
 		status = "waiting-for-players"
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"gameId": match.MatchID, "fen": match.PositionFEN, "status": status, "players": players, "moves": moves, "clock": s.clock(match), "result": match.Result, "premoves": s.premovesView(match), "watch_url": s.watchURL(match.MatchID)})
+	writeJSON(w, http.StatusOK, map[string]any{"gameId": match.MatchID, "fen": match.PositionFEN, "status": status, "players": players, "controls": controls, "moves": moves, "clock": s.clock(match), "result": match.Result, "premoves": s.premovesView(match), "watch_url": s.watchURL(match.MatchID)})
 }
 
 // premovesView exposes each side's armed conditional pre-moves in the watch payload, so

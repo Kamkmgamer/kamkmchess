@@ -21,6 +21,8 @@
 .recap-mode legend { font-weight: 600; margin-bottom: 8px; }
 .recap-mode label { display: flex; gap: 10px; min-height: 44px; align-items: center; cursor: pointer; }
 .recap-mode input { accent-color: var(--green); width: 18px; height: 18px; min-height: 18px; margin: 0; padding: 0; }
+.recap-player-names, .recap-player-names label { display: grid; gap: 8px; }
+.recap-player-names input { width: 100%; min-width: 0; }
 .recap-volume { display: grid; grid-template-columns: auto minmax(40px, 1fr); align-items: center; gap: 20px; font-weight: 600; }
 .recap-export-actions, .recap-download { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 .recap-export-actions .button, .recap-download .button { min-height: 44px; }

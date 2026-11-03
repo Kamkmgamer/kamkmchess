@@ -39,7 +39,7 @@
  *   completion, and its public replay is one action away. An abort is named
  *   as an abort and it is marked as unscored.
  */
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { captureOnlineReplay } from '../review/online-replay.js';
 import type { RecapInput } from './RecapPage.js';
 import { getBoardStyle } from './board-style.js';
@@ -48,6 +48,7 @@ import { createRequestOwner } from './request-owner.js';
 import { createGuestCredential } from '../online/auth.js';
 import { Icon, IconButton } from './Icon.js';
 import { ChessBoard } from './ChessBoard.js';
+import { ScreenshotButton } from './ScreenshotButton.js';
 import { MoveList } from './MoveList.js';
 import { OpponentPanel } from './OpponentPanel.js';
 import { OpponentLogo } from './OpponentBadge.js';
@@ -606,6 +607,7 @@ export function OnlinePublicHistory({ history }: { readonly history: OnlineProfi
  */
 export function OnlineWorkspace({ composition, onClose, onOpenProfile, accountUser, onConfigureAgent, agentLabel, initialTab, checkAgent,
   agentService, agentConnectionStore, agentNamespace, onAgentConnected }: OnlineWorkspaceProps) {
+  const boardPanel = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState<OnlineTab>(initialTab ?? 'games');
   const [recap, setRecap] = useState<{ readonly input: RecapInput; readonly owner: string | null; readonly generation: number } | null>(null);
   const [clockIndex, setClockIndex] = useState(1);
@@ -2004,6 +2006,7 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, accountUs
 
     {tab === 'games' && view && position && <div className="match-layout online-match">
       <section className="board-column" aria-label="Online match board">
+        <div ref={boardPanel}>
         {rows.map(row => {
           // The owner's own seat reads as the account they signed in with.
           // A signed-in opponent shows the avatar their public profile chose;
@@ -2047,7 +2050,9 @@ export function OnlineWorkspace({ composition, onClose, onOpenProfile, accountUs
             </div>
           </section>}
         </div>
+        </div>
         <nav className="board-tools" aria-label="Online board tools">
+          <ScreenshotButton target={boardPanel} />
           <IconButton icon="draw" label="Offer a draw" disabled={busy || view.status !== 'active'} onClick={() => setConfirm('draw')} />
           <IconButton icon="undo" label="Offer a takeback" disabled={busy || !takebackAllowed} onClick={() => setConfirm('takeback')} />
           <IconButton icon="resign" label="Resign game" disabled={busy || view.status !== 'active'} onClick={() => setConfirm('resign')} />

@@ -22,6 +22,7 @@ const STANDARD_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 /** The watch payload of a hosted game, published by the MCP server. */
 interface WatchBoard {
   gameId: string; fen: string; status: string; players: Record<string, string>; moves: string[];
+  controls?: Record<string, string>;
   clock: { whiteMs: number; blackMs: number; incrementMs?: number; activeSeat?: 'white' | 'black' | null };
   result: { kind?: string; winner?: string | null; reason?: string } | null;
   /** Conditional pre-moves a remote agent has armed, when the server exposes them. */
@@ -320,12 +321,12 @@ export class HostedGameController implements GameController {
     return this.snapshot();
   }
 
-  async joinSeat(): Promise<void> {
+  async joinSeat(name: string): Promise<void> {
     if (!this.seatToken) throw new Error('This address does not carry a seat invitation.');
     if (this.joining) return;
     this.joining = true;
     try {
-      await this.client.call('join_seat', { resume_token: this.seatToken, model_name: 'Human' });
+      await this.client.call('join_seat', { resume_token: this.seatToken, model_name: name.trim() || 'Guest' });
       this.joined = true;
       await this.poll();
       this.publish();
@@ -409,7 +410,8 @@ export class HostedGameController implements GameController {
         try { return JSON.parse(sessionStorage.getItem(`agent-game:${this.watchId}`) ?? '{}') as Record<'white' | 'black', string>; }
         catch { return {} as Record<'white' | 'black', string>; }
       })(),
-      joinSeat: () => this.joinSeat(),
+      joinSeat: name => this.joinSeat(name),
+      playerControl: side => this.board?.controls?.[side] ?? null,
       connectionError: () => this.connectionError,
     };
   }

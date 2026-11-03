@@ -77,8 +77,8 @@ describe('hosted game sessions', () => {
     board = { ...watchBoard, fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', moves: [] };
     const session = openHostedGameSession({ watchId: 'match-1', seatToken: 'white-secret', side: 'white' });
     await session.controller.initialize();
-    await session.hosted?.joinSeat();
-    expect(rpc[0]).toMatchObject({ name: 'join_seat', args: { resume_token: 'white-secret', model_name: 'Human' } });
+    await session.hosted?.joinSeat('Alice');
+    expect(rpc[0]).toMatchObject({ name: 'join_seat', args: { resume_token: 'white-secret', model_name: 'Alice' } });
     const snapshot = session.controller.snapshot();
     expect(snapshot.checkpoint.selections.players.white).toMatchObject({ kind: 'human' });
     expect(snapshot.checkpoint.selections.players.black).toMatchObject({ kind: 'model', modelRoutingId: 'Kimi K2' });
@@ -106,7 +106,7 @@ describe('hosted game sessions', () => {
     board = { ...watchBoard, fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', moves: [] };
     const session = openHostedGameSession({ watchId: 'match-1', seatToken: 'white-secret', side: 'white' });
     await session.controller.initialize();
-    await session.hosted?.joinSeat();
+    await session.hosted?.joinSeat('Guest');
     const result = await session.controller.dispatch({
       schemaVersion: 1, kind: 'human-move', fence: session.controller.snapshot().fence, move: { from: 'a2', to: 'a4' },
     });
@@ -116,7 +116,7 @@ describe('hosted game sessions', () => {
   it('resigns the joined side through the result declaration', async () => {
     const session = openHostedGameSession({ watchId: 'match-1', seatToken: 'white-secret', side: 'white' });
     await session.controller.initialize();
-    await session.hosted?.joinSeat();
+    await session.hosted?.joinSeat('Guest');
     const result = await session.controller.declareResult(session.controller.snapshot().fence, { kind: 'resignation', side: 'white' });
     expect(result.kind).toBe('accepted');
     expect(rpc[1]).toMatchObject({ name: 'resign' });

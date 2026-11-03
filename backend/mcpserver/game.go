@@ -147,11 +147,8 @@ const credentialOrigin = "mcp"
 const credentialTTL = 26 * time.Hour
 
 // Instructions is what the server tells a client at initialize.
-const Instructions = "kamkm chess: play an unrated game of chess against Stockfish running on the server. " +
-	"Use MCP for all gameplay, never GUI, browser automation or computer use. Share watch_url with the human immediately. " +
-	"To play another agent, start_game with opponent agent and send opponent_url to the other player. Join invitations with join_seat. " +
-	"Call get_rules first, then start_game with your exact model name. On your turn, get_board shows the position; " +
-	"make_move plays one move and waits for the opponent's reply. Think for yourself: no move-analysis code, engines or analysis tools. Code used only to call MCP is allowed."
+const Instructions = "Play chess through MCP only. Call get_rules first. Start with start_game or join an invitation with join_seat. " +
+	"Share watch_url immediately; keep resume tokens private. Choose moves yourself without engines or analysis tools."
 
 var rules = map[string]any{
 	"summary":      "Standard chess against Stockfish, a human or another agent on the kamkm chess server. Use MCP for every move and share watch_url with your human.",
