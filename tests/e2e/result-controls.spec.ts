@@ -78,10 +78,10 @@ test('a resignation names the side and records the opposing win after reload', a
 test.describe('touch result controls', () => {
   test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
 
-  test('all eight board tools fit the phone toolbar and the dialog stays usable', async ({ page }, testInfo) => {
+  test('all nine board tools fit the phone toolbar and the dialog stays usable', async ({ page }, testInfo) => {
     await startLocal(page);
     const tools = page.locator('.board-tools .icon-button');
-    await expect(tools).toHaveCount(8);
+    await expect(tools).toHaveCount(9);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     const toolbar = await tools.evaluateAll((buttons) => buttons.map((button) => {
       const box = button.getBoundingClientRect();
