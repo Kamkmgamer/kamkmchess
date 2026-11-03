@@ -91,6 +91,7 @@ import { LeftGameRail } from '../navigation/LeftGameRail.js';
 import { readSidebarPreferences } from '../navigation/sidebar-preferences.js';
 import { NewGameSetup } from './NewGameSetup.js';
 const RecapPage = lazy(() => import('./RecapPage.js'));
+const GameReviewPage = lazy(() => import('./GameReviewPage.js'));
 import type { NewGameDraft, StartedSidebarGame } from './NewGameSetup.js';
 import { resultDeclarationAvailability, resultDeclarationCopy } from './result-declaration.js';
 import type { ResultDeclarationChoice } from './result-declaration.js';
@@ -1144,7 +1145,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     const player = snapshot.checkpoint.selections.players[side];
     if (player.kind === 'human') {
       // The seat this browser plays in a hosted game reads as its owner.
-      if (hostedGame && seatJoined && side === hostedGame.side) return hostedPlayerName.trim() || clerkUser?.name || 'Guest';
+      if (hostedGame && seatJoined && side === hostedGame.side) return hostedPlayerName.trim() || clerkUser?.username || clerkUser?.name || 'Guest';
       if (!hostedGame && clerkUser && players[side === 'white' ? 'black' : 'white'].kind !== 'human') return clerkUser.name;
       return side === 'white' ? 'White' : 'Black';
     }
@@ -1171,7 +1172,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   ].join('\n\n');
   const openTool = (next: typeof tool) => { setRecap(null); setTool(next); setFeedback(''); setCoordinateError(''); };
   const focusPage = tool !== null || recoveryOpen || recap !== null;
-  const makeRecap = () => {
+  const makeRecap = (initialView: 'review' | 'video') => {
     try {
       const recapLabel = (side: 'white' | 'black') => {
         const player = players[side];
@@ -1180,7 +1181,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       };
       const replay = captureReplay(snapshot.checkpoint, { white: recapLabel('white'), black: recapLabel('black') });
       stopBrowserEngines(); setRecapError(null);
-      setRecap({ replay, boardStyle, pieceStyle, orientation });
+      setRecap({ replay, boardStyle, pieceStyle, orientation, initialView });
     } catch (error) { setRecapError(conciseError(error)); }
   };
   const downloadArchive = () => {
@@ -1262,8 +1263,9 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
       onAgents={online ? openAgents : undefined}
       menuOpen={menuOpen} onMenuOpenChange={setMenuOpen} />
     <main className="workspace minimal-workspace" id="main">
-    {recap && <Suspense fallback={<p role="status">Loading video tools…</p>}><RecapPage key={`${recap.replay.gameId}/${recap.replay.lineId}`} input={recap}
-      onClose={() => { setRecap(null); requestAnimationFrame(() => resultStatus.current?.focus()); }} /></Suspense>}
+    {recap && <Suspense fallback={<p role="status">Loading game?</p>}>{recap.initialView === 'review'
+      ? <GameReviewPage input={recap} onClose={() => { setRecap(null); requestAnimationFrame(() => resultStatus.current?.focus()); }} />
+      : <RecapPage key={`${recap.replay.gameId}/${recap.replay.lineId}`} input={recap} onClose={() => { setRecap(null); requestAnimationFrame(() => resultStatus.current?.focus()); }} />}</Suspense>}
     {!focusPage && <header className="topbar">
       <IconButton className="button quiet icon-button topbar-menu" icon="menu" label="Menu" onClick={() => setMenuOpen(true)} />
       <a className="wordmark" href="/" aria-label="Kamkm Chess home">kamkm chess</a>
@@ -1349,7 +1351,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         </div>
       </section>
       <aside className="moves-sidebar" id="moves-panel" ref={movesPanel} tabIndex={-1} aria-labelledby="moves-title">
-        {finalResult && <GameResultCard result={finalResult} onNewGame={() => openSetup()} onMakeVideo={makeRecap} />}
+        {finalResult && <GameResultCard result={finalResult} onNewGame={() => openSetup()} onMakeVideo={() => makeRecap('video')} onReview={() => makeRecap('review')} />}
         {recapError && <p role="alert">{recapError}</p>}
         <div className="moves-heading"><h2 id="moves-title">Moves</h2><span className="count" aria-label={`Move ${history.ply} of ${history.count}`}>{history.ply}/{history.count}</span>
           <span className="mobile-board-return"><IconButton icon="board" label="Show board" aria-controls="board" onClick={() => { boardPanel.current?.focus({ preventScroll: true }); boardPanel.current?.scrollIntoView({ block: 'start' }); }} /></span>
@@ -1375,18 +1377,19 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           </div>
         </div>
         {hostedGame && <nav hidden={setupOpen} className="hosted-game" aria-label="Hosted game">
-          {!seatJoined && hostedGame.hasSeat && <><label>Player name <input value={hostedPlayerName} onChange={event => setHostedPlayerName(event.target.value)} placeholder={clerkUser?.name || 'Guest'} maxLength={40} /></label><button className="button primary" type="button" disabled={working}
-            onClick={() => { void hostedGame.joinSeat(hostedPlayerName.trim() || clerkUser?.name || 'Guest').then(() => {
+          {!seatJoined && hostedGame.hasSeat && <>{!clerkUser && <label>Player name <input value={hostedPlayerName} onChange={event => setHostedPlayerName(event.target.value)} placeholder="Guest" maxLength={40} /></label>}<button className="button primary" type="button" disabled={working || account.status === 'loading'}
+            onClick={() => { const playerName = clerkUser ? clerkUser.username || clerkUser.name : hostedPlayerName.trim() || 'Guest'; void hostedGame.joinSeat(playerName).then(() => {
+              setHostedPlayerName(playerName);
               // The board orients to the side this browser now plays.
               setOrientation(hostedGame.side);
               setFeedback(`Joined. You play ${hostedGame.side}.`);
             }).catch(error => setFeedback(conciseError(error))); }}>
             {hostedGame.side === 'white' ? 'Play white' : 'Play black'}</button></>}
-          <div className="button-row">
+          {hostedWaiting && <div className="button-row">
             <CopyButton label="Copy viewing link" value={hostedGame.watchUrl} />
             {(Object.entries(hostedGame.invitations) as ['white' | 'black', string][]).map(([color, url]) =>
               <CopyButton key={color} label={`Copy ${color} invite`} value={seatPrompt(url)} />)}
-          </div>
+          </div>}
           {hostedGame.connectionError() && <p className="status-detail" role="alert">{hostedGame.connectionError()}</p>}
         </nav>}
         <nav hidden={setupOpen} className="board-tools" aria-label="Board tools"><IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />

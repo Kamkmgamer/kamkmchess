@@ -36,6 +36,7 @@ describe('game review worker ownership and recovery', () => {
     const game = replay();
     const result = await reviewGame(game, new AbortController().signal, vi.fn());
     expect(result.moves.map(move => move.grade)).toEqual(['best', 'best']);
+    expect(result.moves.map(move => [move.bestLine, move.playedLine])).toEqual([[['e2e4'], ['e2e4']], [['e7e5'], ['e7e5']]]);
     expect(mock.download.mock.calls.map(call => call[0])).toEqual(['stockfish-lite']);
     expect(mock.search.mock.calls.map(call => call[0].moves)).toEqual([[], ['e2e4']]);
     expect(mock.close).toHaveBeenCalledWith('stockfish-lite'); expect(mock.save).toHaveBeenCalledTimes(2);

@@ -26,10 +26,10 @@ describe('sidebar account controls', () => {
     expect(client.signInWithGoogle).toHaveBeenCalledWith('https://chess.example/#home');
     expect(client.openUserProfile).not.toHaveBeenCalled();
 
-    client.user = { id: 'user_a', fullName: 'Alex Player', primaryEmailAddress: { emailAddress: 'alex@example.com' }, imageUrl: 'https://img.clerk.com/avatar.png' };
+    client.user = { id: 'user_a', fullName: 'Alex Player', username: 'alex', primaryEmailAddress: { emailAddress: 'alex@example.com' }, imageUrl: 'https://img.clerk.com/avatar.png' };
     client.session = { getToken: async () => 'token' };
     notify();
-    expect(controls.getSnapshot().user).toEqual({ name: 'Alex Player', email: 'alex@example.com', imageUrl: 'https://img.clerk.com/avatar.png' });
+    expect(controls.getSnapshot().user).toEqual({ name: 'Alex Player', username: 'alex', email: 'alex@example.com', imageUrl: 'https://img.clerk.com/avatar.png' });
     await controls.openSettings();
     expect(client.openUserProfile).toHaveBeenCalledOnce();
     expect(client.signInWithGoogle).toHaveBeenCalledOnce();
