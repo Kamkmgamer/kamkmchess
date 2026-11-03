@@ -1385,11 +1385,11 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
               setFeedback(`Joined. You play ${hostedGame.side}.`);
             }).catch(error => setFeedback(conciseError(error))); }}>
             {hostedGame.side === 'white' ? 'Play white' : 'Play black'}</button></>}
-          <div className="button-row">
+          {hostedWaiting && <div className="button-row">
             <CopyButton label="Copy viewing link" value={hostedGame.watchUrl} />
             {(Object.entries(hostedGame.invitations) as ['white' | 'black', string][]).map(([color, url]) =>
               <CopyButton key={color} label={`Copy ${color} invite`} value={seatPrompt(url)} />)}
-          </div>
+          </div>}
           {hostedGame.connectionError() && <p className="status-detail" role="alert">{hostedGame.connectionError()}</p>}
         </nav>}
         <nav hidden={setupOpen} className="board-tools" aria-label="Board tools"><IconButton icon="flip" label="Flip board" onClick={() => setOrientation(side => side === 'white' ? 'black' : 'white')} />

@@ -4,13 +4,13 @@ import type { PageAgentApi } from '../../src/agents/webmcp.js';
 
 declare global { interface Window { kamkmChessAgent?: PageAgentApi } }
 
-async function hostedGame(page: Page) {
+async function hostedGame(page: Page, board = { status: 'waiting-for-players' }) {
   const calls: { name: string; arguments: Record<string, unknown> }[] = [];
   await page.route('**/v1/mcp*', async route => {
     const origin = new URL(route.request().url()).origin;
     const watch = `${origin}/play/agent?watch=match-fixture`;
     if (route.request().method() === 'GET') {
-      await route.fulfill({ json: { gameId: 'match-fixture', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', status: 'waiting-for-players', players: { white: 'GLM-4.7 (self-reported)', black: 'Kimi K2 (self-reported)' }, moves: [], clock: { whiteMs: 10800000, blackMs: 10800000 }, result: null, watch_url: watch } });
+      await route.fulfill({ json: { gameId: 'match-fixture', fen: 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1', status: board.status, players: { white: 'GLM-4.7 (self-reported)', black: 'Kimi K2 (self-reported)' }, moves: [], clock: { whiteMs: 10800000, blackMs: 10800000 }, result: null, watch_url: watch } });
       return;
     }
     const rpc = route.request().postDataJSON() as { id: number; method: string; params: { name: string; arguments: Record<string, unknown> } };
@@ -36,7 +36,8 @@ test('the page advertises MCP instead of local gameplay tools', async ({ page })
 });
 
 test('Agent seats have separate invitations and a public live viewer', async ({ page }) => {
-  const calls = await hostedGame(page);
+  const board = { status: 'waiting-for-players' };
+  const calls = await hostedGame(page, board);
   await page.goto('/play?setup=new');
   await page.getByLabel('White', { exact: true }).selectOption('agent');
   await page.getByLabel('Black', { exact: true }).selectOption('agent');
@@ -64,6 +65,8 @@ test('Agent seats have separate invitations and a public live viewer', async ({ 
   expect(viewing).not.toContain('secret');
   expect(viewing).not.toContain('#');
   await expect(page.getByRole('button', { name: /^Play (white|black)$/ })).toHaveCount(0);
+  board.status = 'active';
+  await expect(page.getByRole('button', { name: /Copy (viewing link|white invite|black invite)/ })).toHaveCount(0);
 });
 
 test('a human joins their side while the opposite agent gets its prompt', async ({ page }) => {

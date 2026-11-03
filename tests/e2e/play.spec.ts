@@ -761,3 +761,36 @@ test('reports an upstream failure without calling it a connection failure', asyn
   expect(exported.games[0]?.chunks.some(chunk => chunk.bytes.encoding === 'base64')).toBe(true);
   expect(JSON.stringify(exported)).toContain('"httpStatus":502');
 });
+
+test('includes embedded logos and cross-origin player photos in board downloads', async ({ page }) => {
+  const svg = (color: string) => `<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="${color}"/></svg>`;
+  await page.route('https://avatar.example/photo.svg', route => route.fulfill({ contentType: 'image/svg+xml', headers: { 'access-control-allow-origin': '*' }, body: svg('lime') }));
+  await page.goto('/play');
+  await expect(page.getByRole('button', { name: 'Download board screenshot' })).toBeVisible();
+  const boxes = await page.evaluate(async (red) => {
+    const photo = new Image(); photo.src = 'https://avatar.example/photo.svg'; await photo.decode();
+    const rows = document.querySelectorAll<HTMLElement>('#board .player-row');
+    for (const [index, row] of Array.from(rows).entries()) {
+      const image = document.createElement('img');
+      image.src = index === 0 ? `data:image/svg+xml,${encodeURIComponent(red)}` : 'https://avatar.example/photo.svg';
+      image.style.cssText = 'width:40px;height:40px;position:absolute;left:0;top:0;z-index:10';
+      row.style.position = 'relative'; row.append(image);
+
+    }
+    const panel = document.querySelector('#board')!.getBoundingClientRect();
+    return Array.from(rows, row => { const box = row.querySelector('img:last-child')!.getBoundingClientRect(); return { x: box.x - panel.x + 20, y: box.y - panel.y + 20 }; });
+  }, svg('red'));
+  const pending = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download board screenshot' }).click();
+  const stream = await (await pending).createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const colors = await page.evaluate(async ({ png, boxes }) => {
+    const image = new Image(); image.src = `data:image/png;base64,${png}`; await image.decode();
+    const canvas = document.createElement('canvas'); canvas.width = image.width; canvas.height = image.height;
+    const context = canvas.getContext('2d')!; context.drawImage(image, 0, 0);
+    return boxes.map(({ x, y }) => Array.from(context.getImageData(Math.round(x * 2), Math.round(y * 2), 1, 1).data));
+  }, { png: Buffer.concat(chunks).toString('base64'), boxes });
+  expect(colors[0]).toEqual([255, 0, 0, 255]);
+  expect(colors[1]).toEqual([0, 255, 0, 255]);
+});

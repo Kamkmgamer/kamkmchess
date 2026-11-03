@@ -55,8 +55,7 @@ export function ScreenshotButton({ target }: { readonly target: RefObject<HTMLEl
         filter: node => !(node instanceof HTMLElement && (
           (node.parentElement === target.current && !node.matches('.player-row, .playing-board')) ||
           node.matches('.board-tools, .promotion-panel, .premove-notice, .premove-plan, .board-inspection, .sr-only') ||
-          (node.tagName === 'BUTTON' && !node.classList.contains('evaluation-bar')) ||
-          (node instanceof HTMLImageElement && new URL(node.src, location.href).origin !== location.origin)
+          (node.tagName === 'BUTTON' && !node.classList.contains('evaluation-bar'))
         )),
       });
       const link = document.createElement('a');
