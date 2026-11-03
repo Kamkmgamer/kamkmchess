@@ -3,7 +3,7 @@ import type { ClerkBrowserPort, ClerkSdkLoader } from './clerk';
 
 export interface AccountControlsState {
   readonly status: 'disabled' | 'loading' | 'ready' | 'error';
-  readonly user: { readonly name: string; readonly email: string | null; readonly imageUrl: string | null } | null;
+  readonly user: { readonly name: string; readonly username: string | null; readonly email: string | null; readonly imageUrl: string | null } | null;
   readonly busy: boolean;
   readonly message: string;
 }
@@ -30,6 +30,7 @@ export function createAccountControls(publishableKey: string | null, options: {
     const email = user?.primaryEmailAddress?.emailAddress ?? null;
     publish({ ...state, status: 'ready', user: user ? {
       name: user.fullName || user.username || email || 'Chess player',
+      username: user.username?.trim() || null,
       email,
       imageUrl: user.imageUrl || null,
     } : null, message: '' });

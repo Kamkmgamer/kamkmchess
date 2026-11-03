@@ -1145,7 +1145,7 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
     const player = snapshot.checkpoint.selections.players[side];
     if (player.kind === 'human') {
       // The seat this browser plays in a hosted game reads as its owner.
-      if (hostedGame && seatJoined && side === hostedGame.side) return hostedPlayerName.trim() || clerkUser?.name || 'Guest';
+      if (hostedGame && seatJoined && side === hostedGame.side) return hostedPlayerName.trim() || clerkUser?.username || clerkUser?.name || 'Guest';
       if (!hostedGame && clerkUser && players[side === 'white' ? 'black' : 'white'].kind !== 'human') return clerkUser.name;
       return side === 'white' ? 'White' : 'Black';
     }
@@ -1377,8 +1377,9 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           </div>
         </div>
         {hostedGame && <nav hidden={setupOpen} className="hosted-game" aria-label="Hosted game">
-          {!seatJoined && hostedGame.hasSeat && <><label>Player name <input value={hostedPlayerName} onChange={event => setHostedPlayerName(event.target.value)} placeholder={clerkUser?.name || 'Guest'} maxLength={40} /></label><button className="button primary" type="button" disabled={working}
-            onClick={() => { void hostedGame.joinSeat(hostedPlayerName.trim() || clerkUser?.name || 'Guest').then(() => {
+          {!seatJoined && hostedGame.hasSeat && <>{!clerkUser && <label>Player name <input value={hostedPlayerName} onChange={event => setHostedPlayerName(event.target.value)} placeholder="Guest" maxLength={40} /></label>}<button className="button primary" type="button" disabled={working || account.status === 'loading'}
+            onClick={() => { const playerName = clerkUser ? clerkUser.username || clerkUser.name : hostedPlayerName.trim() || 'Guest'; void hostedGame.joinSeat(playerName).then(() => {
+              setHostedPlayerName(playerName);
               // The board orients to the side this browser now plays.
               setOrientation(hostedGame.side);
               setFeedback(`Joined. You play ${hostedGame.side}.`);

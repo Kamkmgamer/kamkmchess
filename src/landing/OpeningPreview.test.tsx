@@ -20,7 +20,7 @@ describe('landing integration with the playable workspace', () => {
 
   it('shows the signed-in account in the settings control', () => {
     const markup = renderToStaticMarkup(<GameNavigation onOptions={() => {}} onNavigate={() => {}} onSettings={() => {}}
-      account={{ status: 'ready', user: { name: 'Alex Player', email: 'alex@example.com', imageUrl: 'https://img.clerk.com/avatar.png' }, busy: false, message: '' }} onAccount={() => {}} />);
+      account={{ status: 'ready', user: { name: 'Alex Player', username: 'alex', email: 'alex@example.com', imageUrl: 'https://img.clerk.com/avatar.png' }, busy: false, message: '' }} onAccount={() => {}} />);
     expect(markup).toContain('Alex Player');
     expect(markup).toContain('alex@example.com');
     expect(markup).toContain('aria-label="Account settings"');
