@@ -29,6 +29,7 @@ import { parseArgs } from 'node:util';
 
 /** @type {Record<string, number>} */
 const LEVELS = { casual: 100, club: 1000, strong: 5000 };
+const REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 const VERIFIED_ROUTES = new Set(['api', 'claude-code']);
 
 export const SYSTEM_PROMPT = [
@@ -55,6 +56,7 @@ export const SYSTEM_PROMPT = [
  * @property {string} apiKey
  * @property {string} color
  * @property {string} level
+ * @property {string} [reasoning]
  * @property {number} minutes
  * @property {number} increment
  * @property {string} invite
@@ -125,16 +127,19 @@ export function parseAnswer(text) {
 }
 
 /**
- * @param {{ baseUrl: string, apiKey: string, model?: string | undefined }} options
+ * Plays one chat turn against the OpenAI-compatible API. A reasoning effort
+ * goes into the request body, so an api game with --reasoning plays at that
+ * effort instead of only claiming it.
+ * @param {{ baseUrl: string, apiKey: string, model?: string | undefined, reasoning?: string | undefined }} options
  * @param {{ role: string, content: string }[]} messages
  * @param {typeof fetch} [fetcher]
  * @returns {Promise<string>}
  */
-async function chat({ baseUrl, apiKey, model }, messages, fetcher = fetch) {
+async function chat({ baseUrl, apiKey, model, reasoning }, messages, fetcher = fetch) {
   const response = await fetcher(`${baseUrl.replace(/\/+$/, '')}/chat/completions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ model, messages }),
+    body: JSON.stringify({ model, messages, ...(reasoning ? { reasoning_effort: reasoning } : {}) }),
   });
   if (!response.ok) throw new Error(`the model API answered ${response.status}`);
   const body = await response.json();
@@ -192,7 +197,7 @@ export async function playApiGame(client, options, log, fetcher = fetch) {
 }
 
 /**
- * @param {Pick<RunOptions, 'name' | 'color' | 'level' | 'minutes' | 'increment' | 'invite'>} options
+ * @param {Pick<RunOptions, 'name' | 'color' | 'level' | 'reasoning' | 'minutes' | 'increment' | 'invite'>} options
  * @param {string} route
  */
 function startArgs(options, route) {
@@ -203,6 +208,7 @@ function startArgs(options, route) {
     minutes: options.minutes,
     increment_seconds: options.increment,
     runner: `kamkm-runner/${route}`,
+    ...(options.reasoning ? { reasoning_effort: options.reasoning } : {}),
     ...(options.invite && VERIFIED_ROUTES.has(route) ? { invite_code: options.invite } : {}),
   };
 }
@@ -277,6 +283,7 @@ function usage() {
   --api-key-env NAME   Environment variable with the API key (default OPENROUTER_API_KEY)
   --color white|black|random   (default white)
   --level casual|club|strong   Stockfish strength (default club)
+  --reasoning low|medium|high|xhigh|max   Reasoning effort for the model (api: also sent as reasoning_effort; every route reports it)
   --minutes N --increment N    Clock (default 180 and 60)
   --games N            Games to play in a row (default 1)
   --invite CODE        Verified-board invite code (or KAMKM_INVITE_CODE)`;
@@ -288,18 +295,20 @@ async function main() {
       via: { type: 'string' }, server: { type: 'string', default: 'https://api.chess.khalil.mageed.net/v1/mcp' },
       model: { type: 'string' }, name: { type: 'string' }, 'base-url': { type: 'string', default: 'https://openrouter.ai/api/v1' },
       'api-key-env': { type: 'string', default: 'OPENROUTER_API_KEY' }, color: { type: 'string', default: 'white' },
-      level: { type: 'string', default: 'club' }, minutes: { type: 'string', default: '180' }, increment: { type: 'string', default: '60' },
+      level: { type: 'string', default: 'club' }, reasoning: { type: 'string' },
+      minutes: { type: 'string', default: '180' }, increment: { type: 'string', default: '60' },
       games: { type: 'string', default: '1' }, invite: { type: 'string' }, help: { type: 'boolean' },
     },
   });
-  if (values.help || !['api', 'claude-code', 'codex'].includes(values.via ?? '') || !(values.level in LEVELS)) {
+  if (values.help || !['api', 'claude-code', 'codex'].includes(values.via ?? '') || !(values.level in LEVELS)
+    || (values.reasoning !== undefined && !REASONING_EFFORTS.has(values.reasoning))) {
     process.stdout.write(`${usage()}\n`);
     process.exit(values.help ? 0 : 2);
   }
   /** @type {RunOptions} */
   const options = {
     via: values.via ?? '', server: values.server, model: values.model, baseUrl: values['base-url'],
-    color: values.color, level: values.level, minutes: Number(values.minutes), increment: Number(values.increment),
+    color: values.color, level: values.level, reasoning: values.reasoning ?? '', minutes: Number(values.minutes), increment: Number(values.increment),
     invite: values.invite ?? process.env.KAMKM_INVITE_CODE ?? '',
     name: values.name ?? values.model ?? (values.via === 'codex' ? 'Codex' : 'Claude'),
     apiKey: process.env[values['api-key-env']] ?? '',

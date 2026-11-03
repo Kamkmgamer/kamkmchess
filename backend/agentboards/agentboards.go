@@ -1,9 +1,11 @@
 // Package agentboards keeps the record of remote agent games and serves the
-// community and verified boards.
+// verified, community and browser boards.
 //
 // A game is verified only when it was started with an invite code an
-// operator issued for the official runner. Everything else is a community
-// result under a self-reported name.
+// operator issued for the official runner. Every other MCP game is a
+// community result under a self-reported name. A browser result is the
+// weakest record: the visitor's own device played and scored the game and
+// nothing on the server checked it.
 package agentboards
 
 import (
@@ -12,12 +14,31 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/Kamkmgamer/kamkmchess/backend/agentname"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// The names of the boards Read serves.
+const (
+	BoardVerified  = "verified"
+	BoardCommunity = "community"
+	BoardBrowser   = "browser"
+)
+
+// ReasoningEfforts are the reasoning levels an agent may report for itself.
+var ReasoningEfforts = map[string]bool{"low": true, "medium": true, "high": true, "xhigh": true, "max": true}
+
+// results are the outcomes a browser report may claim, from the model's
+// own perspective.
+var results = map[string]bool{"win": true, "draw": true, "loss": true}
+
+// ErrInvalidReport reports a browser result the validation rejects.
+var ErrInvalidReport = errors.New("agentboards: the reported game is not valid")
 
 // Store reads and writes the agent game records.
 type Store struct {
@@ -29,11 +50,12 @@ func New(db *pgxpool.Pool) *Store { return &Store{db: db} }
 
 // Game is one recorded agent game.
 type Game struct {
-	MatchID       string
-	AgentSeat     string
-	ModelName     string
-	EngineThinkMs int
-	Runner        string
+	MatchID         string
+	AgentSeat       string
+	ModelName       string
+	ReasoningEffort string
+	EngineThinkMs   int
+	Runner          string
 }
 
 const codePrefix = "kinv_"
@@ -77,11 +99,73 @@ func (s *Store) Record(ctx context.Context, game Game, code string) (bool, error
 	if value := strings.TrimSpace(game.Runner); value != "" {
 		runner = &value
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO online_agent_games(match_id,agent_seat,model_name,engine_think_ms,verified,invite_id,runner) VALUES($1,$2,$3,$4,$5,$6,$7)`,
-		game.MatchID, game.AgentSeat, game.ModelName, game.EngineThinkMs, inviteID != nil, inviteID, runner); err != nil {
+	var effort any
+	if value := strings.TrimSpace(game.ReasoningEffort); ReasoningEfforts[value] {
+		effort = value
+	}
+	if _, err = tx.Exec(ctx, `INSERT INTO online_agent_games(match_id,agent_seat,model_name,reasoning_effort,engine_think_ms,verified,invite_id,runner) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
+		game.MatchID, game.AgentSeat, game.ModelName, effort, game.EngineThinkMs, inviteID != nil, inviteID, runner); err != nil {
 		return false, err
 	}
 	return inviteID != nil, tx.Commit(ctx)
+}
+
+// Report is one browser-reported game result for the browser board.
+type Report struct {
+	ClientGameID    string
+	ModelName       string
+	ReasoningEffort string
+	EngineThinkMs   int
+	Result          string
+	MoveCount       int
+}
+
+var clientGameIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,80}$`)
+
+// RecordClient stores one browser-reported result. The report is validated
+// here, so every caller keeps the table's checks: a report outside its
+// bounds is ErrInvalidReport, and a repeated client game id is stored once
+// and quietly ignored after.
+func (s *Store) RecordClient(ctx context.Context, report Report) error {
+	stored, err := report.validated()
+	if err != nil {
+		return err
+	}
+	var effort any
+	if stored.ReasoningEffort != "" {
+		effort = stored.ReasoningEffort
+	}
+	_, err = s.db.Exec(ctx, `INSERT INTO agent_client_games(client_game_id,model_name,reasoning_effort,engine_think_ms,result,move_count) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT (client_game_id) DO NOTHING`,
+		stored.ClientGameID, stored.ModelName, effort, stored.EngineThinkMs, stored.Result, stored.MoveCount)
+	return err
+}
+
+// validated returns the report in the shape the table stores, or
+// ErrInvalidReport when the report is outside its bounds.
+func (r Report) validated() (Report, error) {
+	stored := Report{
+		ClientGameID:    strings.TrimSpace(r.ClientGameID),
+		ModelName:       agentname.Clean(r.ModelName),
+		ReasoningEffort: strings.ToLower(strings.TrimSpace(r.ReasoningEffort)),
+		EngineThinkMs:   r.EngineThinkMs,
+		Result:          r.Result,
+		MoveCount:       r.MoveCount,
+	}
+	switch {
+	case !clientGameIDPattern.MatchString(stored.ClientGameID):
+		return Report{}, ErrInvalidReport
+	case stored.ModelName == "":
+		return Report{}, ErrInvalidReport
+	case stored.ReasoningEffort != "" && !ReasoningEfforts[stored.ReasoningEffort]:
+		return Report{}, ErrInvalidReport
+	case stored.EngineThinkMs < 100 || stored.EngineThinkMs > 10_000:
+		return Report{}, ErrInvalidReport
+	case !results[stored.Result]:
+		return Report{}, ErrInvalidReport
+	case stored.MoveCount < 0 || stored.MoveCount > 1000:
+		return Report{}, ErrInvalidReport
+	}
+	return stored, nil
 }
 
 // IssueInvite creates an invite and returns its code. The code is shown once:
@@ -116,15 +200,17 @@ func Level(thinkMs int) string {
 	}
 }
 
-// Row is one model at one level.
+// Row is one model at one level and one reasoning effort. An empty effort
+// holds games whose effort was never reported.
 type Row struct {
-	Model  string  `json:"model"`
-	Level  string  `json:"level"`
-	Games  int     `json:"games"`
-	Wins   int     `json:"wins"`
-	Draws  int     `json:"draws"`
-	Losses int     `json:"losses"`
-	Score  float64 `json:"score"`
+	Model           string  `json:"model"`
+	ReasoningEffort string  `json:"reasoningEffort"`
+	Level           string  `json:"level"`
+	Games           int     `json:"games"`
+	Wins            int     `json:"wins"`
+	Draws           int     `json:"draws"`
+	Losses          int     `json:"losses"`
+	Score           float64 `json:"score"`
 }
 
 // Board is one board.
@@ -135,9 +221,49 @@ type Board struct {
 }
 
 // Read aggregates the finished games of one board. Aborted games are left
-// out: an abort is unscored.
-func (s *Store) Read(ctx context.Context, verified bool) (Board, error) {
-	rows, err := s.db.Query(ctx, `SELECT g.model_name,
+// out: an abort is unscored. An unknown board name is the community board.
+func (s *Store) Read(ctx context.Context, board string) (Board, error) {
+	name := board
+	if name != BoardVerified && name != BoardBrowser {
+		name = BoardCommunity
+	}
+	query, args := boardQuery(name)
+	rows, err := s.db.Query(ctx, query, args...)
+	if err != nil {
+		return Board{}, err
+	}
+	defer rows.Close()
+	result := Board{Board: name, Rows: []Row{}, UpdatedAt: time.Now().UTC()}
+	for rows.Next() {
+		var row Row
+		if err = rows.Scan(&row.Model, &row.ReasoningEffort, &row.Level, &row.Games, &row.Wins, &row.Draws, &row.Losses); err != nil {
+			return Board{}, err
+		}
+		row.Score = (float64(row.Wins) + 0.5*float64(row.Draws)) / float64(row.Games)
+		result.Rows = append(result.Rows, row)
+	}
+	return result, rows.Err()
+}
+
+// boardQuery picks the aggregation of one board with its arguments: the MCP
+// games for the community and verified boards, the browser-reported games
+// for the browser board. The verified flag scopes the MCP query.
+func boardQuery(name string) (query string, args []any) {
+	if name == BoardBrowser {
+		return `SELECT model_name,
+				COALESCE(reasoning_effort, '') AS effort,
+				CASE WHEN engine_think_ms < 500 THEN 'casual' WHEN engine_think_ms < 3000 THEN 'club' ELSE 'strong' END AS level,
+				count(*),
+				count(*) FILTER (WHERE result = 'win'),
+				count(*) FILTER (WHERE result = 'draw'),
+				count(*) FILTER (WHERE result = 'loss')
+			FROM agent_client_games
+			GROUP BY 1, 2, 3
+			ORDER BY 3, (count(*) FILTER (WHERE result = 'win') + 0.5 * count(*) FILTER (WHERE result = 'draw'))::float / count(*) DESC, 4 DESC, 1, 2
+			LIMIT 200`, nil
+	}
+	return `SELECT g.model_name,
+			COALESCE(g.reasoning_effort, '') AS effort,
 			CASE WHEN g.engine_think_ms < 500 THEN 'casual' WHEN g.engine_think_ms < 3000 THEN 'club' ELSE 'strong' END AS level,
 			count(*),
 			count(*) FILTER (WHERE m.result->>'winner' = g.agent_seat),
@@ -145,24 +271,8 @@ func (s *Store) Read(ctx context.Context, verified bool) (Board, error) {
 			count(*) FILTER (WHERE m.result->>'winner' IS NOT NULL AND m.result->>'winner' <> g.agent_seat)
 		FROM online_agent_games g JOIN online_matches m ON m.match_id = g.match_id
 		WHERE g.verified = $1 AND m.status = 'completed' AND m.result->>'kind' <> 'abort'
-		GROUP BY 1, 2
-		ORDER BY 2, (count(*) FILTER (WHERE m.result->>'winner' = g.agent_seat) + 0.5 * count(*) FILTER (WHERE m.result->>'kind' = 'draw'))::float / count(*) DESC, 3 DESC, 1
-		LIMIT 200`, verified)
-	if err != nil {
-		return Board{}, err
-	}
-	defer rows.Close()
-	board := Board{Board: "community", Rows: []Row{}, UpdatedAt: time.Now().UTC()}
-	if verified {
-		board.Board = "verified"
-	}
-	for rows.Next() {
-		var row Row
-		if err = rows.Scan(&row.Model, &row.Level, &row.Games, &row.Wins, &row.Draws, &row.Losses); err != nil {
-			return Board{}, err
-		}
-		row.Score = (float64(row.Wins) + 0.5*float64(row.Draws)) / float64(row.Games)
-		board.Rows = append(board.Rows, row)
-	}
-	return board, rows.Err()
+		GROUP BY 1, 2, 3
+		ORDER BY 3, (count(*) FILTER (WHERE m.result->>'winner' = g.agent_seat) + 0.5 * count(*) FILTER (WHERE m.result->>'kind' = 'draw'))::float / count(*) DESC, 4 DESC, 1, 2
+			LIMIT 200`, []any{name == BoardVerified}
 }
+

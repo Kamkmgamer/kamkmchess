@@ -7,7 +7,7 @@ import { ScreenshotButton } from './ScreenshotButton.js';
 import { MoveList } from './MoveList.js';
 import { OnlineWorkspace } from './online-workspace.js';
 import type { OnlineComposition } from '../online/composition.js';
-import { privateAgentEntryFor, privateAgentEntryForBinding, privateAgentId, readPrivateAgentCatalog, seatChoiceAvailable } from '../accounts/agent-catalog.js';
+import { privateAgentEntryFor, privateAgentEntryForBinding, privateAgentId, publicAgentLabel, readPrivateAgentCatalog, seatChoiceAvailable } from '../accounts/agent-catalog.js';
 import type { PrivateAgentEntry } from '../accounts/agent-catalog.js';
 import type { ConnectionNamespace, ConnectionStore } from '../providers/connections/index.js';
 import { createAgentReadinessCheck } from '../online/agent-readiness.js';
@@ -59,6 +59,7 @@ import { createEngineSelection, isEngineSelection, recommendEngine, runEngineTur
 import { AGENT_TIME_CONTROL, agentBridge, createAgentSelection, isAgentSelection, registerAgentTools, runAgentTurn } from '../agents/index.js';
 import type { AgentGameView, AgentStartOptions } from '../agents/index.js';
 import { remoteEndpoint, seatPrompt } from '../agents/remote.js';
+import { reportAgentGame } from '../agents/report.js';
 import type { PlayerSelectionV1 } from '../storage/index.js';
 import { BROWSER_ENGINES, stopBrowserEngines, stopUnusedBrowserEngines } from '../engines/browser.js';
 import { engineSettings } from '../engines/local.js';
@@ -214,6 +215,10 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   const [generationJournal, setGenerationJournal] = useState<GenerationJournalV1 | null>(null);
   const [journalRefresh, setJournalRefresh] = useState(0);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
+  /** The finished game this browser reported to the agent leaderboard, if it did. */
+  const [agentReport, setAgentReport] = useState<{ gameId: string; sent: boolean } | null>(null);
+  /** The engine seat's realized think times of one game, accumulated while it moved, for the browser-board report. */
+  const [engineThink, setEngineThink] = useState<{ gameId: string; sumMs: number; moves: number } | null>(null);
   const [onlineOpen, setOnlineOpen] = useState(() => onlineRoute === 'new' || onlineRoute === 'profile');
   const [menuOpen, setMenuOpen] = useState(false);
   const [onlineInitialTab, setOnlineInitialTab] = useState<'games' | 'new' | 'profile'>(routedOnlineTab);
@@ -703,10 +708,13 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
           }
           if (isEngineSelection(queuedSelection)) {
             setGenerationDetail('Thinking…');
-            const accepted = await runEngineTurn(session.controller, abort!.signal);
+            const turn = await runEngineTurn(session.controller, abort!.signal);
             if (sessionRef.current.gameId !== session.gameId) return;
-            setGenerationState(accepted ? 'idle' : 'failed');
-            setGenerationDetail(accepted ? 'Move saved.' : 'Move unavailable. Retry.');
+            if (turn.accepted) setEngineThink(state => state?.gameId === session.gameId
+              ? { gameId: session.gameId, sumMs: state.sumMs + turn.thinkMs, moves: state.moves + 1 }
+              : { gameId: session.gameId, sumMs: turn.thinkMs, moves: 1 });
+            setGenerationState(turn.accepted ? 'idle' : 'failed');
+            setGenerationDetail(turn.accepted ? 'Move saved.' : 'Move unavailable. Retry.');
             setJournalRefresh(revision => revision + 1);
             return;
           }
@@ -1166,6 +1174,45 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
   }, [finalEvent, finalTone]);
   const result = snapshot.checkpoint.result;
   const practiceOffered = result.kind === 'final' && PRACTICE_REASONS.has(result.reason) && result.winner === humanColor && hostedGame === null;
+  /** The finished model seat against the browser's engine this device could report to the browser board, if there is one. Hosted games are recorded by the server already and never reported twice. */
+  const agentReportOffer = (() => {
+    if (!final || hostedGame !== null || publicConfig.apiBaseUrl === null) return null;
+    if (snapshot.checkpoint.result.kind !== 'final') return null;
+    const seats = snapshot.checkpoint.selections.players;
+    const sides = ['white', 'black'] as const;
+    const modelSides = sides.filter(side => {
+      const seat = seats[side];
+      return seat.kind === 'model' && !isEngineSelection(seat) && !isAgentSelection(seat);
+    });
+    const [modelSide] = modelSides;
+    if (modelSide === undefined || modelSides.length !== 1) return null;
+    const otherSeat = seats[modelSide === 'white' ? 'black' : 'white'];
+    if (!isEngineSelection(otherSeat)) return null;
+    const model = seats[modelSide];
+    if (model.kind !== 'model') return null;
+    const winner = snapshot.checkpoint.result.winner;
+    // The band reflects what was played: the engine's realized think time per
+    // move, or its configured think time when it never moved.
+    const realizedThink = engineThink !== null && engineThink.gameId === snapshot.checkpoint.gameId && engineThink.moves > 0
+      ? Math.round(engineThink.sumMs / engineThink.moves)
+      : engineSettings(otherSeat).moveTimeMs;
+    return {
+      clientGameId: snapshot.checkpoint.gameId,
+      model: publicAgentLabel(model.modelRoutingId),
+      ...(model.reasoningEffort ? { reasoningEffort: model.reasoningEffort } : {}),
+      engineThinkMs: realizedThink,
+      result: winner === 'draw' ? 'draw' as const : winner === modelSide ? 'win' as const : 'loss' as const,
+      moveCount: history.count,
+    };
+  })();
+  const reportAgentResult = () => {
+    if (!agentReportOffer) return;
+    const offer = agentReportOffer;
+    void reportAgentGame(publicConfig.apiBaseUrl, offer).then(sent => {
+      if (sent) setAgentReport({ gameId: offer.clientGameId, sent: true });
+      else setFeedback('The agent leaderboard could not take the report. Try again.');
+    });
+  };
   const archiveText = [
     ...(generationJournal?.retainedMessages.map(message => `${message.role}: ${message.content}`) ?? []),
     ...(generationJournal?.discardedMessages.map(message => `Undone ${message.role}: ${message.content}`) ?? []),
@@ -1351,7 +1398,8 @@ export function App({ composition, initialSession, initialSnapshot, onOpenAccoun
         </div>
       </section>
       <aside className="moves-sidebar" id="moves-panel" ref={movesPanel} tabIndex={-1} aria-labelledby="moves-title">
-        {finalResult && <GameResultCard result={finalResult} onNewGame={() => openSetup()} onMakeVideo={() => makeRecap('video')} onReview={() => makeRecap('review')} />}
+        {finalResult && <GameResultCard result={finalResult} onNewGame={() => openSetup()} onMakeVideo={() => makeRecap('video')} onReview={() => makeRecap('review')}
+          {...(agentReportOffer ? { onReport: reportAgentResult, reported: agentReport?.sent === true && agentReport.gameId === agentReportOffer.clientGameId } : {})} />}
         {recapError && <p role="alert">{recapError}</p>}
         <div className="moves-heading"><h2 id="moves-title">Moves</h2><span className="count" aria-label={`Move ${history.ply} of ${history.count}`}>{history.ply}/{history.count}</span>
           <span className="mobile-board-return"><IconButton icon="board" label="Show board" aria-controls="board" onClick={() => { boardPanel.current?.focus({ preventScroll: true }); boardPanel.current?.scrollIntoView({ block: 'start' }); }} /></span>

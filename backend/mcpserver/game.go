@@ -10,12 +10,13 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/Kamkmgamer/kamkmchess/backend/agentboards"
+	"github.com/Kamkmgamer/kamkmchess/backend/agentname"
 	"github.com/Kamkmgamer/kamkmchess/backend/engine"
 	"github.com/Kamkmgamer/kamkmchess/backend/online"
 	"github.com/Kamkmgamer/kamkmchess/backend/onlineauth"
+	"github.com/Kamkmgamer/kamkmchess/backend/ratelimit"
 	"github.com/Kamkmgamer/kamkmchess/backend/serverengine"
 	"github.com/jackc/pgx/v5"
 )
@@ -102,7 +103,7 @@ type Options struct {
 type Server struct {
 	options  Options
 	sessions *sessionStore
-	starts   *rateLimiter
+	starts   *ratelimit.Limiter
 	premoves *premoveRegistry
 }
 
@@ -132,7 +133,7 @@ func New(options Options) (*Server, error) {
 	return &Server{
 		options:  options,
 		sessions: newSessionStore(options.MaxSessions, 2*time.Hour, options.Now),
-		starts:   newRateLimiter(options.StartsPerHour, time.Hour, options.Now),
+		starts:   ratelimit.New(options.StartsPerHour, time.Hour, options.Now),
 		premoves: newPremoveRegistry(),
 	}, nil
 }
@@ -175,6 +176,7 @@ func toolList() []map[string]any {
 		{"name": "start_game", "description": "Start a hosted game against Stockfish, another agent or a human. Share watch_url with your human and opponent_url with the invited player. Returns your private resume_token.", "inputSchema": map[string]any{
 			"type": "object", "required": []string{"model_name"}, "properties": map[string]any{
 				"model_name":        map[string]any{"type": "string", "description": "Your exact model and variant, e.g. \"Claude Opus 5.5\". Shown as self-reported."},
+				"reasoning_effort":  map[string]any{"type": "string", "enum": []string{"low", "medium", "high", "xhigh", "max"}, "description": "Your reasoning effort while choosing moves, if your API has one. Shown as self-reported on the leaderboard."},
 				"color":             map[string]any{"type": "string", "enum": []string{"white", "black", "random"}, "default": "white"},
 				"opponent":          map[string]any{"type": "string", "enum": []string{"engine", "agent", "human"}, "default": "engine", "description": "Agent or human creates a shared match and returns a separate opponent invitation URL."},
 				"starting_fen":      map[string]any{"type": "string", "description": "Optional custom starting position."},
@@ -235,7 +237,7 @@ func (s *Server) call(ctx context.Context, sess *session, address, name string, 
 	case "resign":
 		return s.resign(ctx, sess)
 	case "join_seat":
-		if name, ok := args["model_name"].(string); !ok || cleanName(name) == "" {
+		if name, ok := args["model_name"].(string); !ok || agentname.Clean(name) == "" {
 			return nil, errTool("model_name is required")
 		}
 		return s.resumeGame(ctx, sess, args)
@@ -258,9 +260,16 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 			return nil, errTool("you already have a game in progress: finish it or resign first")
 		}
 	}
-	name := cleanName(fmt.Sprint(args["model_name"]))
+	name := agentname.Clean(fmt.Sprint(args["model_name"]))
 	if _, ok := args["model_name"].(string); !ok || name == "" {
 		return nil, errTool("model_name is required: give your exact model and variant")
+	}
+	effort := ""
+	if value, ok := args["reasoning_effort"].(string); ok && strings.TrimSpace(value) != "" {
+		effort = strings.ToLower(strings.TrimSpace(value))
+		if !agentboards.ReasoningEfforts[effort] {
+			return nil, errTool("reasoning_effort must be one of: low, medium, high, xhigh, max")
+		}
 	}
 	code, _ := args["invite_code"].(string)
 	code = strings.TrimSpace(code)
@@ -286,7 +295,7 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 	if active >= s.options.MaxActiveGames {
 		return nil, errTool("the server is at its limit of games in progress: try again in a few minutes")
 	}
-	if !s.starts.allow(address) {
+	if !s.starts.Allow(address) {
 		return nil, errTool("too many games started from your address this hour: try again later")
 	}
 	agentSeat := online.SeatWhite
@@ -390,7 +399,8 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 		runner, _ := args["runner"].(string)
 		verified, err = s.options.Records.Record(ctx, agentboards.Game{
 			MatchID: match.MatchID, AgentSeat: string(agentSeat), ModelName: name,
-			EngineThinkMs: int(engine.ClampThink(think).Milliseconds()), Runner: clip(cleanName(runner), 40),
+			ReasoningEffort: effort,
+			EngineThinkMs:   int(engine.ClampThink(think).Milliseconds()), Runner: agentname.Clip(agentname.Clean(runner), 40),
 		}, code)
 		if err != nil {
 			s.cleanupFailedStart(sess)
@@ -457,8 +467,8 @@ func (s *Server) resumeGame(ctx context.Context, sess *session, args map[string]
 		name = strings.TrimSuffix(seat.PublicLabel, " (self-reported)")
 	}
 	sess.attach(principal, name, token)
-	if reported, ok := args["model_name"].(string); ok && cleanName(reported) != "" {
-		sess.agentName = cleanName(reported)
+	if reported, ok := args["model_name"].(string); ok && agentname.Clean(reported) != "" {
+		sess.agentName = agentname.Clean(reported)
 	}
 	s.sessions.markReady(sess)
 	return s.board(ctx, sess)
@@ -521,7 +531,7 @@ func (s *Server) makeMove(ctx context.Context, sess *session, args map[string]an
 		s.premoves.clear(match.MatchID, sess.seat)
 	}
 	if plan, _ := args["plan"].(string); strings.TrimSpace(plan) != "" {
-		sess.plan = clip(strings.TrimSpace(plan), 800)
+		sess.plan = agentname.Clip(strings.TrimSpace(plan), 800)
 	} else {
 		sess.plan = ""
 	}
@@ -829,28 +839,6 @@ func sideToMove(fen string) (online.Seat, bool) {
 		return online.SeatBlack, true
 	}
 	return online.SeatWhite, true
-}
-
-// cleanName keeps a self-reported name publishable: no control characters,
-// no address-like text, and short enough for the seat label.
-func cleanName(name string) string {
-	name = strings.Join(strings.Fields(name), " ")
-	name = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) || r == '@' {
-			return -1
-		}
-		return r
-	}, name)
-	name = strings.ReplaceAll(name, "://", " ")
-	return strings.TrimSpace(clip(name, 40))
-}
-
-func clip(value string, limit int) string {
-	runes := []rune(value)
-	if len(runes) <= limit {
-		return value
-	}
-	return string(runes[:limit])
 }
 
 func plural(n int) string {

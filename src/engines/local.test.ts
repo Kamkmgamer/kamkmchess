@@ -39,8 +39,8 @@ describe('local engines', () => {
         requests.push({ engineId: engine.engineId, moves: [...position.moves] });
         return { move: requests.length === 1 ? 'e2e4' : 'e7e5', engineName: engine.engineId, elapsedMs: 1 };
       });
-      expect(await runEngineTurn(controller, new AbortController().signal)).toBe(true);
-      expect(await runEngineTurn(controller, new AbortController().signal)).toBe(true);
+      expect(await runEngineTurn(controller, new AbortController().signal)).toMatchObject({ accepted: true, thinkMs: 1000 });
+      expect(await runEngineTurn(controller, new AbortController().signal)).toMatchObject({ accepted: true, thinkMs: 1000 });
       expect(requests).toMatchObject([{ engineId: 'stockfish-lite', moves: [] }, { engineId: 'stockfish-full', moves: ['e2e4'] }]);
       expect(controller.snapshot().checkpoint.rules.moves.map(move => move.san)).toEqual(['e4', 'e5']);
       const saved = (await store.readGame(gameId))!;

@@ -15,7 +15,8 @@ import (
 	"io"
 	"net/http"
 	"slices"
-	"strings"
+
+	"github.com/Kamkmgamer/kamkmchess/backend/ratelimit"
 )
 
 // ProtocolVersions are the MCP revisions the endpoint answers. The first is
@@ -129,7 +130,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{codeInvalidParams, "tools/call needs a name"}})
 			return
 		}
-		result, err := s.call(r.Context(), sess, clientAddress(r, s.options.TrustProxy), params.Name, params.Arguments)
+		result, err := s.call(r.Context(), sess, ratelimit.ClientAddress(r, s.options.TrustProxy), params.Name, params.Arguments)
 		writeJSON(w, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: req.ID, Result: toolResult(result, err)})
 	default:
 		writeJSON(w, http.StatusOK, rpcResponse{JSONRPC: "2.0", ID: req.ID, Error: &rpcError{codeMethodNotFound, "method not found: " + req.Method}})
@@ -211,28 +212,6 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
-}
-
-// clientAddress names the caller for the rate limits. The hosting proxy
-// appends the address it saw to X-Forwarded-For and keeps whatever the client
-// sent, so only the last entry is trustworthy.
-func clientAddress(r *http.Request, trustProxy bool) string {
-	if trustProxy {
-		if values := r.Header.Values("X-Forwarded-For"); len(values) > 0 {
-			last := values[len(values)-1]
-			if i := strings.LastIndex(last, ","); i >= 0 {
-				last = last[i+1:]
-			}
-			if last = strings.TrimSpace(last); last != "" {
-				return last
-			}
-		}
-	}
-	host := r.RemoteAddr
-	if i := strings.LastIndex(host, ":"); i > 0 {
-		host = host[:i]
-	}
-	return host
 }
 
 // errTool is a readable failure of a tool call.
