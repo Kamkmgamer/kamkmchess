@@ -7,7 +7,9 @@ case "${SSH_ORIGINAL_COMMAND:-}" in
 esac
 [[ "$revision" =~ ^[0-9a-f]{40}$ ]] || exit 2
 umask 077
-release=$(mktemp -d /opt/kamkmchess/release.XXXXXXXX)
+# The forced command sets KAMKM_BASE on a host whose deployment is not in /opt/kamkmchess.
+export KAMKM_BASE=${KAMKM_BASE:-/opt/kamkmchess}
+release=$(mktemp -d "$KAMKM_BASE/release.XXXXXXXX")
 trap 'rm -rf "$release"' EXIT
 ulimit -f 512000
 cat > "$release/input.tar.gz"

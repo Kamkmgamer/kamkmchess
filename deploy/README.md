@@ -78,6 +78,30 @@ schema, create roles or databases, or bypass row security. The API uses a pool
 of at most four connections. A browser build receives only the three public
 `KAMKM_PUBLIC_*` settings from `.env.example`.
 
+## Production host (since 2026-11-15)
+
+The API runs on the cPanel host `mageed.net` (178.238.238.2) again, as the
+`agentsoftmagic` user, in `/home/agentsoftmagic/kamkmchess-prod/server`. It is
+the same Compose stack as on the former target host, moved with its database
+and restore-fence volumes, encrypted backups and environment files. cPanel
+Apache terminates HTTPS with AutoSSL certificates and proxies to
+`127.0.0.1:18081` through an `api.htaccess`-style `.htaccess`:
+`api.chess.khalil.mageed.net` is a subdomain of the `khalilmageed` account
+(document root `public_html/api-chess`), and `chess-api.agent.soft-magic.com`
+uses `public_html/chess-api` of the `agentsoftmagic` account. Both A records
+are on the local nameservers with a 300-second TTL. The `agentsoftmagic`
+crontab runs `backup.sh` daily at 03:17 UTC; `backup.log` is next to `server/`.
+
+The CI key in that account's `authorized_keys` is restricted to
+`command="KAMKM_BASE=/home/agentsoftmagic/kamkmchess-prod .../server/cd-entrypoint.sh"`.
+`cd-entrypoint.sh` and `cd-target.sh` use `KAMKM_BASE` instead of
+`/opt/kamkmchess` when it is set. The former target host (104.204.68.77)
+keeps its stopped stack and data for recovery; its nginx only forwards both
+hostnames to the new host for clients with a stale DNS answer.
+
+The rest of this section describes the target-host deployment as it was
+between 2026-11-03 and 2026-11-15.
+
 ## Target host delivery
 
 The target host has an isolated deployment in `/opt/kamkmchess/server`. Its

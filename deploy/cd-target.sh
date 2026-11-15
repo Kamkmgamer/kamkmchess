@@ -1,11 +1,12 @@
 #!/bin/bash
 set -Eeuo pipefail
 release=${1:?release directory required}
-cd /opt/kamkmchess/server
-exec 9>/opt/kamkmchess/deploy.lock
+base=${KAMKM_BASE:-/opt/kamkmchess}
+cd "$base/server"
+exec 9>"$base/deploy.lock"
 flock -n 9 || { echo 'A deployment is already running.' >&2; exit 1; }
 compose=(docker compose -f postgres.compose.yml -f api.compose.yml -f api-target.compose.yml)
-source_ssh=(ssh -i /opt/kamkmchess/migration/id_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/opt/kamkmchess/tunnel/known_hosts -p 9004 agentsoftmagic@mageed.net)
+source_ssh=(ssh -i "$base/migration/id_ed25519" -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$base/tunnel/known_hosts" -p 9004 agentsoftmagic@mageed.net)
 first=0
 dump_file=
 if [ ! -f .target-cutover-complete ]; then first=1; fi
@@ -35,7 +36,7 @@ if [ "$first" -eq 1 ]; then
   # The source freezes writes and starts a recovery watchdog before dumping.
   # No public traffic is moved until the clone, migrations and backup pass.
   umask 077
-  dump_file=$(mktemp /opt/kamkmchess/source-dump.XXXXXXXX)
+  dump_file=$(mktemp "$base/source-dump.XXXXXXXX")
   "${source_ssh[@]}" dump > "$dump_file"
   "${compose[@]}" stop api
   docker exec -u postgres kamkmchess-postgres-1 dropdb -U kamkmchess_migrator --if-exists --force kamkmchess_incoming
@@ -56,8 +57,8 @@ test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18081/v1/online/
 
 if [ "$first" -eq 1 ]; then
   # A weekly bundle from the empty standby must not mask the first live one.
-  mkdir -p /opt/kamkmchess/standby-backups
-  for file in backups/weekly-*.kha; do [ ! -e "$file" ] || mv "$file" /opt/kamkmchess/standby-backups/; done
+  mkdir -p "$base/standby-backups"
+  for file in backups/weekly-*.kha; do [ ! -e "$file" ] || mv "$file" "$base/standby-backups/"; done
   ./backup.sh
   # The source operation is idempotent if its reply is lost after switching.
   "${source_ssh[@]}" cutover || "${source_ssh[@]}" cutover
