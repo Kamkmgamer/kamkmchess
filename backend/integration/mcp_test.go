@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -252,7 +253,7 @@ func TestMCPGamesFeedTheBoards(t *testing.T) {
 	if _, errText := c.tool("start_game", map[string]any{"model_name": "Model", "invite_code": "kinv_forged"}); !strings.Contains(errText, "not valid") {
 		t.Fatalf("a forged code = %q", errText)
 	}
-	verified, errText := c.tool("start_game", map[string]any{"model_name": "Verified Model", "engine_think_ms": 100, "invite_code": code, "runner": "kamkm-runner/api"})
+	verified, errText := c.tool("start_game", map[string]any{"model_name": "Verified Model", "reasoning_effort": "high", "engine_think_ms": 100, "invite_code": code, "runner": "kamkm-runner/api"})
 	if errText != "" || verified["board"] != "verified" {
 		t.Fatalf("an invited game = %v, %q", verified, errText)
 	}
@@ -270,19 +271,38 @@ func TestMCPGamesFeedTheBoards(t *testing.T) {
 	if _, errText = c.tool("resign", nil); errText != "" {
 		t.Fatal(errText)
 	}
-	verifiedBoard, err := store.Read(ctx, true)
+	verifiedBoard, err := store.Read(ctx, agentboards.BoardVerified)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(verifiedBoard.Rows) != 1 || verifiedBoard.Rows[0] != (agentboards.Row{Model: "Verified Model", Level: "casual", Games: 1, Losses: 1}) {
+	if len(verifiedBoard.Rows) != 1 || verifiedBoard.Rows[0] != (agentboards.Row{Model: "Verified Model", ReasoningEffort: "high", Level: "casual", Games: 1, Losses: 1}) {
 		t.Fatalf("verified board = %+v", verifiedBoard.Rows)
 	}
-	communityBoard, err := store.Read(ctx, false)
+	communityBoard, err := store.Read(ctx, agentboards.BoardCommunity)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(communityBoard.Rows) != 1 || communityBoard.Rows[0].Model != "Community Model" || communityBoard.Rows[0].Level != "strong" || communityBoard.Rows[0].Losses != 1 {
 		t.Fatalf("community board = %+v", communityBoard.Rows)
+	}
+	// A browser result the visitor's own device reported lands on its own
+	// board, keyed by its client game id once.
+	report := agentboards.Report{ClientGameID: "local-game-1", ModelName: "GPT-5 mini", ReasoningEffort: "medium", EngineThinkMs: 1000, Result: "win", MoveCount: 40}
+	if err := store.RecordClient(ctx, report); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordClient(ctx, report); err != nil {
+		t.Fatal(err)
+	}
+	browserBoard, err := store.Read(ctx, agentboards.BoardBrowser)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(browserBoard.Rows) != 1 || browserBoard.Rows[0] != (agentboards.Row{Model: "GPT-5 mini", ReasoningEffort: "medium", Level: "club", Games: 1, Wins: 1, Score: 1}) {
+		t.Fatalf("browser board = %+v", browserBoard.Rows)
+	}
+	if err := store.RecordClient(ctx, agentboards.Report{ClientGameID: "local-game-2", ModelName: "x", EngineThinkMs: 99, Result: "win", MoveCount: 1}); !errors.Is(err, agentboards.ErrInvalidReport) {
+		t.Fatalf("an out of range report was not rejected: %v", err)
 	}
 	// The public route serves the same rows.
 	server := httptest.NewServer(agentboards.Handler(store, time.Second))

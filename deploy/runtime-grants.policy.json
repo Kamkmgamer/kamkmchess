@@ -22,6 +22,7 @@
     "deletion_tombstones": ["SELECT", "INSERT"],
     "online_matches": ["SELECT", "INSERT", "UPDATE"],
     "online_agent_games": ["SELECT", "INSERT"],
+    "agent_client_games": ["SELECT", "INSERT"],
     "online_agent_invites": ["SELECT", "INSERT", "UPDATE"],
     "online_runtime_switches": ["SELECT", "INSERT", "UPDATE"],
     "online_seats": ["SELECT", "INSERT", "UPDATE"],

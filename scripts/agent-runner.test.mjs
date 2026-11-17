@@ -38,12 +38,16 @@ function fakes() {
   const answers = ['e5 please', '{"move":"e2e5"}', '{"move":"e2e4","plan":"centre"}', '{"move":"d2d4"}'];
   /** @type {unknown[]} */
   const prompts = [];
+  /** @type {Record<string, unknown>[]} */
+  const bodies = [];
   /** @type {typeof fetch} */
   const model = async (_url, init) => {
-    prompts.push(JSON.parse(String(init?.body)).messages);
+    const body = JSON.parse(String(init?.body));
+    bodies.push(body);
+    prompts.push(body.messages);
     return new Response(JSON.stringify({ choices: [{ message: { content: answers.shift() } }] }));
   };
-  return { calls, mcp, model, prompts };
+  return { calls, mcp, model, prompts, bodies };
 }
 
 test('the api route shows the model only the input and keeps the invite to itself', async () => {
@@ -58,8 +62,21 @@ test('the api route shows the model only the input and keeps the invite to itsel
   assert.equal(start.arguments.invite_code, 'kinv_secret');
   assert.equal(start.arguments.runner, 'kamkm-runner/api');
   assert.equal(start.arguments.engine_think_ms, 100);
+  assert.equal(start.arguments.reasoning_effort, undefined, 'no effort was claimed');
   for (const messages of prompts) assert.ok(!JSON.stringify(messages).includes('kinv_secret'), 'the model saw the invite code');
   // The chatty answer was corrected, the illegal move was fed back, then two moves were played.
   assert.deepEqual(calls.filter((call) => call.name === 'make_move').map((call) => call.arguments.move), ['e2e5', 'e2e4', 'd2d4']);
   assert.ok(JSON.stringify(prompts[2]).includes('e2e5 is illegal here.'));
+});
+
+test('a reasoning effort is claimed to the server and sent to the model API', async () => {
+  const { calls, mcp, model, bodies } = fakes();
+  const client = new McpClient('https://chess.example/v1/mcp', mcp);
+  await client.connect();
+  const options = { name: 'Model X', color: 'white', level: 'casual', reasoning: 'high', minutes: 10, increment: 0, invite: '', baseUrl: 'https://api.example', apiKey: 'k', model: 'x' };
+  await playApiGame(client, options, () => {}, model);
+  const start = calls.find((call) => call.name === 'start_game');
+  assert.ok(start, 'the runner never started a game');
+  assert.equal(start.arguments.reasoning_effort, 'high');
+  for (const body of bodies) assert.equal(body.reasoning_effort, 'high', 'every model request played at the effort');
 });

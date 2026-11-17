@@ -203,6 +203,19 @@ async function until(condition: () => boolean, label: string): Promise<void> {
  * The record is the one the browser writes before it asks the service for
  * the entry, so a reload finds the entry of the owner again.
  */
+/**
+ * A queue window that is open now: the service made the entry ready a moment
+ * ago and the cutoff is a minute ahead. The instants come from the same clock
+ * as the cutoff, so the window stays a minute long whatever day the suite
+ * runs. A fixed ready instant paired with a live cutoff grows the window with
+ * the calendar until its delay overflows the timer and the cutoff fires at
+ * once.
+ */
+function liveWindow(cutoffAt = new Date(Date.now() + 60_000).toISOString()): { readyAt: string; updatedAt: string; cutoffAt: string } {
+  const readyAt = new Date(Date.parse(cutoffAt) - 60_000).toISOString();
+  return { readyAt, updatedAt: readyAt, cutoffAt };
+}
+
 function storeIntent(storage: Storage, entryId: string, engineMatchId: string | null, identity = 'account%3Aaccount-1'): void {
   storage.setItem(`kamkmchess.online.queue.intent.v1:${identity}`, JSON.stringify([{
     key: 'intent-00000001',
@@ -1380,7 +1393,7 @@ describe('the engine credential recovery only touches a committed engine game (R
     const { fetcher, wires } = createFetchDouble({
       entryRead: () => ({
         status: 200,
-        data: { ...entryAnswer(null), status: 'waiting', cutoffAt: new Date(Date.now() + 60_000).toISOString() },
+        data: { ...entryAnswer(null), status: 'waiting', ...liveWindow() },
       }),
     });
     const storage = createStorage();
@@ -1534,8 +1547,7 @@ describe('the waiting entry of a reload is resumed with its original cutoff (R6-
       ...entryAnswer(null),
       entryId,
       status: 'waiting',
-      readyAt: '2026-10-21T10:00:00.000Z',
-      cutoffAt,
+      ...liveWindow(cutoffAt),
       assignedMatchId: null,
     };
   }

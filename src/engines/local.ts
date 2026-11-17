@@ -42,9 +42,17 @@ export function createEngineSelection(settings: EngineSettings): ModelSelection 
   return selection;
 }
 
-export async function runEngineTurn(controller: GameController, signal: AbortSignal): Promise<boolean> {
+/** One engine turn: whether its move was recorded, and the think time the engine actually used. */
+export interface EngineTurnResult {
+  readonly accepted: boolean;
+  /** The realized think time in ms; 0 when the engine never ran. */
+  readonly thinkMs: number;
+}
+
+/** Plays the queued engine seat's turn through the fenced move flow. */
+export async function runEngineTurn(controller: GameController, signal: AbortSignal): Promise<EngineTurnResult> {
   const started = await controller.dispatch({ schemaVersion: 1, kind: 'begin-model-turn', fence: controller.snapshot().fence });
-  if (started.kind !== 'model-turn-started') return false;
+  if (started.kind !== 'model-turn-started') return { accepted: false, thinkMs: 0 };
   let fence = started.request.fence;
   try {
     const settings = engineSettings(started.request.selection);
@@ -57,13 +65,13 @@ export async function runEngineTurn(controller: GameController, signal: AbortSig
     const requestId = crypto.randomUUID();
     const archived = await controller.appendModelTurnArchive(fence, { kind: 'request', requestId, protocol: 'uci',
       modelId: settings.engineId, body: new TextEncoder().encode(JSON.stringify(body)) });
-    if (!archived) return false;
+    if (!archived) return { accepted: false, thinkMs: 0 };
     fence = archived;
     const result = await searchBrowserEngine(body, body, signal);
     if (signal.aborted) throw new DOMException('Engine turn stopped.', 'AbortError');
     const recorded = await controller.appendModelTurnArchive(fence, { kind: 'terminal', requestId, outcome: 'complete',
       details: result, messages: [] });
-    if (!recorded) return false;
+    if (!recorded) return { accepted: false, thinkMs: body.moveTimeMs };
     fence = recorded;
     if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(result.move)) throw new Error('The engine returned no playable move. Check its setup and retry.');
     const move: CoordinateMove = { from: result.move.slice(0, 2) as Square, to: result.move.slice(2, 4) as Square,
@@ -72,7 +80,7 @@ export async function runEngineTurn(controller: GameController, signal: AbortSig
     const accepted = await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-effect', fence,
       effect: { kind: 'accepted-move', move, transition, budgets: createTurnBudgets() } });
     if (accepted.kind === 'rejected' && accepted.reason === 'illegal-move') throw new Error('The engine returned an illegal move. Check the engine and retry.');
-    return accepted.kind === 'accepted';
+    return { accepted: accepted.kind === 'accepted', thinkMs: body.moveTimeMs };
   } catch (error) {
     await controller.dispatch({ schemaVersion: 1, kind: 'model-turn-interrupted', fence, reason: signal.aborted ? 'aborted' : 'failed' });
     throw error;

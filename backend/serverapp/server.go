@@ -454,6 +454,7 @@ func Open(ctx context.Context, cfg Config) (http.Handler, func(), error) {
 			root.Handle("/v1/mcp", endpoint)
 			if cfg.Online.AgentBoardsEnabled {
 				root.Handle("/v1/public/agent-boards", httpapi.CORS(cfg.Clerk.AllowedOrigins, agentboards.Handler(agentGames, 30*time.Second)))
+				root.Handle("/v1/public/agent-games", httpapi.CORS(cfg.Clerk.AllowedOrigins, agentboards.ReportHandler(agentGames, cfg.Online.MCPStartsPerHour, time.Hour, cfg.Online.MCPTrustProxy)))
 			}
 		}
 	}
