@@ -63,6 +63,49 @@ func TestParsePremovePlan(t *testing.T) {
 	}
 }
 
+func TestParsePremovePlanCapsTotalNodes(t *testing.T) {
+	triggers := func(count int) []any {
+		on := make([]any, count)
+		for index := range on {
+			on[index] = "a7a6"
+		}
+		return on
+	}
+	level := func(then any) []any {
+		entries := make([]any, maxPremoveBranches)
+		for index := range entries {
+			entries[index] = map[string]any{"on": triggers(maxPremoveBranches), "then": then}
+		}
+		return entries
+	}
+
+	// Every per-level cap holds, yet the plan expands to 64 + 64*64 + 64*64*64 nodes.
+	widest := level(map[string]any{"move": "a2a3", "premoves": level(map[string]any{"move": "a3a4", "premoves": level("b2b3")})})
+	if plan, err := parsePremovePlan(widest); err == nil {
+		t.Fatalf("plan of %d nodes accepted", countPremoveNodes(plan))
+	}
+
+	// Four triggers with a 63-node nested plan each arm exactly maxPremoveNodes nodes.
+	nested := level("a2a3")
+	nested[maxPremoveBranches-1] = map[string]any{"on": triggers(7), "then": "a2a3"}
+	atCap := []any{map[string]any{"on": triggers(4), "then": map[string]any{"move": "a2a3", "premoves": nested}}}
+	plan, err := parsePremovePlan(atCap)
+	if err != nil {
+		t.Fatalf("plan at the node cap rejected: %v", err)
+	}
+	if got := countPremoveNodes(plan); got != maxPremoveNodes {
+		t.Fatalf("plan expanded to %d nodes, want %d", got, maxPremoveNodes)
+	}
+
+	overCap := []any{
+		map[string]any{"on": triggers(4), "then": map[string]any{"move": "a2a3", "premoves": nested}},
+		map[string]any{"on": triggers(1), "then": "a2a3"},
+	}
+	if plan, err := parsePremovePlan(overCap); err == nil {
+		t.Fatalf("plan of %d nodes accepted", countPremoveNodes(plan))
+	}
+}
+
 func TestArmedTriggerMatchesBothCastleSquareForms(t *testing.T) {
 	for _, example := range []struct{ trigger, uci, san string }{
 		{"e1g1", "e1h1", "O-O"}, {"e1h1", "e1g1", "O-O+"}, {"e8g8", "e8h8", "O-O#"},

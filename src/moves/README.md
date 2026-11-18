@@ -53,8 +53,9 @@ with the reply to play (`then`, either a coordinate or a nested object carrying 
 ```
 
 `parsePremoves` reads the field strictly. Every trigger and reply is a normalized
-coordinate token; nesting is capped at `MAX_PREMOVE_DEPTH` pre-moved replies and
-`MAX_PREMOVE_BRANCHES` branches per level. The field is decoration, never the command: a
+coordinate token; nesting is capped at `MAX_PREMOVE_DEPTH` pre-moved replies,
+`MAX_PREMOVE_BRANCHES` branches per level and `MAX_PREMOVE_NODES` armed nodes in
+total, counting one node per trigger. The field is decoration, never the command: a
 malformed or over-budget value is dropped — the raw value survives as a retained field —
 and the move itself still plays. Legality is never decided here; the controller checks
 each branch against the board when it arms it and again when it fires it, discarding

@@ -9,7 +9,7 @@ export {
   decideCompletedAnswer,
   decideModelTurn,
 } from './budgets.js';
-export { MAX_PREMOVE_BRANCHES, MAX_PREMOVE_DEPTH } from './types.js';
+export { MAX_PREMOVE_BRANCHES, MAX_PREMOVE_DEPTH, MAX_PREMOVE_NODES } from './types.js';
 export type {
   IllegalMoveAttemptRecordV1,
   ModelTurnDecision,

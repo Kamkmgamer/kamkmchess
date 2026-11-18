@@ -11,7 +11,7 @@ import type {
   ResignationDeclaration,
   RetainedFieldV1,
 } from './types.js';
-import { MAX_PREMOVE_BRANCHES, MAX_PREMOVE_DEPTH } from './types.js';
+import { MAX_PREMOVE_BRANCHES, MAX_PREMOVE_DEPTH, MAX_PREMOVE_NODES } from './types.js';
 
 const COORDINATE_PATTERN = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 const ACTION_KEYS: ReadonlySet<string> = new Set(['move', 'resign']);
@@ -38,7 +38,18 @@ function retainedFieldsOf(value: Record<string, unknown>, extraExcluded: readonl
  * parser checks their shape, never their legality.
  */
 export function parsePremoves(raw: unknown): readonly PremoveBranchV1[] | undefined | null {
-  return parsePremoveList(raw, 1);
+  const branches = parsePremoveList(raw, 1);
+  if (branches === undefined || branches === null) return branches;
+  return countPremoveNodes(branches) > MAX_PREMOVE_NODES ? null : branches;
+}
+
+/** Counts the armed nodes a plan expands to: one per trigger, nested plans included. */
+function countPremoveNodes(branches: readonly PremoveBranchV1[]): number {
+  let total = 0;
+  for (const branch of branches) {
+    total += branch.on.length * (1 + countPremoveNodes(branch.then.premoves ?? []));
+  }
+  return total;
 }
 
 function parsePremoveList(raw: unknown, depth: number): readonly PremoveBranchV1[] | undefined | null {
