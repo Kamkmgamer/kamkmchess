@@ -251,6 +251,27 @@ describe('conditional pre-moves', () => {
     expect(result.retainedFields).toEqual([{ key: 'premoves', value: deep }]);
   });
 
+  it('[MOV-07] drops a plan that expands past the total node cap', () => {
+    const triggers = (count: number) => Array.from({ length: count }, () => 'a7a6');
+    const level = (then: unknown) => Array.from({ length: 8 }, () => ({ on: triggers(8), then }));
+    const widest = level({ move: 'a2a3', premoves: level({ move: 'a3a4', premoves: level('b2b3') }) });
+    const dropped = classify(JSON.stringify({ move: 'e2e4', premoves: widest }));
+    if (dropped.kind !== 'move') throw new Error('expected a move declaration');
+    expect(dropped.premoves).toBeUndefined();
+    expect(dropped.retainedFields).toEqual([{ key: 'premoves', value: widest }]);
+
+    const nested = [...level('a2a3').slice(0, 7), { on: triggers(7), then: 'a2a3' }];
+    const atCap = [{ on: triggers(4), then: { move: 'a2a3', premoves: nested } }];
+    const kept = classify(JSON.stringify({ move: 'e2e4', premoves: atCap }));
+    if (kept.kind !== 'move') throw new Error('expected a move declaration');
+    expect(kept.premoves).toHaveLength(1);
+
+    const overCap = [...atCap, { on: triggers(1), then: 'a2a3' }];
+    const over = classify(JSON.stringify({ move: 'e2e4', premoves: overCap }));
+    if (over.kind !== 'move') throw new Error('expected a move declaration');
+    expect(over.premoves).toBeUndefined();
+  });
+
   it('[MOV-07] tolerates harmless extra keys on branches', () => {
     const result = classify(JSON.stringify({ move: 'e2e4', premoves: [{ on: ['e7e5'], then: 'g1f3', note: 'confident' }] }));
     if (result.kind !== 'move' || result.premoves === undefined) throw new Error('expected a move with premoves');

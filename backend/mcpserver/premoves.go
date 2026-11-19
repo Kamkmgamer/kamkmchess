@@ -15,6 +15,11 @@ const maxPremoveDepth = 3
 // maxPremoveBranches bounds the conditional branches per level.
 const maxPremoveBranches = 8
 
+// maxPremoveNodes bounds the armed nodes one plan expands to across all levels. Every
+// trigger of a branch becomes its own node carrying the whole nested plan, so the
+// per-level caps alone still allow hundreds of thousands of nodes.
+const maxPremoveNodes = 256
+
 // armedPremoveNode is one armed condition: when the opponent's next move equals
 // Trigger, the agent's seat plays Reply without a new turn, and Premoves re-arm with
 // the reply. The server never judges chess legality; the match authority drops a
@@ -79,7 +84,23 @@ func parsePremovePlan(raw any) ([]armedPremoveNode, error) {
 	if !ok || len(list) == 0 || len(list) > maxPremoveBranches {
 		return nil, errors.New("premoves must be an array of at most 8 {on, then} entries")
 	}
-	return parsePremoveBranches(list, 1)
+	nodes, err := parsePremoveBranches(list, 1)
+	if err != nil {
+		return nil, err
+	}
+	if countPremoveNodes(nodes) > maxPremoveNodes {
+		return nil, fmt.Errorf("premoves expand to more than %d trigger and reply pairs; send a smaller plan", maxPremoveNodes)
+	}
+	return nodes, nil
+}
+
+// countPremoveNodes counts the armed nodes of a plan, nested replies included.
+func countPremoveNodes(nodes []armedPremoveNode) int {
+	total := len(nodes)
+	for _, node := range nodes {
+		total += countPremoveNodes(node.Premoves)
+	}
+	return total
 }
 
 func parsePremoveBranches(list []any, depth int) ([]armedPremoveNode, error) {

@@ -34,6 +34,13 @@ export const MAX_PREMOVE_DEPTH = 3;
 /** How many conditional branches one pre-move level may carry. */
 export const MAX_PREMOVE_BRANCHES = 8;
 
+/**
+ * How many armed nodes one plan may expand to across all levels. Every trigger of a
+ * branch arms its own node carrying the whole nested plan, so the per-level caps alone
+ * still allow hundreds of thousands of nodes.
+ */
+export const MAX_PREMOVE_NODES = 256;
+
 /** One conditional pre-move branch: if the opponent plays one of `on`, play `then`. */
 export interface PremoveBranchV1 {
   /** Opponent replies in coordinate form, as the model wrote them. */
