@@ -321,7 +321,7 @@ func (s *Server) startGame(ctx context.Context, sess *session, address string, a
 	label := name
 	agent := online.CreateSeat{
 		Participant: online.ParticipantRef{Kind: online.ParticipantGuest, ID: agentID},
-		PublicLabel: name + " (self-reported)",
+		PublicLabel: seatLabel(name),
 		Control:     online.SeatControl{Kind: online.ControlAgent, ModelLabel: &label},
 	}
 	think := time.Duration(intArg(args, "engine_think_ms", 1000, 100, 10_000)) * time.Millisecond
@@ -469,9 +469,42 @@ func (s *Server) resumeGame(ctx context.Context, sess *session, args map[string]
 	sess.attach(principal, name, token)
 	if reported, ok := args["model_name"].(string); ok && agentname.Clean(reported) != "" {
 		sess.agentName = agentname.Clean(reported)
+		s.persistSeatName(ctx, match, principal, sess.agentName)
 	}
 	s.sessions.markReady(sess)
 	return s.board(ctx, sess)
+}
+
+// SeatRenamer stores the name an agent reported on its own seat.
+type SeatRenamer interface {
+	RenameAgentSeat(ctx context.Context, matchID string, seat online.Seat, ownerID, label string) error
+}
+
+// persistSeatName writes the reported name onto the seat itself. Without it
+// the name lives only in this connection, and the watch page of a finished
+// game falls back to the placeholder label once the connection is gone.
+// A failure is not fatal: the connection still carries the name.
+func (s *Server) persistSeatName(ctx context.Context, match online.Match, principal onlineauth.Principal, name string) {
+	renamer, ok := s.options.Matches.(SeatRenamer)
+	if !ok || match.Status != online.MatchActive {
+		return
+	}
+	label := seatLabel(name)
+	if seat, found := match.Seat(principal.Seat); !found || seat.PublicLabel == label || seat.Control.Kind != online.ControlAgent {
+		return
+	}
+	_ = renamer.RenameAgentSeat(ctx, match.MatchID, principal.Seat, principal.Participant.ID, label)
+}
+
+// seatLabel is the published label of a self-reported name, kept within the
+// 64-byte bound of a public label.
+func seatLabel(name string) string {
+	const suffix = " (self-reported)"
+	runes := []rune(name)
+	for len(runes) > 0 && len(string(runes))+len(suffix) > 64 {
+		runes = runes[:len(runes)-1]
+	}
+	return strings.TrimSpace(string(runes)) + suffix
 }
 
 var coordinateMove = regexp.MustCompile(`^[a-h][1-8][a-h][1-8][qrbn]?$`)

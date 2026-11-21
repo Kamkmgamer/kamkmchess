@@ -2052,3 +2052,24 @@ func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
+
+// RenameAgentSeat records the public label an agent reported for its own
+// guest seat while the match is still active.
+//
+// The label otherwise lives only in the reporting agent's connection, so a
+// finished game would lose the name once that connection expired or the
+// server restarted. The update is limited to the agent-controlled guest seat
+// the caller owns, and a finished match keeps the label it was published
+// with.
+func (s *Service) RenameAgentSeat(ctx context.Context, matchID string, seat Seat, ownerID, label string) error {
+	if !idPattern.MatchString(matchID) || (seat != SeatWhite && seat != SeatBlack) || ownerID == "" || !publicLabelShape(label) {
+		return ErrInvalidArgument
+	}
+	_, err := s.db.Exec(ctx, `UPDATE online_seats AS seats SET public_label=$1, updated_at=clock_timestamp()
+		FROM online_matches AS matches
+		WHERE seats.match_id=$2 AND seats.seat=$3 AND seats.owner_kind='guest' AND seats.owner_id=$4
+		  AND seats.control_kind='agent' AND seats.public_label<>$1
+		  AND matches.match_id=seats.match_id AND matches.status='active'`,
+		label, matchID, string(seat), ownerID)
+	return err
+}
