@@ -135,6 +135,8 @@ input:focus-visible, select:focus-visible, textarea:focus-visible { outline: non
 .clock-held { margin-left: auto; align-self: center; font-size: 11px; font-weight: 650; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); }
 .clock-held + .clock { margin-left: 8px; }
 .playing-board.with-evaluation { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
+/* Anything after the bar and board (the armed-premove notice) spans the full row. */
+.playing-board.with-evaluation > .premove-plan { grid-column: 1 / -1; }
 .evaluation-bar { position: relative; align-self: stretch; margin-block: 3px; padding: 0; border: 1px solid var(--edge); border-radius: 4px; overflow: hidden; background: #333; cursor: default; }
 .evaluation-white { position: absolute; inset: 0; background: #f5f5f5; transform-origin: bottom; transition: transform 400ms cubic-bezier(.16, 1, .3, 1); }
 .evaluation-bar.reversed .evaluation-white { transform-origin: top; }
