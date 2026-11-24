@@ -45,6 +45,9 @@ const RunnerID = "server-engine"
 // it, so it is never an allowed browser origin.
 const credentialOrigin = "server-engine"
 
+// DefaultUnjoinedTimeout is how long an invitation nobody joined stays open.
+const DefaultUnjoinedTimeout = time.Hour
+
 // credentialTTL bounds one credential. A longer game rotates it.
 const credentialTTL = 26 * time.Hour
 
@@ -87,8 +90,12 @@ type Options struct {
 	// RetryAfter is how long a seat whose turn failed is left alone. Zero
 	// means five seconds.
 	RetryAfter time.Duration
-	Now        func() time.Time
-	Logger     *slog.Logger
+	// UnjoinedTimeout is how long an unstarted match whose readiness check
+	// still fails is kept before the engine seat cancels it. Such a match has
+	// no running clock, so nothing else ever ends it. Zero means one hour.
+	UnjoinedTimeout time.Duration
+	Now             func() time.Time
+	Logger          *slog.Logger
 }
 
 // Service drives the server engine seats.
@@ -120,6 +127,9 @@ func New(options Options) (*Service, error) {
 	}
 	if options.RetryAfter <= 0 {
 		options.RetryAfter = 5 * time.Second
+	}
+	if options.UnjoinedTimeout <= 0 {
+		options.UnjoinedTimeout = DefaultUnjoinedTimeout
 	}
 	if options.Now == nil {
 		options.Now = time.Now
@@ -315,17 +325,24 @@ func (s *Service) Play(ctx context.Context, ref SeatRef) error {
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
-	ready := s.readiness
-	s.mu.Unlock()
-	if ready != nil && !ready(match) {
-		return nil
-	}
 	seat, ok := match.Seat(ref.Seat)
 	if !ok || seat.Participant.ID != ref.OwnerID || seat.Control.Kind != online.ControlEngine {
 		return nil
 	}
 	if match.Status != online.MatchActive || sideToMove(match.PositionFEN) != ref.Seat {
+		return nil
+	}
+	s.mu.Lock()
+	ready := s.readiness
+	s.mu.Unlock()
+	if ready != nil && !ready(match) {
+		// An invitation nobody joined has no clock, so it would stay active
+		// and keep its seat in every sweep. The engine seat cancels it once
+		// it is stale; the seat never moved, so the cancel is an unscored
+		// abort.
+		if len(match.Moves) == 0 && !s.options.Now().Before(match.UpdatedAt.Add(s.options.UnjoinedTimeout)) {
+			return s.cancel(ctx, ref, match)
+		}
 		return nil
 	}
 	think, ok := ThinkOf(ref.OwnerID)
@@ -371,6 +388,38 @@ func (s *Service) Play(ctx context.Context, ref SeatRef) error {
 	return err
 }
 
+// cancel ends an unstarted match for the engine seat.
+func (s *Service) cancel(ctx context.Context, ref SeatRef, match online.Match) error {
+	principal, err := s.principal(ctx, ref, false)
+	if err != nil {
+		return err
+	}
+	lease, err := s.acquire(ctx, ref, match, principal)
+	if errors.Is(err, onlineauth.ErrUnauthenticated) {
+		if principal, err = s.principal(ctx, ref, true); err == nil {
+			lease, err = s.acquire(ctx, ref, match, principal)
+		}
+	}
+	if err != nil {
+		return err
+	}
+	cmd := online.Command{
+		SchemaVersion:   online.ContractsSchemaVersion,
+		MatchID:         match.MatchID,
+		OperationID:     cancelOperationID(match.MatchID, ref.Seat, match.Version),
+		ExpectedVersion: match.Version,
+		Seat:            ref.Seat,
+		ControlEpoch:    match.ControlEpoch,
+		LeaseID:         lease.LeaseID,
+		Action:          online.Action{Kind: online.ActionCancel},
+	}
+	_, err = s.options.Matches.Execute(onlineauth.WithPrincipal(ctx, principal), principal.Participant, cmd)
+	if errors.Is(err, online.ErrConflict) || errors.Is(err, online.ErrMatchEnded) {
+		return nil
+	}
+	return err
+}
+
 func (s *Service) acquire(ctx context.Context, ref SeatRef, match online.Match, principal onlineauth.Principal) (online.RunnerLease, error) {
 	return s.options.Matches.AcquireRunnerLease(onlineauth.WithPrincipal(ctx, principal), principal.Participant, online.RunnerLeaseRequest{
 		SchemaVersion: online.ContractsSchemaVersion,
@@ -389,6 +438,12 @@ func operationID(matchID string, seat online.Seat, version int64) string {
 	return "srveng-" + hex.EncodeToString(sum[:])[:32]
 }
 
+// cancelOperationID is the stable operation of the cancel of one stale turn.
+func cancelOperationID(matchID string, seat online.Seat, version int64) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("kamkmchess/server-engine/cancel/%s/%s/%d", matchID, seat, version)))
+	return "srveng-cancel-" + hex.EncodeToString(sum[:])[:32]
+}
+
 func sideToMove(fen string) online.Seat {
 	fields := strings.Fields(fen)
 	if len(fields) > 1 && fields[1] == "b" {
@@ -403,15 +458,18 @@ type Querier interface {
 }
 
 // PostgresSeats lists the server engine seats of the active matches whose
-// side is to move, oldest first.
+// side is to move. Started matches come first, so unstarted invitations that
+// wait for their players can never crowd a live game out of the batch; each
+// group is oldest first.
 func PostgresSeats(db Querier) ActiveSeats {
 	return func(ctx context.Context, limit int) ([]SeatRef, error) {
 		rows, err := db.Query(ctx, `SELECT s.match_id, s.seat, s.owner_id
 			FROM online_seats s JOIN online_matches m ON m.match_id = s.match_id
+			JOIN online_clocks c ON c.match_id = m.match_id
 			WHERE m.status = 'active' AND s.owner_kind = 'guest' AND s.control_kind = 'engine'
 			  AND s.owner_id LIKE 'server-engine:%'
 			  AND split_part(m.position_fen, ' ', 2) = CASE s.seat WHEN 'white' THEN 'w' ELSE 'b' END
-			ORDER BY m.updated_at, s.match_id LIMIT $1`, limit)
+			ORDER BY (c.white_moved OR c.black_moved) DESC, m.updated_at, s.match_id LIMIT $1`, limit)
 		if err != nil {
 			return nil, err
 		}
